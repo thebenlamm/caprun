@@ -547,17 +547,19 @@ pub struct Event {
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **ExecutorDecision return type: enum variant vs. Result**
    - What we know: PLAN.md says "returns `NotImplemented`" — implies a value, not a panic.
    - What's unclear: Whether the signature is `-> ExecutorDecision` or `-> Result<ExecutorDecision, BrokerError>`.
    - Recommendation: Start with `-> ExecutorDecision` for the stub; wrapping in `Result` is a one-line change when brokerd grows real error paths in Phase 3.
+   - **RESOLVED: Use `-> ExecutorDecision` (Plan 01-02 Task 1 implements the stub with signature `submit_plan_node(_session_id: Uuid, _plan: PlanNode) -> ExecutorDecision` returning `ExecutorDecision::NotImplemented`).**
 
 2. **Should `cli/caprun` be a stub Cargo.toml in Phase 1?**
    - What we know: PLAN.md shows `cli/caprun` in the workspace. It's not used until Phase 3+.
    - What's unclear: Whether Phase 1 should create the directory and empty Cargo.toml or leave it for Phase 3.
    - Recommendation: Create the directory and minimal Cargo.toml now so `cargo build --workspace` never fails on a missing member.
+   - **RESOLVED: caprun stub is in Phase 1 scope (Plan 01-01 Task 1 creates `cli/caprun/Cargo.toml` + `src/main.rs` with `fn main() {}` so the explicit workspace member resolves).**
 
 ---
 
