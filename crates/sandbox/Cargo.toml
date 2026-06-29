@@ -11,6 +11,7 @@ anyhow = { workspace = true }
 landlock    = { workspace = true }
 seccompiler = { workspace = true }
 nix         = { workspace = true }
+libc        = "0.2"
 
 [[bin]]
 name = "confine-probe"
