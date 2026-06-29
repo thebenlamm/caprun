@@ -115,12 +115,56 @@ Before setting Decision and Gate status, the reviewer MUST:
 
 ## Decision
 
-> **Pending human review.** The reviewer sets one of the two values below after completing
-> the review steps above.
+**Decision:** NEEDS REVISION
+**Decided:** 2026-06-29 by Ben Lamm
 
-**Decision:** APPROVED / NEEDS REVISION
+The nine completeness checkboxes all pass — the docs *state* every required item. But the
+gate also requires **soundness**, and two independent adversarial reviews converged on the same
+disqualifying defect: the value-injection defense is forgeable by an injected planner. A
+completeness gate passes a fully-written-but-wrong spec; none of the gaps below trip a checkbox.
+Approving here would let Phase 4 build `crates/executor` against a spec that can pass the §9
+demo with zero real security (a planner that simply emits `taint: []`).
 
-*(Replace with the selected decision and today's date once the review is complete.)*
+### Soundness criterion added to this gate (must hold before APPROVED)
+
+> **An injected/compromised planner MUST NOT be able to cause a tainted value to reach a
+> sensitive sink arg with an executor decision of Proceed.** Satisfied by Required Fix 1 below
+> (planner references opaque value handles; it never authors literal/taint metadata).
+
+### Required fixes before re-review (union of two independent reviews)
+
+1. **Planner cannot author taint.** Replace the planner-writable `ValueNode { literal, taint }`
+   with a broker-owned `ValueRecord` resolved by an opaque `ValueId`. The planner emits
+   `PlanArg { name, value_id }` and references handles only; the executor dereferences
+   `ValueRecord { id, literal, taint, provenance_node }` from a trusted store. This closes
+   taint-*stripping* (false negatives) — the dual of the taint-*stapling* the docs already
+   close. (Both reviews — the core fix; mirrors CaMeL's variable model.)
+
+2. **Provenance must prove ancestry, not just point.** `provenance: EventId` only references a
+   read Event; it cannot prove the literal *descends* from it. Use `provenance_chain: Vec<EventId>`
+   (or `value_id` derivation edges recorded in the audit DAG) so literal → read-Event ancestry
+   is locally verifiable, matching the "unbroken taint edge" the docs already require.
+
+3. **Content args are not "non-sensitive."** Split sink args into `routing-sensitive`
+   (`to`/`cc`/`bcc` → I2 blocks tainted) and `content-sensitive` (`subject`/`body`/`attachment`
+   → Tier-4 approval displays verbatim with tainted spans). State sensitivity per-sink, not as a
+   global principle — for `http.post`/`file.write`/`exec` the body/command *is* the dangerous arg.
+
+4. **Taint propagates to child sessions/intents,** released only via a broker-owned
+   **declassification/endorsement step logged as an audit Event** (not a silent allowlist). This
+   also reconciles UX-rule 4 (no learning/auto-confirm) against handover §4.6 (broker proposes
+   standing policy from repeated approvals): endorsement-as-Event is the release on the ratchet.
+
+5. **Literal confirmation needs canonicalization.** The prompt MUST show raw *and* canonical
+   forms (display-name, Unicode homoglyph, punycode domain, plus-addressing, RTL markers) plus
+   known-contact and source, so `accounts@xn--ev1l...` cannot be confirmed as legitimate.
+
+6. **Drop standing-policy patterns for v0.** Exact-literal allowlist only; pattern allowlists
+   (e.g. `@company.com`) are a post-v0 policy-language problem.
+
+*(Both reviewers explicitly endorse the direction — threat decomposition and the deterministic
+Rust executor are correct — and would approve after fixes 1–6. The design is no longer drifting
+back into authz.)*
 
 ---
 
@@ -133,4 +177,5 @@ Before setting Decision and Gate status, the reviewer MUST:
 
 Available resolutions: [ UNBLOCKED / BLOCKED ]
 
-*(Set to UNBLOCKED only after Decision: APPROVED is recorded above.)*
+Gate remains BLOCKED pending revision of both DESIGN docs per Required Fixes 1–6 and a fresh
+gate record pinned to the revised docs' sha256 hashes.
