@@ -65,7 +65,10 @@ day one — so every later effect path is forced through PlanNode/ValueNode.
      sensitivity, taint propagation, and the literal-value confirmation UX.
   3. Both docs are reviewed and approved — the recorded gate that unblocks
      `crates/executor` in Phase 4.
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 02-01-PLAN.md — Author DESIGN-taint-model.md (dynamic-taint default, hard Tier 3+ split, I0 draft-only, genuine-taint requirement)
+- [ ] 02-02-PLAN.md — Author DESIGN-plan-executor.md (ValueNode/PlanNode, hardcoded sink sensitivity, monotonic propagation, literal-value confirmation UX)
+- [ ] 02-03-PLAN.md — DESIGN-GATE-RECORD.md: checklist + sha256 pin + blocking human review that unblocks crates/executor
 
 ### Phase 3: Confinement & Mediation Substrate
 **Goal**: Deliver kernel-enforced confinement (sandbox), the broker reference
@@ -120,6 +123,6 @@ requires both Phase 2 and Phase 3.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Substrate Foundation | 0/2 | Not started | - |
-| 2. Security Design Gate | 0/TBD | Not started | - |
+| 2. Security Design Gate | 0/3 | Not started | - |
 | 3. Confinement & Mediation Substrate | 0/TBD | Not started | - |
 | 4. Value-Injection Security Demo (v0 DONE) | 0/TBD | Not started | - |
