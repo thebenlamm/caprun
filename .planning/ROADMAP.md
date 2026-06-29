@@ -112,7 +112,7 @@ value-injection defense.
 
   4. `caprun` runs a confined worker that reads a file via the passed fd, and the
      read Event appears in the audit DAG (complete mediation, no LLM).
-**Plans**: 2/5 plans executed
+**Plans**: 3/5 plans executed
 
 **Wave 1** *(foundation + risk verification)*
 
@@ -121,7 +121,7 @@ value-injection defense.
 **Wave 2** *(parallel implementation, blocked on Wave 1)*
 
 - [x] 03-02-PLAN.md — sandbox crate: prctl(NO_NEW_PRIVS)+rlimits+Landlock deny-all+seccomp; 3 negative assertions (REQ-sandbox)
-- [ ] 03-03-PLAN.md — brokerd core: SQLite hash-chained audit DAG + Session create + abstract-UDS IPC server (REQ-brokerd-core)
+- [x] 03-03-PLAN.md — brokerd core: SQLite hash-chained audit DAG + Session create + abstract-UDS IPC server (REQ-brokerd-core)
 - [ ] 03-04-PLAN.md — adapter-fs crate: SCM_RIGHTS fd-pass (pass_fd/recv_fd) with O_CLOEXEC (REQ-adapters-fs)
 
 **Wave 3** *(blocked on Wave 2)*
@@ -167,5 +167,5 @@ requires both Phase 2 and Phase 3.
 |-------|----------------|--------|-----------|
 | 1. Substrate Foundation | 2/2 | Complete    | 2026-06-29 |
 | 2. Security Design Gate | 3/3 | Complete    | 2026-06-29 |
-| 3. Confinement & Mediation Substrate | 2/5 | In Progress|  |
+| 3. Confinement & Mediation Substrate | 3/5 | In Progress|  |
 | 4. Value-Injection Security Demo (v0 DONE) | 0/TBD | Not started | - |
