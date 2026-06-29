@@ -31,11 +31,27 @@ auto-authorize Tier 3+ effects. A human gate is REQUIRED on any context creation
 data. This closes the gap that I1 and I2 do not cover alone: the case where the *Session itself*
 is seeded from hostile content rather than the Session processing hostile content after creation.
 
+- **The tainted-seed tag MUST be set by the trusted session-creation path from provenance — never
+  self-declared by the creating agent.** The same hole as taint-stripping applies here: if the
+  (possibly injected) agent that constructs a Session from an email self-declares "this seed is
+  trusted," an injected agent simply declares otherwise and escapes I0. The taint determination at
+  creation time MUST be made by the trusted brokerd session-creation path, derived from the
+  provenance of the seed content (which read Event / which `ValueRecord` the intent text descends
+  from), not asserted by the creator. See the I0 Acceptance Predicate below.
+
 **I2 (value injection):** No attacker-tainted value may occupy a sensitive argument of an
 irreversible or external sink without literal-value human confirmation or an exact standing
 policy match. I2 is enforced by the deterministic, non-LLM plan executor (see
 `DESIGN-plan-executor.md`). Policy files may gate *which sinks are callable*; they MUST NOT
 disable I2.
+
+- The planner references values only by opaque `ValueId` handles; the authoritative
+  `(literal, taint, provenance)` lives in a broker-owned `ValueRecord` resolved by the executor at
+  call time (see `DESIGN-plan-executor.md` §ValueRecord & ValueId Handle Model). This is what makes
+  taint unforgeable in BOTH directions — it cannot be stapled (genuine-taint rule) and it cannot be
+  STRIPPED (an injected planner never holds the literal or the taint to suppress it).
+- **Soundness property (MUST hold):** an injected planner MUST NOT be able to drive a tainted value
+  into a routing-sensitive sink argument as `Proceed`. The handle model is what makes this hold.
 
 ---
 
@@ -129,9 +145,13 @@ plan executor, specified in `DESIGN-plan-executor.md`).
 | `stripped` | Confirmation that instructional content was removed: `instructions_to_agent: true`, `tool_requests: true` |
 
 The extract is typed (each claim has a declared type) and lossy (raw text is not included; only
-extracted typed values). The taint labels on the extract MUST propagate to any ValueNode derived
-from this extract. Taint is never set by the planner or executor at the point of sink invocation;
-it is inherited from the extract that originated from the read Event.
+extracted typed values). **The worker-extraction step mints a broker-owned `ValueRecord`** (see
+`DESIGN-plan-executor.md` §ValueRecord & ValueId Handle Model) binding each extracted value to its
+`(literal, taint, provenance_chain)`, and returns only the opaque `ValueId` handle upward. The taint
+labels on the extract MUST propagate into the `ValueRecord` for any value derived from this extract.
+Taint is never set by the planner or executor at the point of sink invocation, and the planner never
+holds the literal or taint at all — it references the `ValueId`. Taint is inherited from the extract
+that originated from the read Event, carried in the trusted broker-owned store.
 
 ---
 
@@ -148,13 +168,64 @@ it is inherited from the extract that originated from the read Event.
 
 **Rules:**
 - Taint labels are monotonic: once a value carries a label, all derived values MUST inherit it.
-  Labels are NEVER removed.
-- A ValueNode that carries taint labels but whose taint cannot be traced to a read Event in the
-  audit DAG is INVALID. See Genuine-Taint Requirement below.
+  Labels are NEVER removed. **Release is not removal:** a value may be *endorsed* (see
+  Declassification & Endorsement below), which records an endorsement edge in the audit DAG — the
+  label itself is never mutated.
+- Taint propagates across context boundaries: a tainted context MUST NOT spawn untainted child
+  sessions or create new intents as clean. See Taint Propagation to Child Sessions/Intents below.
+- A `ValueRecord` that carries taint labels but whose `provenance_chain` cannot be traced to a read
+  Event in the audit DAG is INVALID. See Genuine-Taint Requirement below.
 - v0's sink sensitivity map is hardcoded in Rust TCB — there is no Cedar policy system, no schema
   taint policy file, and no runtime taint label registry. Label extensibility is a post-v0 concern.
 
 ---
+
+## Taint Propagation to Child Sessions/Intents
+
+Dynamic taint for Tier 0–2 is correct, but "MAY view raw untrusted bytes" needs a hard boundary at
+context creation. Once a context is tainted, the taint MUST cross every boundary it spawns.
+
+**Rule (MUST):** Once a context (Session or intent) is tainted, it MUST NOT:
+- spawn an untainted child Session,
+- create a new intent as clean, or
+- produce a trusted value,
+
+except through a broker-owned declassification/endorsement boundary (below) or a sanitizer/extractor
+boundary that itself mints a fresh `ValueRecord` with provenance. **Taint propagates to all child
+sessions/intents by default.** A child Session created by a tainted context inherits tainted-seed
+status; the trusted session-creation path sets this from provenance (see I0), not the creating agent.
+
+This makes the "MAY view raw untrusted bytes" allowance safe: a tainted context can read freely, but
+it cannot launder its taint away by creating a fresh-looking child.
+
+## Declassification & Endorsement (the only release on the ratchet)
+
+Taint is monotonic, which without a release valve turns the happy path into a confirmation treadmill
+(e.g., replying to a *legitimate* client whose reply-to was extracted from inbound — and therefore
+tainted — mail would block on the `to` arg every time, forever). The release is **declassification
+via endorsement, recorded as an audit Event** — never a silent allowlist mutation.
+
+**Rule (MUST):** A tainted value is released for a specific effect ONLY via a broker-owned
+declassification step, and that step MUST itself be an audit Event:
+
+- When a human confirms a tainted **exact literal** (via the I2 literal-value confirmation UX), the
+  broker records an **endorsement Event** in the audit DAG binding that exact literal to that
+  approval. This is the "endorsement-as-logged-Event."
+- A later occurrence of the **byte-identical** literal MAY resolve against that logged endorsement
+  instead of re-prompting. The match is on the exact literal only — never a pattern, domain glob, or
+  similarity heuristic (v0 has no pattern allowlist; see `DESIGN-plan-executor.md` UX rule 3).
+- The taint label is **never mutated or removed** — monotonicity is preserved. Endorsement records
+  an additional edge; it does not rewrite history. "Taint cleared for that exact literal" means an
+  endorsement edge exists, not that the label was deleted.
+- Declassification authority is broker-owned and TCB-resident. No agent (planner or worker) can
+  endorse; only the human-gated broker path can append an endorsement Event.
+
+**Reconciling the cross-doc conflict:** executor UX-rule 4 (no learning / no auto-confirm) and the
+handover §4.6 proposal (broker proposes standing policy from repeated approvals) are reconciled here.
+There is no learned/heuristic standing policy in v0. The ONLY "standing policy" is the set of logged
+endorsement Events over exact literals. Auto-resolution against a prior endorsement is not "learning"
+— it is replaying a recorded, human-authorized, exact-literal audit edge. This keeps taint monotonic
+and honest while giving a bounded release on the ratchet.
 
 ## Threat Model — I1 Attack Surface
 
@@ -224,8 +295,10 @@ When a tainted Session seed results in a plan that itself constructs new Session
 taint boundary at the planner level may be incomplete.
 
 *Accepted for v0:* Mitigated by the I0 draft-only rule (the initial tainted Session cannot
-auto-authorize Tier 3+) and by the requirement for a human gate before Tier 3+ is granted.
-Full mitigation of multi-hop intent injection is a post-v0 concern.
+auto-authorize Tier 3+), by the child-session/intent taint-propagation rule (a tainted context
+cannot spawn a clean child; see Taint Propagation to Child Sessions/Intents), and by the requirement
+for a human gate before Tier 3+ is granted. Full mitigation of arbitrary multi-hop intent injection
+(e.g., laundering through many sanitizer boundaries) is a post-v0 concern.
 
 **3. fd revocation after SCM_RIGHTS handoff**
 
@@ -243,15 +316,33 @@ worker disposal, not on fd revocation.
 
 ## Genuine-Taint Requirement & I0 Acceptance Predicate
 
-### Genuine-Taint Requirement
+### Genuine-Taint Requirement (both directions: anti-stapling AND anti-stripping)
 
 Taint MUST originate from a read Event recorded in the audit DAG. Taint MUST NOT be hand-set at
-the sink.
+the sink, and MUST NOT be authorable (or suppressible) by the planner.
 
-Concretely: when the plan executor evaluates a PlanNode and finds a tainted value in a sensitive
-sink argument, the taint labels on that ValueNode MUST be traceable to a specific read Event in
-the audit DAG. A system that staples taint labels onto a ValueNode at sink-call time — rather
-than propagating them from the originating read Event — does NOT satisfy this requirement.
+Concretely: when the plan executor evaluates a PlanNode and finds a tainted value in a
+routing-sensitive sink argument, the taint labels on that **broker-owned `ValueRecord`** MUST be
+traceable through its `provenance_chain` to a specific read Event in the audit DAG. The chain must
+prove ancestry locally (an unbroken read-Event → value edge), not merely point at some Event.
+
+**Two directions, both closed:**
+
+- **Anti-STAPLING (false positives):** A system that staples taint labels onto a value at sink-call
+  time — rather than propagating them from the originating read Event — does NOT satisfy this
+  requirement. Stapled taint has no `provenance_chain` terminating at a real read Event.
+
+- **Anti-STRIPPING (false negatives) — the dual:** A system in which the planner can mint a hostile
+  literal with `taint: []` does NOT satisfy this requirement. The genuine-taint rule alone validates
+  only taint that IS present; it does nothing to ensure taint that SHOULD be present IS present.
+  Stripping is closed by the **ValueRecord & ValueId handle model** (`DESIGN-plan-executor.md`): the
+  planner references values by opaque `ValueId` and never holds the literal or taint, so an injected
+  planner has nothing to suppress; the executor resolves the authoritative record from the trusted
+  broker-owned store.
+
+**Soundness property (MUST hold, asserted by the DESIGN gate):** an injected planner MUST NOT be
+able to drive a tainted value into a routing-sensitive sink argument as `Proceed`. Held by the
+handle model above.
 
 **The v0 Acceptance Test (§9) explicitly fails for taint-stapling.** If taint is set at the
 sink instead of propagated through the DAG from the read Event, the audit DAG will not show an
@@ -260,7 +351,8 @@ about the system's actual security posture. A passing §9 run with stapled taint
 positive, not a security property.
 
 The genuine-taint requirement is consumed by:
-- `DESIGN-plan-executor.md` (ValueNode provenance field, taint propagation rules)
+- `DESIGN-plan-executor.md` (broker-owned `ValueRecord` with `provenance_chain`; the `ValueId`
+  handle model; taint propagation rules; the soundness property)
 - The Phase 4 §9 acceptance test (audit DAG assertion: unbroken taint edge from read Event to
   blocked sink arg)
 
@@ -269,10 +361,16 @@ The genuine-taint requirement is consumed by:
 The I0 invariant is satisfied when the following predicate holds for every Session whose intent
 text or seed derives from external or untrusted content:
 
+0. **The tainted-seed determination is made by the trusted brokerd session-creation path from the
+   seed's provenance** (which read Event / `ValueRecord` the intent text descends from) — NOT
+   self-declared by the agent creating the Session. A creating agent's assertion that a seed is
+   trusted is never authoritative.
 1. The Session starts in draft-only status (`Session.status == Draft`) at creation time.
 2. The broker MUST reject any `submit_plan_node()` call for a Tier 3+ sink from a draft Session
    without human gate confirmation having been recorded.
 
-Both conditions MUST hold simultaneously. Satisfying condition (1) without condition (2) leaves
-Tier 3+ auto-authorization open. Satisfying condition (2) without condition (1) still permits
-a tainted Session to operate in an active state before the gate is checked.
+All three conditions MUST hold simultaneously. Condition (0) is what makes (1) and (2) meaningful:
+without trusted, provenance-derived tagging, an injected creating agent simply declares its hostile
+seed "trusted" and bypasses the draft-only entry — the same shape as the taint-stripping hole that
+the `ValueId` handle model closes for I2. Satisfying (1) without (2) leaves Tier 3+ auto-authorization
+open; satisfying (2) without (1) still permits a tainted Session to operate active before the gate.
