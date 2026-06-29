@@ -25,7 +25,7 @@ both depend on nothing — they start in parallel on day one (the M0 + M0-design
 parallel start). Phase 3 continues the substrate from Phase 1. Phase 4 requires
 **both** Phase 2 (the design gate) and Phase 3 (the substrate) complete.
 
-- [ ] **Phase 1: Substrate Foundation** - Cargo workspace, domain core, and the locked plan-node broker API
+- [x] **Phase 1: Substrate Foundation** - Cargo workspace, domain core, and the locked plan-node broker API (completed 2026-06-29)
 - [ ] **Phase 2: Security Design Gate** - The taint-model and plan-executor DESIGN docs that hard-gate all executor code (runs parallel to substrate)
 - [ ] **Phase 3: Confinement & Mediation Substrate** - Kernel confinement, broker reference monitor, fd-pass fs adapter, proven by the no-LLM substrate demo
 - [ ] **Phase 4: Value-Injection Security Demo (v0 DONE)** - The §9 acceptance test passes with a genuine taint chain — the only gate for v0 done
@@ -51,14 +51,14 @@ day one — so every later effect path is forced through PlanNode/ValueNode.
 
   3. `ValueNode` carries literal + provenance + taint fields in its type
      definition, so plan nodes can express genuine taint later.
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 **Wave 1**
 
 - [x] 01-01-PLAN.md — Virtual Cargo workspace + runtime-core domain types (no I/O), incl. ValueNode literal+provenance+taint lock
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — brokerd submit_plan_node stub (returns NotImplemented) + architectural no-bypass invariant gate
+- [x] 01-02-PLAN.md — brokerd submit_plan_node stub (returns NotImplemented) + architectural no-bypass invariant gate
 
 ### Phase 2: Security Design Gate
 
@@ -151,7 +151,7 @@ requires both Phase 2 and Phase 3.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Substrate Foundation | 1/2 | In Progress|  |
+| 1. Substrate Foundation | 2/2 | Complete   | 2026-06-29 |
 | 2. Security Design Gate | 0/3 | Not started | - |
 | 3. Confinement & Mediation Substrate | 0/TBD | Not started | - |
 | 4. Value-Injection Security Demo (v0 DONE) | 0/TBD | Not started | - |
