@@ -36,10 +36,18 @@ use std::os::fd::RawFd;
 /// # Note on async contexts
 /// `sendmsg` is a blocking syscall. When called from a tokio async task,
 /// wrap in `tokio::task::spawn_blocking` to avoid blocking the runtime thread.
-pub fn pass_fd(_socket_raw_fd: RawFd, _file_raw_fd: RawFd) -> nix::Result<()> {
-    // TODO Wave 2 Plan 04: implement via nix::sys::socket::sendmsg SCM_RIGHTS
-    // Pattern: RESEARCH.md Pattern 6
-    Err(nix::errno::Errno::ENOSYS)
+pub fn pass_fd(socket_raw_fd: RawFd, file_raw_fd: RawFd) -> nix::Result<()> {
+    use nix::sys::socket::{sendmsg, ControlMessage, MsgFlags};
+    use std::io::IoSlice;
+
+    // At least one iov byte required by some kernel versions for cmsg delivery.
+    let iov = [IoSlice::new(b"\x00")];
+    let fds = [file_raw_fd];
+    // CRITICAL: exactly one ControlMessage::ScmRights slice (never multiple per
+    // sendmsg — nix issue #464 documents platform-dependent behaviour otherwise).
+    let cmsg = ControlMessage::ScmRights(&fds);
+    sendmsg::<()>(socket_raw_fd, &iov, &[cmsg], MsgFlags::empty(), None)?;
+    Ok(())
 }
 
 /// Receive a file descriptor from a peer over a Unix socket.
@@ -48,19 +56,58 @@ pub fn pass_fd(_socket_raw_fd: RawFd, _file_raw_fd: RawFd) -> nix::Result<()> {
 /// `socket_raw_fd`. The cmsg buffer is sized using `cmsg_space!([RawFd; 1])`
 /// (RESEARCH.md Pitfall 3). `FD_CLOEXEC` is set on the received fd
 /// immediately after receipt (RESEARCH.md Pitfall 6) to prevent accidental
-/// fd leakage into worker-exec'd grandchildren.
+/// fd leakage into worker-exec'd grandchildren (mitigates T-03-11).
 ///
 /// # Errors
-/// - Returns `Err(Errno::ENODATA)` if no `SCM_RIGHTS` cmsg arrived.
+/// - Returns `Err(Errno::ENODATA)` if no `SCM_RIGHTS` cmsg arrived (mitigates
+///   T-03-12 — bogus fd is never returned if ancillary data was lost).
 /// - Returns the underlying `recvmsg`/`fcntl` errno on failure.
 ///
 /// # Note on async contexts
 /// `recvmsg` is a blocking syscall. When called from a tokio async task,
 /// wrap in `tokio::task::spawn_blocking` to avoid blocking the runtime thread.
-pub fn recv_fd(_socket_raw_fd: RawFd) -> nix::Result<RawFd> {
-    // TODO Wave 2 Plan 04: implement via nix::sys::socket::recvmsg SCM_RIGHTS
-    // Pattern: RESEARCH.md Pattern 6
-    Err(nix::errno::Errno::ENOSYS)
+pub fn recv_fd(socket_raw_fd: RawFd) -> nix::Result<RawFd> {
+    use nix::sys::socket::{recvmsg, ControlMessageOwned, MsgFlags};
+    use std::io::IoSliceMut;
+    use std::os::fd::BorrowedFd;
+
+    let mut buf = [0u8; 1];
+    let mut iov = [IoSliceMut::new(&mut buf)];
+    // Buffer MUST be at least cmsg_space!([RawFd; 1]) bytes — Pitfall 3.
+    // The macro ensures correct platform-specific alignment and sizing.
+    let mut cmsgspace = nix::cmsg_space!([RawFd; 1]);
+
+    let msg = recvmsg::<()>(
+        socket_raw_fd,
+        &mut iov,
+        Some(&mut cmsgspace),
+        MsgFlags::empty(),
+    )?;
+
+    for cmsg in msg.cmsgs()? {
+        if let ControlMessageOwned::ScmRights(fds) = cmsg {
+            if let Some(&fd) = fds.first() {
+                // Set FD_CLOEXEC immediately — received fds are NOT cloexec by
+                // default after recvmsg. This closes the race window before any
+                // exec (seccomp blocks exec anyway, but defence-in-depth
+                // requires setting it here — see T-03-11 in threat register).
+                //
+                // SAFETY: `fd` is a valid file descriptor received from recvmsg.
+                // BorrowedFd does not take ownership; the fd will be managed
+                // by the caller after this function returns Ok(fd).
+                let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
+                nix::fcntl::fcntl(
+                    borrowed,
+                    nix::fcntl::FcntlArg::F_SETFD(nix::fcntl::FdFlag::FD_CLOEXEC),
+                )?;
+                return Ok(fd);
+            }
+        }
+    }
+    // No SCM_RIGHTS cmsg found — return ENODATA rather than a bogus fd.
+    // This surfaces dropped/truncated ancillary data rather than silently
+    // handing the worker an invalid fd (mitigates T-03-12).
+    Err(nix::errno::Errno::ENODATA)
 }
 
 #[cfg(test)]
@@ -70,11 +117,14 @@ mod tests {
     use std::io::Read;
     use std::os::unix::io::{AsRawFd, FromRawFd};
 
-    /// TDD RED: unit-level pass_fd + recv_fd round-trip via a socketpair.
+    /// TDD GREEN: unit-level pass_fd + recv_fd round-trip via a socketpair.
     ///
-    /// This test FAILS on the stub implementation (returns ENOSYS) and passes
-    /// after the real SCM_RIGHTS implementation is in place (Task 1 GREEN).
-    /// SCM_RIGHTS works on both Linux and macOS — no cfg gate needed.
+    /// Proves that the broker can open a file and hand the fd to the worker
+    /// via SCM_RIGHTS, and the worker can read the file content through the
+    /// received fd without ever calling open() on the path.
+    ///
+    /// SCM_RIGHTS is cross-platform — this test runs on macOS (dev) and Linux
+    /// (CI) without a cfg gate.
     #[test]
     fn pass_recv_fd_roundtrip() {
         let (broker_sock, worker_sock) = socketpair(
