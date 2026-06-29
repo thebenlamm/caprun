@@ -163,9 +163,17 @@ Before setting Decision and Gate status, the reviewer MUST:
 | 5 | Literal confirmation shows raw + canonical (punycode/homoglyph/RTL) | ✓ applied |
 | 6 | Standing-policy patterns removed for v0 — exact-literal allowlist only | ✓ applied |
 
-**Decision:** APPROVED / NEEDS REVISION
+**Decision:** APPROVED
+**Decided:** 2026-06-29 by Ben Lamm (round 2)
 
-*(Replace with the selected decision and today's date once the round-2 review is complete.)*
+Round-1 NEEDS REVISION findings (taint-stripping forgeability + 5 supporting gaps) are all
+resolved in the revised docs re-hashed above. The soundness criterion (Item 10) holds: an injected
+planner cannot drive a tainted value into a sensitive sink as Proceed, because the planner
+references opaque `ValueId` handles and never authors taint. Both prior reviewers conditioned
+approval on exactly these six fixes. Approval is pinned to the round-2 sha256 hashes; a later edit
+to either DESIGN doc invalidates this approval and requires a fresh gate round.
+
+> Prior round-1 decision: NEEDS REVISION (superseded by this round-2 APPROVED).
 
 ---
 
@@ -174,8 +182,10 @@ Before setting Decision and Gate status, the reviewer MUST:
 > **Phase 4 MUST NOT author any `crates/executor` file until this record shows
 > Decision: APPROVED and Gate status: UNBLOCKED.**
 
-**`crates/executor` is: BLOCKED**
+**`crates/executor` is: UNBLOCKED**
 
 Available resolutions: [ UNBLOCKED / BLOCKED ]
 
-*(Set to UNBLOCKED only after Decision: APPROVED is recorded above.)*
+Decision: APPROVED is recorded above (round 2, 2026-06-29). Phase 4 is authorized to author
+`crates/executor` against the revised DESIGN docs pinned by the round-2 hashes. The prior round-1
+gate state was BLOCKED; it is now UNBLOCKED.
