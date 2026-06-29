@@ -1,0 +1,10 @@
+[package]
+name    = "brokerd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+runtime-core = { path = "../runtime-core" }
+uuid         = { workspace = true }
+anyhow       = { workspace = true }
