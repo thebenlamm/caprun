@@ -1,0 +1,10 @@
+.DS_Store
+**/.DS_Store
+
+# Rust (v0 build artifacts, once crates land)
+/target/
+**/*.rs.bk
+
+# GSD local audit / runtime DB
+audit.db
+runtime.db
