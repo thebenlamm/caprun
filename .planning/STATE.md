@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 03
 current_phase_name: confinement-mediation-substrate
-status: executing
+status: verifying
 stopped_at: Bootstrapped all four planning artifacts from ingest synthesis (13 reqs, 4 phases, 100% coverage)
-last_updated: "2026-06-29T21:21:02.948Z"
+last_updated: "2026-06-29T21:45:47.215Z"
 last_activity: 2026-06-29
 last_activity_desc: Phase 03 execution started
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 10
-  completed_plans: 9
-  percent: 50
+  completed_plans: 10
+  percent: 75
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-06-29)
 
 Phase: 03 (confinement-mediation-substrate) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-29 — Phase 03 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -60,6 +60,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 03 P02 | 2 | 2 tasks | 3 files |
 | Phase 03 P03 | 4 | 2 tasks | 6 files |
 | Phase 03 P04 | 4 | 2 tasks | 3 files |
+| Phase 03 P05 | 22 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -76,6 +77,7 @@ Load-bearing locked decisions affecting current work:
 - [Phase ?]: nix 0.31 fcntl takes AsFd not RawFd — BorrowedFd::borrow_raw(fd) used to satisfy trait bound (post-recvmsg fd validity justifies unsafe)
 - [Phase ?]: FD_CLOEXEC via fcntl after recvmsg chosen over MSG_CMSG_CLOEXEC for macOS cross-platform compatibility — tests run on dev machine
 - [Phase ?]: ENODATA returned from recv_fd when no SCM_RIGHTS cmsg present — prevents returning bogus fd (T-03-12 mitigation)
+- [Phase ?]: Self-confinement model: worker calls apply_confinement() after connecting to broker
 
 ### Pending Todos
 
@@ -96,6 +98,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-29T21:20:50.502Z
+Last session: 2026-06-29T21:45:42.868Z
 Stopped at: Bootstrapped all four planning artifacts from ingest synthesis (13 reqs, 4 phases, 100% coverage)
 Resume file: None
