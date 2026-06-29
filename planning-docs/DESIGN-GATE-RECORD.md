@@ -3,13 +3,22 @@
 **Date:** 2026-06-29
 **Reviewer:** Ben Lamm
 **Phase:** 02-security-design-gate — Plan 03
+**Review round:** 2 (re-review of revised docs)
 
-## Documents Under Review
+## Revision History
+
+- **Round 1 — NEEDS REVISION** (commit `eee5278`): two independent adversarial reviews converged
+  on a disqualifying defect — an injected planner could *strip* taint (`taint: []`) because the
+  planner authored `ValueNode { literal, taint }` directly. Six required fixes recorded.
+- **Round 1 fixes applied:** DESIGN-taint-model.md revised in `7dc2a46`; DESIGN-plan-executor.md
+  revised in `539def7`. Both docs re-hashed below. This round-2 record re-reviews the revised docs.
+
+## Documents Under Review (round 2 — revised)
 
 | Document | sha256 |
 |----------|--------|
-| `planning-docs/DESIGN-taint-model.md` | `b7a53fe2ced0cec9fe44d23bacea3ee58616963c523305211411bcdcd2080244` |
-| `planning-docs/DESIGN-plan-executor.md` | `afa6b595c176bc0e95412143c1cf31f29e6586e7f6301ea9bb1b10d309732e0c` |
+| `planning-docs/DESIGN-taint-model.md` | `9606b1a6a5106644f4a59e300c4a0cdd2bb552c27025de568edd77a5d56a194e` |
+| `planning-docs/DESIGN-plan-executor.md` | `7f88782b6217f52630b9c0c8e0d40949e3434c9d50a250c18dde0ff256c7bca2` |
 
 Hashes were computed with `shasum -a 256` at gate-record authoring time. The reviewer MUST
 re-run `shasum -a 256 planning-docs/DESIGN-taint-model.md planning-docs/DESIGN-plan-executor.md`
@@ -85,6 +94,30 @@ before approval.
     recorded in the audit DAG" and "A ValueNode whose taint labels were hand-set at the sink call
     site is invalid."
 
+### Soundness (round 2 — added after round-1 review)
+
+Completeness greps pass fully-written-but-wrong specs; this item gates *soundness*, not presence.
+
+- [x] **Item 10 — An injected/compromised planner cannot drive a tainted value into a sensitive
+  sink arg as Proceed** (soundness criterion; satisfies the round-1 central finding)
+  - The planner no longer authors taint. Verified by content of the revised docs:
+    - `grep -cE "ValueRecord|ValueId|PlanArg" DESIGN-plan-executor.md` → 45 matches: planner emits
+      `PlanArg { name, value_id }`; broker-owned `ValueRecord { id, literal, taint, provenance_node,
+      provenance_chain }` resolved from a trusted store; executor dereferences by `ValueId`
+      (dangling handle → Block). Closes taint-**stripping** (false negatives), the dual of the
+      taint-**stapling** the docs already closed.
+    - `grep -c "provenance_chain"` → 17 (executor) / 5 (taint-model): `Vec<EventId>` derivation
+      edges make literal→read-Event ancestry locally verifiable.
+    - Sink args split `routing_sensitive` (to/cc/bcc → Block) vs `content_sensitive`
+      (subject/body/attachment → Tier-4 verbatim); per-sink rule replaces the global
+      "content non-sensitive" principle.
+    - Taint propagates to child sessions/intents; release only via broker-owned
+      **declassification/endorsement logged as an audit Event** (reconciles UX-rule 4 vs handover §4.6).
+    - Literal confirmation shows raw **and** canonical forms (punycode/homoglyph/RTL/display-name).
+    - Standing-policy **patterns removed for v0** — exact-literal allowlist only.
+    - I0 tainted-seed tag set by the **trusted brokerd creation path from provenance**, never
+      self-declared by the creating agent.
+
 ---
 
 ## How to Verify (Human Review Steps)
@@ -115,56 +148,24 @@ Before setting Decision and Gate status, the reviewer MUST:
 
 ## Decision
 
-**Decision:** NEEDS REVISION
-**Decided:** 2026-06-29 by Ben Lamm
+> **Round 2 — pending human re-review.** Round 1 was NEEDS REVISION; all six required fixes were
+> applied (commits `7dc2a46`, `539def7`) and the revised docs are re-hashed above. The reviewer
+> sets one of the two values below after re-reading the revised docs.
 
-The nine completeness checkboxes all pass — the docs *state* every required item. But the
-gate also requires **soundness**, and two independent adversarial reviews converged on the same
-disqualifying defect: the value-injection defense is forgeable by an injected planner. A
-completeness gate passes a fully-written-but-wrong spec; none of the gaps below trip a checkbox.
-Approving here would let Phase 4 build `crates/executor` against a spec that can pass the §9
-demo with zero real security (a planner that simply emits `taint: []`).
+**Round-1 fixes — verification status (all applied):**
 
-### Soundness criterion added to this gate (must hold before APPROVED)
+| # | Required fix (round 1) | Status |
+|---|------------------------|--------|
+| 1 | Broker-owned `ValueRecord`/`ValueId`; planner references handles, never authors taint | ✓ applied |
+| 2 | `provenance_chain: Vec<EventId>` proving literal→read-Event ancestry | ✓ applied |
+| 3 | Per-sink split: routing-sensitive (block) vs content-sensitive (Tier-4 verbatim) | ✓ applied |
+| 4 | Taint propagates to child sessions/intents; release via logged declassification Event | ✓ applied |
+| 5 | Literal confirmation shows raw + canonical (punycode/homoglyph/RTL) | ✓ applied |
+| 6 | Standing-policy patterns removed for v0 — exact-literal allowlist only | ✓ applied |
 
-> **An injected/compromised planner MUST NOT be able to cause a tainted value to reach a
-> sensitive sink arg with an executor decision of Proceed.** Satisfied by Required Fix 1 below
-> (planner references opaque value handles; it never authors literal/taint metadata).
+**Decision:** APPROVED / NEEDS REVISION
 
-### Required fixes before re-review (union of two independent reviews)
-
-1. **Planner cannot author taint.** Replace the planner-writable `ValueNode { literal, taint }`
-   with a broker-owned `ValueRecord` resolved by an opaque `ValueId`. The planner emits
-   `PlanArg { name, value_id }` and references handles only; the executor dereferences
-   `ValueRecord { id, literal, taint, provenance_node }` from a trusted store. This closes
-   taint-*stripping* (false negatives) — the dual of the taint-*stapling* the docs already
-   close. (Both reviews — the core fix; mirrors CaMeL's variable model.)
-
-2. **Provenance must prove ancestry, not just point.** `provenance: EventId` only references a
-   read Event; it cannot prove the literal *descends* from it. Use `provenance_chain: Vec<EventId>`
-   (or `value_id` derivation edges recorded in the audit DAG) so literal → read-Event ancestry
-   is locally verifiable, matching the "unbroken taint edge" the docs already require.
-
-3. **Content args are not "non-sensitive."** Split sink args into `routing-sensitive`
-   (`to`/`cc`/`bcc` → I2 blocks tainted) and `content-sensitive` (`subject`/`body`/`attachment`
-   → Tier-4 approval displays verbatim with tainted spans). State sensitivity per-sink, not as a
-   global principle — for `http.post`/`file.write`/`exec` the body/command *is* the dangerous arg.
-
-4. **Taint propagates to child sessions/intents,** released only via a broker-owned
-   **declassification/endorsement step logged as an audit Event** (not a silent allowlist). This
-   also reconciles UX-rule 4 (no learning/auto-confirm) against handover §4.6 (broker proposes
-   standing policy from repeated approvals): endorsement-as-Event is the release on the ratchet.
-
-5. **Literal confirmation needs canonicalization.** The prompt MUST show raw *and* canonical
-   forms (display-name, Unicode homoglyph, punycode domain, plus-addressing, RTL markers) plus
-   known-contact and source, so `accounts@xn--ev1l...` cannot be confirmed as legitimate.
-
-6. **Drop standing-policy patterns for v0.** Exact-literal allowlist only; pattern allowlists
-   (e.g. `@company.com`) are a post-v0 policy-language problem.
-
-*(Both reviewers explicitly endorse the direction — threat decomposition and the deterministic
-Rust executor are correct — and would approve after fixes 1–6. The design is no longer drifting
-back into authz.)*
+*(Replace with the selected decision and today's date once the round-2 review is complete.)*
 
 ---
 
@@ -177,5 +178,4 @@ back into authz.)*
 
 Available resolutions: [ UNBLOCKED / BLOCKED ]
 
-Gate remains BLOCKED pending revision of both DESIGN docs per Required Fixes 1–6 and a fresh
-gate record pinned to the revised docs' sha256 hashes.
+*(Set to UNBLOCKED only after Decision: APPROVED is recorded above.)*
