@@ -46,7 +46,7 @@ pub struct SinkId(pub String);
 
 /// A plan node: a sink to call with typed, provenanced, tainted arguments.
 ///
-/// This is the only authorized effect path. Raw EffectRequest→sink is forbidden.
+/// This is the only authorized effect path. No raw effect-to-sink path may exist.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PlanNode {
     pub sink: SinkId,
