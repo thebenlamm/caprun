@@ -112,7 +112,21 @@ value-injection defense.
 
   4. `caprun` runs a confined worker that reads a file via the passed fd, and the
      read Event appears in the audit DAG (complete mediation, no LLM).
-**Plans**: TBD
+**Plans**: 5 plans
+
+**Wave 1** *(foundation + risk verification)*
+
+- [ ] 03-01-PLAN.md — Workspace deps + crate skeletons + test scaffolds; Wave-0 spikes proving seccompiler 0.5.0 deny-rule API and abstract-UDS-in-tokio
+
+**Wave 2** *(parallel implementation, blocked on Wave 1)*
+
+- [ ] 03-02-PLAN.md — sandbox crate: prctl(NO_NEW_PRIVS)+rlimits+Landlock deny-all+seccomp; 3 negative assertions (REQ-sandbox)
+- [ ] 03-03-PLAN.md — brokerd core: SQLite hash-chained audit DAG + Session create + abstract-UDS IPC server (REQ-brokerd-core)
+- [ ] 03-04-PLAN.md — adapter-fs crate: SCM_RIGHTS fd-pass (pass_fd/recv_fd) with O_CLOEXEC (REQ-adapters-fs)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 03-05-PLAN.md — caprun no-LLM substrate demo: confined worker reads via passed fd, read Event in audit DAG, chain verified (REQ-substrate-demo)
 
 ### Phase 4: Value-Injection Security Demo (v0 DONE)
 
