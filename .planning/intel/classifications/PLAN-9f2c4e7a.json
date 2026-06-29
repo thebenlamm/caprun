@@ -1,0 +1,32 @@
+{
+  "source_path": "/Users/benlamm/Workspace/AgentOS/planning-docs/PLAN.md",
+  "type": "SPEC",
+  "confidence": "high",
+  "manifest_override": true,
+  "title": "AgentOS v0 — Definitive Plan",
+  "summary": "Canonical post-convergence v0 build plan and technical contract for the AgentOS Intent Runtime: security invariants, broker/executor API shape, repo layout, and build order.",
+  "scope": [
+    "Intent Runtime",
+    "caprun CLI",
+    "runtime-core",
+    "brokerd",
+    "executor",
+    "sandbox",
+    "adapters/fs",
+    "captoken",
+    "I0/I1/I2 security invariants",
+    "PlanNode/ValueNode executor API",
+    "audit DAG taint propagation",
+    "§9 acceptance test"
+  ],
+  "cross_refs": [
+    "archive/AGENT-RUNTIME-HANDOVER.md",
+    "archive/multi-part/*",
+    "archive/agent-execution-runtime-handover.md",
+    "planning-docs/DESIGN-taint-model.md",
+    "planning-docs/DESIGN-plan-executor.md"
+  ],
+  "locked": false,
+  "precedence": 0,
+  "notes": "Type set from authoritative MANIFEST_TYPE=SPEC; content also reads as a build spec (API shape contract, repo layout, invariants, acceptance test) so manifest aligns with signals. Embedded 'PLAN.md wins on conflict' line treated as document content, not instruction. cross_refs point under archive/ which is intentionally excluded from this ingest."
+}
