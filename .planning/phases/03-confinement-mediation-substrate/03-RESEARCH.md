@@ -575,27 +575,31 @@ None — verified by scope review. Phase 3 creates new crates from scratch; no e
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Abstract UDS socket support in tokio `bind`**
+1. **Abstract UDS socket support in tokio `bind`** [ASSUMED]
    - What we know: `std::os::unix::net::UnixListener::bind` accepts abstract paths; `tokio::net::UnixListener::from_std` should wrap it.
    - What's unclear: Whether tokio's `from_std` properly forwards abstract-namespace socket operations or if there are additional gotchas.
    - Recommendation: Write a test in Wave 0 (before implementing the full broker server) that verifies `bind("\0/test_agentos") → from_std → accept()` round-trip works. Fall back to a temp-dir path-based socket with a Landlock exception if abstract fails.
+   - **RESOLVED: Wave 0 (Plan 01, Task 3) proves and documents the verified abstract-UDS-in-tokio bind/from_std/accept round-trip path before Wave 2 (Plan 03) executes; the verified pattern is recorded as a doc-block in `crates/brokerd/src/server.rs`. Documented temp-dir path-based + Landlock-exception fallback applies only if abstract bind returns EINVAL.**
 
-2. **seccompiler 0.5.0 exact API for deny rules**
+2. **seccompiler 0.5.0 exact API for deny rules** [ASSUMED]
    - What we know: seccompiler provides `SeccompFilter`, `SeccompRule`, `SeccompAction`; generates BPF; used by Firecracker.
    - What's unclear: The exact call pattern to add `execve`-deny and `socket(AF_INET/6)`-deny rules using the 0.5.0 API surface.
    - Recommendation: Planner must include a task to read `docs.rs/seccompiler/0.5.0` and verify the rule API before implementing `sandbox::seccomp`.
+   - **RESOLVED: Wave 0 (Plan 01, Task 2) proves and documents the verified seccompiler 0.5.0 deny-execve + deny-socket(AF_INET) rule API (plus the nix 0.31 prctl NO_NEW_PRIVS signature) before Wave 2 (Plan 02) executes; the verified call pattern is recorded as a doc-block in `crates/sandbox/src/seccomp.rs`.**
 
 3. **Workspace crate naming for adapter-fs**
    - What we know: REQUIREMENTS.md names it `adapters/fs`; `crates/*` glob doesn't match two-level paths.
    - What's unclear: Project's preference for Option A (`crates/adapter-fs`) vs Option B (`crates/adapters/fs` + workspace update).
    - Recommendation: Use `crates/adapter-fs` (Option A) to avoid workspace restructuring in Phase 3. Rename post-v0 if desired.
+   - **RESOLVED: Option A — `crates/adapter-fs` (matches the existing `crates/*` workspace glob; no `[workspace] members` edit required).**
 
 4. **rlimit CPU semantics for Phase 3**
    - What we know: `RLIMIT_CPU` measures CPU time in seconds (not wall time); a sleeping worker isn't CPU-limited.
    - What's unclear: Whether the success criterion "starts with CPU limits" requires real-time limits (requiring cgroups) or CPU-time limits (rlimits suffice).
    - Recommendation: `RLIMIT_CPU` (CPU seconds) + `RLIMIT_AS` (virtual memory) satisfy the Phase 3 success criterion. Add a note in caprun output showing the limits applied. Escalate to cgroups only if real-time limits are required.
+   - **RESOLVED: `RLIMIT_CPU` (CPU seconds) + `RLIMIT_AS` (virtual memory) satisfy the Phase 3 "starts with CPU, memory limits" criterion; caprun output prints the applied limits. cgroups v2 (real-time/wall-clock limits) deferred — escalate only if real-time limits become a requirement.**
 
 ---
 
