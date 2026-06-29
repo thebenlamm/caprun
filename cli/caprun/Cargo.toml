@@ -4,6 +4,23 @@ version.workspace  = true
 edition.workspace  = true
 license.workspace  = true
 
+[dependencies]
+sandbox      = { path = "../../crates/sandbox" }
+brokerd      = { path = "../../crates/brokerd" }
+adapter-fs   = { path = "../../crates/adapter-fs" }
+runtime-core = { path = "../../crates/runtime-core" }
+tokio        = { workspace = true }
+anyhow       = { workspace = true }
+uuid         = { workspace = true }
+
 [[bin]]
 name = "caprun"
 path = "src/main.rs"
+
+[[bin]]
+name = "caprun-worker"
+path = "src/worker.rs"
+
+[[test]]
+name = "e2e"
+path = "tests/e2e.rs"
