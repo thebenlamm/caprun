@@ -1,9 +1,20 @@
-/// brokerd — broker effect API
+/// brokerd — broker effect API and confinement-mediation substrate
 ///
-/// The only authorised entry point for effects is `submit_plan_node`.
-/// There is no raw effect-to-sink path anywhere in this crate.
+/// Phase 1 contract: `submit_plan_node` is the only authorised entry point
+/// for effects. There is no raw effect-to-sink path anywhere in this crate.
 /// All arguments are carried through PlanNode/ValueNode from runtime-core
 /// (DEC-architectural-lock-plan-nodes).
+///
+/// Phase 3 additions (Wave 0 stubs — Wave 2/3 implement):
+///   - `proto`   — IPC message types (BrokerRequest, BrokerResponse)
+///   - `server`  — tokio async UDS IPC server
+///   - `session` — Session lifecycle (create, persist)
+///   - `audit`   — SQLite hash-linked audit DAG
+
+pub mod proto;
+pub mod server;
+pub mod session;
+pub mod audit;
 
 /// Submit a plan node for execution.
 ///
