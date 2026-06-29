@@ -79,11 +79,11 @@ day one — so every later effect path is forced through PlanNode/ValueNode.
 
   3. Both docs are reviewed and approved — the recorded gate that unblocks
      `crates/executor` in Phase 4.
-**Plans**: 3 plans
+**Plans**: 2/3 plans executed
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — Author DESIGN-taint-model.md (dynamic-taint default, hard Tier 3+ split, I0 draft-only, genuine-taint requirement)
-- [ ] 02-02-PLAN.md — Author DESIGN-plan-executor.md (ValueNode/PlanNode, hardcoded sink sensitivity, monotonic propagation, literal-value confirmation UX)
+- [x] 02-01-PLAN.md — Author DESIGN-taint-model.md (dynamic-taint default, hard Tier 3+ split, I0 draft-only, genuine-taint requirement)
+- [x] 02-02-PLAN.md — Author DESIGN-plan-executor.md (ValueNode/PlanNode, hardcoded sink sensitivity, monotonic propagation, literal-value confirmation UX)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -152,6 +152,6 @@ requires both Phase 2 and Phase 3.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Substrate Foundation | 2/2 | Complete    | 2026-06-29 |
-| 2. Security Design Gate | 0/3 | Not started | - |
+| 2. Security Design Gate | 2/3 | In Progress|  |
 | 3. Confinement & Mediation Substrate | 0/TBD | Not started | - |
 | 4. Value-Injection Security Demo (v0 DONE) | 0/TBD | Not started | - |
