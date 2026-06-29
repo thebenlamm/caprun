@@ -51,10 +51,10 @@ day one — so every later effect path is forced through PlanNode/ValueNode.
 
   3. `ValueNode` carries literal + provenance + taint fields in its type
      definition, so plan nodes can express genuine taint later.
-**Plans**: 2 plans
+**Plans**: 1/2 plans executed
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Virtual Cargo workspace + runtime-core domain types (no I/O), incl. ValueNode literal+provenance+taint lock
+- [x] 01-01-PLAN.md — Virtual Cargo workspace + runtime-core domain types (no I/O), incl. ValueNode literal+provenance+taint lock
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -151,7 +151,7 @@ requires both Phase 2 and Phase 3.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Substrate Foundation | 0/2 | Not started | - |
+| 1. Substrate Foundation | 1/2 | In Progress|  |
 | 2. Security Design Gate | 0/3 | Not started | - |
 | 3. Confinement & Mediation Substrate | 0/TBD | Not started | - |
 | 4. Value-Injection Security Demo (v0 DONE) | 0/TBD | Not started | - |
