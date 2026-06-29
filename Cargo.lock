@@ -97,8 +97,12 @@ dependencies = [
  "adapter-fs",
  "anyhow",
  "brokerd",
+ "chrono",
  "runtime-core",
+ "rusqlite",
  "sandbox",
+ "serde",
+ "serde_json",
  "tokio",
  "uuid",
 ]
