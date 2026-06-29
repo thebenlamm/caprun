@@ -151,7 +151,7 @@ requires both Phase 2 and Phase 3.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Substrate Foundation | 2/2 | Complete   | 2026-06-29 |
+| 1. Substrate Foundation | 2/2 | Complete    | 2026-06-29 |
 | 2. Security Design Gate | 0/3 | Not started | - |
 | 3. Confinement & Mediation Substrate | 0/TBD | Not started | - |
 | 4. Value-Injection Security Demo (v0 DONE) | 0/TBD | Not started | - |

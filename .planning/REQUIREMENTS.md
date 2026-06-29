@@ -17,21 +17,26 @@ sufficient.
 
 ### Substrate (M0)
 
-- [ ] **REQ-runtime-core**: `runtime-core` crate — core domain types with no
+- [x] **REQ-runtime-core**: `runtime-core` crate — core domain types with no
       I/O. *Done when:* Intent, Session, Event, Artifact, and the 3-class Effect
       enums compile.
-- [ ] **REQ-api-stub-plan-node**: Broker `submit_plan_node()` API surface, shape
+
+- [x] **REQ-api-stub-plan-node**: Broker `submit_plan_node()` API surface, shape
       locked from day one. *Done when:* `submit_plan_node()` exists and returns
       `NotImplemented`; the PlanNode/ValueNode shape is locked.
+
 - [ ] **REQ-sandbox**: `sandbox` crate — kernel-enforced confinement boundary.
       *Done when:* a worker starts with CPU, memory, broker UDS, and zero
       ambient fs/net/shell; negative assertions hold (cannot read `~/.ssh`,
       cannot reach network, cannot exec un-allowlisted binaries).
+
 - [ ] **REQ-brokerd-core**: `brokerd` core — control plane / reference monitor.
       *Done when:* Session create, SQLite audit-DAG append, and UDS IPC all work.
+
 - [ ] **REQ-adapters-fs**: `adapters/fs` — filesystem adapter via fd-pass.
       *Done when:* the broker opens a workspace file and passes the fd via
       SCM_RIGHTS.
+
 - [ ] **REQ-substrate-demo**: End-to-end substrate demonstration proving complete
       mediation (no LLM required). *Done when:* `caprun` confined worker reads a
       file via passed fd and the event appears in the audit DAG.
@@ -45,6 +50,7 @@ Runs in **parallel** with Substrate (M0).
       when:* it explicitly states the dynamic-taint default, the hard
       planner/worker split for Tier 3+, and the I0 intent/session-creation rule
       (draft-only when seeded from untrusted content).
+
 - [ ] **REQ-design-plan-executor**: `DESIGN-plan-executor.md` design doc. *Done
       when:* it specifies ValueNode, PlanNode, sink sensitivity, taint
       propagation, and the confirmation UX. `crates/executor` is blocked until
@@ -56,15 +62,19 @@ Runs in **parallel** with Substrate (M0).
       genuinely-tainted typed extracts. *Done when:* the worker reads hostile
       input → emits a ValueNode; taint originates from the read Event (never
       hand-set).
+
 - [ ] **REQ-executor-stub**: `executor` stub — deterministic I2 interpreter.
       *Done when:* it walks the PlanNode DAG with I2 hardcoded and monotonic
       taint propagation through edges.
+
 - [ ] **REQ-mediated-sink-stub**: Mediated sink stub (e.g. `email.send`) with a
       sensitive `to` argument. *Done when:* the sink sensitivity map is
       hardcoded in v0 — no policy/schema system yet.
+
 - [ ] **REQ-approval-hook**: Approval hook for human confirmation of sensitive
       sink args. *Done when:* FAMP delivery; the prompt shows the literal value
       to confirm.
+
 - [ ] **REQ-s9-acceptance-test**: Automated integration test running the §9
       scenario end-to-end with a genuine taint chain — the single gate for v0
       DONE. *Done when:* (1) the reader emits a schema-valid typed extract as a
@@ -115,8 +125,8 @@ Explicitly excluded from v0 to prevent scope creep.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REQ-runtime-core | Phase 1 | Pending |
-| REQ-api-stub-plan-node | Phase 1 | Pending |
+| REQ-runtime-core | Phase 1 | Complete |
+| REQ-api-stub-plan-node | Phase 1 | Complete |
 | REQ-design-taint-model | Phase 2 | Pending |
 | REQ-design-plan-executor | Phase 2 | Pending |
 | REQ-sandbox | Phase 3 | Pending |
@@ -130,6 +140,7 @@ Explicitly excluded from v0 to prevent scope creep.
 | REQ-s9-acceptance-test | Phase 4 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 13 total
 - Mapped to phases: 13
 - Unmapped: 0 ✓
