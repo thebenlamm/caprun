@@ -46,7 +46,9 @@ day one — so every later effect path is forced through PlanNode/ValueNode.
      `EffectRequest`-to-sink path anywhere in the crate tree.
   3. `ValueNode` carries literal + provenance + taint fields in its type
      definition, so plan nodes can express genuine taint later.
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 01-01-PLAN.md — Virtual Cargo workspace + runtime-core domain types (no I/O), incl. ValueNode literal+provenance+taint lock
+- [ ] 01-02-PLAN.md — brokerd submit_plan_node stub (returns NotImplemented) + architectural no-bypass invariant gate
 
 ### Phase 2: Security Design Gate
 **Goal**: Author and review the two DESIGN docs that gate all executor code:
@@ -117,7 +119,7 @@ requires both Phase 2 and Phase 3.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Substrate Foundation | 0/TBD | Not started | - |
+| 1. Substrate Foundation | 0/2 | Not started | - |
 | 2. Security Design Gate | 0/TBD | Not started | - |
 | 3. Confinement & Mediation Substrate | 0/TBD | Not started | - |
 | 4. Value-Injection Security Demo (v0 DONE) | 0/TBD | Not started | - |
