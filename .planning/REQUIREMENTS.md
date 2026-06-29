@@ -46,12 +46,12 @@ sufficient.
 Hard gate: `crates/executor` must NOT be written until both docs are reviewed.
 Runs in **parallel** with Substrate (M0).
 
-- [ ] **REQ-design-taint-model**: `DESIGN-taint-model.md` design doc. *Done
+- [x] **REQ-design-taint-model**: `DESIGN-taint-model.md` design doc. *Done
       when:* it explicitly states the dynamic-taint default, the hard
       planner/worker split for Tier 3+, and the I0 intent/session-creation rule
       (draft-only when seeded from untrusted content).
 
-- [ ] **REQ-design-plan-executor**: `DESIGN-plan-executor.md` design doc. *Done
+- [x] **REQ-design-plan-executor**: `DESIGN-plan-executor.md` design doc. *Done
       when:* it specifies ValueNode, PlanNode, sink sensitivity, taint
       propagation, and the confirmation UX. `crates/executor` is blocked until
       this is reviewed.
@@ -127,8 +127,8 @@ Explicitly excluded from v0 to prevent scope creep.
 |-------------|-------|--------|
 | REQ-runtime-core | Phase 1 | Complete |
 | REQ-api-stub-plan-node | Phase 1 | Complete |
-| REQ-design-taint-model | Phase 2 | Pending |
-| REQ-design-plan-executor | Phase 2 | Pending |
+| REQ-design-taint-model | Phase 2 | Complete |
+| REQ-design-plan-executor | Phase 2 | Complete |
 | REQ-sandbox | Phase 3 | Pending |
 | REQ-brokerd-core | Phase 3 | Pending |
 | REQ-adapters-fs | Phase 3 | Pending |

@@ -26,7 +26,7 @@ parallel start). Phase 3 continues the substrate from Phase 1. Phase 4 requires
 **both** Phase 2 (the design gate) and Phase 3 (the substrate) complete.
 
 - [x] **Phase 1: Substrate Foundation** - Cargo workspace, domain core, and the locked plan-node broker API (completed 2026-06-29)
-- [ ] **Phase 2: Security Design Gate** - The taint-model and plan-executor DESIGN docs that hard-gate all executor code (runs parallel to substrate)
+- [x] **Phase 2: Security Design Gate** - The taint-model and plan-executor DESIGN docs that hard-gate all executor code (runs parallel to substrate) (completed 2026-06-29)
 - [ ] **Phase 3: Confinement & Mediation Substrate** - Kernel confinement, broker reference monitor, fd-pass fs adapter, proven by the no-LLM substrate demo
 - [ ] **Phase 4: Value-Injection Security Demo (v0 DONE)** - The §9 acceptance test passes with a genuine taint chain — the only gate for v0 done
 
@@ -79,7 +79,7 @@ day one — so every later effect path is forced through PlanNode/ValueNode.
 
   3. Both docs are reviewed and approved — the recorded gate that unblocks
      `crates/executor` in Phase 4.
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 **Wave 1**
 
 - [x] 02-01-PLAN.md — Author DESIGN-taint-model.md (dynamic-taint default, hard Tier 3+ split, I0 draft-only, genuine-taint requirement)
@@ -87,7 +87,7 @@ day one — so every later effect path is forced through PlanNode/ValueNode.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-03-PLAN.md — DESIGN-GATE-RECORD.md: checklist + sha256 pin + blocking human review that unblocks crates/executor
+- [x] 02-03-PLAN.md — DESIGN-GATE-RECORD.md: checklist + sha256 pin + blocking human review that unblocks crates/executor
 
 ### Phase 3: Confinement & Mediation Substrate
 
@@ -152,6 +152,6 @@ requires both Phase 2 and Phase 3.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Substrate Foundation | 2/2 | Complete    | 2026-06-29 |
-| 2. Security Design Gate | 2/3 | In Progress|  |
+| 2. Security Design Gate | 3/3 | Complete    | 2026-06-29 |
 | 3. Confinement & Mediation Substrate | 0/TBD | Not started | - |
 | 4. Value-Injection Security Demo (v0 DONE) | 0/TBD | Not started | - |
