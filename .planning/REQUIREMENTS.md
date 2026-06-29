@@ -25,19 +25,19 @@ sufficient.
       locked from day one. *Done when:* `submit_plan_node()` exists and returns
       `NotImplemented`; the PlanNode/ValueNode shape is locked.
 
-- [ ] **REQ-sandbox**: `sandbox` crate — kernel-enforced confinement boundary.
+- [x] **REQ-sandbox**: `sandbox` crate — kernel-enforced confinement boundary.
       *Done when:* a worker starts with CPU, memory, broker UDS, and zero
       ambient fs/net/shell; negative assertions hold (cannot read `~/.ssh`,
       cannot reach network, cannot exec un-allowlisted binaries).
 
-- [ ] **REQ-brokerd-core**: `brokerd` core — control plane / reference monitor.
+- [x] **REQ-brokerd-core**: `brokerd` core — control plane / reference monitor.
       *Done when:* Session create, SQLite audit-DAG append, and UDS IPC all work.
 
-- [ ] **REQ-adapters-fs**: `adapters/fs` — filesystem adapter via fd-pass.
+- [x] **REQ-adapters-fs**: `adapters/fs` — filesystem adapter via fd-pass.
       *Done when:* the broker opens a workspace file and passes the fd via
       SCM_RIGHTS.
 
-- [ ] **REQ-substrate-demo**: End-to-end substrate demonstration proving complete
+- [x] **REQ-substrate-demo**: End-to-end substrate demonstration proving complete
       mediation (no LLM required). *Done when:* `caprun` confined worker reads a
       file via passed fd and the event appears in the audit DAG.
 
@@ -129,10 +129,10 @@ Explicitly excluded from v0 to prevent scope creep.
 | REQ-api-stub-plan-node | Phase 1 | Complete |
 | REQ-design-taint-model | Phase 2 | Complete |
 | REQ-design-plan-executor | Phase 2 | Complete |
-| REQ-sandbox | Phase 3 | Pending |
-| REQ-brokerd-core | Phase 3 | Pending |
-| REQ-adapters-fs | Phase 3 | Pending |
-| REQ-substrate-demo | Phase 3 | Pending |
+| REQ-sandbox | Phase 3 | Complete |
+| REQ-brokerd-core | Phase 3 | Complete |
+| REQ-adapters-fs | Phase 3 | Complete |
+| REQ-substrate-demo | Phase 3 | Complete |
 | REQ-quarantined-reader | Phase 4 | Pending |
 | REQ-executor-stub | Phase 4 | Pending |
 | REQ-mediated-sink-stub | Phase 4 | Pending |

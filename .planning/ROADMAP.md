@@ -112,11 +112,11 @@ value-injection defense.
 
   4. `caprun` runs a confined worker that reads a file via the passed fd, and the
      read Event appears in the audit DAG (complete mediation, no LLM).
-**Plans**: 5 plans
+**Plans**: 1/5 plans executed
 
 **Wave 1** *(foundation + risk verification)*
 
-- [ ] 03-01-PLAN.md — Workspace deps + crate skeletons + test scaffolds; Wave-0 spikes proving seccompiler 0.5.0 deny-rule API and abstract-UDS-in-tokio
+- [x] 03-01-PLAN.md — Workspace deps + crate skeletons + test scaffolds; Wave-0 spikes proving seccompiler 0.5.0 deny-rule API and abstract-UDS-in-tokio
 
 **Wave 2** *(parallel implementation, blocked on Wave 1)*
 
@@ -167,5 +167,5 @@ requires both Phase 2 and Phase 3.
 |-------|----------------|--------|-----------|
 | 1. Substrate Foundation | 2/2 | Complete    | 2026-06-29 |
 | 2. Security Design Gate | 3/3 | Complete    | 2026-06-29 |
-| 3. Confinement & Mediation Substrate | 0/TBD | Not started | - |
+| 3. Confinement & Mediation Substrate | 1/5 | In Progress|  |
 | 4. Value-Injection Security Demo (v0 DONE) | 0/TBD | Not started | - |
