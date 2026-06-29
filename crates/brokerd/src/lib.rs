@@ -18,8 +18,7 @@ pub fn submit_plan_node(
     _session_id: uuid::Uuid,
     _plan: runtime_core::PlanNode,
 ) -> runtime_core::ExecutorDecision {
-    // RED: intentionally wrong — test will fail asserting NotImplemented
-    runtime_core::ExecutorDecision::Allowed
+    runtime_core::ExecutorDecision::NotImplemented
 }
 
 #[cfg(test)]
