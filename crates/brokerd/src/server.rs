@@ -34,32 +34,158 @@
 /// for that path in sandbox::landlock::deny_all_filesystem.
 ///
 /// IPC framing: 4-byte LE length prefix + JSON body (serde_json).
-/// Max message size: 64 KiB (ASVS V5 input validation).
+/// Max message size: 64 KiB (ASVS V5 input validation / T-03-08 DoS mitigate).
 ///
-/// Phase 3 Wave 0: stub compiles. Wave 2 Plan 03 implements the full loop.
+/// Wave 2 Plan 03: full accept loop implementation.
+/// Plan 05 (caprun) wires RequestFd and ReportRead end-to-end.
 
+use crate::audit::append_event;
+use crate::proto::{BrokerRequest, BrokerResponse};
+use crate::session::{create_session, persist_session};
+use chrono::Utc;
+use runtime_core::Event;
+use std::sync::{Arc, Mutex};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use uuid::Uuid;
+
+/// Maximum IPC message size (64 KiB).
+///
+/// Any message claiming a length beyond this limit is rejected before allocation
+/// (T-03-08 DoS mitigate: guard before vec allocation, not after).
 const MAX_MSG_SIZE: usize = 64 * 1024;
 
 /// Start the broker IPC server on an abstract-namespace UDS socket.
 ///
-/// The socket path is `\0/agentos/{session_id}` (abstract namespace — no
-/// filesystem entry; survives Landlock deny-all on the worker side).
+/// Binds `\0/agentos/{session_id}` using tokio's native abstract-path support
+/// (Approach A — verified in uds_abstract_spike.rs). Accepts connections in a
+/// loop and spawns a task per connection.
 ///
-/// Verified pattern (Approach A): `tokio::net::UnixListener::bind("\0/agentos/<id>")`
+/// # Arguments
+/// * `session_id` — unique string used as the socket name suffix.
+/// * `conn` — shared, mutex-protected SQLite connection for session + audit writes.
 ///
-/// Returns when the server loop exits (or immediately in this stub).
-pub async fn run_broker_server(_session_id: &str) -> anyhow::Result<()> {
-    // TODO Wave 2 Plan 03: implement full broker loop using verified pattern:
-    //
-    //   let sock_path = format!("\0/agentos/{_session_id}");
-    //   let listener = tokio::net::UnixListener::bind(&sock_path)?;
-    //   loop {
-    //       let (mut stream, _addr) = listener.accept().await?;
-    //       tokio::spawn(async move { handle_connection(&mut stream).await });
-    //   }
-    //
-    // Message handling: length-prefix (4-byte LE) + serde_json::from_slice.
-    // Guard: reject messages > MAX_MSG_SIZE (64 KiB) before allocation.
-    let _ = MAX_MSG_SIZE; // silence unused warning until Wave 2
+/// Returns when the accept loop encounters an unrecoverable error.
+pub async fn run_broker_server(
+    session_id: &str,
+    conn: Arc<Mutex<rusqlite::Connection>>,
+) -> anyhow::Result<()> {
+    // Approach A: tokio detects the leading NUL and calls from_abstract_name internally.
+    // Verified against tokio-1.52.3 source and confirmed by uds_abstract_spike.rs.
+    let sock_path = format!("\0/agentos/{session_id}");
+    let listener = tokio::net::UnixListener::bind(&sock_path)?;
+
+    loop {
+        let (stream, _addr) = listener.accept().await?;
+        let conn_clone = conn.clone();
+        tokio::spawn(async move {
+            if let Err(e) = handle_connection(stream, conn_clone).await {
+                eprintln!("[brokerd] connection error: {e}");
+            }
+        });
+    }
+}
+
+/// Handle one IPC connection: read a framed request, dispatch it, send the response.
+///
+/// Framing: 4-byte LE length prefix + JSON body.
+/// Guard: length > 64 KiB → reject with Error response, never allocate.
+async fn handle_connection(
+    mut stream: tokio::net::UnixStream,
+    conn: Arc<Mutex<rusqlite::Connection>>,
+) -> anyhow::Result<()> {
+    // Read 4-byte LE length prefix
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf).await?;
+    let msg_len = u32::from_le_bytes(len_buf) as usize;
+
+    // T-03-08: guard before allocation — reject oversized messages
+    if msg_len > MAX_MSG_SIZE {
+        let resp = BrokerResponse::Error {
+            message: "message too large".into(),
+        };
+        send_response(&mut stream, &resp).await?;
+        return Ok(());
+    }
+
+    let mut body = vec![0u8; msg_len];
+    stream.read_exact(&mut body).await?;
+
+    // Deserialize — serde errors → Error response, never panic (T-03-08)
+    let request = match serde_json::from_slice::<BrokerRequest>(&body) {
+        Ok(req) => req,
+        Err(e) => {
+            // T-03-09: log detail internally, send generic message to caller
+            eprintln!("[brokerd] deserialize error: {e}");
+            let resp = BrokerResponse::Error {
+                message: "invalid request".into(),
+            };
+            send_response(&mut stream, &resp).await?;
+            return Ok(());
+        }
+    };
+
+    let response = dispatch(request, &conn);
+    send_response(&mut stream, &response).await?;
+    Ok(())
+}
+
+/// Dispatch a BrokerRequest and return the appropriate BrokerResponse.
+///
+/// DB writes are wrapped in a synchronous lock block (no await while holding
+/// the mutex — safe to use std::sync::Mutex in async context).
+fn dispatch(request: BrokerRequest, conn: &Arc<Mutex<rusqlite::Connection>>) -> BrokerResponse {
+    match request {
+        BrokerRequest::CreateSession { intent_id } => {
+            let session = create_session(intent_id);
+            let session_id = session.id;
+
+            // Build the session_created audit event
+            let event = Event {
+                id: Uuid::new_v4(),
+                parent_id: None,
+                session_id,
+                actor: "broker".into(),
+                event_type: "session_created".into(),
+                timestamp: Utc::now(),
+                taint: vec![],
+            };
+
+            // Lock, persist, append — lock released before response is sent
+            let result: anyhow::Result<()> = match conn.lock() {
+                Ok(locked) => persist_session(&locked, &session)
+                    .and_then(|_| append_event(&locked, &event, None).map(|_| ())),
+                Err(e) => Err(anyhow::anyhow!("mutex poisoned: {e}")),
+            };
+
+            match result {
+                Ok(_) => BrokerResponse::SessionCreated { session_id },
+                Err(e) => {
+                    // T-03-09: internal detail logged, generic message to worker
+                    eprintln!("[brokerd] CreateSession error: {e}");
+                    BrokerResponse::Error {
+                        message: "internal error".into(),
+                    }
+                }
+            }
+        }
+
+        // RequestFd and ReportRead are not wired until Plan 05 (caprun end-to-end).
+        BrokerRequest::RequestFd { .. } | BrokerRequest::ReportRead { .. } => {
+            BrokerResponse::Error {
+                message: "not wired until Plan 05".into(),
+            }
+        }
+    }
+}
+
+/// Write a framed BrokerResponse to the stream (4-byte LE length + JSON body).
+async fn send_response(
+    stream: &mut tokio::net::UnixStream,
+    response: &BrokerResponse,
+) -> anyhow::Result<()> {
+    let body = serde_json::to_vec(response)?;
+    let len = (body.len() as u32).to_le_bytes();
+    stream.write_all(&len).await?;
+    stream.write_all(&body).await?;
     Ok(())
 }
