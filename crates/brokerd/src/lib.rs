@@ -12,42 +12,49 @@
 ///   - `audit`   — SQLite hash-linked audit DAG
 
 pub mod proto;
+pub mod quarantine;
 pub mod server;
 pub mod session;
 pub mod audit;
 pub mod sinks;
 pub mod approval;
 
-/// Submit a plan node for execution.
+/// Submit a plan node for I2 evaluation against the broker-owned value store.
 ///
-/// Phase 1 stub: always returns `ExecutorDecision::NotImplemented`.
-/// Future phases (Phase 4) will evaluate taint labels in ValueNode arguments
-/// and return Allowed / BlockedPendingConfirmation / Denied.
+/// Delegates to `executor::submit_plan_node` — the deterministic, non-LLM I2
+/// enforcer in the Rust TCB. No raw effect-to-sink path exists here or anywhere
+/// in brokerd (DEC-architectural-lock-plan-nodes, CON-broker-api-shape).
 ///
 /// # No raw effect-to-sink path
-/// brokerd in Phase 1 contains ONLY this function. There is no convenience
-/// executor helper and no type representing a raw effect-to-sink path.
+/// This function is the sole public effect entry point for brokerd. It takes a
+/// PlanNode (opaque-handle args only) and returns an `ExecutorDecision`. There is
+/// no path from a raw `EffectRequest` or literal value directly to a sink.
 pub fn submit_plan_node(
-    _session_id: uuid::Uuid,
-    _plan: runtime_core::PlanNode,
+    session_id: uuid::Uuid,
+    plan: runtime_core::PlanNode,
+    store: &executor::value_store::ValueStore,
 ) -> runtime_core::ExecutorDecision {
-    runtime_core::ExecutorDecision::NotImplemented
+    executor::submit_plan_node(session_id, &plan, store)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
+    use executor::value_store::ValueStore;
     use runtime_core::{ExecutorDecision, PlanNode, SinkId};
+    use uuid::Uuid;
 
+    /// Delegated submit_plan_node returns Allowed for a PlanNode with no args
+    /// (nothing to check → no tainted handle → Allowed).
     #[test]
-    fn submit_plan_node_returns_not_implemented() {
+    fn submit_plan_node_empty_args_returns_allowed() {
         let session_id = Uuid::new_v4();
         let plan = PlanNode {
             sink: SinkId("test.sink".into()),
             args: vec![],
         };
-        let result = submit_plan_node(session_id, plan);
-        assert_eq!(result, ExecutorDecision::NotImplemented);
+        let store = ValueStore::default();
+        let result = submit_plan_node(session_id, plan, &store);
+        assert_eq!(result, ExecutorDecision::Allowed);
     }
 }
