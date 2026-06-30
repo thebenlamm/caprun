@@ -806,22 +806,25 @@ grep -n "SubmitPlanNode" /Users/benlamm/Workspace/AgentOS/crates/brokerd/tests/u
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should `ReportRead` be removed from proto.rs in Phase 5?**
    - What we know: Phase 5 replaces `ReportRead { bytes_read }` with `ReportClaims`; `ReportRead` is currently wired in `main.rs::handle_worker_connection` (the code being deleted)
    - What's unclear: whether any test still sends `ReportRead` via IPC
    - Recommendation: Keep `ReportRead` in the enum but have the new unified dispatch return an error for it ("use ReportClaims"), OR remove it if no live test uses it. Check `uds_ipc.rs`.
+   - **RESOLVED: kept as deprecated — Plan 02 Task 2 keeps the `ReportRead` variant and has the unified dispatch return an Error for it (removal is cosmetic, not a requirement; avoids multi-plan file churn).**
 
 2. **Should `plan_node_evaluated` event remain for the Allowed path in Phase 5?**
    - What we know: Phase 5 only proves the blocked path (hostile input always blocks); the Allowed path is tested in Phase 7 (file.create)
    - What's unclear: whether appending `sink_allowed` or `plan_node_evaluated` for the Allowed path is needed for Phase 5 tests
    - Recommendation: For Phase 5, only the blocked path matters for ACC-02. Keep `plan_node_evaluated` as the event type for Allowed (or just don't append on Allowed path in Phase 5). The causal chain for Allowed is Phase 7's concern.
+   - **RESOLVED: kept; block path uses the new fail-closed `sink_blocked` append — Plan 02 Task 2. Allowed-path causal chain is Phase 7's concern (SC7).**
 
 3. **Where does `approval.rs::build_confirmation_prompt` get called on the live path?**
    - What we know: It exists and works; the §9 test calls it. In Phase 5 the CLI exits immediately on block, so no UX confirmation is needed.
    - What's unclear: ACC-02 says "block durable before CLI returns" but doesn't require a human approval prompt in Phase 5. The confirmation UX is v2.
    - Recommendation: Phase 5 does NOT need to wire `build_confirmation_prompt` into the live dispatch. The `sink_blocked` event IS the block record. Human confirmation UX is explicitly deferred.
+   - **RESOLVED: not wired in Phase 5; the `sink_blocked` event is the block record. Human confirmation UX deferred to v2.**
 
 ---
 
