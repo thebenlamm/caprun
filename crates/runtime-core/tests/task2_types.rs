@@ -71,9 +71,37 @@ fn executor_decision_has_all_variants() {
         literal_value: "val".to_string(),
         sink: "email.send".to_string(),
         arg_name: "to".to_string(),
+        taint: vec![],
+        provenance_chain: vec![],
     };
     let _denied = ExecutorDecision::Denied { reason: "policy".to_string() };
     let _ni = ExecutorDecision::NotImplemented;
+}
+
+#[test]
+fn blocked_decision_carries_taint_and_provenance_chain() {
+    // The Block payload carries taint + provenance_chain so a held-out test can assert
+    // the unbroken chain directly from the decision (no second query). provenance_chain[0]
+    // equals the file_read Event id.
+    let event_id = uuid::Uuid::new_v4();
+    let decision = ExecutorDecision::BlockedPendingConfirmation {
+        literal_value: "attacker@evil.example".to_string(),
+        sink: "email.send".to_string(),
+        arg_name: "to".to_string(),
+        taint: vec![TaintLabel::EmailRaw, TaintLabel::ExternalUntrusted],
+        provenance_chain: vec![event_id],
+    };
+    // serde round-trips losslessly with the new fields.
+    let json = serde_json::to_string(&decision).expect("serialize");
+    let restored: ExecutorDecision = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(decision, restored);
+    match restored {
+        ExecutorDecision::BlockedPendingConfirmation { taint, provenance_chain, .. } => {
+            assert_eq!(taint.len(), 2);
+            assert_eq!(provenance_chain[0], event_id);
+        }
+        _ => panic!("expected BlockedPendingConfirmation"),
+    }
 }
 
 #[test]
