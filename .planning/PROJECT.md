@@ -20,23 +20,26 @@ genuine taint chain must hold.**
 
 ### Validated
 
-(None yet — ship v0 to validate.)
+Shipped in **v1.0 — AgentOS v0** (2026-06-30). Full traceability archived in
+`.planning/milestones/v1.0-REQUIREMENTS.md`.
+
+- ✓ Substrate (M0): runtime-core, sandbox, brokerd, fs adapter, substrate demo,
+  locked plan-node API — v1.0
+- ✓ Design gate (M0-design): DESIGN-taint-model.md, DESIGN-plan-executor.md
+  (hard gate before any executor code) — v1.0
+- ✓ Security demo (M1 = v0 DONE): quarantined reader, deterministic executor,
+  mediated sink stub, approval hook, §9 value-injection acceptance test — v1.0
+- ✓ **v0 DONE gate cleared:** the §9 test passes on a kernel-confined worker
+  with a genuine, audited taint chain (`mint_from_read` is the sole broker
+  taint-mint site; stapled taint fails the test). `cargo test --workspace` = 51 green.
 
 ### Active
 
-Tracked in detail in `.planning/REQUIREMENTS.md`. Summary of v0 scope:
+(None yet — next milestone unscoped. Run `/gsd-new-milestone` to define v1.1.)
 
-- [x] Substrate (M0): runtime-core, sandbox, brokerd, fs adapter, substrate
-      demo, locked plan-node API
-- [x] Design gate (M0-design): DESIGN-taint-model.md, DESIGN-plan-executor.md
-      (hard gate before any executor code)
-- [x] Security demo (M1 = v0 DONE): quarantined reader, executor stub, mediated
-      sink stub, approval hook, §9 value-injection acceptance test
-
-**v0 DONE gate:** Only the §9 acceptance test passing — on a kernel-confined
-worker whose only egress is broker-mediated plan nodes, with a genuine taint
-chain verified in the audit DAG — counts as v0 done. **Substrate done ≠ v0
-done.**
+Candidate directions pulled from the v0 Out-of-Scope list: real sinks beyond the
+email.send stub, an LLM (or richer stub) planner feeding PlanNodes, Git/GitHub
+adapters, and broadening the sink sensitivity map beyond the hardcoded v0 map.
 
 ### Out of Scope
 
@@ -56,6 +59,14 @@ Do not build any of these until §9 holds (non-goals for v0):
 
 ## Context
 
+- **Current state (v1.0 shipped 2026-06-30):** v0 is DONE. 4 phases, 15 plans,
+  ~4,600 Rust LOC across `runtime-core`, `sandbox`, `brokerd`, `executor`,
+  `adapter-fs`, and the `caprun` binary. `cargo test --workspace` = 51 green;
+  the §9 value-injection acceptance test passes with a genuine, audited taint
+  chain. Security claims are Linux-only (verified via Colima+Docker from Mac).
+- **Next milestone:** unscoped — start with `/gsd-new-milestone`. Likely v1.1
+  candidates: real sinks beyond the email.send stub, an LLM/richer planner,
+  Git/GitHub adapters, broader sink sensitivity map.
 - **Source of truth:** `planning-docs/PLAN.md` ("AgentOS v0 — Definitive Plan").
   On any conflict, PLAN.md wins. Background detail lives under `archive/`
   (security: `archive/AGENT-RUNTIME-HANDOVER.md`; architecture narrative:
@@ -195,4 +206,4 @@ Python OK for non-TCB experiments only.
 | §9 with genuine taint = the only v0-DONE gate | Substrate proves mediation but not value-injection defense; stapled taint proves nothing | — Locked |
 
 ---
-*Last updated: 2026-06-30 — Phase 4 complete; §9 acceptance test passes with a genuine, audited taint chain. **v0 is DONE.***
+*Last updated: 2026-06-30 after v1.0 milestone — §9 acceptance test passes with a genuine, audited taint chain. **v0 is DONE.***
