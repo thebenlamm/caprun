@@ -22,7 +22,8 @@ genuine taint chain must hold.**
 run — a deterministic scripted planner turns an intent into PlanNodes, a confined
 worker drives toward a real `file.create` sink, and the deterministic I2 block
 fires on a genuine taint chain (with a clean, broker-minted allow-path too).
-**Runtime assembly only — no new capability surface** (Git/Cedar/etc. stay out).
+**One bounded new capability surface (`file.create`); no network/shell/destructive
+overwrite** — and Git/Cedar/etc. stay out.
 
 **Target features:**
 - Unify `caprun` onto the single `brokerd::server` dispatch path (kill the dual

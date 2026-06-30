@@ -5,7 +5,8 @@
 broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically
 blocks value-injection at sensitive sink arguments.
 **Milestone goal:** Turn the proven-in-tests value-injection defense into a real
-`caprun` run. Runtime assembly only — no new capability surface.
+`caprun` run. One bounded new capability surface (`file.create`); no
+network/shell/destructive overwrite.
 **Scope reviewed by:** `#caprun-630` — codex + grok (2026-06-30).
 
 ## v1 Requirements
@@ -21,8 +22,11 @@ The spine: collapse the dual dispatch and make the executor reachable from a liv
   does NOT carry a second executor-dispatch implementation
 - [ ] **ASM-02**: The stale `"SubmitPlanNode not wired until Plan 04"` stub is
   removed; `executor::submit_plan_node` runs through the live broker path
-- [ ] **ASM-03**: A confined worker reads the passed fd and emits a typed
-  `ReportClaims`-style IPC message; raw source bytes never cross into the planner
+- [ ] **ASM-03**: A confined worker reads the passed fd and emits a `ReportClaims`
+  IPC message defined as a **bounded tagged enum** (Phase 5 ships `EmailAddress`;
+  `RelativePath` added in Phase 7). The broker validates each variant's size/shape
+  and assigns taint/provenance itself; unknown claim kinds fail closed. Raw source
+  bytes never cross into the planner
 - [ ] **ASM-04**: The broker mints authoritative `ValueId`s from worker-reported
   claims via `mint_from_read`, anchored to the real `file_read` audit event
 
@@ -47,7 +51,8 @@ The spine: collapse the dual dispatch and make the executor reachable from a liv
   overwrites an existing file
 - [ ] **SINK-04**: `file.create` resolves paths via `openat2`
   (`RESOLVE_BENEATH`/`RESOLVE_NO_SYMLINKS`) under a workspace dirfd; absolute paths
-  and traversal/symlink escapes are rejected; no validate-then-write (TOCTOU-safe)
+  and traversal/symlink escapes are rejected; no validate-then-write (TOCTOU-safe).
+  Shares the workspace-root capability model with `HARD-04` (read-side prerequisite)
 
 ### Enforcement Hardening (HARD)
 
@@ -62,8 +67,9 @@ Constraints raised by channel review that must hold for the live path to be soun
   session is denied in another; the broker connection is bound to its session and
   a request-supplied `session_id` is never trusted
 - [ ] **HARD-04**: `RequestFd` reads are capability-restricted to the workspace
-  root — the worker cannot nominate an arbitrary broker-opened path (same
-  restriction as the write sink)
+  root — the worker cannot nominate an arbitrary broker-opened path. Shares the
+  workspace-root capability model with `SINK-04` (write-side); `HARD-04` is the
+  read-side prerequisite for `SINK-04`
 - [ ] **HARD-05**: Effect-path ordering is enforced: validate schema → capability
   check → executor decision → durable authorization audit → sink invocation →
   durable result audit; audit failure fails closed; the causal parent is preserved
@@ -79,7 +85,9 @@ The §9 live contract — the only definition of "done" for v1.1.
 - [ ] **ACC-01**: `BlockedPendingConfirmation` is operationally defined: zero sink
   invocations + a stable non-success CLI result + a durable `sink_blocked` event
 - [ ] **ACC-02**: Live §9 (email.send) — a real `caprun` run blocks a tainted
-  routing-sensitive arg through the unified broker path
+  routing-sensitive arg through the unified broker path, recording a **durable
+  causal `sink_blocked` event** (the blocked-path audit primitive: causal parent
+  preserved, append-failure fails closed, block durable before the CLI returns)
 - [ ] **ACC-03**: Live `file.create` block — hostile input → typed path claim →
   `mint_from_read` → `file.create` blocked, with no file written
 - [ ] **ACC-04**: Clean allow-path — a broker-minted trusted intent path creates
@@ -87,6 +95,12 @@ The §9 live contract — the only definition of "done" for v1.1.
 - [ ] **ACC-05**: The audit DB shows one causal chain `fd_granted → file_read →
   plan_node_evaluated → sink_blocked/sink_executed` for the run
 - [ ] **ACC-06**: Forged handles and unknown sink/arg cases are denied
+- [ ] **ACC-07**: Genuine-taint sentinel (anti-stapling) — the blocked PlanArg's
+  `ValueId` resolves to a `ValueRecord` whose `provenance_chain[0]` equals the
+  actual `file_read` event id, and the **durable** audit evidence
+  (`sink_blocked`/evaluation) links `effect_id + sink + arg + ValueId + provenance
+  anchor` so the proof survives process exit. An event-order-only assertion is
+  insufficient; this is the test that fails for any stapled-taint implementation
 
 ## v2 Requirements
 
@@ -118,45 +132,44 @@ Explicitly excluded for v1.1. Documented to prevent scope creep.
 | HTTP / shell sinks | `file.create` is the bounded first real sink; others are v2 |
 | Interactive approval UX | The block must *fire* + be auditable; UX is v2 |
 | Multi-step agent loop | Single-shot plan→execute→block proves "usable"; loop is v2 |
-| Git/GitHub adapters, Cedar | Post-v0 per PLAN.md; "no new capability surface" this milestone |
+| Git/GitHub adapters, Cedar | Post-v0 per PLAN.md; `file.create` is the only new capability surface this milestone |
 | Mac/WSL2 support | All v1.1 security claims remain Linux-only |
 
 ## Traceability
 
-Populated during roadmap creation (phase numbering continues from v1.0 — starts at Phase 05).
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ASM-01 | TBD | Pending |
-| ASM-02 | TBD | Pending |
-| ASM-03 | TBD | Pending |
-| ASM-04 | TBD | Pending |
-| PLAN-01 | TBD | Pending |
-| PLAN-02 | TBD | Pending |
-| PLAN-03 | TBD | Pending |
-| PLAN-04 | TBD | Pending |
-| SINK-01 | TBD | Pending |
-| SINK-02 | TBD | Pending |
-| SINK-03 | TBD | Pending |
-| SINK-04 | TBD | Pending |
-| HARD-01 | TBD | Pending |
-| HARD-02 | TBD | Pending |
-| HARD-03 | TBD | Pending |
-| HARD-04 | TBD | Pending |
-| HARD-05 | TBD | Pending |
-| HARD-06 | TBD | Pending |
-| ACC-01 | TBD | Pending |
-| ACC-02 | TBD | Pending |
-| ACC-03 | TBD | Pending |
-| ACC-04 | TBD | Pending |
-| ACC-05 | TBD | Pending |
-| ACC-06 | TBD | Pending |
+| ASM-01 | Phase 5 | Pending |
+| ASM-02 | Phase 5 | Pending |
+| ASM-03 | Phase 5 | Pending |
+| ASM-04 | Phase 5 | Pending |
+| HARD-03 | Phase 5 | Pending |
+| ACC-02 | Phase 5 | Pending |
+| PLAN-01 | Phase 6 | Pending |
+| PLAN-02 | Phase 6 | Pending |
+| PLAN-03 | Phase 6 | Pending |
+| PLAN-04 | Phase 6 | Pending |
+| HARD-02 | Phase 6 | Pending |
+| SINK-01 | Phase 7 | Pending |
+| SINK-02 | Phase 7 | Pending |
+| SINK-03 | Phase 7 | Pending |
+| SINK-04 | Phase 7 | Pending |
+| HARD-01 | Phase 7 | Pending |
+| HARD-04 | Phase 7 | Pending |
+| HARD-05 | Phase 7 | Pending |
+| HARD-06 | Phase 7 | Pending |
+| ACC-01 | Phase 7 | Pending |
+| ACC-03 | Phase 7 | Pending |
+| ACC-04 | Phase 7 | Pending |
+| ACC-05 | Phase 7 | Pending |
+| ACC-06 | Phase 7 | Pending |
+| ACC-07 | Phase 7 | Pending |
 
 **Coverage:**
-- v1 requirements: 24 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 24 ⚠️
+- v1 requirements: 25 total
+- Mapped to phases: 25
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-06-30*
-*Last updated: 2026-06-30 after milestone v1.1 definition (channel-reviewed)*
+*Last updated: 2026-06-30 — traceability updated after roadmap revision (peer review #caprun-630 deltas applied: HARD-03 moved Phase 7→5; ACC-07 added to Phase 7; blocked-path audit primitive in Phase 5; ASM-03 phased EmailAddress/RelativePath; HARD-04+SINK-04 shared capability model noted)*
