@@ -155,7 +155,7 @@ passing — with a genuine, audited taint chain — **is v0 DONE.**
      reader had no send cap, the sender never saw raw text, and an unbroken taint
      edge from the raw-read Event to the blocked sink argument. If taint is
      stapled at the sink instead of propagated, the test fails.
-**Plans**: 3/5 plans executed
+**Plans**: 4/5 plans executed
 
 **Wave 1** *(foundation — runtime-core handle-model types)*
 
@@ -168,7 +168,7 @@ passing — with a genuine, audited taint chain — **is v0 DONE.**
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 04-04-PLAN.md — quarantined reader + mint_from_read genuine-taint anchor + SubmitPlanNode dispatch wired to executor (REQ-quarantined-reader)
+- [x] 04-04-PLAN.md — quarantined reader + mint_from_read genuine-taint anchor + SubmitPlanNode dispatch wired to executor (REQ-quarantined-reader)
 
 **Wave 4** *(blocked on Wave 3 — the v0 DONE gate)*
 
@@ -185,4 +185,4 @@ requires both Phase 2 and Phase 3.
 | 1. Substrate Foundation | 2/2 | Complete    | 2026-06-29 |
 | 2. Security Design Gate | 3/3 | Complete    | 2026-06-29 |
 | 3. Confinement & Mediation Substrate | 5/5 | Complete    | 2026-06-29 |
-| 4. Value-Injection Security Demo (v0 DONE) | 3/5 | In Progress|  |
+| 4. Value-Injection Security Demo (v0 DONE) | 4/5 | In Progress|  |
