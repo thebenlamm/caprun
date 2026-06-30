@@ -10,10 +10,19 @@ pub enum ExecutorDecision {
     /// Plan executed and all taint checks passed.
     Allowed,
     /// Execution blocked — tainted value in sensitive sink argument; confirmation required.
+    ///
+    /// Carries the literal_value, sink, and arg_name read from the broker-owned
+    /// ValueRecord, plus the `taint` labels and the ordered `provenance_chain`.
+    /// A held-out §9 test can assert the unbroken taint chain DIRECTLY from this
+    /// payload (no second query): `provenance_chain[0]` equals the file_read Event id.
     BlockedPendingConfirmation {
         literal_value: String,
         sink: String,
         arg_name: String,
+        /// Taint labels carried by the blocked value (from its ValueRecord).
+        taint: Vec<crate::plan_node::TaintLabel>,
+        /// Ordered derivation edges; `provenance_chain[0]` is the file_read Event id.
+        provenance_chain: Vec<uuid::Uuid>,
     },
     /// Execution denied by policy.
     Denied { reason: String },
