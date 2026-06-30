@@ -1,0 +1,20 @@
+[package]
+name    = "executor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# I2 enforcement — deterministic, non-LLM plan executor.
+# Deps: runtime-core (ValueId, ValueRecord, PlanNode, ExecutorDecision) + workspace
+# standard utilities only. No new registry crate. (T-04-SC: low, accepted.)
+
+[dependencies]
+runtime-core = { path = "../runtime-core" }
+uuid         = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
+
+[dev-dependencies]
+runtime-core = { path = "../runtime-core" }
+uuid         = { workspace = true }
