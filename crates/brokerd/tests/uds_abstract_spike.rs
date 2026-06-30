@@ -90,7 +90,11 @@ mod spike {
             b"{\"msg\":\"hello from spike\"}",
             "round-trip body mismatch"
         );
-        assert_eq!(msg_len, 25, "round-trip length mismatch");
+        assert_eq!(
+            msg_len,
+            b"{\"msg\":\"hello from spike\"}".len(),
+            "round-trip length mismatch"
+        );
 
         // VERIFIED: Abstract-namespace UDS bind → accept → connect → framed message
         // round-trip succeeds in tokio 1.52.3 on Linux. The pattern is:
