@@ -1,0 +1,217 @@
+/// executor_decision.rs — Integration tests for `submit_plan_node`.
+///
+/// Tests the four held behaviors from DESIGN-plan-executor §Executor Decision Logic:
+///   1. Tainted routing-sensitive arg ("to") → BlockedPendingConfirmation carrying
+///      literal/taint/provenance_chain verbatim from the ValueRecord.
+///   2. Untainted routing-sensitive arg ("to") → Allowed.
+///   3. Unknown/dangling handle → Denied (never Allowed — T-04-02).
+///   4. Tainted content-sensitive arg ("subject") → Allowed in v0 (no Block;
+///      verbatim Tier-4 review is deferred to the approval-hook plan).
+///
+/// Block payload fidelity requirement (plan §acceptance_criteria): the Block-case
+/// assertion confirms literal_value, taint, and provenance_chain equal the values
+/// passed to mint (not synthesized in the executor).
+
+use executor::{submit_plan_node, value_store::ValueStore};
+use runtime_core::{
+    plan_node::{PlanArg, PlanNode, SinkId, TaintLabel, ValueId},
+    ExecutorDecision,
+};
+use uuid::Uuid;
+
+// ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
+
+fn email_send_with_to(to_value_id: ValueId) -> PlanNode {
+    PlanNode {
+        sink: SinkId("email.send".to_string()),
+        args: vec![PlanArg {
+            name: "to".to_string(),
+            value_id: to_value_id,
+        }],
+    }
+}
+
+fn email_send_with_arg(arg_name: &str, value_id: ValueId) -> PlanNode {
+    PlanNode {
+        sink: SinkId("email.send".to_string()),
+        args: vec![PlanArg {
+            name: arg_name.to_string(),
+            value_id,
+        }],
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Case 1: tainted routing-sensitive arg → Block with verbatim record payload
+// ---------------------------------------------------------------------------
+
+/// A tainted value in the routing-sensitive "to" arg must produce
+/// `BlockedPendingConfirmation` whose payload is sourced verbatim from the minted
+/// ValueRecord — NOT synthesized by the executor.
+///
+/// Block payload fidelity: literal_value, taint, provenance_chain must EQUAL
+/// the values passed to `mint` (no executor-side taint authoring, T-04-03).
+#[test]
+fn tainted_to_arg_blocks_with_verbatim_record_payload() {
+    let mut store = ValueStore::default();
+    let event_id = Uuid::new_v4();
+    let provenance = vec![event_id];
+    let literal = "accounts@ev1l.com".to_string();
+    let taint = vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw];
+
+    // mint: the broker's worker-extraction step
+    let id = store.mint(literal.clone(), taint.clone(), provenance.clone());
+
+    let plan = email_send_with_to(id);
+    let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+
+    match decision {
+        ExecutorDecision::BlockedPendingConfirmation {
+            literal_value,
+            sink,
+            arg_name,
+            taint: blocked_taint,
+            provenance_chain,
+        } => {
+            // Block payload fidelity (plan acceptance criteria)
+            assert_eq!(
+                literal_value, literal,
+                "literal_value must be verbatim from ValueRecord, not synthesized"
+            );
+            assert_eq!(sink, "email.send");
+            assert_eq!(arg_name, "to");
+            assert_eq!(
+                blocked_taint, taint,
+                "taint must equal mint input — executor must not add/remove labels"
+            );
+            assert_eq!(
+                provenance_chain, provenance,
+                "provenance_chain[0] must equal the file_read Event id from mint"
+            );
+        }
+        other => panic!("expected BlockedPendingConfirmation, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Case 2: untainted routing-sensitive arg → Allowed
+// ---------------------------------------------------------------------------
+
+/// A value with an empty taint vec in the "to" arg must produce `Allowed`.
+/// An empty taint vec means the record has no taint labels — no hostile origin.
+#[test]
+fn untainted_to_arg_returns_allowed() {
+    let mut store = ValueStore::default();
+    // Empty taint vec → no taint labels
+    let id = store.mint("boss@company.com".to_string(), vec![], vec![]);
+
+    let plan = email_send_with_to(id);
+    let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+
+    assert_eq!(
+        decision,
+        ExecutorDecision::Allowed,
+        "untainted 'to' must produce Allowed"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Case 3: unknown/dangling handle → Denied (T-04-02)
+// ---------------------------------------------------------------------------
+
+/// A `ValueId` not in the store resolves to `None`; the executor MUST return
+/// `Denied`, never `Allowed`. This prevents an injected planner from fabricating
+/// a handle to a non-existent clean value to bypass the Block check (T-04-02).
+#[test]
+fn unknown_handle_returns_denied() {
+    let store = ValueStore::default(); // empty store
+    let forged_id = ValueId::new(); // never minted
+
+    let plan = email_send_with_to(forged_id);
+    let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+
+    assert!(
+        matches!(decision, ExecutorDecision::Denied { .. }),
+        "dangling handle must produce Denied, got {decision:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Case 4: tainted content-sensitive arg → Allowed in v0
+// ---------------------------------------------------------------------------
+
+/// "subject" is content-sensitive, NOT routing-sensitive. A tainted subject does
+/// NOT Block in v0 — Tier-4 verbatim review is the post-v0 approval mechanism.
+/// This test guards against accidentally routing content-sensitive args through the
+/// routing-sensitive Block path.
+#[test]
+fn tainted_content_sensitive_arg_allows_in_v0() {
+    let mut store = ValueStore::default();
+    let id = store.mint(
+        "hostile subject line".to_string(),
+        vec![TaintLabel::ExternalUntrusted],
+        vec![Uuid::new_v4()],
+    );
+
+    // "subject" is content-sensitive → must NOT Block in v0
+    let plan = email_send_with_arg("subject", id);
+    let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+
+    assert_eq!(
+        decision,
+        ExecutorDecision::Allowed,
+        "tainted 'subject' (content-sensitive) must produce Allowed in v0; \
+         Tier-4 verbatim review is deferred to the approval-hook plan"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Additional coverage: cc/bcc routing-sensitive, body/attachment content-sensitive
+// ---------------------------------------------------------------------------
+
+/// "cc" and "bcc" are also routing-sensitive — tainted values must Block.
+#[test]
+fn tainted_cc_and_bcc_also_block() {
+    let mut store = ValueStore::default();
+    let cc_id = store.mint(
+        "attacker@ev1l.com".to_string(),
+        vec![TaintLabel::ExternalUntrusted],
+        vec![Uuid::new_v4()],
+    );
+    let bcc_id = store.mint(
+        "spy@ev1l.com".to_string(),
+        vec![TaintLabel::EmailRaw],
+        vec![Uuid::new_v4()],
+    );
+
+    for (arg_name, id) in [("cc", cc_id), ("bcc", bcc_id)] {
+        let plan = email_send_with_arg(arg_name, id);
+        let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+        assert!(
+            matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }),
+            "tainted '{arg_name}' must Block; got {decision:?}"
+        );
+    }
+}
+
+/// "body" and "attachment" are content-sensitive — tainted values must NOT Block.
+#[test]
+fn tainted_body_and_attachment_allow_in_v0() {
+    let mut store = ValueStore::default();
+    for arg_name in ["body", "attachment"] {
+        let id = store.mint(
+            format!("hostile {arg_name} content"),
+            vec![TaintLabel::ExternalUntrusted],
+            vec![Uuid::new_v4()],
+        );
+        let plan = email_send_with_arg(arg_name, id);
+        let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+        assert_eq!(
+            decision,
+            ExecutorDecision::Allowed,
+            "tainted '{arg_name}' (content-sensitive) must Allowed in v0; got {decision:?}"
+        );
+    }
+}
