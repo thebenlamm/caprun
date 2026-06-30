@@ -15,6 +15,8 @@ pub mod proto;
 pub mod server;
 pub mod session;
 pub mod audit;
+pub mod sinks;
+pub mod approval;
 
 /// Submit a plan node for execution.
 ///

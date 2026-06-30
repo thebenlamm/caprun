@@ -131,6 +131,70 @@ pub fn append_event(
     Ok(hash)
 }
 
+/// Return all Events recorded for `session_id`, ordered by insertion (rowid).
+///
+/// Each row's `payload` column contains the full serialized `Event` (written by
+/// `append_event`). Deserializes each payload back into a `runtime_core::Event`
+/// so the returned Events carry their original `taint` labels intact.
+///
+/// # Arguments
+/// * `conn` — open rusqlite connection.
+/// * `session_id` — the UUID of the session to query (as a string).
+pub fn query_events_by_session(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<Vec<Event>> {
+    let mut stmt = conn.prepare(
+        "SELECT payload FROM events WHERE session_id = ?1 ORDER BY rowid",
+    )?;
+    let events = stmt
+        .query_map(rusqlite::params![session_id], |row| {
+            let payload: String = row.get(0)?;
+            Ok(payload)
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    events
+        .into_iter()
+        .map(|p| serde_json::from_str::<Event>(&p).map_err(anyhow::Error::from))
+        .collect()
+}
+
+/// Locate the first Event of `event_type` within `session_id`.
+///
+/// Deserializes the `payload` column so the returned Event's `taint` reflects
+/// what was originally persisted — required by the §9 held-out test to assert
+/// the taint chain anchor exists in the DAG.
+///
+/// Returns `None` if no matching event exists for the session.
+///
+/// # Arguments
+/// * `conn` — open rusqlite connection.
+/// * `session_id` — the UUID of the session to search (as a string).
+/// * `event_type` — the event_type string to match (e.g., `"file_read"`, `"email_send_stub"`).
+pub fn find_event_by_type(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    event_type: &str,
+) -> Result<Option<Event>> {
+    let result: std::result::Result<String, rusqlite::Error> = conn.query_row(
+        "SELECT payload FROM events \
+         WHERE session_id = ?1 AND event_type = ?2 \
+         ORDER BY rowid \
+         LIMIT 1",
+        rusqlite::params![session_id, event_type],
+        |row| row.get(0),
+    );
+    match result {
+        Ok(payload) => {
+            let event = serde_json::from_str::<Event>(&payload)?;
+            Ok(Some(event))
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(anyhow::Error::from(e)),
+    }
+}
+
 /// Walk the audit chain for `session_id` and verify every hash link.
 ///
 /// Uses a recursive CTE to traverse from the root event (parent_id IS NULL)
@@ -206,4 +270,80 @@ pub fn verify_chain(conn: &rusqlite::Connection, session_id: &str) -> bool {
     })();
 
     result.unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use runtime_core::TaintLabel;
+    use uuid::Uuid;
+
+    /// Build a minimal file_read Event with taint labels [ExternalUntrusted, EmailRaw].
+    fn make_file_read_event(session_id: Uuid) -> Event {
+        Event {
+            id: Uuid::new_v4(),
+            parent_id: None,
+            session_id,
+            actor: "worker".to_string(),
+            event_type: "file_read".to_string(),
+            timestamp: Utc::now(),
+            taint: vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw],
+        }
+    }
+
+    #[test]
+    fn find_event_by_type_returns_event_with_taint_intact() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+        let event = make_file_read_event(session_id);
+        let event_id = event.id;
+
+        append_event(&conn, &event, None).expect("append_event");
+
+        let found = find_event_by_type(&conn, &session_id.to_string(), "file_read")
+            .expect("find_event_by_type")
+            .expect("event should be present");
+
+        assert_eq!(found.id, event_id);
+        assert_eq!(
+            found.taint,
+            vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw],
+            "taint must survive the payload round-trip"
+        );
+    }
+
+    #[test]
+    fn find_event_by_type_returns_none_for_missing_type() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+        let event = make_file_read_event(session_id);
+
+        append_event(&conn, &event, None).expect("append_event");
+
+        let found = find_event_by_type(&conn, &session_id.to_string(), "email_send_stub")
+            .expect("find_event_by_type");
+
+        assert!(found.is_none(), "no email_send_stub event should be found");
+    }
+
+    #[test]
+    fn query_events_by_session_returns_all_events() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+        let event = make_file_read_event(session_id);
+        let event_id = event.id;
+
+        append_event(&conn, &event, None).expect("append_event");
+
+        let events = query_events_by_session(&conn, &session_id.to_string())
+            .expect("query_events_by_session");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].id, event_id);
+        assert_eq!(
+            events[0].taint,
+            vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw]
+        );
+    }
 }

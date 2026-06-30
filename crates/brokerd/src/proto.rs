@@ -15,6 +15,16 @@ pub enum BrokerRequest {
     /// Report that the worker read `bytes_read` bytes via a previously
     /// granted fd. Appended to the audit DAG as a file_read event.
     ReportRead { bytes_read: u64 },
+    /// Submit a PlanNode for executor evaluation.
+    ///
+    /// The broker resolves each PlanArg handle to the broker-owned ValueRecord
+    /// (literal + taint + provenance_chain) and evaluates taint policy.
+    /// Closes RESEARCH Gap 3: surfaces the Block data (literal_value, taint,
+    /// provenance_chain) to the broker-side confirmation-prompt builder.
+    SubmitPlanNode {
+        session_id: uuid::Uuid,
+        plan_node: runtime_core::PlanNode,
+    },
 }
 
 /// Response from the broker to a worker.
@@ -28,4 +38,10 @@ pub enum BrokerResponse {
     Ack,
     /// The broker encountered an error; the worker should log and exit.
     Error { message: String },
+    /// Decision returned after evaluating a SubmitPlanNode request.
+    ///
+    /// When `decision` is `ExecutorDecision::BlockedPendingConfirmation { .. }`,
+    /// the broker constructs a `ConfirmationPrompt` from the Block payload and
+    /// delivers it to the human via FAMP before proceeding.
+    PlanNodeDecision { decision: runtime_core::ExecutorDecision },
 }
