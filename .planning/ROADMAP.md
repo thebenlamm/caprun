@@ -155,7 +155,24 @@ passing — with a genuine, audited taint chain — **is v0 DONE.**
      reader had no send cap, the sender never saw raw text, and an unbroken taint
      edge from the raw-read Event to the blocked sink argument. If taint is
      stapled at the sink instead of propagated, the test fails.
-**Plans**: TBD
+**Plans**: 5 plans
+
+**Wave 1** *(foundation — runtime-core handle-model types)*
+
+- [ ] 04-01-PLAN.md — runtime-core ValueId/PlanArg/ValueRecord, PlanNode.args→Vec&lt;PlanArg&gt;, provenance_chain, extended Block payload; repair all callers (REQ-executor-stub)
+
+**Wave 2** *(parallel implementation, blocked on Wave 1)*
+
+- [ ] 04-02-PLAN.md — executor crate: ValueStore mint/resolve + hardcoded email.send sensitivity map + deterministic submit_plan_node (REQ-executor-stub, REQ-mediated-sink-stub)
+- [ ] 04-03-PLAN.md — brokerd email.send sink stub + literal-value confirmation prompt + SubmitPlanNode proto + audit query helpers (REQ-mediated-sink-stub, REQ-approval-hook)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 04-04-PLAN.md — quarantined reader + mint_from_read genuine-taint anchor + SubmitPlanNode dispatch wired to executor (REQ-quarantined-reader)
+
+**Wave 4** *(blocked on Wave 3 — the v0 DONE gate)*
+
+- [ ] 04-05-PLAN.md — §9 end-to-end acceptance test with genuine-taint backstop (provenance_chain[0] == file_read Event id) (REQ-s9-acceptance-test)
 
 ## Progress
 
@@ -168,4 +185,4 @@ requires both Phase 2 and Phase 3.
 | 1. Substrate Foundation | 2/2 | Complete    | 2026-06-29 |
 | 2. Security Design Gate | 3/3 | Complete    | 2026-06-29 |
 | 3. Confinement & Mediation Substrate | 5/5 | Complete    | 2026-06-29 |
-| 4. Value-Injection Security Demo (v0 DONE) | 0/TBD | Not started | - |
+| 4. Value-Injection Security Demo (v0 DONE) | 0/5 | Not started | - |
