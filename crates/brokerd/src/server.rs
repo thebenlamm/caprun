@@ -179,8 +179,13 @@ fn dispatch(
             }
         }
 
-        // RequestFd and ReportRead are not wired until Plan 05 (caprun end-to-end).
-        BrokerRequest::RequestFd { .. } | BrokerRequest::ReportRead { .. } => {
+        // RequestFd, ReportRead, and ReportClaims are not wired in this server
+        // dispatch path until Plan 05 rewrites handle_connection.
+        // ReportClaims is stubbed here to keep the match exhaustive after the
+        // additive proto.rs change in Plan 01 (Plan 02 wires the real handler).
+        BrokerRequest::RequestFd { .. }
+        | BrokerRequest::ReportRead { .. }
+        | BrokerRequest::ReportClaims { .. } => {
             BrokerResponse::Error {
                 message: "not wired until Plan 05".into(),
             }
