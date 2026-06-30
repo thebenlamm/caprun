@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 runtime-core = { path = "../runtime-core" }
+executor     = { path = "../executor" }
 uuid         = { workspace = true }
 anyhow       = { workspace = true }
 tokio        = { workspace = true }

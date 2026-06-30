@@ -12,6 +12,7 @@
 ///   - `audit`   — SQLite hash-linked audit DAG
 
 pub mod proto;
+pub mod quarantine;
 pub mod server;
 pub mod session;
 pub mod audit;
