@@ -28,7 +28,7 @@ parallel start). Phase 3 continues the substrate from Phase 1. Phase 4 requires
 - [x] **Phase 1: Substrate Foundation** - Cargo workspace, domain core, and the locked plan-node broker API (completed 2026-06-29)
 - [x] **Phase 2: Security Design Gate** - The taint-model and plan-executor DESIGN docs that hard-gate all executor code (runs parallel to substrate) (completed 2026-06-29)
 - [x] **Phase 3: Confinement & Mediation Substrate** - Kernel confinement, broker reference monitor, fd-pass fs adapter, proven by the no-LLM substrate demo (completed 2026-06-29)
-- [ ] **Phase 4: Value-Injection Security Demo (v0 DONE)** - The §9 acceptance test passes with a genuine taint chain — the only gate for v0 done
+- [x] **Phase 4: Value-Injection Security Demo (v0 DONE)** - The §9 acceptance test passes with a genuine taint chain — the only gate for v0 done (completed 2026-06-30)
 
 ## Phase Details
 
@@ -155,7 +155,7 @@ passing — with a genuine, audited taint chain — **is v0 DONE.**
      reader had no send cap, the sender never saw raw text, and an unbroken taint
      edge from the raw-read Event to the blocked sink argument. If taint is
      stapled at the sink instead of propagated, the test fails.
-**Plans**: 4/5 plans executed
+**Plans**: 5/5 plans complete
 
 **Wave 1** *(foundation — runtime-core handle-model types)*
 
@@ -172,7 +172,7 @@ passing — with a genuine, audited taint chain — **is v0 DONE.**
 
 **Wave 4** *(blocked on Wave 3 — the v0 DONE gate)*
 
-- [ ] 04-05-PLAN.md — §9 end-to-end acceptance test with genuine-taint backstop (provenance_chain[0] == file_read Event id) (REQ-s9-acceptance-test)
+- [x] 04-05-PLAN.md — §9 end-to-end acceptance test with genuine-taint backstop (provenance_chain[0] == file_read Event id) (REQ-s9-acceptance-test)
 
 ## Progress
 
@@ -185,4 +185,4 @@ requires both Phase 2 and Phase 3.
 | 1. Substrate Foundation | 2/2 | Complete    | 2026-06-29 |
 | 2. Security Design Gate | 3/3 | Complete    | 2026-06-29 |
 | 3. Confinement & Mediation Substrate | 5/5 | Complete    | 2026-06-29 |
-| 4. Value-Injection Security Demo (v0 DONE) | 4/5 | In Progress|  |
+| 4. Value-Injection Security Demo (v0 DONE) | 5/5 | Complete   | 2026-06-30 |
