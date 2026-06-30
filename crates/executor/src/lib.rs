@@ -12,10 +12,7 @@
 pub mod sink_sensitivity;
 pub mod value_store;
 
-use runtime_core::{
-    plan_node::{PlanNode, SinkId},
-    ExecutorDecision,
-};
+use runtime_core::{plan_node::PlanNode, ExecutorDecision};
 use uuid::Uuid;
 use value_store::ValueStore;
 

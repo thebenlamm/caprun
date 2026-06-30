@@ -41,11 +41,19 @@ impl ValueStore {
     /// is the field the §9 held-out test asserts to prove genuine taint propagation.
     pub fn mint(
         &mut self,
-        _literal: String,
-        _taint: Vec<TaintLabel>,
-        _provenance_chain: Vec<uuid::Uuid>,
+        literal: String,
+        taint: Vec<TaintLabel>,
+        provenance_chain: Vec<uuid::Uuid>,
     ) -> ValueId {
-        unimplemented!("ValueStore::mint — RED phase stub")
+        let id = ValueId::new();
+        let record = ValueRecord {
+            id: id.clone(),
+            literal,
+            taint,
+            provenance_chain,
+        };
+        self.inner.insert(id.clone(), record);
+        id
     }
 
     /// Read-only dereference of an opaque handle to its authoritative ValueRecord.
@@ -53,8 +61,8 @@ impl ValueStore {
     /// Returns `None` for any id not previously minted by this store. The executor's
     /// decision rule treats `None` as `Denied` — a dangling/forged handle MUST NOT
     /// become `Allowed`.
-    pub fn resolve(&self, _id: &ValueId) -> Option<&ValueRecord> {
-        unimplemented!("ValueStore::resolve — RED phase stub")
+    pub fn resolve(&self, id: &ValueId) -> Option<&ValueRecord> {
+        self.inner.get(id)
     }
 }
 
