@@ -1,9 +1,9 @@
 <!-- generated-by: gsd-doc-writer -->
-# AgentOS Architecture
+# caprun Architecture
 
 ## System Overview
 
-AgentOS is an **Intent Runtime** on stock Linux: a user-space execution layer where agents have no ambient authority, every external effect is authorized against a Session, and confinement is kernel-enforced. The v0 binary is `caprun`. The system's thesis is that humans execute programs and agents execute intents — object-capability scoping is natural for machines.
+caprun is an **Intent Runtime** on stock Linux: a user-space execution layer where agents have no ambient authority, every external effect is authorized against a Session, and confinement is kernel-enforced. The v0 binary is `caprun`. The system's thesis is that humans execute programs and agents execute intents — object-capability scoping is natural for machines.
 
 Inputs are Intents (a goal expressed by a user or outer system). Outputs are Effects (Observe, MutateReversible, or CommitIrreversible) that are only permitted after passing through the broker's policy gate, the deterministic executor's I2 enforcement, and the SQLite audit DAG. The primary architectural style is a layered object-capability runtime with a strict reference-monitor control plane (Broker), a kernel-enforced confinement boundary (Sandbox), and a deterministic, non-LLM enforcement engine (Executor).
 
@@ -366,7 +366,7 @@ Two design docs must be reviewed and `planning-docs/DESIGN-GATE-RECORD.md` must 
 ## Directory Structure
 
 ```
-AgentOS/                         # repo root = single Rust workspace (resolver = "3")
+caprun/                         # repo root = single Rust workspace (resolver = "3")
   Cargo.toml                     # workspace manifest; no separate caprunner/ subdir
   CLAUDE.md                      # project guidance; PLAN.md wins on conflicts
   planning-docs/

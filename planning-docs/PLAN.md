@@ -1,4 +1,4 @@
-# AgentOS v0 — Definitive Plan
+# caprun v0 — Definitive Plan
 
 **Status:** Agreed by AoS-claude, AoS-codex, AoS-grok (2026-06-29)  
 **Session:** `#aos-session0` convergence  
@@ -10,7 +10,7 @@
 
 An **Intent Runtime** — user-space execution layer on stock Linux where agents have no ambient authority, every external effect is authorized against a Session, and confinement is kernel-enforced.
 
-- **Repo / project:** AgentOS — the repo root is a single Rust workspace; crates live at `AgentOS/crates/`. No separate `caprunner/` subdir.
+- **Repo / project:** caprun — the repo root is a single Rust workspace; crates live at `caprun/crates/`. No separate `caprunner/` subdir.
 - **v0 binary:** `caprun`
 - **Platform:** M0/M1 target **Linux (Ubuntu) only**. Mac/WSL2 deferred to post-v0 best-effort. All v0 security claims are Linux-only.
 - **NOT:** kernel fork, agent framework, desktop automation platform, memory product, marketplace
@@ -115,7 +115,7 @@ Week-2 executor is a minimal stub walking this shape. The API shape is not optio
 ## Repository Layout (DECIDED)
 
 ```text
-AgentOS/                  # repo root = Rust workspace (Cargo workspace at root)
+caprun/                  # repo root = Rust workspace (Cargo workspace at root)
   CLAUDE.md
   planning-docs/          # existing + PLAN.md + DESIGN-*.md
   crates/
@@ -227,6 +227,6 @@ Do not build until §9 holds:
 ## Next Actions for Ben
 
 1. Review this plan — counter anything marked DECIDED if wrong.
-2. Scaffold the `AgentOS/` Cargo workspace + `crates/` layout per above.
+2. Scaffold the `caprun/` Cargo workspace + `crates/` layout per above.
 3. Start M0 + M0-design in parallel (sandbox code + DESIGN-plan-executor.md).
 4. Do not write `crates/executor` until DESIGN-plan-executor.md is reviewed.

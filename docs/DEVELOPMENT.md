@@ -1,7 +1,7 @@
 <!-- generated-by: gsd-doc-writer -->
 # Development Guide
 
-AgentOS is a single Rust Cargo workspace. This guide covers the contributor
+caprun is a single Rust Cargo workspace. This guide covers the contributor
 workflow: local setup, build commands, crate layout, and the hard architectural
 rules that every contributor must understand before writing a line of code.
 
@@ -27,7 +27,7 @@ See also: [README](../README.md) · [Architecture](ARCHITECTURE.md) · [Configur
 The repo root is the Cargo workspace (`resolver = "3"`, edition 2021).
 
 ```
-AgentOS/
+caprun/
   Cargo.toml              # workspace root
   scripts/
     check-invariants.sh   # architectural gate — run before any code

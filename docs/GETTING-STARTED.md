@@ -9,7 +9,7 @@ This guide takes you from a fresh clone to a running `caprun` substrate demo —
 
 ### Rust toolchain
 
-AgentOS is a single Cargo workspace (`resolver = "3"`, edition 2021). Any recent Rust stable release works. There is no `rust-toolchain.toml` or `rust-version` field pinning a specific version.
+caprun is a single Cargo workspace (`resolver = "3"`, edition 2021). Any recent Rust stable release works. There is no `rust-toolchain.toml` or `rust-version` field pinning a specific version.
 
 ```bash
 # Install via rustup if not already present

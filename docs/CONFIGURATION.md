@@ -1,7 +1,7 @@
 <!-- generated-by: gsd-doc-writer -->
 # Configuration
 
-AgentOS / caprun has a small, intentionally constrained configuration surface. Confinement parameters (rlimits, Landlock ABI, seccomp rules) are hardcoded in the Rust TCB — they are not swappable via config files. The configurable surface is limited to CLI arguments, worker environment variables, and the audit database path.
+caprun has a small, intentionally constrained configuration surface. Confinement parameters (rlimits, Landlock ABI, seccomp rules) are hardcoded in the Rust TCB — they are not swappable via config files. The configurable surface is limited to CLI arguments, worker environment variables, and the audit database path.
 
 ---
 

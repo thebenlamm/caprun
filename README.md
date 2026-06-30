@@ -1,5 +1,5 @@
 <!-- generated-by: gsd-doc-writer -->
-# AgentOS
+# caprun
 
 An **Intent Runtime** on stock Linux: a user-space execution layer where agents have no ambient authority, every external effect is authorized against a Session, and confinement is kernel-enforced.
 
@@ -94,7 +94,7 @@ No `--privileged` needed. Landlock requires kernel ≥ 5.13.
 ## Repository layout
 
 ```
-AgentOS/
+caprun/
   Cargo.toml              # workspace root (resolver = "3", edition 2021)
   scripts/
     check-invariants.sh   # Gate 1 (EffectRequest absent) + Gate 2 (runtime-core purity)

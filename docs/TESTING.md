@@ -1,7 +1,7 @@
 <!-- generated-by: gsd-doc-writer -->
 # Testing
 
-AgentOS uses Rust's built-in test runner via `cargo test`. There is no external test framework. Tests live in each crate's `tests/` directory and in `cli/caprun/tests/`.
+caprun uses Rust's built-in test runner via `cargo test`. There is no external test framework. Tests live in each crate's `tests/` directory and in `cli/caprun/tests/`.
 
 ---
 
