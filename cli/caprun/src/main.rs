@@ -279,6 +279,16 @@ async fn handle_worker_connection(
                 })
                 .await?;
             }
+
+            // ReportClaims dispatch is wired in Plan 05 (server rewrite).
+            // Stubbed here to keep the match exhaustive after the additive
+            // proto.rs change in Plan 01.
+            BrokerRequest::ReportClaims { .. } => {
+                send_response(&mut stream, &BrokerResponse::Error {
+                    message: "ReportClaims not wired until Plan 05".into(),
+                })
+                .await?;
+            }
         }
     }
     Ok(())
