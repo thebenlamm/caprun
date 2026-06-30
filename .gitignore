@@ -8,3 +8,11 @@
 # GSD local audit / runtime DB
 audit.db
 runtime.db
+
+# GSD / agent runtime scaffolding (regenerable, not part of the product)
+.claude/
+.codex/
+
+# Ephemeral local planning state + research cache
+.planning/config.json
+.planning/research/
