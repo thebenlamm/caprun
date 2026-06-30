@@ -28,7 +28,7 @@ pub mod approval;
 /// # No raw effect-to-sink path
 /// This function is the sole public effect entry point for brokerd. It takes a
 /// PlanNode (opaque-handle args only) and returns an `ExecutorDecision`. There is
-/// no path from a raw `EffectRequest` or literal value directly to a sink.
+/// no path from a raw `EffectRequest` or literal value directly to a sink. (planner-discipline-allow)
 pub fn submit_plan_node(
     session_id: uuid::Uuid,
     plan: runtime_core::PlanNode,

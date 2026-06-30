@@ -48,8 +48,12 @@ pub enum BrokerRequest {
     /// (literal + taint + provenance_chain) and evaluates taint policy.
     /// Closes RESEARCH Gap 3: surfaces the Block data (literal_value, taint,
     /// provenance_chain) to the broker-side confirmation-prompt builder.
+    ///
+    /// SECURITY CONTRACT (HARD-03): this message carries NO `session_id`. The
+    /// broker evaluates against the connection-established session identity
+    /// threaded through `handle_connection` — it NEVER trusts a session_id
+    /// supplied in the IPC message (spoofing defense T-05-03).
     SubmitPlanNode {
-        session_id: uuid::Uuid,
         plan_node: runtime_core::PlanNode,
     },
 }

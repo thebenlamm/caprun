@@ -1,4 +1,4 @@
-/// server — tokio async UDS IPC server
+/// server — tokio async UDS IPC server (the unified, session-scoped reference monitor)
 ///
 /// ─────────────────────────────────────────────────────────────────────────────
 /// VERIFIED abstract-namespace UDS pattern — confirmed by reading tokio-1.52.3
@@ -11,40 +11,43 @@
 ///   UnixStream::connect. Simply pass the path with a leading NUL byte:
 ///
 ///   let listener = tokio::net::UnixListener::bind("\0/agentos/<session_id>")?;
-///   // On Linux, tokio strips the \0 and calls:
-///   // StdSocketAddr::from_abstract_name(&os_str_bytes[1..])
-///
-/// APPROACH B — ALTERNATIVE (if Approach A fails — more explicit):
-///   use std::os::linux::net::SocketAddrExt;
-///   let addr = std::os::unix::net::SocketAddr::from_abstract_name(b"/agentos/<session_id>")?;
-///   let std_listener = std::os::unix::net::UnixListener::bind_addr(&addr)?;
-///   std_listener.set_nonblocking(true)?;
-///   let listener = tokio::net::UnixListener::from_std(std_listener)?;
-///
-///   NOTE: std::os::unix::net::UnixListener::bind(path_with_null) does NOT work —
-///   CString rejects embedded NUL bytes. Always use bind_addr for std approach.
 ///
 /// KEY PROPERTY: Abstract sockets bypass Landlock filesystem restrictions.
-/// After Landlock deny-all-filesystem is applied in pre_exec, the worker can
-/// still connect to the broker's abstract socket. This is why abstract UDS is
-/// the correct choice (over path-based /tmp/agentos.sock which Landlock would block).
-///
-/// FALLBACK (per RESEARCH.md Q1): If abstract bind returns EINVAL on an older kernel,
-/// use a temp-dir path-based socket and add a Landlock read/connect exception
-/// for that path in sandbox::landlock::deny_all_filesystem.
+/// After Landlock deny-all-filesystem is applied in the worker, it can still
+/// connect to the broker's abstract socket.
 ///
 /// IPC framing: 4-byte LE length prefix + JSON body (serde_json).
 /// Max message size: 64 KiB (ASVS V5 input validation / T-03-08 DoS mitigate).
 ///
-/// Wave 2 Plan 03: full accept loop implementation.
-/// Plan 05 (caprun) wires RequestFd and ReportRead end-to-end.
+/// ─────────────────────────────────────────────────────────────────────────────
+/// UNIFIED DISPATCH (Phase 5, Plan 02)
+/// ─────────────────────────────────────────────────────────────────────────────
+/// This is THE single broker dispatch path — there is no second loop in the CLI.
+/// It is the live, session-scoped, fail-closed reference monitor:
+///   * RequestFd    — broker opens the workspace file (ambient fs) and passes the
+///                    fd via SCM_RIGHTS; appends a causal `fd_granted` event.
+///   * ReportClaims — mints a genuinely-tainted ValueRecord per typed claim via
+///                    `quarantine::mint_from_read` (the SOLE taint-mint site), so
+///                    `provenance_chain[0]` anchors to the real file_read event.
+///   * SubmitPlanNode — evaluates I2 via `executor::submit_plan_node` against the
+///                    CONNECTION-established session_id (never a message-supplied
+///                    one), durably appends `sink_blocked`/`plan_node_evaluated`
+///                    BEFORE returning the decision (fail-closed, ACC-02).
+///
+/// Per-connection isolation (HARD-03): each accepted connection owns a fresh
+/// `ValueStore::default()`, so a ValueId minted in one connection resolves to
+/// None (→ Denied) in another. There is no shared cross-session store.
 
 use crate::audit::append_event;
-use crate::proto::{BrokerRequest, BrokerResponse};
+use crate::proto::{BrokerRequest, BrokerResponse, WorkerClaim};
+use crate::quarantine::{mint_from_read, Claim};
 use crate::session::{create_session, persist_session};
+use adapter_fs::pass_fd;
+use anyhow::Context;
 use chrono::Utc;
 use executor::value_store::ValueStore;
 use runtime_core::Event;
+use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
@@ -59,108 +62,159 @@ const MAX_MSG_SIZE: usize = 64 * 1024;
 ///
 /// Binds `\0/agentos/{session_id}` using tokio's native abstract-path support
 /// (Approach A — verified in uds_abstract_spike.rs). Accepts connections in a
-/// loop and spawns a task per connection.
+/// loop and spawns a per-connection task. Each connection owns its own
+/// `ValueStore` and threads the causal chain forward from the supplied initial
+/// session_created event state.
 ///
 /// # Arguments
-/// * `session_id`   — unique string used as the socket name suffix.
-/// * `conn`         — shared, mutex-protected SQLite connection for session + audit writes.
-/// * `value_store`  — shared, mutex-protected broker-owned ValueStore for I2 enforcement.
-///                    Threaded here from the broker startup path (DEC-architectural-lock).
+/// * `session_id`            — string form, used as the socket name suffix.
+/// * `conn`                  — shared, mutex-protected SQLite connection.
+/// * `session_id_uuid`       — broker-authoritative session identity (HARD-03).
+/// * `initial_last_event_id` — id of the `session_created` event minted upstream.
+/// * `initial_last_event_hash` — hash of that event row (chain anchor).
+///
+/// The `value_store` is NO LONGER a parameter — it is created fresh per
+/// connection inside `handle_connection` to enforce session-scoped resolution.
 ///
 /// Returns when the accept loop encounters an unrecoverable error.
 pub async fn run_broker_server(
     session_id: &str,
     conn: Arc<Mutex<rusqlite::Connection>>,
-    value_store: Arc<Mutex<ValueStore>>,
+    session_id_uuid: Uuid,
+    initial_last_event_id: Uuid,
+    initial_last_event_hash: String,
 ) -> anyhow::Result<()> {
     // Approach A: tokio detects the leading NUL and calls from_abstract_name internally.
-    // Verified against tokio-1.52.3 source and confirmed by uds_abstract_spike.rs.
     let sock_path = format!("\0/agentos/{session_id}");
     let listener = tokio::net::UnixListener::bind(&sock_path)?;
 
     loop {
         let (stream, _addr) = listener.accept().await?;
         let conn_clone = conn.clone();
-        let store_clone = value_store.clone();
+        // Pass connection state by value — each connection owns its own chain state.
+        let initial_hash = initial_last_event_hash.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, conn_clone, store_clone).await {
+            if let Err(e) = handle_connection(
+                stream,
+                conn_clone,
+                session_id_uuid,
+                initial_last_event_id,
+                initial_hash,
+            )
+            .await
+            {
                 eprintln!("[brokerd] connection error: {e}");
             }
         });
     }
 }
 
-/// Handle one IPC connection: read a framed request, dispatch it, send the response.
+/// Handle one IPC connection: loop reading framed requests and dispatching them.
 ///
 /// Framing: 4-byte LE length prefix + JSON body.
 /// Guard: length > 64 KiB → reject with Error response, never allocate.
+///
+/// Owns a per-connection `ValueStore` (HARD-03: session-scoped resolution) and
+/// threads `last_event_id` / `last_event_hash` across every message so each
+/// appended event chains causally onto the previous one.
 async fn handle_connection(
     mut stream: tokio::net::UnixStream,
     conn: Arc<Mutex<rusqlite::Connection>>,
-    value_store: Arc<Mutex<ValueStore>>,
+    session_id: Uuid,
+    mut last_event_id: Uuid,
+    mut last_event_hash: String,
 ) -> anyhow::Result<()> {
-    // Read 4-byte LE length prefix
-    let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf).await?;
-    let msg_len = u32::from_le_bytes(len_buf) as usize;
+    // Per-connection ValueStore — scoped to this session ONLY (HARD-03 fix).
+    let mut value_store = ValueStore::default();
 
-    // T-03-08: guard before allocation — reject oversized messages
-    if msg_len > MAX_MSG_SIZE {
-        let resp = BrokerResponse::Error {
-            message: "message too large".into(),
-        };
-        send_response(&mut stream, &resp).await?;
-        return Ok(());
-    }
-
-    let mut body = vec![0u8; msg_len];
-    stream.read_exact(&mut body).await?;
-
-    // Deserialize — serde errors → Error response, never panic (T-03-08)
-    let request = match serde_json::from_slice::<BrokerRequest>(&body) {
-        Ok(req) => req,
-        Err(e) => {
-            // T-03-09: log detail internally, send generic message to caller
-            eprintln!("[brokerd] deserialize error: {e}");
-            let resp = BrokerResponse::Error {
-                message: "invalid request".into(),
-            };
-            send_response(&mut stream, &resp).await?;
-            return Ok(());
+    loop {
+        // Read 4-byte LE length prefix; clean EOF ends the connection loop.
+        let mut len_buf = [0u8; 4];
+        match stream.read_exact(&mut len_buf).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(e.into()),
         }
-    };
+        let msg_len = u32::from_le_bytes(len_buf) as usize;
 
-    let response = dispatch(request, &conn, &value_store);
-    send_response(&mut stream, &response).await?;
+        // T-03-08: guard before allocation — reject oversized messages.
+        if msg_len > MAX_MSG_SIZE {
+            send_response(
+                &mut stream,
+                &BrokerResponse::Error {
+                    message: "message too large".into(),
+                },
+            )
+            .await?;
+            break;
+        }
+
+        let mut body = vec![0u8; msg_len];
+        stream.read_exact(&mut body).await?;
+
+        // Deserialize — serde errors → generic Error response, never panic (T-03-08/09).
+        let request = match serde_json::from_slice::<BrokerRequest>(&body) {
+            Ok(req) => req,
+            Err(e) => {
+                eprintln!("[brokerd] deserialize error: {e}");
+                send_response(
+                    &mut stream,
+                    &BrokerResponse::Error {
+                        message: "invalid request".into(),
+                    },
+                )
+                .await?;
+                break;
+            }
+        };
+
+        dispatch_request(
+            request,
+            &mut stream,
+            &conn,
+            session_id,
+            &mut last_event_id,
+            &mut last_event_hash,
+            &mut value_store,
+        )
+        .await?;
+    }
     Ok(())
 }
 
-/// Dispatch a BrokerRequest and return the appropriate BrokerResponse.
+/// Dispatch a single `BrokerRequest`, writing its response to `stream`.
 ///
-/// DB writes are wrapped in a synchronous lock block (no await while holding
-/// the mutex — safe to use std::sync::Mutex in async context).
-fn dispatch(
+/// Extracted from the accept loop (RESEARCH Pitfall 6) so individual arms are
+/// unit-testable against a `UnixStream::pair()` without binding a real socket.
+///
+/// `last_event_id` / `last_event_hash` are advanced (after a successful append)
+/// by every arm that records an event, preserving the causal chain.
+pub async fn dispatch_request(
     request: BrokerRequest,
+    stream: &mut tokio::net::UnixStream,
     conn: &Arc<Mutex<rusqlite::Connection>>,
-    value_store: &Arc<Mutex<ValueStore>>,
-) -> BrokerResponse {
+    session_id: Uuid,
+    last_event_id: &mut Uuid,
+    last_event_hash: &mut String,
+    value_store: &mut ValueStore,
+) -> anyhow::Result<()> {
     match request {
         BrokerRequest::CreateSession { intent_id } => {
+            // Session-independent: mints its own fresh session (parent_id None);
+            // does NOT thread the connection chain.
             let session = create_session(intent_id);
-            let session_id = session.id;
+            let new_session_id = session.id;
 
-            // Build the session_created audit event
             let event = Event {
                 id: Uuid::new_v4(),
                 parent_id: None,
-                session_id,
+                session_id: new_session_id,
                 actor: "broker".into(),
                 event_type: "session_created".into(),
                 timestamp: Utc::now(),
                 taint: vec![],
             };
 
-            // Lock, persist, append — lock released before response is sent
             let result: anyhow::Result<()> = match conn.lock() {
                 Ok(locked) => persist_session(&locked, &session)
                     .and_then(|_| append_event(&locked, &event, None).map(|_| ())),
@@ -168,68 +222,153 @@ fn dispatch(
             };
 
             match result {
-                Ok(_) => BrokerResponse::SessionCreated { session_id },
+                Ok(_) => {
+                    send_response(
+                        stream,
+                        &BrokerResponse::SessionCreated {
+                            session_id: new_session_id,
+                        },
+                    )
+                    .await?;
+                }
                 Err(e) => {
-                    // T-03-09: internal detail logged, generic message to worker
                     eprintln!("[brokerd] CreateSession error: {e}");
-                    BrokerResponse::Error {
-                        message: "internal error".into(),
-                    }
+                    send_response(
+                        stream,
+                        &BrokerResponse::Error {
+                            message: "internal error".into(),
+                        },
+                    )
+                    .await?;
                 }
             }
         }
 
-        // RequestFd, ReportRead, and ReportClaims are not wired in this server
-        // dispatch path until Plan 05 rewrites handle_connection.
-        // ReportClaims is stubbed here to keep the match exhaustive after the
-        // additive proto.rs change in Plan 01 (Plan 02 wires the real handler).
-        BrokerRequest::RequestFd { .. }
-        | BrokerRequest::ReportRead { .. }
-        | BrokerRequest::ReportClaims { .. } => {
-            BrokerResponse::Error {
-                message: "not wired until Plan 05".into(),
-            }
-        }
+        BrokerRequest::RequestFd { path } => {
+            // Broker opens the file — broker has ambient fs access.
+            let file = std::fs::File::open(&path)
+                .with_context(|| format!("broker: open {path}"))?;
+            let file_fd = file.as_raw_fd();
 
-        BrokerRequest::SubmitPlanNode { session_id, plan_node } => {
-            // executor::submit_plan_node is a pure fn — resolves ValueIds from the
-            // trusted store and returns a decision. No DB lock needed for the
-            // decision itself.
-            //
-            // Lock the value store (no await while holding): the executor is
-            // synchronous and the lock is released before we return the response.
-            let decision = match value_store.lock() {
-                Ok(store) => executor::submit_plan_node(session_id, &plan_node, &store),
-                Err(e) => {
-                    // T-03-09: log internal detail; return generic message upward
-                    eprintln!("[brokerd] SubmitPlanNode: value_store mutex poisoned: {e}");
-                    return BrokerResponse::Error {
-                        message: "internal error".into(),
-                    };
-                }
+            // Append fd_granted Event — causal parent is the prior event (not None).
+            let fd_event_id = Uuid::new_v4();
+            let fd_event = Event {
+                id: fd_event_id,
+                parent_id: Some(*last_event_id),
+                session_id,
+                actor: "broker".into(),
+                event_type: "fd_granted".into(),
+                timestamp: Utc::now(),
+                taint: vec![],
+            };
+            let fd_hash = {
+                let locked = conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                append_event(&locked, &fd_event, Some(last_event_hash))
+                    .context("append fd_granted")?
             };
 
-            // Append a plan_node_evaluated audit Event to the DAG (best-effort;
-            // an audit write failure does not change the decision — the Block or
-            // Allow still holds).
-            let eval_event = Event {
+            // pass_fd is blocking (sendmsg) — MUST use spawn_blocking (RESEARCH Pitfall 2).
+            let sock_fd = stream.as_raw_fd();
+            tokio::task::spawn_blocking(move || {
+                let result = pass_fd(sock_fd, file_fd).map_err(|e| anyhow::anyhow!("pass_fd: {e}"));
+                drop(file); // close broker's copy after sendmsg completes
+                result
+            })
+            .await
+            .context("spawn_blocking pass_fd")??;
+
+            send_response(stream, &BrokerResponse::FdGranted).await?;
+
+            // Advance the chain ONLY after the append + fd-pass succeeded.
+            *last_event_id = fd_event_id;
+            *last_event_hash = fd_hash;
+        }
+
+        BrokerRequest::ReportClaims { claims } => {
+            // Mint one genuinely-tainted ValueRecord per typed claim.
+            // mint_from_read is the SOLE taint-mint site — NEVER call ValueStore::mint
+            // directly on the live path (taint stapling fails §9, T-04-03/T-05-05).
+            let mut value_ids = Vec::new();
+            for claim in claims {
+                match claim {
+                    WorkerClaim::EmailAddress(addr) => {
+                        let quarantine_claim = Claim {
+                            claim_type: "email_address".into(),
+                            value: addr,
+                        };
+                        let (read_event_id, read_hash, value_id) = {
+                            let locked = conn
+                                .lock()
+                                .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                            mint_from_read(
+                                &locked,
+                                value_store,
+                                session_id,
+                                &quarantine_claim,
+                                Some(last_event_hash),
+                            )?
+                        };
+                        *last_event_id = read_event_id;
+                        *last_event_hash = read_hash;
+                        value_ids.push(value_id);
+                    } // Exhaustive enum: any future variant fails closed at deserialize.
+                }
+            }
+            send_response(stream, &BrokerResponse::ClaimsReceived { value_ids }).await?;
+        }
+
+        BrokerRequest::SubmitPlanNode { plan_node } => {
+            // session_id comes from the connection — NEVER from the IPC message (HARD-03).
+            let decision = executor::submit_plan_node(session_id, &plan_node, value_store);
+
+            // Durably record the decision BEFORE returning any response (ACC-02).
+            // Fail-closed: an append error propagates with `?`, so the block is
+            // NEVER reported to the worker as having succeeded.
+            let event_type = match &decision {
+                runtime_core::ExecutorDecision::BlockedPendingConfirmation { .. } => "sink_blocked",
+                _ => "plan_node_evaluated",
+            };
+            let audit_event = Event {
                 id: Uuid::new_v4(),
-                parent_id: None,
+                parent_id: Some(*last_event_id), // causal parent preserved — not None
                 session_id,
                 actor: "executor".into(),
-                event_type: "plan_node_evaluated".into(),
+                event_type: event_type.into(),
                 timestamp: Utc::now(),
-                taint: vec![], // evaluation event itself carries no taint
+                taint: vec![],
             };
-            if let Ok(locked) = conn.lock() {
-                if let Err(e) = append_event(&locked, &eval_event, None) {
-                    eprintln!("[brokerd] plan_node_evaluated audit append failed: {e}");
-                }
-            }
+            let new_hash = {
+                let locked = conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                append_event(&locked, &audit_event, Some(last_event_hash)).map_err(|e| {
+                    eprintln!("[brokerd] {event_type} audit append FAILED (fail-closed): {e}");
+                    anyhow::anyhow!("audit append failed: {e}")
+                })?
+            };
+            *last_event_id = audit_event.id;
+            *last_event_hash = new_hash;
 
-            BrokerResponse::PlanNodeDecision { decision }
+            // Only send the decision AFTER the durable append succeeded.
+            send_response(stream, &BrokerResponse::PlanNodeDecision { decision }).await?;
+        }
+
+        BrokerRequest::ReportRead { .. } => {
+            // Deprecated: the live taint path is ReportClaims (typed extracts).
+            // The variant remains in proto for wire compatibility but is no longer
+            // a live broker path — direct callers to ReportClaims.
+            send_response(
+                stream,
+                &BrokerResponse::Error {
+                    message: "ReportRead is deprecated — use ReportClaims".into(),
+                },
+            )
+            .await?;
         }
     }
+    Ok(())
 }
 
 /// Write a framed BrokerResponse to the stream (4-byte LE length + JSON body).

@@ -17,7 +17,6 @@ mod linux_tests {
     use brokerd::audit::open_audit_db;
     use brokerd::proto::{BrokerRequest, BrokerResponse};
     use brokerd::server::run_broker_server;
-    use executor::value_store::ValueStore;
     use rusqlite::Connection;
     use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -57,9 +56,17 @@ mod linux_tests {
 
         let conn_clone = conn.clone();
         let session_id_clone = server_session_id.clone();
-        let value_store = Arc::new(Mutex::new(ValueStore::default()));
         let server_handle = tokio::spawn(async move {
-            let _ = run_broker_server(&session_id_clone, conn_clone, value_store).await;
+            // CreateSession path is session-independent; the chain-state args are unused
+            // by it, so fresh placeholders are fine here.
+            let _ = run_broker_server(
+                &session_id_clone,
+                conn_clone,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                String::new(),
+            )
+            .await;
         });
 
         // Yield once so the server task executes through bind() and into accept().await
@@ -96,9 +103,15 @@ mod linux_tests {
 
         let conn_clone = conn.clone();
         let session_id_clone = server_session_id.clone();
-        let value_store = Arc::new(Mutex::new(ValueStore::default()));
         let server_handle = tokio::spawn(async move {
-            let _ = run_broker_server(&session_id_clone, conn_clone, value_store).await;
+            let _ = run_broker_server(
+                &session_id_clone,
+                conn_clone,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                String::new(),
+            )
+            .await;
         });
 
         tokio::task::yield_now().await;
