@@ -154,7 +154,7 @@ The broker enforces a maximum IPC message size of **64 KiB** (`MAX_MSG_SIZE` con
 |-------------|---------|-------|
 | Operating system (enforcement) | Linux ≥ 5.13 | Landlock ABI::V1 minimum. ABI::V3 (full feature set) requires Linux ≥ 5.19. |
 | Root / elevated privileges | None | The confinement stack is fully unprivileged. |
-| Rust toolchain | <!-- VERIFY: minimum stable Rust version required --> | No `rust-toolchain.toml` or `rust-version` field detected in workspace `Cargo.toml`. |
+| Rust toolchain | Recent stable | No version is pinned (`Cargo.toml` uses edition 2021); any recent stable `rustup` toolchain builds the workspace. |
 | Operating system (build/compile) | macOS or Linux | Cross-compiles cleanly; confinement code is cfg-gated. |
 
 ---
@@ -181,6 +181,6 @@ docker run --rm \
 | `--security-opt seccomp=unconfined` | Required. Docker's default seccomp profile blocks `landlock()` and `seccomp()` syscalls. `unconfined` allows them. |
 | `-e CARGO_TARGET_DIR=/tmp/lt` | Keeps Linux build artifacts inside the container (`/tmp/lt`), separate from the macOS host `target/` directory. |
 | `--privileged` | **Not used.** The confinement stack does not require root or elevated container privileges. |
-| `rust:1` | Official Rust Docker image (latest stable). <!-- VERIFY: whether a pinned tag is required or if `rust:1` is always sufficient --> |
+| `rust:1` | Official Rust Docker image, latest stable 1.x. Unpinned by design; pin to a specific tag (e.g. `rust:1.82`) only if/when CI needs reproducible builds. |
 
 Abstract-namespace UDS sockets (`\0/agentos/<session-id>`) used for broker IPC are Linux-only and function correctly inside the container.

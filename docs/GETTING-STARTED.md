@@ -32,8 +32,8 @@ All v0 security claims rest on Linux kernel primitives (Landlock, seccomp-bpf, a
 ## Clone and build
 
 ```bash
-git clone https://github.com/agentos/agentos.git   # <!-- VERIFY: repository remote URL -->
-cd AgentOS
+git clone https://github.com/thebenlamm/caprun.git
+cd caprun
 cargo build --workspace
 ```
 
