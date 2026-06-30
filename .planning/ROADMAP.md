@@ -25,7 +25,7 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 
 **Milestone goal:** Turn the proven-in-tests value-injection defense into a real `caprun` run — a deterministic scripted planner turns an intent into PlanNodes, a confined worker drives toward a real `file.create` sink, and the deterministic I2 block fires on a genuine taint chain (with a clean, broker-minted allow-path too). Runtime assembly only — no new capability surface.
 
-- [ ] **Phase 5: Runtime Spine & Live §9 Email Block** - Collapse dual dispatch, land session-scoped handle model, and prove live §9 block with durable blocked-path audit through the email.send stub
+- [x] **Phase 5: Runtime Spine & Live §9 Email Block** - Collapse dual dispatch, land session-scoped handle model, and prove live §9 block with durable blocked-path audit through the email.send stub (completed 2026-06-30)
 - [ ] **Phase 6: Deterministic Planner & Intent Input** - Typed intent → PlanNode planner with broker-minted trusted values for the clean allow-path
 - [ ] **Phase 7: file.create Sink, Enforcement Hardening & Full Acceptance** - Real hardened sink, closed enforcement edge cases, full live §9 acceptance contract green
 
@@ -45,7 +45,7 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
   5. `ValueRecord`s are session-scoped: the broker connection is bound to its session, a handle minted in one session is denied in another, and a request-supplied `session_id` is never trusted for resolution
   6. A real `caprun` invocation on hostile input produces a durable causal `sink_blocked` event — causal parent preserved, append-failure fails closed — and the CLI exits non-success before any effect executes; the block is durable before the CLI returns
 
-**Plans**: 3/4 plans executed
+**Plans**: 4/4 plans complete
 **Wave 1**
 
 - [x] 05-01-PLAN.md — Additive IPC protocol types (WorkerClaim/ReportClaims/ClaimsReceived) + fail-closed serde tests [wave 1]
@@ -60,7 +60,7 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 05-04-PLAN.md — Live §9 block e2e (hostile → durable causal sink_blocked, non-success exit) + phase gate [wave 4]
+- [x] 05-04-PLAN.md — Live §9 block e2e (hostile → durable causal sink_blocked, non-success exit) + phase gate [wave 4]
 
 ### Phase 6: Deterministic Planner & Intent Input
 
@@ -102,6 +102,6 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 | 2. Security Design Gate | v1.0 | 3/3 | Complete | 2026-06-29 |
 | 3. Confinement & Mediation Substrate | v1.0 | 5/5 | Complete | 2026-06-29 |
 | 4. Value-Injection Security Demo (v0 DONE) | v1.0 | 5/5 | Complete | 2026-06-30 |
-| 5. Runtime Spine & Live §9 Email Block | v1.1 | 3/4 | In Progress|  |
+| 5. Runtime Spine & Live §9 Email Block | v1.1 | 4/4 | Complete   | 2026-06-30 |
 | 6. Deterministic Planner & Intent Input | v1.1 | 0/TBD | Not started | - |
 | 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 0/TBD | Not started | - |
