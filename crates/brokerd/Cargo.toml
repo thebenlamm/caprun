@@ -19,6 +19,7 @@ chrono       = { workspace = true }
 
 [dev-dependencies]
 runtime-core = { path = "../runtime-core" }
+executor     = { path = "../executor" }
 rusqlite     = { workspace = true }
 uuid         = { workspace = true }
 chrono       = { workspace = true }

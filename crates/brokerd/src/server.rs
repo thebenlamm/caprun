@@ -43,6 +43,7 @@ use crate::audit::append_event;
 use crate::proto::{BrokerRequest, BrokerResponse};
 use crate::session::{create_session, persist_session};
 use chrono::Utc;
+use executor::value_store::ValueStore;
 use runtime_core::Event;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -61,13 +62,16 @@ const MAX_MSG_SIZE: usize = 64 * 1024;
 /// loop and spawns a task per connection.
 ///
 /// # Arguments
-/// * `session_id` — unique string used as the socket name suffix.
-/// * `conn` — shared, mutex-protected SQLite connection for session + audit writes.
+/// * `session_id`   — unique string used as the socket name suffix.
+/// * `conn`         — shared, mutex-protected SQLite connection for session + audit writes.
+/// * `value_store`  — shared, mutex-protected broker-owned ValueStore for I2 enforcement.
+///                    Threaded here from the broker startup path (DEC-architectural-lock).
 ///
 /// Returns when the accept loop encounters an unrecoverable error.
 pub async fn run_broker_server(
     session_id: &str,
     conn: Arc<Mutex<rusqlite::Connection>>,
+    value_store: Arc<Mutex<ValueStore>>,
 ) -> anyhow::Result<()> {
     // Approach A: tokio detects the leading NUL and calls from_abstract_name internally.
     // Verified against tokio-1.52.3 source and confirmed by uds_abstract_spike.rs.
@@ -77,8 +81,9 @@ pub async fn run_broker_server(
     loop {
         let (stream, _addr) = listener.accept().await?;
         let conn_clone = conn.clone();
+        let store_clone = value_store.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, conn_clone).await {
+            if let Err(e) = handle_connection(stream, conn_clone, store_clone).await {
                 eprintln!("[brokerd] connection error: {e}");
             }
         });
@@ -92,6 +97,7 @@ pub async fn run_broker_server(
 async fn handle_connection(
     mut stream: tokio::net::UnixStream,
     conn: Arc<Mutex<rusqlite::Connection>>,
+    value_store: Arc<Mutex<ValueStore>>,
 ) -> anyhow::Result<()> {
     // Read 4-byte LE length prefix
     let mut len_buf = [0u8; 4];
@@ -124,7 +130,7 @@ async fn handle_connection(
         }
     };
 
-    let response = dispatch(request, &conn);
+    let response = dispatch(request, &conn, &value_store);
     send_response(&mut stream, &response).await?;
     Ok(())
 }
@@ -133,7 +139,11 @@ async fn handle_connection(
 ///
 /// DB writes are wrapped in a synchronous lock block (no await while holding
 /// the mutex — safe to use std::sync::Mutex in async context).
-fn dispatch(request: BrokerRequest, conn: &Arc<Mutex<rusqlite::Connection>>) -> BrokerResponse {
+fn dispatch(
+    request: BrokerRequest,
+    conn: &Arc<Mutex<rusqlite::Connection>>,
+    value_store: &Arc<Mutex<ValueStore>>,
+) -> BrokerResponse {
     match request {
         BrokerRequest::CreateSession { intent_id } => {
             let session = create_session(intent_id);
@@ -176,12 +186,44 @@ fn dispatch(request: BrokerRequest, conn: &Arc<Mutex<rusqlite::Connection>>) -> 
             }
         }
 
-        // SubmitPlanNode dispatch is wired in Plan 04 (executor integration).
-        // The variant is declared here (closing RESEARCH Gap 3) but the taint
-        // evaluation + ConfirmationPrompt path is connected in the next plan.
-        BrokerRequest::SubmitPlanNode { .. } => BrokerResponse::Error {
-            message: "SubmitPlanNode not wired until Plan 04".into(),
-        },
+        BrokerRequest::SubmitPlanNode { session_id, plan_node } => {
+            // executor::submit_plan_node is a pure fn — resolves ValueIds from the
+            // trusted store and returns a decision. No DB lock needed for the
+            // decision itself.
+            //
+            // Lock the value store (no await while holding): the executor is
+            // synchronous and the lock is released before we return the response.
+            let decision = match value_store.lock() {
+                Ok(store) => executor::submit_plan_node(session_id, &plan_node, &store),
+                Err(e) => {
+                    // T-03-09: log internal detail; return generic message upward
+                    eprintln!("[brokerd] SubmitPlanNode: value_store mutex poisoned: {e}");
+                    return BrokerResponse::Error {
+                        message: "internal error".into(),
+                    };
+                }
+            };
+
+            // Append a plan_node_evaluated audit Event to the DAG (best-effort;
+            // an audit write failure does not change the decision — the Block or
+            // Allow still holds).
+            let eval_event = Event {
+                id: Uuid::new_v4(),
+                parent_id: None,
+                session_id,
+                actor: "executor".into(),
+                event_type: "plan_node_evaluated".into(),
+                timestamp: Utc::now(),
+                taint: vec![], // evaluation event itself carries no taint
+            };
+            if let Ok(locked) = conn.lock() {
+                if let Err(e) = append_event(&locked, &eval_event, None) {
+                    eprintln!("[brokerd] plan_node_evaluated audit append failed: {e}");
+                }
+            }
+
+            BrokerResponse::PlanNodeDecision { decision }
+        }
     }
 }
 
