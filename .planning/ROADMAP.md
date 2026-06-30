@@ -185,4 +185,4 @@ requires both Phase 2 and Phase 3.
 | 1. Substrate Foundation | 2/2 | Complete    | 2026-06-29 |
 | 2. Security Design Gate | 3/3 | Complete    | 2026-06-29 |
 | 3. Confinement & Mediation Substrate | 5/5 | Complete    | 2026-06-29 |
-| 4. Value-Injection Security Demo (v0 DONE) | 5/5 | Complete   | 2026-06-30 |
+| 4. Value-Injection Security Demo (v0 DONE) | 5/5 | Complete    | 2026-06-30 |

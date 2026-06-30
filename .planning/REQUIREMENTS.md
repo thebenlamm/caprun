@@ -58,24 +58,24 @@ Runs in **parallel** with Substrate (M0).
 
 ### Security Demo (M1 = v0 DONE)
 
-- [ ] **REQ-quarantined-reader**: Quarantined reader worker producing
+- [x] **REQ-quarantined-reader**: Quarantined reader worker producing
       genuinely-tainted typed extracts. *Done when:* the worker reads hostile
       input → emits a ValueNode; taint originates from the read Event (never
       hand-set).
 
-- [ ] **REQ-executor-stub**: `executor` stub — deterministic I2 interpreter.
+- [x] **REQ-executor-stub**: `executor` stub — deterministic I2 interpreter.
       *Done when:* it walks the PlanNode DAG with I2 hardcoded and monotonic
       taint propagation through edges.
 
-- [ ] **REQ-mediated-sink-stub**: Mediated sink stub (e.g. `email.send`) with a
+- [x] **REQ-mediated-sink-stub**: Mediated sink stub (e.g. `email.send`) with a
       sensitive `to` argument. *Done when:* the sink sensitivity map is
       hardcoded in v0 — no policy/schema system yet.
 
-- [ ] **REQ-approval-hook**: Approval hook for human confirmation of sensitive
+- [x] **REQ-approval-hook**: Approval hook for human confirmation of sensitive
       sink args. *Done when:* FAMP delivery; the prompt shows the literal value
       to confirm.
 
-- [ ] **REQ-s9-acceptance-test**: Automated integration test running the §9
+- [x] **REQ-s9-acceptance-test**: Automated integration test running the §9
       scenario end-to-end with a genuine taint chain — the single gate for v0
       DONE. *Done when:* (1) the reader emits a schema-valid typed extract as a
       ValueNode and the planner never sees the raw sentence; (2) taint is genuine
@@ -133,11 +133,11 @@ Explicitly excluded from v0 to prevent scope creep.
 | REQ-brokerd-core | Phase 3 | Complete |
 | REQ-adapters-fs | Phase 3 | Complete |
 | REQ-substrate-demo | Phase 3 | Complete |
-| REQ-quarantined-reader | Phase 4 | Pending |
-| REQ-executor-stub | Phase 4 | Pending |
-| REQ-mediated-sink-stub | Phase 4 | Pending |
-| REQ-approval-hook | Phase 4 | Pending |
-| REQ-s9-acceptance-test | Phase 4 | Pending |
+| REQ-quarantined-reader | Phase 4 | Complete |
+| REQ-executor-stub | Phase 4 | Complete |
+| REQ-mediated-sink-stub | Phase 4 | Complete |
+| REQ-approval-hook | Phase 4 | Complete |
+| REQ-s9-acceptance-test | Phase 4 | Complete |
 
 **Coverage:**
 
