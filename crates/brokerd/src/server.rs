@@ -175,6 +175,13 @@ fn dispatch(request: BrokerRequest, conn: &Arc<Mutex<rusqlite::Connection>>) -> 
                 message: "not wired until Plan 05".into(),
             }
         }
+
+        // SubmitPlanNode dispatch is wired in Plan 04 (executor integration).
+        // The variant is declared here (closing RESEARCH Gap 3) but the taint
+        // evaluation + ConfirmationPrompt path is connected in the next plan.
+        BrokerRequest::SubmitPlanNode { .. } => BrokerResponse::Error {
+            message: "SubmitPlanNode not wired until Plan 04".into(),
+        },
     }
 }
 
