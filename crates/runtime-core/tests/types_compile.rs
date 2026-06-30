@@ -1,15 +1,73 @@
 /// types_compile.rs — field-presence + serde round-trip test for all domain types
 ///
-/// Tests that every domain type (Intent, Session, Event, Artifact, ValueNode) constructs
-/// and round-trips through serde without panics. The taint invariant is the primary
-/// structural guarantee: ValueNode.taint must survive serialization.
+/// Tests that every domain type (Intent, Session, Event, Artifact, ValueNode, ValueId,
+/// PlanArg, ValueRecord) constructs and round-trips through serde without panics.
+/// The taint invariant is the primary structural guarantee: ValueNode.taint must survive
+/// serialization. The handle-model invariant: PlanArg carries ONLY a ValueId (no literal,
+/// no taint field) — the planner never touches broker-owned literals.
 use runtime_core::{
     Artifact, ArtifactRef, Effect, Event, ExecutorDecision, IrreversibleEffect, Intent,
-    IntentStatus, ObserveEffect, PlanNode, Provenance, ReversibleEffect, Session,
-    SessionStatus, SinkId, TaintLabel, ValueNode,
+    IntentStatus, ObserveEffect, PlanArg, PlanNode, Provenance, ReversibleEffect, Session,
+    SessionStatus, SinkId, TaintLabel, ValueId, ValueNode, ValueRecord,
 };
 use uuid::Uuid;
 use chrono::Utc;
+
+#[test]
+fn value_id_is_opaque_handle_with_no_literal_or_taint() {
+    // PlanArg carries only a ValueId — no literal, no taint field.
+    // This is the core invariant of the handle model (T-04-02 mitigation).
+    let vid = ValueId::new();
+    let arg = PlanArg {
+        name: "to".to_string(),
+        value_id: vid.clone(),
+    };
+    assert_eq!(arg.name, "to");
+    assert_eq!(arg.value_id, vid);
+    // PlanArg has no .literal or .taint fields — the types enforce this statically.
+}
+
+#[test]
+fn value_id_serde_round_trip() {
+    let original = ValueId::new();
+    let json = serde_json::to_string(&original).expect("ValueId serializes");
+    let restored: ValueId = serde_json::from_str(&json).expect("ValueId deserializes");
+    assert_eq!(original, restored, "ValueId serde round-trip must be lossless");
+}
+
+#[test]
+fn value_record_carries_literal_taint_provenance_chain() {
+    // ValueRecord is broker-owned and carries the full picture including provenance chain.
+    let event_id = Uuid::new_v4();
+    let record = ValueRecord {
+        id: ValueId::new(),
+        literal: "attacker@evil.example".to_string(),
+        taint: vec![TaintLabel::EmailRaw, TaintLabel::ExternalUntrusted],
+        provenance_chain: vec![event_id],
+    };
+    assert_eq!(record.taint.len(), 2);
+    assert_eq!(record.provenance_chain[0], event_id);
+
+    let json = serde_json::to_string(&record).expect("ValueRecord serializes");
+    let restored: ValueRecord = serde_json::from_str(&json).expect("ValueRecord deserializes");
+    assert_eq!(record, restored, "ValueRecord serde round-trip must be lossless");
+    // provenance_chain[0] MUST equal the originating file_read Event id.
+    assert_eq!(restored.provenance_chain[0], event_id);
+}
+
+#[test]
+fn provenance_has_provenance_chain_field() {
+    // Provenance gains provenance_chain: Vec<uuid::Uuid> for the ordered derivation edges.
+    let event_id = Uuid::new_v4();
+    let prov = Provenance {
+        source_event_id: Some(event_id),
+        source_artifact_id: None,
+        description: "file_read provenance".to_string(),
+        provenance_chain: vec![event_id],
+    };
+    assert_eq!(prov.provenance_chain.len(), 1);
+    assert_eq!(prov.provenance_chain[0], event_id);
+}
 
 #[test]
 fn value_node_taint_survives_serde_round_trip() {
@@ -19,6 +77,7 @@ fn value_node_taint_survives_serde_round_trip() {
             source_event_id: Some(Uuid::new_v4()),
             source_artifact_id: None,
             description: "parsed from external email body".to_string(),
+            provenance_chain: vec![],
         },
         taint: vec![TaintLabel::EmailRaw, TaintLabel::ExternalUntrusted],
     };
@@ -107,20 +166,18 @@ fn artifact_ref_constructs() {
 
 #[test]
 fn all_domain_types_compose_in_a_plan_node() {
-    // Build a plan node carrying a tainted email address
+    // Build a plan node carrying an opaque handle (PlanArg) — no literal, no taint in PlanNode.
+    // The broker-owned ValueRecord carries the literal+taint+provenance_chain separately.
+    let value_id = ValueId::new();
     let plan_node = PlanNode {
         sink: SinkId("email.send".to_string()),
-        args: vec![ValueNode {
-            literal: serde_json::json!("attacker@evil.example"),
-            provenance: Provenance {
-                source_event_id: Some(Uuid::new_v4()),
-                source_artifact_id: None,
-                description: "extracted from external email".to_string(),
-            },
-            taint: vec![TaintLabel::EmailRaw, TaintLabel::ExternalUntrusted],
+        args: vec![PlanArg {
+            name: "to".to_string(),
+            value_id: value_id.clone(),
         }],
     };
-    assert_eq!(plan_node.args[0].taint.len(), 2);
+    assert_eq!(plan_node.args[0].name, "to");
+    assert_eq!(plan_node.args[0].value_id, value_id);
 
     // The executor stub returns NotImplemented (typed, not panic)
     let decision = ExecutorDecision::NotImplemented;

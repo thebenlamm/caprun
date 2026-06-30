@@ -1,7 +1,7 @@
 /// Task 2 TDD: field-presence + serde round-trip for ValueNode, Effect, ExecutorDecision
 use runtime_core::{
     ExecutorDecision, Effect, ObserveEffect, ReversibleEffect, IrreversibleEffect,
-    PlanNode, ValueNode, SinkId, TaintLabel, Provenance,
+    PlanArg, PlanNode, ValueId, ValueNode, SinkId, TaintLabel, Provenance,
 };
 
 #[test]
@@ -12,6 +12,7 @@ fn value_node_has_literal_provenance_taint_fields() {
             source_event_id: None,
             source_artifact_id: None,
             description: "unit test".to_string(),
+            provenance_chain: vec![],
         },
         taint: vec![TaintLabel::UserTrusted],
     };
@@ -29,6 +30,7 @@ fn value_node_serde_round_trip_preserves_taint() {
             source_event_id: None,
             source_artifact_id: None,
             description: "provenance test".to_string(),
+            provenance_chain: vec![],
         },
         taint: vec![TaintLabel::ExternalUntrusted, TaintLabel::LlmGenerated],
     };
@@ -76,18 +78,15 @@ fn executor_decision_has_all_variants() {
 
 #[test]
 fn plan_node_construction() {
+    // PlanNode.args is now Vec<PlanArg> — the planner holds only opaque ValueId handles.
     let node = PlanNode {
         sink: SinkId("email.send".to_string()),
-        args: vec![ValueNode {
-            literal: serde_json::json!("test@example.com"),
-            provenance: Provenance {
-                source_event_id: None,
-                source_artifact_id: None,
-                description: "direct input".to_string(),
-            },
-            taint: vec![TaintLabel::UserTrusted],
+        args: vec![PlanArg {
+            name: "to".to_string(),
+            value_id: ValueId::new(),
         }],
     };
     assert_eq!(node.sink.0, "email.send");
     assert_eq!(node.args.len(), 1);
+    assert_eq!(node.args[0].name, "to");
 }
