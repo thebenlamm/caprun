@@ -155,11 +155,11 @@ passing — with a genuine, audited taint chain — **is v0 DONE.**
      reader had no send cap, the sender never saw raw text, and an unbroken taint
      edge from the raw-read Event to the blocked sink argument. If taint is
      stapled at the sink instead of propagated, the test fails.
-**Plans**: 5 plans
+**Plans**: 1/5 plans executed
 
 **Wave 1** *(foundation — runtime-core handle-model types)*
 
-- [ ] 04-01-PLAN.md — runtime-core ValueId/PlanArg/ValueRecord, PlanNode.args→Vec&lt;PlanArg&gt;, provenance_chain, extended Block payload; repair all callers (REQ-executor-stub)
+- [x] 04-01-PLAN.md — runtime-core ValueId/PlanArg/ValueRecord, PlanNode.args→Vec&lt;PlanArg&gt;, provenance_chain, extended Block payload; repair all callers (REQ-executor-stub)
 
 **Wave 2** *(parallel implementation, blocked on Wave 1)*
 
@@ -185,4 +185,4 @@ requires both Phase 2 and Phase 3.
 | 1. Substrate Foundation | 2/2 | Complete    | 2026-06-29 |
 | 2. Security Design Gate | 3/3 | Complete    | 2026-06-29 |
 | 3. Confinement & Mediation Substrate | 5/5 | Complete    | 2026-06-29 |
-| 4. Value-Injection Security Demo (v0 DONE) | 0/5 | Not started | - |
+| 4. Value-Injection Security Demo (v0 DONE) | 1/5 | In Progress|  |
