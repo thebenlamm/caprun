@@ -26,11 +26,11 @@ genuine taint chain must hold.**
 
 Tracked in detail in `.planning/REQUIREMENTS.md`. Summary of v0 scope:
 
-- [ ] Substrate (M0): runtime-core, sandbox, brokerd, fs adapter, substrate
+- [x] Substrate (M0): runtime-core, sandbox, brokerd, fs adapter, substrate
       demo, locked plan-node API
-- [ ] Design gate (M0-design): DESIGN-taint-model.md, DESIGN-plan-executor.md
+- [x] Design gate (M0-design): DESIGN-taint-model.md, DESIGN-plan-executor.md
       (hard gate before any executor code)
-- [ ] Security demo (M1 = v0 DONE): quarantined reader, executor stub, mediated
+- [x] Security demo (M1 = v0 DONE): quarantined reader, executor stub, mediated
       sink stub, approval hook, §9 value-injection acceptance test
 
 **v0 DONE gate:** Only the §9 acceptance test passing — on a kernel-confined
@@ -195,4 +195,4 @@ Python OK for non-TCB experiments only.
 | §9 with genuine taint = the only v0-DONE gate | Substrate proves mediation but not value-injection defense; stapled taint proves nothing | — Locked |
 
 ---
-*Last updated: 2026-06-29 after net-new bootstrap from ingest synthesis.*
+*Last updated: 2026-06-30 — Phase 4 complete; §9 acceptance test passes with a genuine, audited taint chain. **v0 is DONE.***
