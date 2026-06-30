@@ -36,20 +36,42 @@ pub struct ConfirmationPrompt {
 
 /// Build a literal-value confirmation prompt for a blocked plan node.
 ///
-/// # RED stub — implement in GREEN phase
+/// # Arguments
+/// * `literal_value`   — the exact literal string from the broker-owned ValueRecord.
+/// * `taint`           — taint labels carried by the blocked value.
+/// * `source_event_id` — the Event id of the file_read (or equivalent) that
+///                       introduced this value; the §9 test asserts this is the
+///                       same Event stored in the audit DAG.
+///
+/// # Canonicalisation (v0)
+/// Trims surrounding ASCII whitespace only. For the simple §9 case
+/// (`"accounts@ev1l.com"`) raw == canonical. Punycode/homoglyph/RTL
+/// normalisation are post-v0 extensions documented in DESIGN §Canonicalisation.
+///
+/// # Domain extraction
+/// Returns the portion after the last `@`. If no `@` is present (malformed
+/// address) the domain is the empty string.
+///
+/// # known_contact
+/// Always `false` in v0. Post-v0: look up in user-trusted contact store.
 pub fn build_confirmation_prompt(
-    _literal_value: String,
-    _taint: Vec<TaintLabel>,
-    _source_event_id: Uuid,
+    literal_value: String,
+    taint: Vec<TaintLabel>,
+    source_event_id: Uuid,
 ) -> ConfirmationPrompt {
-    // RED stub — returns wrong values so tests fail
+    let canonical_address = literal_value.trim().to_string();
+    let domain = canonical_address
+        .rfind('@')
+        .map(|pos| canonical_address[pos + 1..].to_string())
+        .unwrap_or_default();
+
     ConfirmationPrompt {
-        raw_recipient: String::new(),
-        canonical_address: String::new(),
-        domain: String::new(),
-        known_contact: true, // wrong — will fail known_contact assertion
-        source_event_id: Uuid::nil(),
-        taint: vec![],
+        raw_recipient: literal_value,
+        canonical_address,
+        domain,
+        known_contact: false,
+        source_event_id,
+        taint,
     }
 }
 

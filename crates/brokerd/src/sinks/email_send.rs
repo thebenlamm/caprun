@@ -13,8 +13,11 @@
 /// the FAMP confirmation wire and human-approval UX are production-hardened.
 
 use anyhow::Result;
-use runtime_core::PlanNode;
+use chrono::Utc;
+use runtime_core::{Event, PlanNode};
 use uuid::Uuid;
+
+use crate::audit;
 
 /// Record an `email_send_stub` Event in the audit DAG and return its hash.
 ///
@@ -30,14 +33,25 @@ use uuid::Uuid;
 /// # No raw literals in payload
 /// PlanNode.args carry only opaque ValueId handles — no literal recipient
 /// address — so the audit row does not repeat the hostile literal.
+/// The §9 held-out test never reaches this function because the executor
+/// blocks first; the stub is exercised by unit tests calling it directly.
 pub fn invoke_email_send_stub(
-    _conn: &rusqlite::Connection,
-    _session_id: Uuid,
-    _plan_node: &PlanNode,
-    _parent_hash: Option<&str>,
+    conn: &rusqlite::Connection,
+    session_id: Uuid,
+    plan_node: &PlanNode,
+    parent_hash: Option<&str>,
 ) -> Result<String> {
-    // RED stub — implement in GREEN phase
-    Err(anyhow::anyhow!("not implemented"))
+    let _ = plan_node; // Opaque handles only — not embedded in the event payload.
+    let event = Event {
+        id: Uuid::new_v4(),
+        parent_id: None,
+        session_id,
+        actor: "sink-stub:email.send".to_string(),
+        event_type: "email_send_stub".to_string(),
+        timestamp: Utc::now(),
+        taint: vec![], // Stub carries no taint — taint lives on the blocked ValueRecord.
+    };
+    audit::append_event(conn, &event, parent_hash)
 }
 
 #[cfg(test)]

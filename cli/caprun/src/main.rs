@@ -271,6 +271,14 @@ async fn handle_worker_connection(
                 })
                 .await?;
             }
+
+            // SubmitPlanNode dispatch is wired in Plan 04 (executor integration).
+            BrokerRequest::SubmitPlanNode { .. } => {
+                send_response(&mut stream, &BrokerResponse::Error {
+                    message: "SubmitPlanNode not wired until Plan 04".into(),
+                })
+                .await?;
+            }
         }
     }
     Ok(())
