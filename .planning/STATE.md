@@ -1,20 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-current_phase: 0
-status: Awaiting next milestone
-stopped_at: Bootstrapped all four planning artifacts from ingest synthesis (13 reqs, 4 phases, 100% coverage)
-last_updated: "2026-06-30T08:32:14.681Z"
+milestone: v1.1
+milestone_name: Usable Runtime — Live §9 from the CLI
+status: planning
+last_updated: "2026-06-30T17:17:35.778Z"
 last_activity: 2026-06-30
-last_activity_desc: Milestone v1.0 completed and archived
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 15
-  completed_plans: 15
-  percent: 100
-current_phase_name: value-injection-security-demo-v0-done
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -28,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-06-29)
 
 ## Current Position
 
-Phase: Milestone v1.0 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-30 — Milestone v1.0 completed and archived
+Status: Defining requirements
+Last activity: 2026-06-30 — Milestone v1.1 started
 
 ## Performance Metrics
 

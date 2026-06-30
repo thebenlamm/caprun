@@ -16,6 +16,39 @@ Event → ValueNode → sensitive sink argument) deterministically blocks
 value-injection at the sink. If everything else fails, **I2 enforcement on a
 genuine taint chain must hold.**
 
+## Current Milestone: v1.1 — Usable Runtime (Live §9 from the CLI)
+
+**Goal:** Turn the proven-in-tests value-injection defense into a real `caprun`
+run — a deterministic scripted planner turns an intent into PlanNodes, a confined
+worker drives toward a real `file.create` sink, and the deterministic I2 block
+fires on a genuine taint chain (with a clean, broker-minted allow-path too).
+**Runtime assembly only — no new capability surface** (Git/Cedar/etc. stay out).
+
+**Target features:**
+- Unify `caprun` onto the single `brokerd::server` dispatch path (kill the dual
+  request loop + the stale "SubmitPlanNode not wired" stub) — the milestone's spine.
+- Live §9 from the CLI: a real `caprun` run blocks a tainted routing-sensitive
+  sink arg through the unified path — proven first on the existing `email.send`
+  stub, then on `file.create`.
+- Deterministic non-LLM planner: typed intent enum → `PlanNode{sink, args}`,
+  emitting only `SinkId` + `ValueId` handles; broker-owned `mint_from_intent`
+  for the clean allow-path, separate from `mint_from_read`.
+- `file.create` sink: explicit arg schema, fail-closed on unknown sink/arg,
+  routing-sensitive path, `O_EXCL` exclusive create, workspace-dirfd + `openat2`
+  (RESOLVE_BENEATH/RESOLVE_NO_SYMLINKS) — I2 is not filesystem confinement.
+- Enforcement hardening surfaced by channel review: trusted-value taint semantics
+  (block over explicitly-untrusted labels, not "any taint"), session-scoped
+  handles, capability-restricted reads, crash-safe authorize-before-invoke audit.
+
+**Acceptance:** real Linux `caprun` — hostile input → typed path claim →
+`mint_from_read` → `file.create` blocked (no file written); a second run with a
+broker-minted trusted path creates the exact file under the workspace root; the
+audit DB shows one causal chain `fd_granted → file_read → plan_node_evaluated →
+sink_blocked/sink_executed`; forged handles + unknown sinks deny.
+
+**Reviewed by:** `#caprun-630` — codex + grok (2026-06-30). Version stays v1.1
+(v1.0 = mechanism proof; v1.1 = usable runtime).
+
 ## Requirements
 
 ### Validated
@@ -35,11 +68,17 @@ Shipped in **v1.0 — AgentOS v0** (2026-06-30). Full traceability archived in
 
 ### Active
 
-(None yet — next milestone unscoped. Run `/gsd-new-milestone` to define v1.1.)
+**v1.1 — Usable Runtime (Live §9 from the CLI).** Full REQ-IDs and traceability
+in `.planning/REQUIREMENTS.md`.
 
-Candidate directions pulled from the v0 Out-of-Scope list: real sinks beyond the
-email.send stub, an LLM (or richer stub) planner feeding PlanNodes, Git/GitHub
-adapters, and broadening the sink sensitivity map beyond the hardcoded v0 map.
+- [ ] Unify `caprun` onto the `brokerd::server` dispatch (no second executor path)
+- [ ] Live §9 block fires from a real `caprun` run (email.send, then file.create)
+- [ ] Typed `ReportClaims` IPC from the confined worker — raw bytes never reach the planner
+- [ ] Deterministic intent → PlanNode planner (handles only) + `mint_from_intent`
+- [ ] `file.create` sink: schema, fail-closed, `O_EXCL`, dirfd + `openat2` hardening
+- [ ] Enforcement hardening: trusted-value taint semantics, session-scoped handles,
+      capability-restricted reads, crash-safe audit ordering
+- [ ] §9 acceptance contract green on real Linux `caprun`
 
 ### Out of Scope
 
@@ -205,5 +244,24 @@ Python OK for non-TCB experiments only.
 | DESIGN docs gate executor code (DEC-canonical-docs) | Writing crates/executor before the taint/executor model is reviewed risks a wrong-shape enforcer | — Locked |
 | §9 with genuine taint = the only v0-DONE gate | Substrate proves mediation but not value-injection defense; stapled taint proves nothing | — Locked |
 
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd-complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
 ---
-*Last updated: 2026-06-30 after v1.0 milestone — §9 acceptance test passes with a genuine, audited taint chain. **v0 is DONE.***
+*Last updated: 2026-06-30 after starting milestone v1.1 (Usable Runtime — Live §9
+from the CLI). v1.0 mechanism proof shipped; v1.1 assembles the live runtime.
+Scope reviewed by `#caprun-630` (codex + grok).*
