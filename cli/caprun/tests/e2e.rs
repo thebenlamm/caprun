@@ -17,13 +17,16 @@
 
 /// substrate_demo — the no-LLM complete-mediation proof.
 ///
-/// Writes a known byte string to a temp workspace file, runs `caprun` pointing
-/// at that file and a temp audit DB, then asserts:
-///  1. caprun exits 0 (entire flow succeeded, no errors).
-///  2. A `file_read` Event exists in the audit DAG for the session.
-///  3. The `file_read` actor encodes the correct byte count (matching the known
-///     string length), proving the worker read via the passed fd and reported
-///     the exact size — complete mediation.
+/// Writes benign workspace content (no email address → zero claims), runs
+/// `caprun` pointing at that file and a temp audit DB, then asserts:
+///  1. caprun exits 0 (entire flow succeeded; benign content is not blocked).
+///  2. A `fd_granted` Event exists in the audit DAG — the worker obtained the
+///     file ONLY through a broker-passed fd (complete mediation still holds).
+///
+/// NOTE: Under the Phase 5 protocol the worker extracts typed claims locally and
+/// sends `ReportClaims` (not the old `ReportRead` byte-count). Benign content
+/// yields zero claims, so NO `file_read` event is minted — mediation is now
+/// proven by the `fd_granted` event rather than the old byte-count actor encoding.
 #[cfg(target_os = "linux")]
 #[test]
 fn substrate_demo() {
@@ -36,6 +39,8 @@ fn substrate_demo() {
     let workspace_file = tmp.join("workspace.txt");
     let audit_db_path = tmp.join("audit.db");
 
+    // Benign content — no email address, so the worker extracts zero claims and
+    // exits 0 without submitting a plan node.
     let known_content = b"caprun substrate demo: no-LLM complete mediation proof 2026";
     std::fs::write(&workspace_file, known_content).expect("write workspace file");
 
@@ -60,11 +65,11 @@ fn substrate_demo() {
     }
     assert!(
         output.status.success(),
-        "caprun must exit 0; got: {}",
+        "caprun must exit 0 for benign content; got: {}",
         output.status
     );
 
-    // ── Verify audit DB: file_read Event exists with correct bytes_read ──────
+    // ── Verify audit DB: fd_granted Event exists (broker-mediated fd) ─────────
     let conn = open_audit_db(audit_db_path.to_str().unwrap()).expect("open audit DB");
 
     // Get the single session's id
@@ -72,30 +77,19 @@ fn substrate_demo() {
         .query_row("SELECT id FROM sessions LIMIT 1", [], |row| row.get(0))
         .expect("query session_id");
 
-    // Find the file_read event for this session
-    let actor: String = conn
+    // The worker obtained the file ONLY through a broker-passed fd — proven by a
+    // fd_granted event for this session (complete mediation).
+    let fd_granted_count: i64 = conn
         .query_row(
-            "SELECT actor FROM events \
-             WHERE session_id = ?1 AND event_type = 'file_read' \
-             LIMIT 1",
+            "SELECT COUNT(*) FROM events \
+             WHERE session_id = ?1 AND event_type = 'fd_granted'",
             [&session_id],
             |row| row.get(0),
         )
-        .expect("file_read event must exist in audit DAG");
-
-    // The broker encodes bytes_read in the actor field as "worker:{bytes_read}"
-    // (caprun/src/main.rs handle_worker_connection ReportRead branch)
-    let bytes_reported: u64 = actor
-        .strip_prefix("worker:")
-        .unwrap_or_else(|| panic!("unexpected actor format: {actor}"))
-        .parse()
-        .unwrap_or_else(|e| panic!("parse bytes_read from actor '{actor}': {e}"));
-
+        .expect("query fd_granted events");
     assert_eq!(
-        bytes_reported,
-        known_content.len() as u64,
-        "worker must report the exact byte count of the known workspace content; \
-         actor={actor}"
+        fd_granted_count, 1,
+        "exactly one fd_granted event must exist — the broker mediated the fd pass"
     );
 
     // ── Cleanup ──────────────────────────────────────────────────────────────
@@ -103,15 +97,18 @@ fn substrate_demo() {
 }
 
 /// dag_chain_integrity — verifies the unbroken hash chain: session_created →
-/// fd_granted → file_read.
+/// fd_granted (the benign 2-event chain under the Phase 5 protocol).
 ///
 /// Runs `caprun` independently of `substrate_demo` (no shared state) and then:
 ///  1. Calls `brokerd::audit::verify_chain` — asserts the SHA-256 chain is
 ///     mathematically unbroken (no hash mismatches, no gaps).
-///  2. Walks the events in causal depth order and asserts exactly the three
+///  2. Walks the events in causal depth order and asserts exactly the two
 ///     expected event types appear in the correct order with linked parent_hashes.
-///  3. A broken or gapped chain (e.g., missing fd_granted between session_created
-///     and file_read) MUST fail this test.
+///  3. A broken or gapped chain (e.g., a missing fd_granted) MUST fail this test.
+///
+/// NOTE: benign content yields zero claims, so no `file_read` event is minted —
+/// the chain is session_created → fd_granted (the §9 block path adds file_read +
+/// sink_blocked and is exercised by Plan 04's live test, not here).
 #[cfg(target_os = "linux")]
 #[test]
 fn dag_chain_integrity() {
@@ -184,8 +181,8 @@ fn dag_chain_integrity() {
 
     assert_eq!(
         events.len(),
-        3,
-        "audit DAG must contain exactly 3 events (session_created, fd_granted, file_read); \
+        2,
+        "audit DAG must contain exactly 2 events (session_created, fd_granted); \
          got {}: {:?}",
         events.len(),
         events.iter().map(|(et, _, _)| et.as_str()).collect::<Vec<_>>()
@@ -193,8 +190,7 @@ fn dag_chain_integrity() {
 
     // Verify causal order and parent_hash linkage
     let (e0_type, e0_parent, e0_hash) = &events[0];
-    let (e1_type, e1_parent, e1_hash) = &events[1];
-    let (e2_type, e2_parent, _e2_hash) = &events[2];
+    let (e1_type, e1_parent, _e1_hash) = &events[1];
 
     assert_eq!(e0_type, "session_created", "event[0] must be session_created");
     assert!(
@@ -207,13 +203,6 @@ fn dag_chain_integrity() {
         e1_parent.as_deref(),
         Some(e0_hash.as_str()),
         "fd_granted.parent_hash must equal session_created.hash"
-    );
-
-    assert_eq!(e2_type, "file_read", "event[2] must be file_read");
-    assert_eq!(
-        e2_parent.as_deref(),
-        Some(e1_hash.as_str()),
-        "file_read.parent_hash must equal fd_granted.hash"
     );
 
     // ── Cleanup ──────────────────────────────────────────────────────────────
