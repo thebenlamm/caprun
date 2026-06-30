@@ -17,25 +17,30 @@ Requirements for milestone v1.1. Each maps to exactly one roadmap phase.
 
 The spine: collapse the dual dispatch and make the executor reachable from a live run.
 
-- [ ] **ASM-01**: `caprun` uses the single `brokerd::server` dispatch path for
+- [x] **ASM-01**: `caprun` uses the single `brokerd::server` dispatch path for
   RequestFd, read reporting, mint, evaluate, audit, and sink invocation — caprun
   does NOT carry a second executor-dispatch implementation
-- [ ] **ASM-02**: The stale `"SubmitPlanNode not wired until Plan 04"` stub is
+
+- [x] **ASM-02**: The stale `"SubmitPlanNode not wired until Plan 04"` stub is
   removed; `executor::submit_plan_node` runs through the live broker path
-- [ ] **ASM-03**: A confined worker reads the passed fd and emits a `ReportClaims`
+
+- [x] **ASM-03**: A confined worker reads the passed fd and emits a `ReportClaims`
   IPC message defined as a **bounded tagged enum** (Phase 5 ships `EmailAddress`;
   `RelativePath` added in Phase 7). The broker validates each variant's size/shape
   and assigns taint/provenance itself; unknown claim kinds fail closed. Raw source
   bytes never cross into the planner
-- [ ] **ASM-04**: The broker mints authoritative `ValueId`s from worker-reported
+
+- [x] **ASM-04**: The broker mints authoritative `ValueId`s from worker-reported
   claims via `mint_from_read`, anchored to the real `file_read` audit event
 
 ### Planner & Intent (PLAN)
 
 - [ ] **PLAN-01**: `caprun` accepts an intent input alongside the workspace (not
   just a bare file path)
+
 - [ ] **PLAN-02**: A deterministic non-LLM planner maps a small typed intent enum
   to `PlanNode{sink, args}`, emitting only `SinkId` + existing `ValueId` handles
+
 - [ ] **PLAN-03**: The planner never sees raw bytes or taint labels — handles only
 - [ ] **PLAN-04**: A broker-owned `mint_from_intent` mints trusted values for
   clean/user-provided inputs, anchored to an `intent_received` audit event,
@@ -45,10 +50,13 @@ The spine: collapse the dual dispatch and make the executor reachable from a liv
 
 - [ ] **SINK-01**: A `file.create` sink exists with an explicit arg schema
   (`path`, `contents`); missing, duplicate, or unknown args are rejected
+
 - [ ] **SINK-02**: `file.create`'s `path` arg is routing-sensitive in the
   sensitivity map
+
 - [ ] **SINK-03**: `file.create` uses exclusive creation (`O_EXCL`) — it never
   overwrites an existing file
+
 - [ ] **SINK-04**: `file.create` resolves paths via `openat2`
   (`RESOLVE_BENEATH`/`RESOLVE_NO_SYMLINKS`) under a workspace dirfd; absolute paths
   and traversal/symlink escapes are rejected; no validate-then-write (TOCTOU-safe).
@@ -60,20 +68,25 @@ Constraints raised by channel review that must hold for the live path to be soun
 
 - [ ] **HARD-01**: Unknown sinks and unknown args fail closed (deny), validated
   before any sensitivity or executor step
+
 - [ ] **HARD-02**: The executor's blocking predicate is defined over
   explicitly-untrusted taint labels; `UserTrusted`/`LocalWorkspace`-only
   provenance does NOT block (clean allow-path is reachable)
-- [ ] **HARD-03**: `ValueRecord`s are session-scoped; a handle minted in one
+
+- [x] **HARD-03**: `ValueRecord`s are session-scoped; a handle minted in one
   session is denied in another; the broker connection is bound to its session and
   a request-supplied `session_id` is never trusted
+
 - [ ] **HARD-04**: `RequestFd` reads are capability-restricted to the workspace
   root — the worker cannot nominate an arbitrary broker-opened path. Shares the
   workspace-root capability model with `SINK-04` (write-side); `HARD-04` is the
   read-side prerequisite for `SINK-04`
+
 - [ ] **HARD-05**: Effect-path ordering is enforced: validate schema → capability
   check → executor decision → durable authorization audit → sink invocation →
   durable result audit; audit failure fails closed; the causal parent is preserved
   (no `parent_id: None` best-effort append)
+
 - [ ] **HARD-06**: Each sink attempt carries an effect/request id; authorization is
   durably recorded before invocation; a crash after invocation leaves an explicit
   indeterminate record and triggers no automatic retry
@@ -84,16 +97,21 @@ The §9 live contract — the only definition of "done" for v1.1.
 
 - [ ] **ACC-01**: `BlockedPendingConfirmation` is operationally defined: zero sink
   invocations + a stable non-success CLI result + a durable `sink_blocked` event
-- [ ] **ACC-02**: Live §9 (email.send) — a real `caprun` run blocks a tainted
+
+- [x] **ACC-02**: Live §9 (email.send) — a real `caprun` run blocks a tainted
   routing-sensitive arg through the unified broker path, recording a **durable
   causal `sink_blocked` event** (the blocked-path audit primitive: causal parent
   preserved, append-failure fails closed, block durable before the CLI returns)
+
 - [ ] **ACC-03**: Live `file.create` block — hostile input → typed path claim →
   `mint_from_read` → `file.create` blocked, with no file written
+
 - [ ] **ACC-04**: Clean allow-path — a broker-minted trusted intent path creates
   the exact expected file under the workspace root
+
 - [ ] **ACC-05**: The audit DB shows one causal chain `fd_granted → file_read →
   plan_node_evaluated → sink_blocked/sink_executed` for the run
+
 - [ ] **ACC-06**: Forged handles and unknown sink/arg cases are denied
 - [ ] **ACC-07**: Genuine-taint sentinel (anti-stapling) — the blocked PlanArg's
   `ValueId` resolves to a `ValueRecord` whose `provenance_chain[0]` equals the
@@ -139,12 +157,12 @@ Explicitly excluded for v1.1. Documented to prevent scope creep.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ASM-01 | Phase 5 | Pending |
-| ASM-02 | Phase 5 | Pending |
-| ASM-03 | Phase 5 | Pending |
-| ASM-04 | Phase 5 | Pending |
-| HARD-03 | Phase 5 | Pending |
-| ACC-02 | Phase 5 | Pending |
+| ASM-01 | Phase 5 | Complete |
+| ASM-02 | Phase 5 | Complete |
+| ASM-03 | Phase 5 | Complete |
+| ASM-04 | Phase 5 | Complete |
+| HARD-03 | Phase 5 | Complete |
+| ACC-02 | Phase 5 | Complete |
 | PLAN-01 | Phase 6 | Pending |
 | PLAN-02 | Phase 6 | Pending |
 | PLAN-03 | Phase 6 | Pending |
@@ -166,6 +184,7 @@ Explicitly excluded for v1.1. Documented to prevent scope creep.
 | ACC-07 | Phase 7 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 25 total
 - Mapped to phases: 25
 - Unmapped: 0 ✓
