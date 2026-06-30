@@ -45,7 +45,7 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
   5. `ValueRecord`s are session-scoped: the broker connection is bound to its session, a handle minted in one session is denied in another, and a request-supplied `session_id` is never trusted for resolution
   6. A real `caprun` invocation on hostile input produces a durable causal `sink_blocked` event — causal parent preserved, append-failure fails closed — and the CLI exits non-success before any effect executes; the block is durable before the CLI returns
 
-**Plans**: 2/4 plans executed
+**Plans**: 3/4 plans executed
 **Wave 1**
 
 - [x] 05-01-PLAN.md — Additive IPC protocol types (WorkerClaim/ReportClaims/ClaimsReceived) + fail-closed serde tests [wave 1]
@@ -56,7 +56,7 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 05-03-PLAN.md — caprun binary: delete second dispatch loop, worker emits typed claims + exits on block, e2e update [wave 3]
+- [x] 05-03-PLAN.md — caprun binary: delete second dispatch loop, worker emits typed claims + exits on block, e2e update [wave 3]
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -102,6 +102,6 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 | 2. Security Design Gate | v1.0 | 3/3 | Complete | 2026-06-29 |
 | 3. Confinement & Mediation Substrate | v1.0 | 5/5 | Complete | 2026-06-29 |
 | 4. Value-Injection Security Demo (v0 DONE) | v1.0 | 5/5 | Complete | 2026-06-30 |
-| 5. Runtime Spine & Live §9 Email Block | v1.1 | 2/4 | In Progress|  |
+| 5. Runtime Spine & Live §9 Email Block | v1.1 | 3/4 | In Progress|  |
 | 6. Deterministic Planner & Intent Input | v1.1 | 0/TBD | Not started | - |
 | 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 0/TBD | Not started | - |
