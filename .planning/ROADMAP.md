@@ -42,7 +42,11 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
   4. `mint_from_read` produces authoritative `ValueId`s anchored to the real `file_read` event in the SQLite audit DAG
   5. `ValueRecord`s are session-scoped: the broker connection is bound to its session, a handle minted in one session is denied in another, and a request-supplied `session_id` is never trusted for resolution
   6. A real `caprun` invocation on hostile input produces a durable causal `sink_blocked` event — causal parent preserved, append-failure fails closed — and the CLI exits non-success before any effect executes; the block is durable before the CLI returns
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 05-01-PLAN.md — Additive IPC protocol types (WorkerClaim/ReportClaims/ClaimsReceived) + fail-closed serde tests [wave 1]
+- [ ] 05-02-PLAN.md — Unified session-scoped broker dispatch: mint_from_read wiring, durable fail-closed sink_blocked, session_id removal [wave 2]
+- [ ] 05-03-PLAN.md — caprun binary: delete second dispatch loop, worker emits typed claims + exits on block, e2e update [wave 3]
+- [ ] 05-04-PLAN.md — Live §9 block e2e (hostile → durable causal sink_blocked, non-success exit) + phase gate [wave 4]
 
 ### Phase 6: Deterministic Planner & Intent Input
 **Goal**: `caprun` accepts typed intents and a deterministic non-LLM planner translates them into plan nodes, with `mint_from_intent` enabling a clean allow-path that does not block at the executor
