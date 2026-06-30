@@ -46,7 +46,51 @@ pub struct Claim {
 /// Returns one `Claim { claim_type: "email_address", value: "<addr>" }` per
 /// address found, or an empty `Vec` when no address is present.
 pub fn extract_email_claims(raw: &str) -> Vec<Claim> {
-    todo!("RED: quarantine extractor not yet implemented")
+    let mut claims = Vec::new();
+    for word in raw.split_whitespace() {
+        // Strip leading and trailing punctuation characters that commonly wrap
+        // an address (e.g., trailing '.', ';', ',', surrounding parentheses).
+        // NOTE: '.' is intentionally included in the strip set so that a
+        // sentence-terminal dot like "accounts@ev1l.com." is trimmed to
+        // "accounts@ev1l.com". trim_matches only strips from the edges, so
+        // internal dots within the domain/local-part are preserved.
+        let trimmed = word.trim_matches(|c: char| {
+            !c.is_alphanumeric() && c != '@' && c != '-' && c != '_' && c != '+'
+        });
+        if looks_like_email(trimmed) {
+            claims.push(Claim {
+                claim_type: "email_address".into(),
+                value: trimmed.to_string(),
+            });
+        }
+    }
+    claims
+}
+
+/// Return `true` if `s` has the structural shape of an email address.
+///
+/// Rules (sufficient for v0 deterministic extraction):
+/// - Exactly one `@` character, at a position > 0 (non-empty local part).
+/// - Domain part (after `@`) contains at least one `.`, does not start or end
+///   with `.`, and is non-empty.
+/// This rejects bare `@domain`, `local@`, and dotless domains without invoking
+/// any external library.
+fn looks_like_email(s: &str) -> bool {
+    // Find '@'; require exactly one occurrence and a non-empty local part
+    let at_idx = match s.bytes().position(|b| b == b'@') {
+        Some(i) if i > 0 => i,
+        _ => return false,
+    };
+    // Reject multiple '@'
+    if s[at_idx + 1..].contains('@') {
+        return false;
+    }
+    let domain = &s[at_idx + 1..];
+    // Domain must be non-empty, contain a dot, and not start/end with a dot
+    !domain.is_empty()
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
 }
 
 /// Append a `file_read` Event to the audit DAG and mint a genuinely-tainted
@@ -84,7 +128,34 @@ pub fn mint_from_read(
     claim: &Claim,
     parent_hash: Option<&str>,
 ) -> Result<(Uuid, String, runtime_core::plan_node::ValueId)> {
-    todo!("RED: mint_from_read not yet implemented")
+    // Step 1: Build the file_read audit Event.
+    //
+    // Taint is set HERE — at read time — never at sink evaluation time.
+    // This is the genuine-taint genesis: the same function that records the read
+    // Event also mints the ValueRecord that references that Event's id.
+    let taint = vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw];
+    let event_id = Uuid::new_v4();
+    let event = Event {
+        id: event_id,
+        parent_id: None,
+        session_id,
+        actor: "confined-reader".into(),
+        event_type: "file_read".into(),
+        timestamp: Utc::now(),
+        taint: taint.clone(),
+    };
+
+    // Step 2: Append the event to the audit DAG, obtaining the row hash.
+    let read_hash = append_event(conn, &event, parent_hash)?;
+
+    // Step 3: Mint the ValueRecord in the broker-owned store.
+    //
+    // provenance_chain[0] == event_id — the genuine-taint anchor.
+    // The §9 test asserts: store.resolve(value_id).provenance_chain[0] == event_id
+    // AND find_event_by_type("file_read").id == event_id.
+    let value_id = store.mint(claim.value.clone(), taint, vec![event_id]);
+
+    Ok((event_id, read_hash, value_id))
 }
 
 #[cfg(test)]
