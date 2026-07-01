@@ -90,7 +90,7 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
     };
     let (read_event_id, read_hash, path_value_id) = {
         let locked = conn.lock().unwrap();
-        mint_from_read(&locked, &mut store, session_id, &claim, None).expect("mint_from_read")
+        mint_from_read(&locked, &mut store, session_id, &claim, None, None).expect("mint_from_read")
     };
 
     let mut last_event_id = read_event_id;

@@ -86,7 +86,7 @@ fn s9_acceptance() {
     // -----------------------------------------------------------------------
     let claim = &claims[0];
     let (read_event_id, _read_hash, value_id) =
-        mint_from_read(&conn, &mut store, session_id, claim, None)
+        mint_from_read(&conn, &mut store, session_id, claim, None, None)
             .expect("mint_from_read failed");
 
     // -----------------------------------------------------------------------
@@ -268,7 +268,7 @@ fn clean_path_intent_value_evaluates_to_allowed() {
     // -----------------------------------------------------------------------
     let recipient = "boss@company.com";
     let (intent_event_id, intent_hash, intent_value_id) =
-        mint_from_intent(&conn, &mut store, session_id, recipient.to_string(), None)
+        mint_from_intent(&conn, &mut store, session_id, recipient.to_string(), None, None)
             .expect("mint_from_intent failed");
 
     // Genuine-provenance anchor: provenance_chain[0] must equal the intent_event_id.
@@ -387,7 +387,7 @@ fn s9_acceptance_file_create_path_block() {
         value: hostile_path.into(),
     };
     let (read_event_id, _read_hash, path_value_id) =
-        mint_from_read(&conn, &mut store, session_id, &claim, None).expect("mint_from_read failed");
+        mint_from_read(&conn, &mut store, session_id, &claim, None, None).expect("mint_from_read failed");
 
     // file.create requires {path, contents}. `path` is FIRST and tainted, so the
     // executor blocks on it before it ever resolves `contents` (a fresh dummy handle

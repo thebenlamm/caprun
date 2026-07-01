@@ -330,6 +330,10 @@ pub async fn dispatch_request(
                         value_store,
                         session_id,
                         &quarantine_claim,
+                        // Causal parent = the connection chain head (DESIGN §0), so
+                        // file_read is parent-linked (fd_granted → file_read) and the
+                        // audit DAG is ONE unbroken parent_id chain (ACC-05 / verify_chain).
+                        Some(*last_event_id),
                         Some(last_event_hash),
                     )?
                 };
@@ -440,7 +444,16 @@ pub async fn dispatch_request(
                 let locked = conn
                     .lock()
                     .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
-                mint_from_intent(&locked, value_store, session_id, literal, Some(last_event_hash))?
+                // Causal parent = the connection chain head (DESIGN §0): intent_received
+                // is parent-linked onto session_created, keeping the parent_id chain unbroken.
+                mint_from_intent(
+                    &locked,
+                    value_store,
+                    session_id,
+                    literal,
+                    Some(*last_event_id),
+                    Some(last_event_hash),
+                )?
             };
 
             // Advance the causal chain AFTER successful mint (same pattern as ReportClaims arm).

@@ -179,6 +179,7 @@ pub fn mint_from_read(
     store: &mut ValueStore,
     session_id: Uuid,
     claim: &Claim,
+    parent_id: Option<Uuid>,
     parent_hash: Option<&str>,
 ) -> Result<(Uuid, String, runtime_core::plan_node::ValueId)> {
     // Step 1: Build the file_read audit Event.
@@ -191,6 +192,13 @@ pub fn mint_from_read(
     // workspace-derived value is untrusted, T-07-44). An unknown claim_type is a
     // fail-closed error (T-07-47): only the two known claim types get a taint set;
     // nothing is default-tagged.
+    //
+    // `parent_id` threads the CAUSAL DAG on the connection chain head (DESIGN §0):
+    // the live broker passes `Some(last_event_id)` so file_read is parent-linked
+    // onto its predecessor (fd_granted), forming ONE unbroken parent_id chain that
+    // `verify_chain` walks. Standalone callers (unit tests minting an isolated root)
+    // pass `None`. NOTE: `parent_id` is the CAUSAL edge; the value-lineage anchor
+    // (`provenance_chain[0] == this file_read id`) is a SEPARATE graph (never equated).
     let taint = match claim.claim_type.as_str() {
         "email_address" => vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw],
         "relative_path" => vec![TaintLabel::ExternalUntrusted, TaintLabel::PathRaw],
@@ -203,7 +211,7 @@ pub fn mint_from_read(
     let event_id = Uuid::new_v4();
     let event = Event::new(
         event_id,
-        None,
+        parent_id,
         session_id,
         "confined-reader".into(),
         "file_read".into(),
@@ -251,13 +259,16 @@ pub fn mint_from_read(
 ///   - `event_type` is `"intent_received"` (not `"file_read"`).
 ///   - `actor` is `"user-intent"` (not `"confined-reader"`).
 ///   - `argument` is `literal: String` (the user-provided value, e.g., recipient email).
-///   - `event.parent_id` is `None` for now — Phase 7 wires the parent_id chain.
+///   - `event.parent_id` threads the causal DAG on the chain head (DESIGN §0), like `mint_from_read`.
 ///
 /// # Arguments
 /// * `conn`         — open rusqlite connection for the audit DAG.
 /// * `store`        — mutable ref to the broker-owned ValueStore.
 /// * `session_id`   — the Session this intent belongs to.
 /// * `literal`      — the user-provided value (e.g., "boss@company.com").
+/// * `parent_id`    — causal predecessor event id (chain head). Live broker passes
+///                    `Some(last_event_id)` so `intent_received` is parent-linked onto
+///                    `session_created`; standalone callers pass `None` (isolated root).
 /// * `parent_hash`  — hash of the preceding DAG event row (`None` for session-root intents).
 ///
 /// # Returns
@@ -270,16 +281,18 @@ pub fn mint_from_intent(
     store: &mut ValueStore,
     session_id: Uuid,
     literal: String,
+    parent_id: Option<Uuid>,
     parent_hash: Option<&str>,
 ) -> Result<(Uuid, String, runtime_core::plan_node::ValueId)> {
     // Step 1: Build the intent_received audit Event.
     //
     // The EVENT itself carries no taint — taint lives on the ValueRecord.
     // This differs from mint_from_read where event taint == record taint.
+    // `parent_id` threads the causal DAG on the chain head (DESIGN §0).
     let event_id = Uuid::new_v4();
     let event = Event::new(
         event_id,
-        None, // Phase 7 wires parent_id linkage (same as mint_from_read precedent)
+        parent_id,
         session_id,
         "user-intent".into(),
         "intent_received".into(),
@@ -377,7 +390,7 @@ mod tests {
         };
 
         let (read_event_id, _read_hash, value_id) =
-            mint_from_read(&conn, &mut store, session_id, &claim, None).unwrap();
+            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
 
         // provenance_chain[0] must equal the returned read_event_id
         let record = store.resolve(&value_id).expect("value_id must resolve");
@@ -409,7 +422,7 @@ mod tests {
         };
 
         let (_read_event_id, _read_hash, value_id) =
-            mint_from_read(&conn, &mut store, session_id, &claim, None).unwrap();
+            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
 
         let record = store.resolve(&value_id).expect("value_id must resolve");
         assert!(
@@ -438,7 +451,7 @@ mod tests {
         };
 
         let (_read_event_id, _read_hash, value_id) =
-            mint_from_read(&conn, &mut store, session_id, &claim, None).unwrap();
+            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
 
         let record = store.resolve(&value_id).expect("value_id must resolve");
         assert_eq!(
@@ -460,7 +473,7 @@ mod tests {
         };
 
         let (_read_event_id, _read_hash, _value_id) =
-            mint_from_read(&conn, &mut store, session_id, &claim, None).unwrap();
+            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
 
         let evt = find_event_by_type(&conn, &session_id.to_string(), "file_read")
             .unwrap()
@@ -491,7 +504,7 @@ mod tests {
         let literal = "boss@company.com".to_string();
 
         let (intent_event_id, _intent_hash, value_id) =
-            mint_from_intent(&conn, &mut store, session_id, literal.clone(), None).unwrap();
+            mint_from_intent(&conn, &mut store, session_id, literal.clone(), None, None).unwrap();
 
         // provenance_chain[0] must equal the returned intent_event_id (anti-stapling)
         let record = store.resolve(&value_id).expect("value_id must resolve");
@@ -519,7 +532,7 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         let (_intent_event_id, _intent_hash, value_id) =
-            mint_from_intent(&conn, &mut store, session_id, "boss@company.com".into(), None)
+            mint_from_intent(&conn, &mut store, session_id, "boss@company.com".into(), None, None)
                 .unwrap();
 
         // Record must carry UserTrusted (positive provenance — NOT empty vec, Pitfall 2)
@@ -552,7 +565,7 @@ mod tests {
         let literal = "recipient@example.com".to_string();
 
         let (_intent_event_id, _intent_hash, value_id) =
-            mint_from_intent(&conn, &mut store, session_id, literal.clone(), None).unwrap();
+            mint_from_intent(&conn, &mut store, session_id, literal.clone(), None, None).unwrap();
 
         let record = store.resolve(&value_id).expect("value_id must resolve");
         assert_eq!(
@@ -619,7 +632,7 @@ mod tests {
         };
 
         let (read_event_id, _read_hash, value_id) =
-            mint_from_read(&conn, &mut store, session_id, &claim, None).unwrap();
+            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
 
         let record = store.resolve(&value_id).expect("value_id must resolve");
         assert!(record.taint.contains(&TaintLabel::ExternalUntrusted));
@@ -649,7 +662,7 @@ mod tests {
             value: "whatever".into(),
         };
 
-        let result = mint_from_read(&conn, &mut store, session_id, &claim, None);
+        let result = mint_from_read(&conn, &mut store, session_id, &claim, None, None);
         assert!(
             result.is_err(),
             "an unknown claim_type must fail closed, never default-tag"
