@@ -6,14 +6,14 @@ current_phase: 06
 current_phase_name: deterministic-planner-intent-input
 status: executing
 stopped_at: Roadmap revised (v1.1, 3 phases 05-07) — 5 peer-review deltas applied, 25 requirements mapped, 100% coverage
-last_updated: "2026-07-01T00:29:21.793Z"
+last_updated: "2026-07-01T00:34:11.530Z"
 last_activity: 2026-07-01
 last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 9
-  completed_plans: 5
+  completed_plans: 6
   percent: 33
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-06-30)
 ## Current Position
 
 Phase: 06 (deterministic-planner-intent-input) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-07-01 — Phase 06 execution started
 
@@ -54,6 +54,7 @@ Progress: [░░░░░░░░░░] 0%
 *Updated after each plan completion*
 | Phase 06 P01 | 4min | - tasks | - files |
 | Phase 06 P01 | 4min | 3 tasks | 4 files |
+| Phase 06 P02 | 2 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,7 @@ Load-bearing locked decisions for v1.1:
 - HARD-04 + SINK-04 share ONE workspace-root capability model — HARD-04 (read-side) is the prerequisite for SINK-04 (write-side); implement the capability once and apply to both.
 - ASM-03 phased delivery: Phase 5 ships EmailAddress variant; Phase 7 adds RelativePath (no second IPC revision).
 - [Phase ?]: .planning/phases/06-deterministic-planner-intent-input/06-01-SUMMARY.md
+- [Phase ?]: executor predicate uses is_untrusted(); UserTrusted-only passes
 
 ### Pending Todos
 
@@ -89,6 +91,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-07-01T00:28:48.939Z
+Last session: 2026-07-01T00:33:35.639Z
 Stopped at: Roadmap revised (v1.1, 3 phases 05-07) — 5 peer-review deltas applied, 25 requirements mapped, 100% coverage
 Resume file: None
