@@ -19,7 +19,7 @@
 
 use brokerd::approval::build_confirmation_prompt;
 use brokerd::audit::{find_event_by_type, open_audit_db, verify_chain};
-use brokerd::quarantine::{extract_email_claims, mint_from_read};
+use brokerd::quarantine::{extract_email_claims, mint_from_intent, mint_from_read};
 use executor::value_store::ValueStore;
 use runtime_core::plan_node::{PlanArg, PlanNode, SinkId, TaintLabel};
 use runtime_core::ExecutorDecision;
@@ -218,5 +218,124 @@ fn s9_acceptance() {
         verify_chain(&conn, &session_id.to_string()),
         "verify_chain must return true — the audit DAG hash chain must be unbroken \
          from the file_read Event through the blocked evaluation"
+    );
+}
+
+/// In-process clean-path test (PLAN-04 + HARD-02):
+///
+/// mint_from_intent mints a UserTrusted ValueRecord anchored to an `intent_received`
+/// event. When that ValueId flows into email.send's routing-sensitive "to" arg,
+/// the executor must return Allowed (not Block — UserTrusted-only provenance does
+/// NOT block per HARD-02). The audit DAG must contain an `intent_received` event
+/// and a `plan_node_evaluated` event but NO `sink_blocked` event.
+#[test]
+fn clean_path_intent_value_evaluates_to_allowed() {
+    // -----------------------------------------------------------------------
+    // Step 1: Open in-memory audit DB and set up state.
+    // -----------------------------------------------------------------------
+    let conn = open_audit_db(":memory:").expect("open_audit_db");
+    let mut store = ValueStore::default();
+    let session_id = Uuid::new_v4();
+
+    // -----------------------------------------------------------------------
+    // Step 2: Mint a UserTrusted ValueRecord via mint_from_intent.
+    //
+    // This is the ONLY call to mint in this test — the test MUST NOT call
+    // ValueStore::mint or set any taint field directly (same invariant as §9).
+    // -----------------------------------------------------------------------
+    let recipient = "boss@company.com";
+    let (intent_event_id, intent_hash, intent_value_id) =
+        mint_from_intent(&conn, &mut store, session_id, recipient.to_string(), None)
+            .expect("mint_from_intent failed");
+
+    // Genuine-provenance anchor: provenance_chain[0] must equal the intent_event_id.
+    let record = store
+        .resolve(&intent_value_id)
+        .expect("intent ValueId must resolve");
+    assert_eq!(
+        record.provenance_chain[0], intent_event_id,
+        "GENUINE-PROVENANCE ANCHOR: provenance_chain[0] must equal the intent_received Event id \
+         (not a fabricated UUID). If stapled, this assertion MUST fail."
+    );
+
+    // -----------------------------------------------------------------------
+    // Step 3: Build a scripted PlanNode routing the UserTrusted handle to "to".
+    // The planner holds ONLY the opaque ValueId — never the literal or taint.
+    // -----------------------------------------------------------------------
+    let plan_node = PlanNode {
+        sink: SinkId("email.send".into()),
+        args: vec![PlanArg {
+            name: "to".into(),
+            value_id: intent_value_id,
+        }],
+    };
+
+    // -----------------------------------------------------------------------
+    // Step 4: Evaluate via the deterministic executor (HARD-02 predicate).
+    //
+    // UserTrusted-only provenance must NOT block — record.taint.iter().any(|t| t.is_untrusted())
+    // returns false for [UserTrusted], so the executor returns Allowed.
+    // -----------------------------------------------------------------------
+    let decision = executor::submit_plan_node(session_id, &plan_node, &store);
+
+    assert!(
+        matches!(decision, ExecutorDecision::Allowed),
+        "UserTrusted-only provenance must evaluate to Allowed (HARD-02), got {:?}",
+        decision
+    );
+
+    // -----------------------------------------------------------------------
+    // Step 5: Manually append a plan_node_evaluated event to the audit DAG
+    // (mirrors what the SubmitPlanNode dispatch arm does in server.rs).
+    // We append it here so the DAG assertion below verifies the full causal chain.
+    // -----------------------------------------------------------------------
+    use brokerd::audit::append_event;
+    use runtime_core::Event;
+
+    let eval_event = Event {
+        id: uuid::Uuid::new_v4(),
+        parent_id: Some(intent_event_id),
+        session_id,
+        actor: "executor".into(),
+        event_type: "plan_node_evaluated".into(),
+        timestamp: chrono::Utc::now(),
+        taint: vec![],
+    };
+    append_event(&conn, &eval_event, Some(&intent_hash)).expect("append plan_node_evaluated");
+
+    // -----------------------------------------------------------------------
+    // Step 6: Verify the audit DAG.
+    // -----------------------------------------------------------------------
+
+    // intent_received event must exist with the correct id.
+    let intent_evt = find_event_by_type(&conn, &session_id.to_string(), "intent_received")
+        .expect("find_event_by_type")
+        .expect("intent_received event must be present in the audit DAG");
+    assert_eq!(
+        intent_evt.id, intent_event_id,
+        "audit DAG intent_received id must equal the anchor id"
+    );
+    // Event itself must carry NO taint (taint lives on the record, not the event).
+    assert!(
+        intent_evt.taint.is_empty(),
+        "intent_received DAG event must carry no taint (differs from file_read)"
+    );
+
+    // plan_node_evaluated event must exist (Allowed path: NOT sink_blocked).
+    let eval_evt = find_event_by_type(&conn, &session_id.to_string(), "plan_node_evaluated")
+        .expect("find_event_by_type")
+        .expect("plan_node_evaluated event must be present in the audit DAG (clean path)");
+    assert_eq!(
+        eval_evt.parent_id,
+        Some(intent_event_id),
+        "plan_node_evaluated must be causally parented onto the intent_received event"
+    );
+
+    // NO sink_blocked event must exist.
+    let sink_blocked = find_event_by_type(&conn, &session_id.to_string(), "sink_blocked")
+        .expect("find_event_by_type");
+    assert!(
+        sink_blocked.is_none(),
+        "clean path must NOT produce a sink_blocked event; UserTrusted-only provenance allows"
     );
 }

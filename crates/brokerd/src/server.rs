@@ -40,7 +40,8 @@
 
 use crate::audit::append_event;
 use crate::proto::{BrokerRequest, BrokerResponse, WorkerClaim};
-use crate::quarantine::{mint_from_read, Claim};
+use crate::quarantine::{mint_from_intent, mint_from_read, Claim};
+use runtime_core::intent::CaprunIntent;
 use crate::session::{create_session, persist_session};
 use adapter_fs::pass_fd;
 use anyhow::Context;
@@ -355,16 +356,29 @@ pub async fn dispatch_request(
             send_response(stream, &BrokerResponse::PlanNodeDecision { decision }).await?;
         }
 
-        BrokerRequest::ProvideIntent { .. } => {
-            // Placeholder: Task 3 (06-03) replaces this with the real dispatch arm that
-            // calls mint_from_intent and returns IntentAccepted { value_id }.
-            send_response(
-                stream,
-                &BrokerResponse::Error {
-                    message: "ProvideIntent dispatch not yet implemented (Task 3 pending)".into(),
-                },
-            )
-            .await?;
+        BrokerRequest::ProvideIntent { intent } => {
+            // Extract the user-provided literal from the typed intent.
+            // Exhaustive match: adding a new CaprunIntent variant causes a compile error here,
+            // forcing the dispatcher to be updated (no silent unhandled variants).
+            let literal = match &intent {
+                CaprunIntent::SendEmailSummary { recipient } => recipient.clone(),
+            };
+
+            // Mint inside the per-connection ValueStore (Pitfall 1: minting outside
+            // handle_connection would put the ValueId in an unreachable store → Denied).
+            // mint_from_intent is the ONLY caller site of mint_from_intent (T-06-05).
+            let (intent_event_id, intent_hash, value_id) = {
+                let locked = conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                mint_from_intent(&locked, value_store, session_id, literal, Some(last_event_hash))?
+            };
+
+            // Advance the causal chain AFTER successful mint (same pattern as ReportClaims arm).
+            *last_event_id = intent_event_id;
+            *last_event_hash = intent_hash;
+
+            send_response(stream, &BrokerResponse::IntentAccepted { value_id }).await?;
         }
 
         BrokerRequest::ReportRead { .. } => {
