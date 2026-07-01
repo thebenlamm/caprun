@@ -42,7 +42,7 @@ The spine: collapse the dual dispatch and make the executor reachable from a liv
   to `PlanNode{sink, args}`, emitting only `SinkId` + existing `ValueId` handles
 
 - [x] **PLAN-03**: The planner never sees raw bytes or taint labels — handles only
-- [ ] **PLAN-04**: A broker-owned `mint_from_intent` mints trusted values for
+- [x] **PLAN-04**: A broker-owned `mint_from_intent` mints trusted values for
   clean/user-provided inputs, anchored to an `intent_received` audit event,
   separate from `mint_from_read`
 
@@ -166,7 +166,7 @@ Explicitly excluded for v1.1. Documented to prevent scope creep.
 | PLAN-01 | Phase 6 | Pending |
 | PLAN-02 | Phase 6 | Complete |
 | PLAN-03 | Phase 6 | Complete |
-| PLAN-04 | Phase 6 | Pending |
+| PLAN-04 | Phase 6 | Complete |
 | HARD-02 | Phase 6 | Complete |
 | SINK-01 | Phase 7 | Pending |
 | SINK-02 | Phase 7 | Pending |
