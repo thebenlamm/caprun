@@ -23,8 +23,10 @@ use value_store::ValueStore;
 ///
 /// For each `PlanArg { name, value_id }` in `plan_node.args`:
 ///   1. Resolve `value_id` from `value_store`. If `None` → `Denied` (dangling handle).
-///   2. If `name` is routing-sensitive for `plan_node.sink` AND `record.taint` is
-///      non-empty → `BlockedPendingConfirmation` populated verbatim from the record.
+///   2. If `name` is routing-sensitive for `plan_node.sink` AND `record.taint` carries
+///      any explicitly-untrusted label (`TaintLabel::is_untrusted()`) →
+///      `BlockedPendingConfirmation` populated verbatim from the record.
+///      `UserTrusted`/`LocalWorkspace`-only provenance does NOT block (HARD-02).
 ///   3. (Content-sensitive tainted args do not Block in v0 — marked for Tier-4
 ///      verbatim review, not yet surfaced.)
 ///
@@ -57,10 +59,11 @@ pub fn submit_plan_node(
         };
 
         // Step 2: Routing-sensitive check. If this arg routes the effect (e.g.,
-        // email.send "to") and the resolved record carries ANY taint, Block.
+        // email.send "to") and the resolved record carries any UNTRUSTED label, Block.
+        // UserTrusted/LocalWorkspace-only provenance does NOT block (HARD-02).
         // The payload is copied verbatim from the broker-owned record — NOT synthesized.
         if sink_sensitivity::is_routing_sensitive(&plan_node.sink, &arg.name)
-            && !record.taint.is_empty()
+            && record.taint.iter().any(|t| t.is_untrusted())
         {
             return ExecutorDecision::BlockedPendingConfirmation {
                 literal_value: record.literal.clone(),
