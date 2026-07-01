@@ -98,15 +98,15 @@ async fn main() -> anyhow::Result<()> {
     let session_id = session.id;
 
     let session_created_id = Uuid::new_v4();
-    let e_session = Event {
-        id: session_created_id,
-        parent_id: None,
+    let e_session = Event::new(
+        session_created_id,
+        None,
         session_id,
-        actor: "broker".into(),
-        event_type: "session_created".into(),
-        timestamp: Utc::now(),
-        taint: vec![],
-    };
+        "broker".into(),
+        "session_created".into(),
+        Utc::now(),
+        vec![],
+    );
 
     let session_created_hash = {
         let locked = conn.lock().unwrap();

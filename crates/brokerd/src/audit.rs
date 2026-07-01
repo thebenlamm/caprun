@@ -281,15 +281,15 @@ mod tests {
 
     /// Build a minimal file_read Event with taint labels [ExternalUntrusted, EmailRaw].
     fn make_file_read_event(session_id: Uuid) -> Event {
-        Event {
-            id: Uuid::new_v4(),
-            parent_id: None,
+        Event::new(
+            Uuid::new_v4(),
+            None,
             session_id,
-            actor: "worker".to_string(),
-            event_type: "file_read".to_string(),
-            timestamp: Utc::now(),
-            taint: vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw],
-        }
+            "worker".to_string(),
+            "file_read".to_string(),
+            Utc::now(),
+            vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw],
+        )
     }
 
     #[test]

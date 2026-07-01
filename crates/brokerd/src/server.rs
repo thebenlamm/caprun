@@ -213,15 +213,15 @@ pub async fn dispatch_request(
             let session = create_session(intent_id);
             let new_session_id = session.id;
 
-            let event = Event {
-                id: Uuid::new_v4(),
-                parent_id: None,
-                session_id: new_session_id,
-                actor: "broker".into(),
-                event_type: "session_created".into(),
-                timestamp: Utc::now(),
-                taint: vec![],
-            };
+            let event = Event::new(
+                Uuid::new_v4(),
+                None,
+                new_session_id,
+                "broker".into(),
+                "session_created".into(),
+                Utc::now(),
+                vec![],
+            );
 
             let result: anyhow::Result<()> = match conn.lock() {
                 Ok(locked) => persist_session(&locked, &session)
@@ -265,15 +265,15 @@ pub async fn dispatch_request(
 
             // Append fd_granted Event — causal parent is the prior event (not None).
             let fd_event_id = Uuid::new_v4();
-            let fd_event = Event {
-                id: fd_event_id,
-                parent_id: Some(*last_event_id),
+            let fd_event = Event::new(
+                fd_event_id,
+                Some(*last_event_id),
                 session_id,
-                actor: "broker".into(),
-                event_type: "fd_granted".into(),
-                timestamp: Utc::now(),
-                taint: vec![],
-            };
+                "broker".into(),
+                "fd_granted".into(),
+                Utc::now(),
+                vec![],
+            );
             let fd_hash = {
                 let locked = conn
                     .lock()
@@ -343,15 +343,15 @@ pub async fn dispatch_request(
                 runtime_core::ExecutorDecision::BlockedPendingConfirmation { .. } => "sink_blocked",
                 _ => "plan_node_evaluated",
             };
-            let audit_event = Event {
-                id: Uuid::new_v4(),
-                parent_id: Some(*last_event_id), // causal parent preserved — not None
+            let audit_event = Event::new(
+                Uuid::new_v4(),
+                Some(*last_event_id), // causal parent preserved — not None
                 session_id,
-                actor: "executor".into(),
-                event_type: event_type.into(),
-                timestamp: Utc::now(),
-                taint: vec![],
-            };
+                "executor".into(),
+                event_type.into(),
+                Utc::now(),
+                vec![],
+            );
             let new_hash = {
                 let locked = conn
                     .lock()

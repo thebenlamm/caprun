@@ -292,15 +292,15 @@ fn clean_path_intent_value_evaluates_to_allowed() {
     use brokerd::audit::append_event;
     use runtime_core::Event;
 
-    let eval_event = Event {
-        id: uuid::Uuid::new_v4(),
-        parent_id: Some(intent_event_id),
+    let eval_event = Event::new(
+        uuid::Uuid::new_v4(),
+        Some(intent_event_id),
         session_id,
-        actor: "executor".into(),
-        event_type: "plan_node_evaluated".into(),
-        timestamp: chrono::Utc::now(),
-        taint: vec![],
-    };
+        "executor".into(),
+        "plan_node_evaluated".into(),
+        chrono::Utc::now(),
+        vec![],
+    );
     append_event(&conn, &eval_event, Some(&intent_hash)).expect("append plan_node_evaluated");
 
     // -----------------------------------------------------------------------

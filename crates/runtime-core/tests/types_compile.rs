@@ -123,15 +123,15 @@ fn session_constructs_and_round_trips() {
 
 #[test]
 fn event_constructs_and_uses_taint_label_from_plan_node() {
-    let event = Event {
-        id: Uuid::new_v4(),
-        parent_id: None,
-        session_id: Uuid::new_v4(),
-        actor: "worker:1".to_string(),
-        event_type: "read_file".to_string(),
-        timestamp: Utc::now(),
-        taint: vec![TaintLabel::LocalWorkspace],
-    };
+    let event = Event::new(
+        Uuid::new_v4(),
+        None,
+        Uuid::new_v4(),
+        "worker:1".to_string(),
+        "read_file".to_string(),
+        Utc::now(),
+        vec![TaintLabel::LocalWorkspace],
+    );
     // Event.taint uses the same TaintLabel from plan_node — no duplicate definition
     assert_eq!(event.taint[0], TaintLabel::LocalWorkspace);
     let json = serde_json::to_string(&event).expect("Event serializes");

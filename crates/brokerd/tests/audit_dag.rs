@@ -18,35 +18,35 @@ fn audit_hash_chain() {
     let conn = open_audit_db(":memory:").expect("open_audit_db failed");
     let session_id = Uuid::new_v4();
 
-    let e1 = Event {
-        id: Uuid::new_v4(),
-        parent_id: None,
+    let e1 = Event::new(
+        Uuid::new_v4(),
+        None,
         session_id,
-        actor: "broker".into(),
-        event_type: "session_created".into(),
-        timestamp: Utc::now(),
-        taint: vec![],
-    };
+        "broker".into(),
+        "session_created".into(),
+        Utc::now(),
+        vec![],
+    );
 
-    let e2 = Event {
-        id: Uuid::new_v4(),
-        parent_id: Some(e1.id),
+    let e2 = Event::new(
+        Uuid::new_v4(),
+        Some(e1.id),
         session_id,
-        actor: "broker".into(),
-        event_type: "fd_granted".into(),
-        timestamp: Utc::now(),
-        taint: vec![],
-    };
+        "broker".into(),
+        "fd_granted".into(),
+        Utc::now(),
+        vec![],
+    );
 
-    let e3 = Event {
-        id: Uuid::new_v4(),
-        parent_id: Some(e2.id),
+    let e3 = Event::new(
+        Uuid::new_v4(),
+        Some(e2.id),
         session_id,
-        actor: "worker".into(),
-        event_type: "file_read".into(),
-        timestamp: Utc::now(),
-        taint: vec![TaintLabel::LocalWorkspace],
-    };
+        "worker".into(),
+        "file_read".into(),
+        Utc::now(),
+        vec![TaintLabel::LocalWorkspace],
+    );
 
     let h1 = append_event(&conn, &e1, None).expect("append e1 failed");
     let h2 = append_event(&conn, &e2, Some(&h1)).expect("append e2 failed");
@@ -95,15 +95,15 @@ fn tamper_breaks_chain() {
     let conn = open_audit_db(":memory:").expect("open_audit_db failed");
     let session_id = Uuid::new_v4();
 
-    let e1 = Event {
-        id: Uuid::new_v4(),
-        parent_id: None,
+    let e1 = Event::new(
+        Uuid::new_v4(),
+        None,
         session_id,
-        actor: "broker".into(),
-        event_type: "session_created".into(),
-        timestamp: Utc::now(),
-        taint: vec![],
-    };
+        "broker".into(),
+        "session_created".into(),
+        Utc::now(),
+        vec![],
+    );
 
     let _ = append_event(&conn, &e1, None).expect("append e1 failed");
 
