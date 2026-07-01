@@ -27,7 +27,7 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 
 - [x] **Phase 5: Runtime Spine & Live §9 Email Block** - Collapse dual dispatch, land session-scoped handle model, and prove live §9 block with durable blocked-path audit through the email.send stub (completed 2026-06-30)
 - [x] **Phase 6: Deterministic Planner & Intent Input** - Typed intent → PlanNode planner with broker-minted trusted values for the clean allow-path (completed 2026-07-01)
-- [ ] **Phase 7: file.create Sink, Enforcement Hardening & Full Acceptance** - Real hardened sink, closed enforcement edge cases, full live §9 acceptance contract green
+- [x] **Phase 7: file.create Sink, Enforcement Hardening & Full Acceptance** - Real hardened sink, closed enforcement edge cases, full live §9 acceptance contract green (completed 2026-07-01)
 
 ## Phase Details
 
@@ -110,14 +110,14 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
   7. The audit DB shows one unbroken causal chain per run — `fd_granted → file_read → plan_node_evaluated → sink_blocked` (hostile) or `sink_executed` (clean); the blocked `PlanArg`'s `ValueId` resolves to a `ValueRecord` whose `provenance_chain[0]` equals the actual `file_read` event id; the durable audit evidence links `effect_id + sink + arg + ValueId + provenance anchor` so the proof survives process exit (anti-stapling sentinel — an event-order-only assertion is insufficient)
   8. Forged `ValueId` handles and unknown sink/arg combinations are denied; an effect-path crash leaves an explicit indeterminate audit record with no automatic retry; cross-session handle access is adversarially denied
 
-**Plans**: 5/6 plans executed
+**Plans**: 6/6 plans complete
 
 - [x] 07-01-PLAN.md
 - [x] 07-02-PLAN.md
 - [x] 07-03-PLAN.md
 - [x] 07-04a-PLAN.md
 - [x] 07-04b-PLAN.md
-- [ ] 07-05-PLAN.md
+- [x] 07-05-PLAN.md
 
 ## Progress
 
@@ -129,4 +129,4 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 | 4. Value-Injection Security Demo (v0 DONE) | v1.0 | 5/5 | Complete | 2026-06-30 |
 | 5. Runtime Spine & Live §9 Email Block | v1.1 | 4/4 | Complete    | 2026-06-30 |
 | 6. Deterministic Planner & Intent Input | v1.1 | 5/5 | Complete    | 2026-07-01 |
-| 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 5/6 | In Progress|  |
+| 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 6/6 | Complete   | 2026-07-01 |
