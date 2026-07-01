@@ -12,7 +12,7 @@
 pub mod sink_sensitivity;
 pub mod value_store;
 
-use runtime_core::{plan_node::PlanNode, ExecutorDecision};
+use runtime_core::{plan_node::PlanNode, DenyReason, ExecutorDecision};
 use uuid::Uuid;
 use value_store::ValueStore;
 
@@ -50,13 +50,31 @@ pub fn submit_plan_node(
             Some(r) => r,
             None => {
                 return ExecutorDecision::Denied {
-                    reason: format!(
-                        "unresolvable handle for arg '{}': ValueId not in store",
-                        arg.name
-                    ),
+                    reason: DenyReason::DanglingHandle,
                 };
             }
         };
+
+        // Step 1a: Empty-taint guard. Runs BEFORE the routing-sensitivity check so
+        // an all-trusted-looking record with empty taint cannot fail open (an empty
+        // taint iterator is never untrusted → would slip past the block). Defense in
+        // depth: mint already rejects empty taint, but the executor must not depend
+        // on that alone (DESIGN §3 ordering: resolve → empty-taint → empty-provenance
+        // → is_routing_sensitive).
+        if record.taint.is_empty() {
+            return ExecutorDecision::Denied {
+                reason: DenyReason::EmptyTaintInvariantViolation,
+            };
+        }
+
+        // Step 1b: Empty-provenance guard. Also before the sensitivity check — a
+        // [UserTrusted] record with empty provenance (the hole codex #5 flagged)
+        // Denies here instead of reaching Allowed.
+        if record.provenance_chain.is_empty() {
+            return ExecutorDecision::Denied {
+                reason: DenyReason::MissingProvenanceAnchor,
+            };
+        }
 
         // Step 2: Routing-sensitive check. If this arg routes the effect (e.g.,
         // email.send "to") and the resolved record carries any UNTRUSTED label, Block.
