@@ -215,14 +215,18 @@ impl TaintLabel {
     /// Returns true for labels that signal hostile/external origin.
     /// UserTrusted and LocalWorkspace are TRUSTED provenance labels — they do NOT block.
     pub fn is_untrusted(&self) -> bool {
-        matches!(
-            self,
-            TaintLabel::ExternalUntrusted
-                | TaintLabel::EmailRaw
-                | TaintLabel::PdfRaw
-                | TaintLabel::LlmGenerated
-                | TaintLabel::WorkerExtracted
-        )
+        // Exhaustive `match self` with NO wildcard arm — see Pitfall 5. Adding a
+        // new TaintLabel variant then forces a compile error rather than silently
+        // defaulting it to trusted. Do NOT use `matches!()` (implicit `_ => false`).
+        match self {
+            TaintLabel::ExternalUntrusted => true,
+            TaintLabel::EmailRaw => true,
+            TaintLabel::PdfRaw => true,
+            TaintLabel::LlmGenerated => true,
+            TaintLabel::WorkerExtracted => true,
+            TaintLabel::UserTrusted => false,
+            TaintLabel::LocalWorkspace => false,
+        }
     }
 }
 ```
@@ -602,17 +606,17 @@ match request {
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Scope of `CaprunIntent` for Phase 6**
    - What we know: Only one variant is needed to prove the clean allow-path: `SendEmailSummary { recipient: String }`. It targets the existing `email.send` stub.
    - What's unclear: Should a second variant (e.g., `CreateFile { path: String, contents: String }`) be stubbed out now for Phase 7's benefit, or strictly minimal?
-   - Recommendation: One variant only (`SendEmailSummary`). YAGNI — adding stubs for Phase 7 risks scope creep and the Phase 7 research will determine the right variant shape for `file.create`.
+   - **RESOLVED: One variant only — `SendEmailSummary`. YAGNI.** Adding stubs for Phase 7 risks scope creep; Phase 7 research will determine the right variant shape for `file.create`. Plans 01/04 implement exactly this.
 
 2. **Phase 7 linkage: `file_read.parent_id` chain**
    - What we know: Phase 5 note says "mint_from_read sets `file_read.parent_id = None`" and the Phase 5 live test explicitly defers `verify_chain` assertion over the full chain. Phase 7 SC7 wires this.
    - What's unclear: Should Phase 6 fix `parent_id` for `intent_received` events or defer to Phase 7?
-   - Recommendation: Defer `event.parent_id` wiring to Phase 7 (consistent with Phase 5 pattern). Thread `parent_hash` correctly for the DB chain (already done by the server.rs causal threading), but leave `event.parent_id = None` in the Event struct for now.
+   - **RESOLVED: Defer `event.parent_id` wiring to Phase 7** (consistent with the `mint_from_read` precedent). Thread `parent_hash` correctly for the DB chain (already done by server.rs causal threading), but leave `event.parent_id = None` in the Event struct for now. Plan 03 follows this.
 
 ---
 
