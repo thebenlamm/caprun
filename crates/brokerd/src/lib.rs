@@ -48,10 +48,28 @@ mod tests {
     use runtime_core::{ExecutorDecision, PlanNode, SinkId};
     use uuid::Uuid;
 
-    /// Delegated submit_plan_node returns Allowed for a PlanNode with no args
-    /// (nothing to check → no tainted handle → Allowed).
+    /// Delegated submit_plan_node returns Allowed for a registered sink with no
+    /// args (nothing to check → no tainted handle → Allowed). Uses `email.send`
+    /// (a KNOWN sink with no required args) — 07-04a's arg-schema gate now fails
+    /// an UNKNOWN sink closed, so the delegation smoke test must target a
+    /// registered sink to exercise the Allowed path.
     #[test]
     fn submit_plan_node_empty_args_returns_allowed() {
+        let session_id = Uuid::new_v4();
+        let plan = PlanNode {
+            sink: SinkId("email.send".into()),
+            args: vec![],
+        };
+        let store = ValueStore::default();
+        let result = submit_plan_node(session_id, plan, &store);
+        assert_eq!(result, ExecutorDecision::Allowed);
+    }
+
+    /// The arg-schema gate fails an UNKNOWN sink closed (07-04a, HARD-01/HARD-05):
+    /// a sink absent from `KNOWN_SINKS` is denied BEFORE any resolve/sensitivity.
+    #[test]
+    fn submit_plan_node_unknown_sink_denied() {
+        use runtime_core::DenyReason;
         let session_id = Uuid::new_v4();
         let plan = PlanNode {
             sink: SinkId("test.sink".into()),
@@ -59,6 +77,11 @@ mod tests {
         };
         let store = ValueStore::default();
         let result = submit_plan_node(session_id, plan, &store);
-        assert_eq!(result, ExecutorDecision::Allowed);
+        assert_eq!(
+            result,
+            ExecutorDecision::Denied {
+                reason: DenyReason::UnknownSink("test.sink".to_string())
+            }
+        );
     }
 }
