@@ -100,6 +100,11 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
     let mut store = ValueStore::default();
     let mut last_event_id = Uuid::new_v4();
     let mut last_event_hash = "genesis-hash".to_string();
+    // ProvideIntent never exercises RequestFd; any valid dir anchors the root.
+    let ws_root = Arc::new(
+        adapter_fs::workspace::WorkspaceRoot::open(std::env::temp_dir().as_path())
+            .expect("open ws root"),
+    );
 
     let (mut server_end, mut client_end) =
         tokio::net::UnixStream::pair().expect("UnixStream::pair");
@@ -117,6 +122,7 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
         &mut last_event_id,
         &mut last_event_hash,
         &mut store,
+        &ws_root,
     )
     .await
     .expect("dispatch ProvideIntent must succeed");

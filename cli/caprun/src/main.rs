@@ -33,6 +33,7 @@ use brokerd::{
 };
 use chrono::Utc;
 use runtime_core::{intent::CaprunIntent, Event};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -72,6 +73,25 @@ async fn main() -> anyhow::Result<()> {
         open_audit_db(&audit_path).context("open_audit_db")?,
     ));
 
+    // ── 1b. Open the workspace-root dirfd capability ONCE (HARD-04) ──────────
+    // RESEARCH Q2 Option (a): derive the workspace ROOT from the workspace-file
+    // parent and hand the worker a root-RELATIVE basename — zero new CLI surface.
+    // The broker resolves every RequestFd read BENEATH this dirfd via
+    // openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS); the broker never again opens
+    // a worker-supplied path via ambient std::fs::File::open.
+    let ws_path = Path::new(&workspace_path);
+    let workspace_root_dir = match ws_path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let workspace_rel = ws_path.file_name().ok_or_else(|| {
+        anyhow::anyhow!("workspace-file has no file name: {workspace_path}")
+    })?;
+    let workspace_root = Arc::new(
+        adapter_fs::workspace::WorkspaceRoot::open(workspace_root_dir)
+            .context("open workspace root")?,
+    );
+
     // ── 2. Create session + persist + append session_created event ──────────
     let intent_id = Uuid::new_v4();
     let session = create_session(intent_id);
@@ -99,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
     // single dispatch authority — ASM-01). It binds `\0/agentos/{session_id}`
     // synchronously at the top of the task, before the worker process can connect.
     let conn_clone = conn.clone();
+    let ws_root_for_broker = workspace_root.clone();
     let broker_task = tokio::spawn(async move {
         brokerd::server::run_broker_server(
             &session_id.to_string(),
@@ -106,6 +127,7 @@ async fn main() -> anyhow::Result<()> {
             session_id,
             session_created_id,
             session_created_hash,
+            ws_root_for_broker,
         )
         .await
     });
@@ -124,7 +146,10 @@ async fn main() -> anyhow::Result<()> {
         // Abstract socket name WITHOUT the leading NUL (worker prepends it)
         .env("BROKER_SOCK", format!("/agentos/{session_id}"))
         .env("SESSION_ID", session_id.to_string())
-        .env("WORKSPACE_FILE", &workspace_path)
+        // Root-RELATIVE basename: the worker echoes this verbatim into
+        // RequestFd { path }, which the broker resolves BENEATH the workspace
+        // dirfd (HARD-04). Sending the full path would defeat RESOLVE_BENEATH.
+        .env("WORKSPACE_FILE", workspace_rel)
         // Serialised CaprunIntent — worker deserialises this and sends ProvideIntent
         // to the broker, which mints it authoritatively in the per-connection
         // ValueStore. Never passed raw bytes here; always the typed intent enum.
