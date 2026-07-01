@@ -32,6 +32,8 @@
 /// runtime (abstract sockets are Linux-only). The e2e test is `#[cfg(target_os =
 /// "linux")]` so this binary is never invoked on macOS; it only needs to COMPILE.
 
+mod planner;
+
 use anyhow::Context;
 use brokerd::proto::{BrokerRequest, BrokerResponse, WorkerClaim};
 use brokerd::quarantine::extract_email_claims;

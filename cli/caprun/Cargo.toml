@@ -31,3 +31,7 @@ path = "src/worker.rs"
 [[test]]
 name = "e2e"
 path = "tests/e2e.rs"
+
+[[test]]
+name = "planner"
+path = "tests/planner.rs"
