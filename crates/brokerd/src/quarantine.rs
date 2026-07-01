@@ -328,4 +328,90 @@ mod tests {
             "DAG file_read event must carry EmailRaw taint"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // mint_from_intent tests — genuine UserTrusted anchor (T-06-04)
+    // -----------------------------------------------------------------------
+
+    /// Genuine-provenance anchor identity test (T-06-04):
+    /// After mint_from_intent, the resolved record's provenance_chain[0] MUST equal
+    /// the returned intent_event_id, AND that id must exist in the audit DAG as an
+    /// "intent_received" event. A fabricated UUID would fail the DAG lookup.
+    #[test]
+    fn mint_from_intent_anchor_identity() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+        let literal = "boss@company.com".to_string();
+
+        let (intent_event_id, _intent_hash, value_id) =
+            mint_from_intent(&conn, &mut store, session_id, literal.clone(), None).unwrap();
+
+        // provenance_chain[0] must equal the returned intent_event_id (anti-stapling)
+        let record = store.resolve(&value_id).expect("value_id must resolve");
+        assert_eq!(
+            record.provenance_chain[0], intent_event_id,
+            "provenance_chain[0] must equal the intent_received Event id (genuine-provenance anchor)"
+        );
+
+        // That id must exist in the audit DAG as an intent_received event
+        let evt = find_event_by_type(&conn, &session_id.to_string(), "intent_received")
+            .unwrap()
+            .expect("intent_received event must exist in the audit DAG");
+        assert_eq!(
+            evt.id, intent_event_id,
+            "audit DAG event id must match the returned intent_event_id"
+        );
+    }
+
+    /// Record taint must be [UserTrusted] — positive provenance assertion (Pitfall 2).
+    /// Event taint must be empty — the event itself carries no taint.
+    #[test]
+    fn mint_from_intent_taint_on_record_empty_on_event() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (_intent_event_id, _intent_hash, value_id) =
+            mint_from_intent(&conn, &mut store, session_id, "boss@company.com".into(), None)
+                .unwrap();
+
+        // Record must carry UserTrusted (positive provenance — NOT empty vec, Pitfall 2)
+        let record = store.resolve(&value_id).expect("value_id must resolve");
+        assert!(
+            record.taint.contains(&TaintLabel::UserTrusted),
+            "record must be tainted UserTrusted (positive provenance)"
+        );
+        assert!(
+            !record.taint.iter().any(|t| t.is_untrusted()),
+            "record must not carry any untrusted labels (UserTrusted only)"
+        );
+
+        // DAG event must carry NO taint (unlike mint_from_read where event carries taint)
+        let evt = find_event_by_type(&conn, &session_id.to_string(), "intent_received")
+            .unwrap()
+            .expect("intent_received event must exist");
+        assert!(
+            evt.taint.is_empty(),
+            "intent_received DAG event must carry no taint (taint lives on the record, not the event)"
+        );
+    }
+
+    /// The minted record's literal must equal the string passed to mint_from_intent.
+    #[test]
+    fn mint_from_intent_literal_flows_through() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+        let literal = "recipient@example.com".to_string();
+
+        let (_intent_event_id, _intent_hash, value_id) =
+            mint_from_intent(&conn, &mut store, session_id, literal.clone(), None).unwrap();
+
+        let record = store.resolve(&value_id).expect("value_id must resolve");
+        assert_eq!(
+            record.literal, literal,
+            "minted record literal must equal the input literal"
+        );
+    }
 }
