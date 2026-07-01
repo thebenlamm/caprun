@@ -98,6 +98,7 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 **Goal**: `file.create` is a real, hardened sink; all enforcement edge cases from channel review are closed; the `RelativePath` claim variant completes the `ReportClaims` enum; and the full live §9 acceptance contract — hostile block with genuine-taint proof, clean allow, and a causal audit chain durable across process exit — is green on a real Linux `caprun` run
 **Depends on**: Phase 6
 **Requirements**: SINK-01, SINK-02, SINK-03, SINK-04, HARD-01, HARD-04, HARD-05, HARD-06, ACC-01, ACC-03, ACC-04, ACC-05, ACC-06, ACC-07
+**Phase 6 handoff (ACC-02 live proof):** Phase 6's intent-driven CLI always routes a `UserTrusted` recipient into `email.send.to`, so the **live** email hostile block became unreachable and its two live tests were retired (the in-process hostile proof in `crates/brokerd/tests/s9_acceptance.rs` remains intact). SC5 below **restores the live §9 hostile block** via `file.create` (tainted path from `mint_from_read`) — this is the required re-establishment of a continuously-proven live §9 guarantee.
 **Success Criteria** (what must be TRUE):
 
   1. `file.create` validates its arg schema (`path`, `contents`) — missing, duplicate, or unknown args are rejected before any sensitivity or executor step; unknown sinks also fail closed
