@@ -71,7 +71,7 @@ fn mint_anchors_provenance_to_file_read_event() {
     };
 
     let (read_event_id, _hash, value_id) =
-        mint_from_read(&conn, &mut store, session_id, &claim, None).expect("mint_from_read");
+        mint_from_read(&conn, &mut store, session_id, &claim, None, None).expect("mint_from_read");
 
     // The resolved record's provenance chain anchors to the returned read event id.
     let record = store.resolve(&value_id).expect("value_id resolves");
@@ -106,7 +106,7 @@ fn handle_from_other_connection_store_is_denied() {
         value: HOSTILE_ADDR.into(),
     };
     let (_id, _hash, value_id) =
-        mint_from_read(&conn, &mut store_a, session_id, &claim, None).expect("mint_from_read");
+        mint_from_read(&conn, &mut store_a, session_id, &claim, None, None).expect("mint_from_read");
 
     // Sanity: in store A the same plan blocks (the value is tainted + routing-sensitive).
     let decision_a = executor::submit_plan_node(
@@ -172,7 +172,7 @@ async fn block_appends_durable_causal_sink_blocked() {
     };
     let (read_event_id, read_hash, value_id) = {
         let locked = conn.lock().unwrap();
-        mint_from_read(&locked, &mut store, session_id, &claim, None).expect("mint_from_read")
+        mint_from_read(&locked, &mut store, session_id, &claim, None, None).expect("mint_from_read")
     };
 
     let mut last_event_id = read_event_id;
@@ -235,7 +235,7 @@ async fn append_failure_is_fail_closed() {
     };
     let (read_event_id, read_hash, value_id) = {
         let locked = conn.lock().unwrap();
-        mint_from_read(&locked, &mut store, session_id, &claim, None).expect("mint_from_read")
+        mint_from_read(&locked, &mut store, session_id, &claim, None, None).expect("mint_from_read")
     };
 
     // Sanity: the file_read anchor exists before we break the DAG.

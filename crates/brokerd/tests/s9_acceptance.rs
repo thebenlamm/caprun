@@ -86,7 +86,7 @@ fn s9_acceptance() {
     // -----------------------------------------------------------------------
     let claim = &claims[0];
     let (read_event_id, _read_hash, value_id) =
-        mint_from_read(&conn, &mut store, session_id, claim, None)
+        mint_from_read(&conn, &mut store, session_id, claim, None, None)
             .expect("mint_from_read failed");
 
     // -----------------------------------------------------------------------
@@ -268,7 +268,7 @@ fn clean_path_intent_value_evaluates_to_allowed() {
     // -----------------------------------------------------------------------
     let recipient = "boss@company.com";
     let (intent_event_id, intent_hash, intent_value_id) =
-        mint_from_intent(&conn, &mut store, session_id, recipient.to_string(), None)
+        mint_from_intent(&conn, &mut store, session_id, recipient.to_string(), None, None)
             .expect("mint_from_intent failed");
 
     // Genuine-provenance anchor: provenance_chain[0] must equal the intent_event_id.
@@ -360,5 +360,118 @@ fn clean_path_intent_value_evaluates_to_allowed() {
     assert!(
         sink_blocked.is_none(),
         "clean path must NOT produce a sink_blocked event; UserTrusted-only provenance allows"
+    );
+}
+
+/// In-process `file.create` backstop (07-05 / SINK-01):
+///
+/// The FAST in-process complement to the live §9 file.create block (the canonical
+/// dispatch-level after-exit proof lives in `durable_anchor.rs`). A genuinely-
+/// tainted `relative_path` value (`[ExternalUntrusted, PathRaw]`), minted via the
+/// SOLE taint site `mint_from_read`, routed into file.create's routing-sensitive
+/// `path` arg → the executor returns `BlockedPendingConfirmation` with a genuine
+/// anchor whose `provenance_chain[0]` equals the `file_read` Event id. Keeps the
+/// in-process backstop aligned with the live sink (07-04b) WITHOUT weakening the
+/// held-out genuine-taint assertion.
+#[test]
+fn s9_acceptance_file_create_path_block() {
+    let conn = open_audit_db(":memory:").expect("open_audit_db");
+    let mut store = ValueStore::default();
+    let session_id = Uuid::new_v4();
+
+    // Genuine-taint mint (SOLE taint site). Only the extracted relative_path claim
+    // reaches here — the raw workspace sentence was discarded by the worker (lossy).
+    let hostile_path = "reports/pwned.txt";
+    let claim = brokerd::quarantine::Claim {
+        claim_type: "relative_path".into(),
+        value: hostile_path.into(),
+    };
+    let (read_event_id, _read_hash, path_value_id) =
+        mint_from_read(&conn, &mut store, session_id, &claim, None, None).expect("mint_from_read failed");
+
+    // file.create requires {path, contents}. `path` is FIRST and tainted, so the
+    // executor blocks on it before it ever resolves `contents` (a fresh dummy handle
+    // that is never resolved on the block path). validate_schema passes (both args
+    // present); the block is the routing-sensitivity decision on `path`.
+    let plan_node = PlanNode {
+        sink: SinkId("file.create".into()),
+        args: vec![
+            PlanArg {
+                name: "path".into(),
+                value_id: path_value_id,
+            },
+            PlanArg {
+                name: "contents".into(),
+                value_id: runtime_core::plan_node::ValueId::new(),
+            },
+        ],
+    };
+
+    let effect_id = Uuid::new_v4();
+    let decision = executor::submit_plan_node(session_id, effect_id, &plan_node, &store);
+    let anchor = match decision {
+        ExecutorDecision::BlockedPendingConfirmation { anchor } => anchor,
+        other => panic!(
+            "expected BlockedPendingConfirmation for a tainted file.create path, got {:?}",
+            other
+        ),
+    };
+
+    // The anchor pins the routing-sensitive file.create `path` and its byte-exact literal.
+    assert_eq!(anchor.sink.0, "file.create", "sink must be file.create");
+    assert_eq!(anchor.arg, "path", "arg must be the routing-sensitive path");
+    assert_eq!(
+        anchor.literal, hostile_path,
+        "anchor.literal must be the byte-exact hostile path"
+    );
+    assert_eq!(
+        anchor.effect_id, effect_id,
+        "anchor.effect_id must be the broker-minted id"
+    );
+    assert!(
+        anchor.taint.contains(&TaintLabel::PathRaw),
+        "a workspace-derived path carries the PathRaw label"
+    );
+    assert!(
+        anchor.taint.iter().any(|t| t.is_untrusted()),
+        "the anchor taint must carry an untrusted label"
+    );
+
+    // HELD-OUT GENUINE-TAINT BACKSTOP (unweakened): provenance_chain[0] == read_event_id.
+    assert!(
+        !anchor.provenance_chain.is_empty(),
+        "provenance_chain must be non-empty — genuine taint chain required"
+    );
+    assert_eq!(
+        anchor.provenance_chain[0], read_event_id,
+        "GENUINE-TAINT BACKSTOP: file.create path anchor.provenance_chain[0] must equal the \
+         file_read Event id returned by mint_from_read (a stapled-taint impl MUST fail here)"
+    );
+    assert_eq!(
+        anchor.read_event_id, anchor.provenance_chain[0],
+        "anchor.read_event_id must equal anchor.provenance_chain[0]"
+    );
+
+    // The DAG file_read event is real and carries the untrusted PathRaw taint.
+    let file_read = find_event_by_type(&conn, &session_id.to_string(), "file_read")
+        .expect("find_event_by_type failed")
+        .expect("file_read event must be present in the audit DAG");
+    assert_eq!(
+        file_read.id, anchor.provenance_chain[0],
+        "the DAG file_read id must equal the anchor's chain root (real event, not a UUID)"
+    );
+    assert!(
+        file_read.taint.contains(&TaintLabel::PathRaw),
+        "the file_read DAG event must carry PathRaw taint"
+    );
+    assert!(
+        !file_read.taint.contains(&TaintLabel::LocalWorkspace),
+        "a workspace-derived path is NEVER LocalWorkspace (T-07-44)"
+    );
+
+    // Hash-chain integrity from the file_read root.
+    assert!(
+        verify_chain(&conn, &session_id.to_string()),
+        "verify_chain must return true — the audit DAG hash chain must be unbroken"
     );
 }
