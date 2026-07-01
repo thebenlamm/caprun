@@ -389,7 +389,38 @@ pub async fn dispatch_request(
             *last_event_id = audit_event.id;
             *last_event_hash = new_hash;
 
-            // Only send the decision AFTER the durable append succeeded.
+            // 07-04b: on an Allowed `file.create` decision, invoke the live sink.
+            // The authorizing `plan_node_evaluated` event is already durably
+            // appended above, so the effect + its audit record follow it
+            // (two-phase ordering: authorize, then effect). The sink event chains
+            // onto the just-advanced (plan_node_evaluated) head. A sink error
+            // propagates with `?` after a durable `sink_execution_failed` record —
+            // no automatic retry (T-07-45). Non-file.create Allowed decisions keep
+            // today's behavior (no sink invocation in v0).
+            if matches!(decision, runtime_core::ExecutorDecision::Allowed)
+                && plan_node.sink.0 == "file.create"
+            {
+                let (sink_event_id, sink_hash) = {
+                    let locked = conn
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                    crate::sinks::file_create::invoke_file_create(
+                        &locked,
+                        value_store,
+                        session_id,
+                        effect_id,
+                        &plan_node,
+                        workspace_root,
+                        *last_event_id,
+                        last_event_hash,
+                    )?
+                };
+                *last_event_id = sink_event_id;
+                *last_event_hash = sink_hash;
+            }
+
+            // Only send the decision AFTER the durable append (and any sink
+            // invocation) succeeded.
             send_response(stream, &BrokerResponse::PlanNodeDecision { decision }).await?;
         }
 

@@ -11,3 +11,4 @@
 /// blocks first — the stub is exercised by unit tests that call it directly.
 
 pub mod email_send;
+pub mod file_create;
