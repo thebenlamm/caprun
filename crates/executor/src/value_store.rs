@@ -104,4 +104,55 @@ mod tests {
             "unknown ValueId must resolve to None"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Mint non-empty invariant (HARD-05): mint MUST reject empty taint or empty
+    // provenance so an empty-taint/empty-provenance ValueRecord is unconstructable
+    // through the sanctioned path. See planning-docs/TASK-mint-nonempty-invariant.md.
+    // -----------------------------------------------------------------------
+
+    /// Empty taint is rejected: `mint` returns `Err(MintInvariantError::EmptyTaint)`.
+    #[test]
+    fn mint_rejects_empty_taint() {
+        let mut store = ValueStore::default();
+        let event_id = Uuid::new_v4();
+        let result = store.mint("boss@company.com".to_string(), vec![], vec![event_id]);
+        assert_eq!(
+            result,
+            Err(MintInvariantError::EmptyTaint),
+            "empty taint must be rejected — an empty-taint record is unconstructable"
+        );
+    }
+
+    /// Empty provenance is rejected: `mint` returns `Err(MintInvariantError::EmptyProvenance)`.
+    #[test]
+    fn mint_rejects_empty_provenance() {
+        let mut store = ValueStore::default();
+        let result = store.mint(
+            "boss@company.com".to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![],
+        );
+        assert_eq!(
+            result,
+            Err(MintInvariantError::EmptyProvenance),
+            "empty provenance must be rejected — the taint anchor would be dangling"
+        );
+    }
+
+    /// Non-empty taint AND provenance succeeds: `mint` returns `Ok(id)` and the
+    /// resolved record's taint/provenance_chain match the mint inputs.
+    #[test]
+    fn mint_accepts_nonempty_taint_and_provenance() {
+        let mut store = ValueStore::default();
+        let event_id = Uuid::new_v4();
+        let taint = vec![TaintLabel::UserTrusted];
+        let chain = vec![event_id];
+        let id = store
+            .mint("boss@company.com".to_string(), taint.clone(), chain.clone())
+            .expect("non-empty taint + provenance must mint Ok");
+        let record = store.resolve(&id).expect("minted id must resolve");
+        assert_eq!(record.taint, taint);
+        assert_eq!(record.provenance_chain, chain);
+    }
 }
