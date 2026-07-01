@@ -1,6 +1,6 @@
 /// Task 2 TDD: field-presence + serde round-trip for ValueNode, Effect, ExecutorDecision
 use runtime_core::{
-    ExecutorDecision, Effect, ObserveEffect, ReversibleEffect, IrreversibleEffect,
+    DenyReason, ExecutorDecision, Effect, ObserveEffect, ReversibleEffect, IrreversibleEffect,
     PlanArg, PlanNode, ValueId, ValueNode, SinkId, TaintLabel, Provenance,
 };
 
@@ -74,7 +74,7 @@ fn executor_decision_has_all_variants() {
         taint: vec![],
         provenance_chain: vec![],
     };
-    let _denied = ExecutorDecision::Denied { reason: "policy".to_string() };
+    let _denied = ExecutorDecision::Denied { reason: DenyReason::DanglingHandle };
     let _ni = ExecutorDecision::NotImplemented;
 }
 

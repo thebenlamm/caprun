@@ -29,6 +29,21 @@ pub struct ValueStore {
     inner: HashMap<ValueId, ValueRecord>,
 }
 
+/// Error returned by `ValueStore::mint` when the mint-time non-empty invariant is
+/// violated. Making `mint` fallible means an empty-taint or empty-provenance
+/// `ValueRecord` is UNCONSTRUCTABLE through the sanctioned path (HARD-05) — the
+/// invariant holds by construction, not merely by convention.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MintInvariantError {
+    /// `taint` was empty. Every ValueRecord must carry ≥1 taint label; an empty
+    /// taint would skip the executor's `any(is_untrusted)` block (an empty
+    /// iterator is never untrusted) and fail open past the sensitivity check.
+    EmptyTaint,
+    /// `provenance_chain` was empty. `provenance_chain[0]` is the genuine-taint
+    /// anchor (the originating read/intent Event id); an empty chain breaks it.
+    EmptyProvenance,
+}
+
 impl ValueStore {
     /// Mint a new `ValueRecord` and return its opaque `ValueId` handle.
     ///
@@ -39,12 +54,22 @@ impl ValueStore {
     ///
     /// `provenance_chain[0]` MUST equal the originating file_read Event id; this
     /// is the field the §9 held-out test asserts to prove genuine taint propagation.
+    ///
+    /// Fails closed (HARD-05): rejects empty taint (`EmptyTaint`) and empty
+    /// provenance (`EmptyProvenance`) BEFORE minting an id, so no empty-taint or
+    /// empty-provenance record can ever enter the store.
     pub fn mint(
         &mut self,
         literal: String,
         taint: Vec<TaintLabel>,
         provenance_chain: Vec<uuid::Uuid>,
-    ) -> ValueId {
+    ) -> Result<ValueId, MintInvariantError> {
+        if taint.is_empty() {
+            return Err(MintInvariantError::EmptyTaint);
+        }
+        if provenance_chain.is_empty() {
+            return Err(MintInvariantError::EmptyProvenance);
+        }
         let id = ValueId::new();
         let record = ValueRecord {
             id: id.clone(),
@@ -53,7 +78,7 @@ impl ValueStore {
             provenance_chain,
         };
         self.inner.insert(id.clone(), record);
-        id
+        Ok(id)
     }
 
     /// Read-only dereference of an opaque handle to its authoritative ValueRecord.
@@ -82,7 +107,9 @@ mod tests {
         let event_id = Uuid::new_v4();
         let chain = vec![event_id];
 
-        let id = store.mint(literal.clone(), taint.clone(), chain.clone());
+        let id = store
+            .mint(literal.clone(), taint.clone(), chain.clone())
+            .expect("valid mint");
         let record = store.resolve(&id).expect("minted id must resolve");
 
         assert_eq!(record.id, id, "resolved record id must match minted ValueId");
@@ -103,5 +130,56 @@ mod tests {
             store.resolve(&random_id).is_none(),
             "unknown ValueId must resolve to None"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Mint non-empty invariant (HARD-05): mint MUST reject empty taint or empty
+    // provenance so an empty-taint/empty-provenance ValueRecord is unconstructable
+    // through the sanctioned path. See planning-docs/TASK-mint-nonempty-invariant.md.
+    // -----------------------------------------------------------------------
+
+    /// Empty taint is rejected: `mint` returns `Err(MintInvariantError::EmptyTaint)`.
+    #[test]
+    fn mint_rejects_empty_taint() {
+        let mut store = ValueStore::default();
+        let event_id = Uuid::new_v4();
+        let result = store.mint("boss@company.com".to_string(), vec![], vec![event_id]);
+        assert_eq!(
+            result,
+            Err(MintInvariantError::EmptyTaint),
+            "empty taint must be rejected — an empty-taint record is unconstructable"
+        );
+    }
+
+    /// Empty provenance is rejected: `mint` returns `Err(MintInvariantError::EmptyProvenance)`.
+    #[test]
+    fn mint_rejects_empty_provenance() {
+        let mut store = ValueStore::default();
+        let result = store.mint(
+            "boss@company.com".to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![],
+        );
+        assert_eq!(
+            result,
+            Err(MintInvariantError::EmptyProvenance),
+            "empty provenance must be rejected — the taint anchor would be dangling"
+        );
+    }
+
+    /// Non-empty taint AND provenance succeeds: `mint` returns `Ok(id)` and the
+    /// resolved record's taint/provenance_chain match the mint inputs.
+    #[test]
+    fn mint_accepts_nonempty_taint_and_provenance() {
+        let mut store = ValueStore::default();
+        let event_id = Uuid::new_v4();
+        let taint = vec![TaintLabel::UserTrusted];
+        let chain = vec![event_id];
+        let id = store
+            .mint("boss@company.com".to_string(), taint.clone(), chain.clone())
+            .expect("non-empty taint + provenance must mint Ok");
+        let record = store.resolve(&id).expect("minted id must resolve");
+        assert_eq!(record.taint, taint);
+        assert_eq!(record.provenance_chain, chain);
     }
 }

@@ -62,7 +62,9 @@ fn tainted_to_arg_blocks_with_verbatim_record_payload() {
     let taint = vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw];
 
     // mint: the broker's worker-extraction step
-    let id = store.mint(literal.clone(), taint.clone(), provenance.clone());
+    let id = store
+        .mint(literal.clone(), taint.clone(), provenance.clone())
+        .expect("valid mint");
 
     let plan = email_send_with_to(id);
     let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
@@ -99,13 +101,22 @@ fn tainted_to_arg_blocks_with_verbatim_record_payload() {
 // Case 2: untainted routing-sensitive arg → Allowed
 // ---------------------------------------------------------------------------
 
-/// A value with an empty taint vec in the "to" arg must produce `Allowed`.
-/// An empty taint vec means the record has no taint labels — no hostile origin.
+/// A routing-sensitive "to" arg carrying ONLY trusted taint ([UserTrusted]) with
+/// a real provenance anchor must produce `Allowed`. Empty taint is now forbidden at
+/// the mint source (HARD-05) and would Deny at the executor's empty-taint guard, so
+/// the clean allow-path is exercised with the real all-trusted shape.
 #[test]
 fn untainted_to_arg_returns_allowed() {
     let mut store = ValueStore::default();
-    // Empty taint vec → no taint labels
-    let id = store.mint("boss@company.com".to_string(), vec![], vec![]);
+    let event_id = Uuid::new_v4();
+    // [UserTrusted] + real provenance anchor → clean, no untrusted label.
+    let id = store
+        .mint(
+            "boss@company.com".to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![event_id],
+        )
+        .expect("valid mint");
 
     let plan = email_send_with_to(id);
     let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
@@ -113,7 +124,7 @@ fn untainted_to_arg_returns_allowed() {
     assert_eq!(
         decision,
         ExecutorDecision::Allowed,
-        "untainted 'to' must produce Allowed"
+        "trusted-only 'to' must produce Allowed"
     );
 }
 
@@ -149,11 +160,13 @@ fn unknown_handle_returns_denied() {
 #[test]
 fn tainted_content_sensitive_arg_allows_in_v0() {
     let mut store = ValueStore::default();
-    let id = store.mint(
-        "hostile subject line".to_string(),
-        vec![TaintLabel::ExternalUntrusted],
-        vec![Uuid::new_v4()],
-    );
+    let id = store
+        .mint(
+            "hostile subject line".to_string(),
+            vec![TaintLabel::ExternalUntrusted],
+            vec![Uuid::new_v4()],
+        )
+        .expect("valid mint");
 
     // "subject" is content-sensitive → must NOT Block in v0
     let plan = email_send_with_arg("subject", id);
@@ -175,16 +188,20 @@ fn tainted_content_sensitive_arg_allows_in_v0() {
 #[test]
 fn tainted_cc_and_bcc_also_block() {
     let mut store = ValueStore::default();
-    let cc_id = store.mint(
-        "attacker@ev1l.com".to_string(),
-        vec![TaintLabel::ExternalUntrusted],
-        vec![Uuid::new_v4()],
-    );
-    let bcc_id = store.mint(
-        "spy@ev1l.com".to_string(),
-        vec![TaintLabel::EmailRaw],
-        vec![Uuid::new_v4()],
-    );
+    let cc_id = store
+        .mint(
+            "attacker@ev1l.com".to_string(),
+            vec![TaintLabel::ExternalUntrusted],
+            vec![Uuid::new_v4()],
+        )
+        .expect("valid mint");
+    let bcc_id = store
+        .mint(
+            "spy@ev1l.com".to_string(),
+            vec![TaintLabel::EmailRaw],
+            vec![Uuid::new_v4()],
+        )
+        .expect("valid mint");
 
     for (arg_name, id) in [("cc", cc_id), ("bcc", bcc_id)] {
         let plan = email_send_with_arg(arg_name, id);
@@ -201,11 +218,13 @@ fn tainted_cc_and_bcc_also_block() {
 fn tainted_body_and_attachment_allow_in_v0() {
     let mut store = ValueStore::default();
     for arg_name in ["body", "attachment"] {
-        let id = store.mint(
-            format!("hostile {arg_name} content"),
-            vec![TaintLabel::ExternalUntrusted],
-            vec![Uuid::new_v4()],
-        );
+        let id = store
+            .mint(
+                format!("hostile {arg_name} content"),
+                vec![TaintLabel::ExternalUntrusted],
+                vec![Uuid::new_v4()],
+            )
+            .expect("valid mint");
         let plan = email_send_with_arg(arg_name, id);
         let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
         assert_eq!(
@@ -231,11 +250,13 @@ fn hard02_usertrusted_only_allows() {
     let mut store = ValueStore::default();
     let event_id = Uuid::new_v4();
     // Positive provenance: [UserTrusted] — must NOT block.
-    let id = store.mint(
-        "boss@company.com".to_string(),
-        vec![TaintLabel::UserTrusted],
-        vec![event_id],
-    );
+    let id = store
+        .mint(
+            "boss@company.com".to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![event_id],
+        )
+        .expect("valid mint");
 
     let plan = email_send_with_to(id);
     let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
@@ -257,7 +278,9 @@ fn hard02_externaltainted_still_blocks() {
     let literal = "attacker@evil.com".to_string();
     let taint = vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw];
 
-    let id = store.mint(literal.clone(), taint.clone(), vec![event_id]);
+    let id = store
+        .mint(literal.clone(), taint.clone(), vec![event_id])
+        .expect("valid mint");
 
     let plan = email_send_with_to(id);
     let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
