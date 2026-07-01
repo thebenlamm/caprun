@@ -430,6 +430,7 @@ pub async fn dispatch_request(
             // forcing the dispatcher to be updated (no silent unhandled variants).
             let literal = match &intent {
                 CaprunIntent::SendEmailSummary { recipient } => recipient.clone(),
+                CaprunIntent::CreateFileFromReport { path } => path.clone(),
             };
 
             // Mint inside the per-connection ValueStore (Pitfall 1: minting outside

@@ -10,6 +10,9 @@
 ///
 /// Intent kinds:
 ///   send-email-summary <recipient>  — send a workspace summary to the recipient
+///   create-file-from-report <path>  — create <path> under the workspace root
+///                                     (clean path → Allow; a hostile workspace-read
+///                                      path → Block, per §9)
 ///
 /// # Single dispatch authority (ASM-01)
 ///
@@ -64,6 +67,9 @@ async fn main() -> anyhow::Result<()> {
     let intent = match intent_kind.as_str() {
         "send-email-summary" => CaprunIntent::SendEmailSummary {
             recipient: intent_param,
+        },
+        "create-file-from-report" => CaprunIntent::CreateFileFromReport {
+            path: intent_param,
         },
         _ => anyhow::bail!("unknown intent kind: {intent_kind}"),
     };
