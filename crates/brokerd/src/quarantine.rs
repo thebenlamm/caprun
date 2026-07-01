@@ -1,17 +1,22 @@
-/// quarantine — typed lossy extract and genuine-taint mint anchor.
+/// quarantine — typed lossy extract and genuine-taint/genuine-provenance mint anchors.
 ///
-/// # CANONICAL TAINT-MINT SITE (T-04-03)
+/// # CANONICAL MINT SITES
 ///
-/// `mint_from_read` is the ONLY broker site that mints a tainted ValueRecord.
-/// Taint MUST be set here — at read Event time — never at sink evaluation time.
-/// Setting taint at sink evaluation time would be "taint stapling" and would fail
-/// the §9 acceptance test: the `provenance_chain[0]` would not match a real
-/// file_read Event in the audit DAG.
+/// Two broker functions mint ValueRecords here, each anchored to a real audit event:
 ///
-/// Anti-stapling invariant: the same `mint_from_read` call that appends the
-/// file_read Event to the audit DAG also mints the ValueRecord with
-/// `provenance_chain = [read_event.id]`. No other path in brokerd may call
-/// `ValueStore::mint` with a non-empty taint vector.
+/// * `mint_from_read` — the SOLE hostile-taint site.
+///   Mints a `[ExternalUntrusted, EmailRaw]`-tainted ValueRecord anchored to a
+///   `file_read` event. Taint MUST be set here (at read Event time), never at
+///   sink evaluation time (anti-stapling, T-04-03).
+///
+/// * `mint_from_intent` — the SOLE UserTrusted site.
+///   Mints a `[UserTrusted]` ValueRecord anchored to an `intent_received` event.
+///   The event itself carries no taint; positive provenance lives on the record.
+///   Symmetrical to `mint_from_read`: event appended + record minted in one call
+///   so `provenance_chain[0] == intent_event_id` (genuine-provenance anchor, T-06-04).
+///
+/// Anti-stapling invariant: both mint functions append the event AND mint the record
+/// in one call. No other path in brokerd may call `ValueStore::mint`.
 
 use anyhow::Result;
 use chrono::Utc;
@@ -156,6 +161,78 @@ pub fn mint_from_read(
     let value_id = store.mint(claim.value.clone(), taint, vec![event_id]);
 
     Ok((event_id, read_hash, value_id))
+}
+
+/// Append an `intent_received` Event and mint a `UserTrusted` ValueRecord.
+///
+/// # SOLE BROKER UserTrusted-MINT SITE (T-06-04)
+///
+/// This is the only call site in brokerd that:
+///   1. Appends an `intent_received` Event with `taint: []` (the event carries no taint)
+///      to the audit DAG via `audit::append_event`.
+///   2. Calls `ValueStore::mint` with `taint: [TaintLabel::UserTrusted]` and
+///      `provenance_chain = [intent_event.id]`.
+///
+/// Both operations occur in one call so the chain is unbroken: `provenance_chain[0]`
+/// is the UUID of the event we just appended — never a fabricated UUID.
+/// The anti-stapling invariant (T-06-04) asserts:
+///   `result.provenance_chain[0] == returned intent_event_id`
+/// AND that id exists in the audit DAG as an `intent_received` event.
+///
+/// Symmetrical to `mint_from_read`, with these differences:
+///   - `taint` on the **record** is `[UserTrusted]` (positive provenance, NOT empty — Pitfall 2).
+///   - `taint` on the **event** is `[]` (unlike `mint_from_read` where event taint == record taint).
+///   - `event_type` is `"intent_received"` (not `"file_read"`).
+///   - `actor` is `"user-intent"` (not `"confined-reader"`).
+///   - `argument` is `literal: String` (the user-provided value, e.g., recipient email).
+///   - `event.parent_id` is `None` for now — Phase 7 wires the parent_id chain.
+///
+/// # Arguments
+/// * `conn`         — open rusqlite connection for the audit DAG.
+/// * `store`        — mutable ref to the broker-owned ValueStore.
+/// * `session_id`   — the Session this intent belongs to.
+/// * `literal`      — the user-provided value (e.g., "boss@company.com").
+/// * `parent_hash`  — hash of the preceding DAG event row (`None` for session-root intents).
+///
+/// # Returns
+/// `(intent_event_id, intent_hash, value_id)` where:
+/// * `intent_event_id` — UUID of the appended `intent_received` Event.
+/// * `intent_hash`     — SHA-256 hash of that event row (for chaining subsequent events).
+/// * `value_id`        — opaque handle to the minted `ValueRecord` (taint: [UserTrusted]).
+pub fn mint_from_intent(
+    conn: &rusqlite::Connection,
+    store: &mut ValueStore,
+    session_id: Uuid,
+    literal: String,
+    parent_hash: Option<&str>,
+) -> Result<(Uuid, String, runtime_core::plan_node::ValueId)> {
+    // Step 1: Build the intent_received audit Event.
+    //
+    // The EVENT itself carries no taint — taint lives on the ValueRecord.
+    // This differs from mint_from_read where event taint == record taint.
+    let event_id = Uuid::new_v4();
+    let event = Event {
+        id: event_id,
+        parent_id: None, // Phase 7 wires parent_id linkage (same as mint_from_read precedent)
+        session_id,
+        actor: "user-intent".into(),
+        event_type: "intent_received".into(),
+        timestamp: Utc::now(),
+        taint: vec![], // event carries no taint
+    };
+
+    // Step 2: Append the event to the audit DAG, obtaining the row hash.
+    let intent_hash = append_event(conn, &event, parent_hash)?;
+
+    // Step 3: Mint the ValueRecord with UserTrusted label.
+    //
+    // taint: [UserTrusted] — positive provenance; NOT empty vec (Pitfall 2: empty would
+    // make HARD-02 vacuous — UserTrusted must be explicit so the predicate fix is meaningful).
+    // provenance_chain[0] == event_id — the genuine-provenance anchor (T-06-04).
+    let taint = vec![TaintLabel::UserTrusted];
+    let value_id = store.mint(literal, taint, vec![event_id]);
+
+    Ok((event_id, intent_hash, value_id))
 }
 
 #[cfg(test)]
