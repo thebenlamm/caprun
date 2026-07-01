@@ -47,8 +47,50 @@ A kernel-confined Intent Runtime that proves I2 value-injection defense end-to-e
 - ~106 commits total across the project; v1.0 built in ~1 day of wall-clock.
 - Notable: parallel worktree execution kept wall-clock near the slowest single plan per wave rather than the sum.
 
+## Milestone: v1.1 — Usable Runtime (Live §9 from the CLI)
+
+**Shipped:** 2026-07-01
+**Phases:** 3 (5-7) | **Plans:** 15
+
+### What Was Built
+
+The v1.0 mechanism proof became a real `caprun` run:
+
+- **Unified runtime spine (Phase 5)** — one `brokerd::server` dispatch path (no second executor loop), typed `ReportClaims` IPC, session-scoped handles, durable fail-closed `sink_blocked` (ACC-02, HARD-03).
+- **Deterministic planner & intent input (Phase 6)** — typed `CaprunIntent` → `PlanNode` over opaque handles; `mint_from_intent` `[UserTrusted]` values; executor predicate over `is_untrusted()` so the clean allow-path is reachable (HARD-02).
+- **Hardened `file.create` sink + full acceptance (Phase 7)** — mint invariant at source (HARD-05), typed `DenyReason`, `WorkspaceRoot` dirfd + `openat2 RESOLVE_BENEATH` (HARD-04/SINK-04), `O_EXCL`, arg-schema gate, durable genuine-taint anchor (ACC-07); full live §9 (ACC-03/04/05) green on real Linux.
+
+### What Worked
+
+- **Small, dependency-ordered waves** — 5 of 7 waves were single-plan dependency links; the one parallel wave (07-01 ⨯ 07-03, disjoint files) merged cleanly. The strict wave graph meant each executor built on a verified base.
+- **The verifier independently re-ran the Linux proof** — rather than trusting the executor's SUMMARY narration, `gsd-verifier` re-ran the Colima/Docker recipe itself and line-read the modified TCB. This caught nothing wrong but is the right posture for a security milestone.
+- **Fail-closed worktree guards did their job** — the initial dispatch omitted `isolation="worktree"`; the executor's `worktree-branch-check` halted on `main` (exit 42) with zero writes instead of committing plan work onto `main`. The guard, not luck, prevented the damage.
+
+### What Was Inefficient
+
+- **Orchestrator dispatch bug cost a retry** — the first two Wave-1 executors ran without `isolation="worktree"` and halted harmlessly; both had to be re-dispatched. A one-line omission, but it doubled Wave 1's spawn count.
+- **Post-merge `cargo test` timed out at the 300s budget** after the anchor-reshape merge (compile-bound, not a failure). Had to re-run at 540s to get a definitive green. Rust workspace test-compile after a merge routinely exceeds 5 min — the default gate budget is too tight for this project.
+- **Noisy auto-extracted accomplishments again** — same v1.0 issue: SUMMARY files led with `[Rule 3 - Blocking]` deviation headers, so MILESTONES.md needed a manual rewrite.
+
+### Patterns Established
+
+- **The v1.1-DONE bug caught by ACC-05:** 07-05 found `verify_chain` returning false on the live DAG because both mint sites hardcoded `parent_id: None` (multiple roots). The causal-chain assertion, run end-to-end, exposed a real TCB gap that per-unit tests missed — "substrate working ≠ done" made concrete.
+- **After-exit, DB-alone acceptance:** the canonical ACC-07 proof reads the persisted audit DB *after the worker exits* and verifies the chain from the DB alone — the strongest anti-stapling posture (an in-process assertion can be fooled by live state).
+
+### Key Lessons
+
+- For Rust workspaces, set the post-merge test gate budget to ≥540s — the 300s default reads as an inconclusive timeout, not a pass, and forces a re-run.
+- When honoring `use_worktrees`, the `isolation="worktree"` parameter is load-bearing on *every* executor dispatch — the branch-check will catch its absence, but at the cost of a wasted spawn.
+
+### Cost Observations
+
+- Model mix: orchestrator Opus 4.8; all executors + verifier on Sonnet.
+- 6 plans across 5 waves; wall-clock dominated by Rust workspace compile per worktree (each isolated `target/`).
+- Notable: the live-Linux proof was run twice (executor + verifier independently) — deliberate redundancy for the security gate.
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Shipped | Notes |
 |-----------|--------|-------|---------|-------|
 | v1.0 MVP  | 4      | 15    | 2026-06-30 | v0 DONE — genuine-taint §9 gate cleared |
+| v1.1 Usable Runtime | 3 | 15 | 2026-07-01 | Live §9 from the CLI — real `file.create` sink, DB-durable taint chain, Linux-verified |
