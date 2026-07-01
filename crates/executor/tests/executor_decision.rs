@@ -215,3 +215,55 @@ fn tainted_body_and_attachment_allow_in_v0() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// HARD-02: predicate is over explicitly-untrusted labels only
+// ---------------------------------------------------------------------------
+
+/// HARD-02 allow case: a routing-sensitive "to" arg carrying ONLY [UserTrusted]
+/// must produce `Allowed` — positive trusted provenance does NOT block.
+///
+/// Uses [UserTrusted] (NOT an empty vec!) so this test would still return
+/// BlockedPendingConfirmation under the pre-fix predicate (`!record.taint.is_empty()`).
+/// That property makes the fix provably load-bearing (Pitfall 2 in 06-RESEARCH.md).
+#[test]
+fn hard02_usertrusted_only_allows() {
+    let mut store = ValueStore::default();
+    let event_id = Uuid::new_v4();
+    // Positive provenance: [UserTrusted] — must NOT block.
+    let id = store.mint(
+        "boss@company.com".to_string(),
+        vec![TaintLabel::UserTrusted],
+        vec![event_id],
+    );
+
+    let plan = email_send_with_to(id);
+    let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+
+    assert_eq!(
+        decision,
+        ExecutorDecision::Allowed,
+        "UserTrusted-only taint in routing-sensitive 'to' must produce Allowed (HARD-02)"
+    );
+}
+
+/// HARD-02 regression guard: a routing-sensitive "to" arg with explicitly-untrusted
+/// taint ([ExternalUntrusted, EmailRaw]) must still produce BlockedPendingConfirmation
+/// after the predicate fix. Guards against accidentally opening the block path.
+#[test]
+fn hard02_externaltainted_still_blocks() {
+    let mut store = ValueStore::default();
+    let event_id = Uuid::new_v4();
+    let literal = "attacker@evil.com".to_string();
+    let taint = vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw];
+
+    let id = store.mint(literal.clone(), taint.clone(), vec![event_id]);
+
+    let plan = email_send_with_to(id);
+    let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+
+    assert!(
+        matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }),
+        "ExternalUntrusted/EmailRaw taint in 'to' must still Block after HARD-02 predicate fix; got {decision:?}"
+    );
+}
