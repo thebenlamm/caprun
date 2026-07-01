@@ -12,7 +12,7 @@
 pub mod sink_sensitivity;
 pub mod value_store;
 
-use runtime_core::{plan_node::PlanNode, DenyReason, ExecutorDecision};
+use runtime_core::{plan_node::PlanNode, DenyReason, ExecutorDecision, SinkBlockedAnchor};
 use uuid::Uuid;
 use value_store::ValueStore;
 
@@ -40,6 +40,7 @@ use value_store::ValueStore;
 ///   grep -v '^[[:space:]]*//' crates/executor/src/lib.rs | grep -c 'ValueRecord {'      → 0
 pub fn submit_plan_node(
     _session_id: Uuid,
+    effect_id: Uuid,
     plan_node: &PlanNode,
     value_store: &ValueStore,
 ) -> ExecutorDecision {
@@ -83,13 +84,22 @@ pub fn submit_plan_node(
         if sink_sensitivity::is_routing_sensitive(&plan_node.sink, &arg.name)
             && record.taint.iter().any(|t| t.is_untrusted())
         {
-            return ExecutorDecision::BlockedPendingConfirmation {
-                literal_value: record.literal.clone(),
-                sink: plan_node.sink.0.clone(),
-                arg_name: arg.name.clone(),
+            // Build the durable anchor by cloning the resolved record VERBATIM.
+            // The executor mints NOTHING (effect_id is the broker-supplied param)
+            // and sets NO taint — every field is a clone of plan_node/arg/record
+            // (T-04-03 anti-stapling). read_event_id == provenance_chain[0]
+            // (07-01's mint invariant guarantees provenance is non-empty).
+            let anchor = SinkBlockedAnchor {
+                effect_id,
+                sink: plan_node.sink.clone(),
+                arg: arg.name.clone(),
+                value_id: arg.value_id.clone(),
+                literal: record.literal.clone(),
                 taint: record.taint.clone(),
                 provenance_chain: record.provenance_chain.clone(),
+                read_event_id: record.provenance_chain[0],
             };
+            return ExecutorDecision::BlockedPendingConfirmation { anchor };
         }
 
         // Step 3: Content-sensitive tainted args (subject/body/attachment) do NOT
