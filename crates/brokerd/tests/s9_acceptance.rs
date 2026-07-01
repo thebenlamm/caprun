@@ -110,34 +110,57 @@ fn s9_acceptance() {
     // Sub-criterion 4: the executor sees the recipient tainted
     // (ExternalUntrusted) in a routing-sensitive sink arg → blocks.
     // -----------------------------------------------------------------------
-    let decision = executor::submit_plan_node(session_id, &plan_node, &store);
+    // The broker mints the effect identity (HARD-06) and passes it to the executor.
+    let effect_id = Uuid::new_v4();
+    let decision = executor::submit_plan_node(session_id, effect_id, &plan_node, &store);
 
-    let (literal_value, sink, arg_name, taint, provenance_chain) = match decision {
-        ExecutorDecision::BlockedPendingConfirmation {
-            literal_value,
-            sink,
-            arg_name,
-            taint,
-            provenance_chain,
-        } => (literal_value, sink, arg_name, taint, provenance_chain),
-        other => panic!(
-            "expected BlockedPendingConfirmation, got {:?}",
-            other
-        ),
+    let anchor = match decision {
+        ExecutorDecision::BlockedPendingConfirmation { anchor } => anchor,
+        other => panic!("expected BlockedPendingConfirmation, got {:?}", other),
     };
+    let literal_value = anchor.literal.clone();
+    let taint = anchor.taint.clone();
+    let provenance_chain = anchor.provenance_chain.clone();
 
     // Literal is the byte-exact attacker address.
     assert_eq!(
         literal_value, "accounts@ev1l.com",
-        "literal_value must be the exact attacker address"
+        "anchor.literal must be the exact attacker address"
     );
-    // Sink and arg are correctly propagated.
-    assert_eq!(sink, "email.send", "sink must be email.send");
-    assert_eq!(arg_name, "to", "arg_name must be to");
+    // Sink and arg are correctly propagated (sink is now a SinkId — compare .0).
+    assert_eq!(anchor.sink.0, "email.send", "sink must be email.send");
+    assert_eq!(anchor.arg, "to", "arg must be to");
+    // The anchor carries the broker-minted effect_id verbatim.
+    assert_eq!(anchor.effect_id, effect_id, "anchor.effect_id must be the broker-minted id");
     // Taint contains ExternalUntrusted (set by mint_from_read, never by this test).
     assert!(
         taint.contains(&TaintLabel::ExternalUntrusted),
         "taint must contain ExternalUntrusted (set by mint_from_read, not by this test)"
+    );
+    // Anchor-internal invariant (DESIGN §0): read_event_id == provenance_chain[0].
+    assert_eq!(
+        anchor.read_event_id, provenance_chain[0],
+        "anchor.read_event_id must equal anchor.provenance_chain[0]"
+    );
+
+    // In-process durable-anchor check (DESIGN §4 rule 6): the broker-owned
+    // Event::sink_blocked constructor sets Event.taint == anchor.taint, and the
+    // anchor rides inside the event. This is what the broker persists on a block.
+    let block_event = runtime_core::Event::sink_blocked(
+        Uuid::new_v4(),
+        Some(read_event_id), // any causal head — irrelevant to the taint-consistency check
+        session_id,
+        chrono::Utc::now(),
+        anchor.clone(),
+    );
+    assert_eq!(
+        block_event.taint, anchor.taint,
+        "Event.taint must equal anchor.taint (DESIGN §4 rule 6)"
+    );
+    assert_eq!(
+        block_event.anchor.as_ref().expect("block event carries anchor").provenance_chain[0],
+        read_event_id,
+        "persisted anchor.provenance_chain[0] must equal the file_read Event id"
     );
 
     // -----------------------------------------------------------------------
@@ -276,7 +299,7 @@ fn clean_path_intent_value_evaluates_to_allowed() {
     // UserTrusted-only provenance must NOT block — record.taint.iter().any(|t| t.is_untrusted())
     // returns false for [UserTrusted], so the executor returns Allowed.
     // -----------------------------------------------------------------------
-    let decision = executor::submit_plan_node(session_id, &plan_node, &store);
+    let decision = executor::submit_plan_node(session_id, Uuid::new_v4(), &plan_node, &store);
 
     assert!(
         matches!(decision, ExecutorDecision::Allowed),
