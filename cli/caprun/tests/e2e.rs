@@ -47,6 +47,8 @@ fn substrate_demo() {
     // ── Run caprun ───────────────────────────────────────────────────────────
     let caprun_bin = env!("CARGO_BIN_EXE_caprun");
     let output = std::process::Command::new(caprun_bin)
+        .arg("send-email-summary")
+        .arg("demo@example.test")
         .arg(workspace_file.to_str().unwrap())
         .arg(audit_db_path.to_str().unwrap())
         .output()
@@ -96,19 +98,22 @@ fn substrate_demo() {
     std::fs::remove_dir_all(&tmp).ok();
 }
 
-/// dag_chain_integrity — verifies the unbroken hash chain: session_created →
-/// fd_granted (the benign 2-event chain under the Phase 5 protocol).
+/// dag_chain_integrity — verifies the unbroken hash chain:
+/// session_created → intent_received → fd_granted (the 3-event benign chain
+/// under the Phase 6 intent-first CLI protocol).
 ///
 /// Runs `caprun` independently of `substrate_demo` (no shared state) and then:
 ///  1. Calls `brokerd::audit::verify_chain` — asserts the SHA-256 chain is
 ///     mathematically unbroken (no hash mismatches, no gaps).
-///  2. Walks the events in causal depth order and asserts exactly the two
+///  2. Walks the events in causal depth order and asserts exactly the three
 ///     expected event types appear in the correct order with linked parent_hashes.
 ///  3. A broken or gapped chain (e.g., a missing fd_granted) MUST fail this test.
 ///
-/// NOTE: benign content yields zero claims, so no `file_read` event is minted —
-/// the chain is session_created → fd_granted (the §9 block path adds file_read +
-/// sink_blocked and is exercised by Plan 04's live test, not here).
+/// NOTE: benign content (no email address) yields zero file claims, so no
+/// `file_read` event is minted and the worker exits before submitting a plan node —
+/// the chain is session_created → intent_received → fd_granted.
+/// The §9 allow-path (adds plan_node_evaluated) is exercised by the s9_live_block
+/// test; the §9 block path is exercised by `crates/brokerd/tests/s9_acceptance.rs`.
 #[cfg(target_os = "linux")]
 #[test]
 fn dag_chain_integrity() {
@@ -127,6 +132,8 @@ fn dag_chain_integrity() {
     // ── Run caprun ───────────────────────────────────────────────────────────
     let caprun_bin = env!("CARGO_BIN_EXE_caprun");
     let status = std::process::Command::new(caprun_bin)
+        .arg("send-email-summary")
+        .arg("demo@example.test")
         .arg(workspace_file.to_str().unwrap())
         .arg(audit_db_path.to_str().unwrap())
         .status()
@@ -181,16 +188,21 @@ fn dag_chain_integrity() {
 
     assert_eq!(
         events.len(),
-        2,
-        "audit DAG must contain exactly 2 events (session_created, fd_granted); \
+        3,
+        "audit DAG must contain exactly 3 events \
+         (session_created, intent_received, fd_granted); \
          got {}: {:?}",
         events.len(),
         events.iter().map(|(et, _, _)| et.as_str()).collect::<Vec<_>>()
     );
 
-    // Verify causal order and parent_hash linkage
+    // Verify causal order and parent_hash linkage.
+    // intent_received has parent_id=None (Phase 7 deferred) but parent_hash=H0
+    // so both session_created and intent_received appear at depth 0 in the CTE;
+    // fd_granted is at depth 1 via parent_id=intent_received.id.
     let (e0_type, e0_parent, e0_hash) = &events[0];
-    let (e1_type, e1_parent, _e1_hash) = &events[1];
+    let (e1_type, e1_parent, e1_hash) = &events[1];
+    let (e2_type, e2_parent, _e2_hash) = &events[2];
 
     assert_eq!(e0_type, "session_created", "event[0] must be session_created");
     assert!(
@@ -198,11 +210,18 @@ fn dag_chain_integrity() {
         "session_created must have no parent_hash; got {e0_parent:?}"
     );
 
-    assert_eq!(e1_type, "fd_granted", "event[1] must be fd_granted");
+    assert_eq!(e1_type, "intent_received", "event[1] must be intent_received");
     assert_eq!(
         e1_parent.as_deref(),
         Some(e0_hash.as_str()),
-        "fd_granted.parent_hash must equal session_created.hash"
+        "intent_received.parent_hash must equal session_created.hash"
+    );
+
+    assert_eq!(e2_type, "fd_granted", "event[2] must be fd_granted");
+    assert_eq!(
+        e2_parent.as_deref(),
+        Some(e1_hash.as_str()),
+        "fd_granted.parent_hash must equal intent_received.hash"
     );
 
     // ── Cleanup ──────────────────────────────────────────────────────────────
