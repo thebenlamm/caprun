@@ -22,6 +22,21 @@ pub enum DenyReason {
     /// A resolved record carried an empty provenance_chain — the genuine-taint
     /// anchor (`provenance_chain[0]`) is missing.
     MissingProvenanceAnchor,
+
+    // ── Schema-validation variants (07-04a, HARD-01/HARD-05) ──────────────────
+    // These are raised by `executor::sink_schema::validate_schema`, the FIRST
+    // step of `submit_plan_node`, BEFORE any resolve/sensitivity work. Unknown
+    // sink or malformed arg set fails closed here (single denial taxonomy — no
+    // second error type). The `String` carries the offending name for audit/CLI.
+    /// The plan node's `sink` is not in the hardcoded `KNOWN_SINKS` registry.
+    /// Fails closed — an unregistered sink is never callable.
+    UnknownSink(String),
+    /// A plan-node arg name is not in the target sink's allowed arg set.
+    UnknownArg(String),
+    /// The same arg name appears more than once in the plan node.
+    DuplicateArg(String),
+    /// A required arg of the target sink is absent from the plan node.
+    MissingArg(String),
 }
 
 impl DenyReason {
@@ -31,22 +46,31 @@ impl DenyReason {
             DenyReason::DanglingHandle => "dangling_handle",
             DenyReason::EmptyTaintInvariantViolation => "empty_taint_invariant_violation",
             DenyReason::MissingProvenanceAnchor => "missing_provenance_anchor",
+            DenyReason::UnknownSink(_) => "unknown_sink",
+            DenyReason::UnknownArg(_) => "unknown_arg",
+            DenyReason::DuplicateArg(_) => "duplicate_arg",
+            DenyReason::MissingArg(_) => "missing_arg",
         }
     }
 }
 
 impl std::fmt::Display for DenyReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let text = match self {
-            DenyReason::DanglingHandle => "unresolvable value handle (dangling or forged)",
+        match self {
+            DenyReason::DanglingHandle => {
+                write!(f, "unresolvable value handle (dangling or forged)")
+            }
             DenyReason::EmptyTaintInvariantViolation => {
-                "value carried empty taint (mint invariant violated)"
+                write!(f, "value carried empty taint (mint invariant violated)")
             }
             DenyReason::MissingProvenanceAnchor => {
-                "value carried empty provenance chain (missing taint anchor)"
+                write!(f, "value carried empty provenance chain (missing taint anchor)")
             }
-        };
-        write!(f, "{text}")
+            DenyReason::UnknownSink(sink) => write!(f, "unknown sink `{sink}` (not registered)"),
+            DenyReason::UnknownArg(arg) => write!(f, "unknown arg `{arg}` for sink"),
+            DenyReason::DuplicateArg(arg) => write!(f, "duplicate arg `{arg}` in plan node"),
+            DenyReason::MissingArg(arg) => write!(f, "missing required arg `{arg}` for sink"),
+        }
     }
 }
 

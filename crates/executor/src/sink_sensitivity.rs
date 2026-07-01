@@ -13,6 +13,11 @@ use runtime_core::plan_node::SinkId;
 /// A tainted value in any of these args → `ExecutorDecision::BlockedPendingConfirmation`.
 pub const EMAIL_SEND_ROUTING_SENSITIVE: &[&str] = &["to", "cc", "bcc"];
 
+/// Args of file.create that determine WHERE the effect writes.
+/// A tainted value in `path` → `ExecutorDecision::BlockedPendingConfirmation`.
+/// `contents` is content-sensitive (WHAT is written), not routing-sensitive.
+pub const FILE_CREATE_ROUTING_SENSITIVE: &[&str] = &["path"];
+
 /// Args of email.send that determine WHAT irreversible payload leaves the trust boundary.
 /// A tainted value here does NOT auto-Block in v0 but MUST be surfaced for Tier-4
 /// verbatim review at approval time (post-v0 approval hook).
@@ -27,6 +32,7 @@ pub const EMAIL_SEND_CONTENT_SENSITIVE: &[&str] = &["subject", "body", "attachme
 pub fn is_routing_sensitive(sink: &SinkId, arg_name: &str) -> bool {
     match sink.0.as_str() {
         "email.send" => EMAIL_SEND_ROUTING_SENSITIVE.contains(&arg_name),
+        "file.create" => FILE_CREATE_ROUTING_SENSITIVE.contains(&arg_name),
         // v0: all other sinks — no routing-sensitive args defined yet.
         _ => false,
     }
@@ -55,6 +61,26 @@ mod tests {
 
     fn other() -> SinkId {
         SinkId("http.post".to_string())
+    }
+
+    fn file_create() -> SinkId {
+        SinkId("file.create".to_string())
+    }
+
+    #[test]
+    fn file_create_path_is_routing_sensitive() {
+        assert!(
+            is_routing_sensitive(&file_create(), "path"),
+            "file.create `path` routes the write — must be routing-sensitive"
+        );
+    }
+
+    #[test]
+    fn file_create_contents_not_routing_sensitive() {
+        assert!(
+            !is_routing_sensitive(&file_create(), "contents"),
+            "file.create `contents` is WHAT is written, not WHERE — not routing-sensitive"
+        );
     }
 
     #[test]

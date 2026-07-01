@@ -97,6 +97,61 @@ impl WorkspaceRoot {
     pub fn read_within(&self, rel_path: &str) -> std::io::Result<std::fs::File> {
         std::fs::File::open(self.root_path.join(rel_path))
     }
+
+    /// Exclusively CREATE a file resolved BENEATH the workspace-root anchor and
+    /// write `contents` into it (Linux; write side of SINK-03/SINK-04).
+    ///
+    /// Resolves and creates `rel_path` in a single `openat2` syscall with
+    /// `O_CREAT | O_EXCL | O_WRONLY` and `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`:
+    /// - `O_EXCL` — never overwrites; a create on an EXISTING path fails with
+    ///   `EEXIST` (SINK-03: no clobber). This is mandatory.
+    /// - `RESOLVE_BENEATH` — rejects absolute paths and `..` escape (`EXDEV`).
+    /// - `RESOLVE_NO_SYMLINKS` — rejects ALL symlink traversal (`RESOLVE_BENEATH`
+    ///   alone does not; RESEARCH Pitfall 2).
+    ///
+    /// Resolution + exclusive create happen in ONE syscall — there is no
+    /// validate-then-create window (SINK-04, TOCTOU-safe, CWE-367). After the fd
+    /// is obtained the bytes are written and `fsync`'d before close.
+    ///
+    /// # Errors
+    /// Returns an `std::io::Error`: `EEXIST` if the path already exists, `EXDEV`
+    /// (or other raw OS error) for a `RESOLVE_*` violation, or a write error.
+    #[cfg(target_os = "linux")]
+    pub fn create_exclusive_within(&self, rel_path: &str, contents: &[u8]) -> std::io::Result<()> {
+        use nix::fcntl::{openat2, OFlag, OpenHow, ResolveFlag};
+        use nix::sys::stat::Mode;
+        use std::io::Write;
+        use std::os::fd::AsFd;
+
+        let how = OpenHow::new()
+            .flags(OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_WRONLY)
+            .mode(Mode::S_IRUSR | Mode::S_IWUSR) // 0o600
+            .resolve(ResolveFlag::RESOLVE_BENEATH | ResolveFlag::RESOLVE_NO_SYMLINKS);
+
+        let fd = openat2(self.dirfd.as_fd(), rel_path, how)
+            .map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
+
+        let mut file = std::fs::File::from(fd);
+        file.write_all(contents)?;
+        file.sync_all()?;
+        Ok(())
+    }
+
+    /// Non-Linux stub — NO security claim (dev-machine compilation only).
+    ///
+    /// Mirrors `read_within`'s stub: an ordinary `create_new` open + write with
+    /// none of the `openat2` RESOLVE_* guarantees, so the crate builds on macOS.
+    /// `create_new(true)` keeps the no-overwrite semantic locally.
+    #[cfg(not(target_os = "linux"))]
+    pub fn create_exclusive_within(&self, rel_path: &str, contents: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.root_path.join(rel_path))?;
+        file.write_all(contents)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -201,6 +256,119 @@ mod tests {
         );
 
         std::fs::remove_file(&target).ok();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // ── create_exclusive_within (write side, SINK-03/SINK-04) ────────────────
+
+    /// A legit in-root exclusive create writes the file with the expected bytes.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn create_exclusive_writes_file() {
+        let root = unique_tmp_root("create_ok");
+        let contents = b"exclusive create via openat2";
+
+        let ws = WorkspaceRoot::open(&root).unwrap();
+        ws.create_exclusive_within("out.txt", contents)
+            .expect("exclusive create under root must succeed");
+
+        let on_disk = std::fs::read(root.join("out.txt")).unwrap();
+        assert_eq!(on_disk, contents, "written bytes must match");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A create on an EXISTING path fails (O_EXCL → EEXIST) — never overwrites.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn create_exclusive_existing_path_rejected() {
+        let root = unique_tmp_root("create_excl");
+        std::fs::write(root.join("dup.txt"), b"original").unwrap();
+
+        let ws = WorkspaceRoot::open(&root).unwrap();
+        let err = ws
+            .create_exclusive_within("dup.txt", b"clobber")
+            .expect_err("O_EXCL must reject an existing path");
+        assert_eq!(
+            err.raw_os_error(),
+            Some(nix::libc::EEXIST),
+            "existing path must fail with EEXIST (no overwrite)"
+        );
+        // Original bytes untouched.
+        assert_eq!(std::fs::read(root.join("dup.txt")).unwrap(), b"original");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// An absolute path arg is rejected by RESOLVE_BENEATH (EXDEV).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn create_exclusive_absolute_path_rejected() {
+        let root = unique_tmp_root("create_abs");
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let err = ws
+            .create_exclusive_within("/tmp/caprun_should_not_exist", b"x")
+            .expect_err("absolute path must be rejected");
+        assert_eq!(
+            err.raw_os_error(),
+            Some(nix::libc::EXDEV),
+            "RESOLVE_BENEATH must reject absolute paths with EXDEV"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A `../` traversal escaping the root is rejected by RESOLVE_BENEATH.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn create_exclusive_parent_traversal_rejected() {
+        let root = unique_tmp_root("create_dotdot");
+        let target_name = format!("caprun_create_escape_{}.txt", std::process::id());
+
+        let ws = WorkspaceRoot::open(&root).unwrap();
+        let err = ws
+            .create_exclusive_within(&format!("../{target_name}"), b"x")
+            .expect_err("`..` traversal must be rejected");
+        assert_eq!(
+            err.raw_os_error(),
+            Some(nix::libc::EXDEV),
+            "RESOLVE_BENEATH must reject `..` escape with EXDEV"
+        );
+
+        // Ensure nothing was written to the parent.
+        let parent = root.parent().unwrap();
+        assert!(!parent.join(&target_name).exists(), "no file must escape the root");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// An in-root symlink to a DIRECTORY outside the root must not let a create
+    /// escape — RESOLVE_NO_SYMLINKS rejects symlink traversal at resolution.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn create_exclusive_symlink_escape_rejected() {
+        let root = unique_tmp_root("create_symlink");
+        let parent = root.parent().expect("temp root has a parent");
+        let outside_dir_name = format!("caprun_create_outdir_{}", std::process::id());
+        let outside_dir = parent.join(&outside_dir_name);
+        std::fs::create_dir_all(&outside_dir).unwrap();
+
+        // In-root symlink → outside directory; try to create a file "through" it.
+        std::os::unix::fs::symlink(&outside_dir, root.join("escape_dir")).unwrap();
+
+        let ws = WorkspaceRoot::open(&root).unwrap();
+        let res = ws.create_exclusive_within("escape_dir/planted.txt", b"x");
+        assert!(
+            res.is_err(),
+            "RESOLVE_NO_SYMLINKS must reject symlink traversal at resolution"
+        );
+        assert!(
+            !outside_dir.join("planted.txt").exists(),
+            "no file must be planted outside the root via a symlink"
+        );
+
+        std::fs::remove_dir_all(&outside_dir).ok();
         std::fs::remove_dir_all(&root).ok();
     }
 }
