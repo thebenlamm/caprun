@@ -48,16 +48,16 @@ The spine: collapse the dual dispatch and make the executor reachable from a liv
 
 ### File Sink (SINK)
 
-- [ ] **SINK-01**: A `file.create` sink exists with an explicit arg schema
+- [x] **SINK-01**: A `file.create` sink exists with an explicit arg schema
   (`path`, `contents`); missing, duplicate, or unknown args are rejected
 
-- [ ] **SINK-02**: `file.create`'s `path` arg is routing-sensitive in the
+- [x] **SINK-02**: `file.create`'s `path` arg is routing-sensitive in the
   sensitivity map
 
-- [ ] **SINK-03**: `file.create` uses exclusive creation (`O_EXCL`) — it never
+- [x] **SINK-03**: `file.create` uses exclusive creation (`O_EXCL`) — it never
   overwrites an existing file
 
-- [ ] **SINK-04**: `file.create` resolves paths via `openat2`
+- [x] **SINK-04**: `file.create` resolves paths via `openat2`
   (`RESOLVE_BENEATH`/`RESOLVE_NO_SYMLINKS`) under a workspace dirfd; absolute paths
   and traversal/symlink escapes are rejected; no validate-then-write (TOCTOU-safe).
   Shares the workspace-root capability model with `HARD-04` (read-side prerequisite)
@@ -66,7 +66,7 @@ The spine: collapse the dual dispatch and make the executor reachable from a liv
 
 Constraints raised by channel review that must hold for the live path to be sound.
 
-- [ ] **HARD-01**: Unknown sinks and unknown args fail closed (deny), validated
+- [x] **HARD-01**: Unknown sinks and unknown args fail closed (deny), validated
   before any sensitivity or executor step
 
 - [x] **HARD-02**: The executor's blocking predicate is defined over
@@ -77,17 +77,17 @@ Constraints raised by channel review that must hold for the live path to be soun
   session is denied in another; the broker connection is bound to its session and
   a request-supplied `session_id` is never trusted
 
-- [ ] **HARD-04**: `RequestFd` reads are capability-restricted to the workspace
+- [x] **HARD-04**: `RequestFd` reads are capability-restricted to the workspace
   root — the worker cannot nominate an arbitrary broker-opened path. Shares the
   workspace-root capability model with `SINK-04` (write-side); `HARD-04` is the
   read-side prerequisite for `SINK-04`
 
-- [ ] **HARD-05**: Effect-path ordering is enforced: validate schema → capability
+- [x] **HARD-05**: Effect-path ordering is enforced: validate schema → capability
   check → executor decision → durable authorization audit → sink invocation →
   durable result audit; audit failure fails closed; the causal parent is preserved
   (no `parent_id: None` best-effort append)
 
-- [ ] **HARD-06**: Each sink attempt carries an effect/request id; authorization is
+- [x] **HARD-06**: Each sink attempt carries an effect/request id; authorization is
   durably recorded before invocation; a crash after invocation leaves an explicit
   indeterminate record and triggers no automatic retry
 
@@ -95,7 +95,7 @@ Constraints raised by channel review that must hold for the live path to be soun
 
 The §9 live contract — the only definition of "done" for v1.1.
 
-- [ ] **ACC-01**: `BlockedPendingConfirmation` is operationally defined: zero sink
+- [x] **ACC-01**: `BlockedPendingConfirmation` is operationally defined: zero sink
   invocations + a stable non-success CLI result + a durable `sink_blocked` event
 
 - [x] **ACC-02**: Live §9 (email.send) — a real `caprun` run blocks a tainted
@@ -103,17 +103,17 @@ The §9 live contract — the only definition of "done" for v1.1.
   causal `sink_blocked` event** (the blocked-path audit primitive: causal parent
   preserved, append-failure fails closed, block durable before the CLI returns)
 
-- [ ] **ACC-03**: Live `file.create` block — hostile input → typed path claim →
+- [x] **ACC-03**: Live `file.create` block — hostile input → typed path claim →
   `mint_from_read` → `file.create` blocked, with no file written
 
-- [ ] **ACC-04**: Clean allow-path — a broker-minted trusted intent path creates
+- [x] **ACC-04**: Clean allow-path — a broker-minted trusted intent path creates
   the exact expected file under the workspace root
 
-- [ ] **ACC-05**: The audit DB shows one causal chain `fd_granted → file_read →
+- [x] **ACC-05**: The audit DB shows one causal chain `fd_granted → file_read →
   plan_node_evaluated → sink_blocked/sink_executed` for the run
 
-- [ ] **ACC-06**: Forged handles and unknown sink/arg cases are denied
-- [ ] **ACC-07**: Genuine-taint sentinel (anti-stapling) — the blocked PlanArg's
+- [x] **ACC-06**: Forged handles and unknown sink/arg cases are denied
+- [x] **ACC-07**: Genuine-taint sentinel (anti-stapling) — the blocked PlanArg's
   `ValueId` resolves to a `ValueRecord` whose `provenance_chain[0]` equals the
   actual `file_read` event id, and the **durable** audit evidence
   (`sink_blocked`/evaluation) links `effect_id + sink + arg + ValueId + provenance
@@ -168,20 +168,20 @@ Explicitly excluded for v1.1. Documented to prevent scope creep.
 | PLAN-03 | Phase 6 | Complete |
 | PLAN-04 | Phase 6 | Complete |
 | HARD-02 | Phase 6 | Complete |
-| SINK-01 | Phase 7 | Pending |
-| SINK-02 | Phase 7 | Pending |
-| SINK-03 | Phase 7 | Pending |
-| SINK-04 | Phase 7 | Pending |
-| HARD-01 | Phase 7 | Pending |
-| HARD-04 | Phase 7 | Pending |
-| HARD-05 | Phase 7 | Pending |
-| HARD-06 | Phase 7 | Pending |
-| ACC-01 | Phase 7 | Pending |
-| ACC-03 | Phase 7 | Pending |
-| ACC-04 | Phase 7 | Pending |
-| ACC-05 | Phase 7 | Pending |
-| ACC-06 | Phase 7 | Pending |
-| ACC-07 | Phase 7 | Pending |
+| SINK-01 | Phase 7 | Complete |
+| SINK-02 | Phase 7 | Complete |
+| SINK-03 | Phase 7 | Complete |
+| SINK-04 | Phase 7 | Complete |
+| HARD-01 | Phase 7 | Complete |
+| HARD-04 | Phase 7 | Complete |
+| HARD-05 | Phase 7 | Complete |
+| HARD-06 | Phase 7 | Complete |
+| ACC-01 | Phase 7 | Complete |
+| ACC-03 | Phase 7 | Complete |
+| ACC-04 | Phase 7 | Complete |
+| ACC-05 | Phase 7 | Complete |
+| ACC-06 | Phase 7 | Complete |
+| ACC-07 | Phase 7 | Complete |
 
 **Coverage:**
 
