@@ -17,6 +17,15 @@ fn caprun_intent_serde_round_trip() {
     assert_eq!(intent, back, "CaprunIntent serde round-trip must be lossless");
 }
 
+/// Fail-closed: an unknown `kind` must fail deserialization, not silently produce
+/// a default value (V5 input validation — CaprunIntent is an exhaustive serde enum).
+#[test]
+fn caprun_intent_unknown_kind_fails_deserialization() {
+    let bad_json = r#"{"kind":"LaunchMissiles","target":"everywhere"}"#;
+    let result: Result<CaprunIntent, _> = serde_json::from_str(bad_json);
+    assert!(result.is_err(), "unknown intent kind must fail deserialization (fail-closed)");
+}
+
 // ── TaintLabel::is_untrusted truth table ─────────────────────────────────────
 
 #[test]
