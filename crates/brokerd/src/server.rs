@@ -305,29 +305,37 @@ pub async fn dispatch_request(
             // directly on the live path (taint stapling fails §9, T-04-03/T-05-05).
             let mut value_ids = Vec::new();
             for claim in claims {
-                match claim {
-                    WorkerClaim::EmailAddress(addr) => {
-                        let quarantine_claim = Claim {
-                            claim_type: "email_address".into(),
-                            value: addr,
-                        };
-                        let (read_event_id, read_hash, value_id) = {
-                            let locked = conn
-                                .lock()
-                                .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
-                            mint_from_read(
-                                &locked,
-                                value_store,
-                                session_id,
-                                &quarantine_claim,
-                                Some(last_event_hash),
-                            )?
-                        };
-                        *last_event_id = read_event_id;
-                        *last_event_hash = read_hash;
-                        value_ids.push(value_id);
-                    } // Exhaustive enum: any future variant fails closed at deserialize.
-                }
+                // Map the wire variant to a broker-side quarantine Claim. The
+                // broker independently assigns the claim_type; the worker cannot
+                // launder trust — mint_from_read taints purely by claim_type
+                // (email → EmailRaw, relative_path → PathRaw). Exhaustive match:
+                // any future WorkerClaim variant is a compile-forced arm here (and
+                // an unknown wire `kind` already fails closed at deserialize).
+                let quarantine_claim = match claim {
+                    WorkerClaim::EmailAddress(addr) => Claim {
+                        claim_type: "email_address".into(),
+                        value: addr,
+                    },
+                    WorkerClaim::RelativePath(path) => Claim {
+                        claim_type: "relative_path".into(),
+                        value: path,
+                    },
+                };
+                let (read_event_id, read_hash, value_id) = {
+                    let locked = conn
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                    mint_from_read(
+                        &locked,
+                        value_store,
+                        session_id,
+                        &quarantine_claim,
+                        Some(last_event_hash),
+                    )?
+                };
+                *last_event_id = read_event_id;
+                *last_event_hash = read_hash;
+                value_ids.push(value_id);
             }
             send_response(stream, &BrokerResponse::ClaimsReceived { value_ids }).await?;
         }
@@ -381,7 +389,38 @@ pub async fn dispatch_request(
             *last_event_id = audit_event.id;
             *last_event_hash = new_hash;
 
-            // Only send the decision AFTER the durable append succeeded.
+            // 07-04b: on an Allowed `file.create` decision, invoke the live sink.
+            // The authorizing `plan_node_evaluated` event is already durably
+            // appended above, so the effect + its audit record follow it
+            // (two-phase ordering: authorize, then effect). The sink event chains
+            // onto the just-advanced (plan_node_evaluated) head. A sink error
+            // propagates with `?` after a durable `sink_execution_failed` record —
+            // no automatic retry (T-07-45). Non-file.create Allowed decisions keep
+            // today's behavior (no sink invocation in v0).
+            if matches!(decision, runtime_core::ExecutorDecision::Allowed)
+                && plan_node.sink.0 == "file.create"
+            {
+                let (sink_event_id, sink_hash) = {
+                    let locked = conn
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                    crate::sinks::file_create::invoke_file_create(
+                        &locked,
+                        value_store,
+                        session_id,
+                        effect_id,
+                        &plan_node,
+                        workspace_root,
+                        *last_event_id,
+                        last_event_hash,
+                    )?
+                };
+                *last_event_id = sink_event_id;
+                *last_event_hash = sink_hash;
+            }
+
+            // Only send the decision AFTER the durable append (and any sink
+            // invocation) succeeded.
             send_response(stream, &BrokerResponse::PlanNodeDecision { decision }).await?;
         }
 
@@ -391,6 +430,7 @@ pub async fn dispatch_request(
             // forcing the dispatcher to be updated (no silent unhandled variants).
             let literal = match &intent {
                 CaprunIntent::SendEmailSummary { recipient } => recipient.clone(),
+                CaprunIntent::CreateFileFromReport { path } => path.clone(),
             };
 
             // Mint inside the per-connection ValueStore (Pitfall 1: minting outside

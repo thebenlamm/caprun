@@ -42,7 +42,7 @@ mod planner;
 
 use anyhow::Context;
 use brokerd::proto::{BrokerRequest, BrokerResponse, WorkerClaim};
-use brokerd::quarantine::extract_email_claims;
+use brokerd::quarantine::{extract_email_claims, extract_relative_path_claims};
 use runtime_core::intent::CaprunIntent;
 use runtime_core::ExecutorDecision;
 use std::io::{Read, Write};
@@ -116,12 +116,22 @@ async fn main() -> anyhow::Result<()> {
     let raw_str = String::from_utf8_lossy(&raw_bytes);
 
     // ── Extract typed claims LOCALLY (lossy guarantee) ───────────────────────
-    // The raw hostile sentence is discarded here — only the extracted address
-    // crosses the IPC boundary (ASM-03 / T-05-08). Reuses the proven extractor.
-    let claims: Vec<WorkerClaim> = extract_email_claims(&raw_str)
-        .into_iter()
-        .map(|c| WorkerClaim::EmailAddress(c.value))
-        .collect();
+    // The raw hostile sentence is discarded here — only the extracted typed value
+    // crosses the IPC boundary (ASM-03 / T-05-08). The extractor is chosen by
+    // INTENT KIND: an email-summary intent extracts email addresses; a
+    // file-create intent extracts root-relative paths. The broker independently
+    // taints whatever the worker emits (mint_from_read) — the worker cannot
+    // launder trust by choosing a variant.
+    let claims: Vec<WorkerClaim> = match &intent {
+        CaprunIntent::SendEmailSummary { .. } => extract_email_claims(&raw_str)
+            .into_iter()
+            .map(|c| WorkerClaim::EmailAddress(c.value))
+            .collect(),
+        CaprunIntent::CreateFileFromReport { .. } => extract_relative_path_claims(&raw_str)
+            .into_iter()
+            .map(|c| WorkerClaim::RelativePath(c.value))
+            .collect(),
+    };
 
     // ── Send BrokerRequest::ReportClaims (typed; no raw bytes) ───────────────
     send_framed(&std_stream, &BrokerRequest::ReportClaims { claims })?;
@@ -132,8 +142,13 @@ async fn main() -> anyhow::Result<()> {
         other => anyhow::bail!("unexpected response to ReportClaims: {other:?}"),
     };
 
-    // ── Benign content: no claims → exit success without submitting a plan ────
-    if value_ids.is_empty() {
+    // ── Early-exit is intent-kind-specific ───────────────────────────────────
+    // email: benign content (no extracted address) means nothing to send → exit 0
+    // without submitting a plan. file-create: the effect is driven by the trusted
+    // intent path, so it proceeds even with no file-extracted claims (the clean
+    // allow-path); a hostile workspace instead supplies a tainted path handle that
+    // the planner routes into file.create/path → Block.
+    if matches!(intent, CaprunIntent::SendEmailSummary { .. }) && value_ids.is_empty() {
         eprintln!("[worker] no claims extracted — benign content, exiting 0");
         return Ok(());
     }
@@ -141,9 +156,8 @@ async fn main() -> anyhow::Result<()> {
     // ── Deterministic planner: map intent + handles → PlanNode (PLAN-02) ─────
     // `plan_from_intent` receives only opaque ValueId handles — never the literal,
     // never taint, never a ValueRecord (PLAN-03, type-enforced by the signature).
-    // The planner uses `intent_value_id` (UserTrusted) for the `to` arg on the
-    // clean allow-path. `value_ids` (tainted file handles) are passed as
-    // `_file_value_ids` and ignored by this variant — available for future paths.
+    // For file.create it routes a tainted file handle (if any) into `path` →
+    // Block, else the UserTrusted intent handle → Allow.
     let plan_node = crate::planner::plan_from_intent(&intent, intent_value_id, &value_ids);
 
     // ── Submit for I2 evaluation (no session_id field — HARD-03) ─────────────

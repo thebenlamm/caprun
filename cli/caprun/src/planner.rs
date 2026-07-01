@@ -32,8 +32,11 @@ use runtime_core::{
 /// * `intent`           — the typed user intent (enum, never free-form text).
 /// * `intent_value_id`  — the `UserTrusted` `ValueId` minted by `mint_from_intent`
 ///                        (opaque handle for the user-provided literal, e.g. recipient).
-/// * `_file_value_ids`  — tainted handles from `mint_from_read` (available for future
-///                        mixed-path demos; NOT used on the clean allow-path).
+/// * `file_value_ids`   — tainted handles from `mint_from_read`. Unused by the
+///                        email allow-path; `CreateFileFromReport` routes the FIRST
+///                        such handle (when present) into `file.create/path` to
+///                        drive the hostile-block path, else falls back to the
+///                        trusted `intent_value_id` (clean allow-path).
 ///
 /// # Returns
 ///
@@ -49,7 +52,7 @@ use runtime_core::{
 pub fn plan_from_intent(
     intent: &CaprunIntent,
     intent_value_id: ValueId,
-    _file_value_ids: &[ValueId],
+    file_value_ids: &[ValueId],
 ) -> PlanNode {
     match intent {
         CaprunIntent::SendEmailSummary { .. } => PlanNode {
@@ -64,5 +67,31 @@ pub fn plan_from_intent(
                 value_id: intent_value_id,
             }],
         },
+        CaprunIntent::CreateFileFromReport { .. } => {
+            // Route `path` (routing-sensitive) by handle PROVENANCE, making both
+            // §9 paths reachable for 07-05:
+            //   * hostile — if the workspace read yielded a tainted RelativePath
+            //     claim, route that (ExternalUntrusted, PathRaw) handle → the
+            //     executor sees an untrusted routing arg → Block.
+            //   * clean   — otherwise route the UserTrusted intent path → Allowed
+            //     → the broker invokes the live file.create sink.
+            // The planner only chooses a handle; it never sees the literal or taint
+            // (PLAN-03) — the broker-owned ValueStore holds those, and the executor
+            // (not the planner) makes the trust decision.
+            let path_value_id = file_value_ids
+                .first()
+                .cloned()
+                .unwrap_or_else(|| intent_value_id.clone());
+            PlanNode {
+                sink: SinkId("file.create".into()),
+                args: vec![
+                    PlanArg { name: "path".into(), value_id: path_value_id },
+                    // `contents` is content-sensitive (WHAT is written), never
+                    // routing-sensitive — a tainted value here does not block. Use
+                    // the trusted intent handle so a value always resolves.
+                    PlanArg { name: "contents".into(), value_id: intent_value_id },
+                ],
+            }
+        }
     }
 }

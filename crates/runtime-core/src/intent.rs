@@ -26,6 +26,15 @@ pub enum CaprunIntent {
     /// by `mint_from_intent` in the broker — the planner receives only the opaque
     /// `ValueId` handle, never the literal directly.
     SendEmailSummary { recipient: String },
+    /// Create a file under the workspace root from a report.
+    ///
+    /// `path` is a user-provided trusted target path, minted `UserTrusted` by
+    /// `mint_from_intent` in the broker. On the clean allow-path the planner routes
+    /// this trusted handle into `file.create/path` → `Allowed`. If the workspace
+    /// content yields a tainted `RelativePath` claim, the planner instead routes
+    /// that (attacker-controlled) handle into `path` → `BlockedPendingConfirmation`
+    /// (07-04b makes both §9 paths reachable for the 07-05 live proof).
+    CreateFileFromReport { path: String },
 }
 
 /// The status of an Intent through its lifecycle.

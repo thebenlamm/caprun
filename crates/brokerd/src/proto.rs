@@ -14,15 +14,20 @@
 ///   causes serde to return a deserialize error for any unrecognized tag, so the
 ///   broker never silently coerces an unknown claim kind to a known one.
 ///
-/// Phase 5 ships one variant: `EmailAddress`.
-/// `RelativePath(String)` is planned for Phase 7 — do not implement here.
+/// Phase 5 shipped `EmailAddress`; Phase 7 (07-04b) adds `RelativePath` so a
+/// workspace-derived path can cross the IPC boundary and be minted
+/// `[ExternalUntrusted, PathRaw]` by the broker (never `LocalWorkspace`).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", content = "value")]
 pub enum WorkerClaim {
     /// An email address extracted by the quarantine extractor.
     /// Carries ONLY the address string — never the raw surrounding sentence.
     EmailAddress(String),
-    // RelativePath(String),  // Phase 7
+    /// A root-relative path string extracted from untrusted workspace content.
+    /// Carries ONLY the path token — never the raw surrounding sentence. The
+    /// broker mints it `[ExternalUntrusted, PathRaw]` (routing-sensitive on
+    /// `file.create/path` → Block); the worker cannot launder it to a trusted label.
+    RelativePath(String),
 }
 
 /// Request from a worker to the broker.

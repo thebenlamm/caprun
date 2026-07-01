@@ -20,6 +20,61 @@ use runtime_core::{
     plan_node::{PlanArg, PlanNode, SinkId, ValueId},
 };
 
+/// Find a plan arg by name (test helper).
+fn arg<'a>(plan: &'a PlanNode, name: &str) -> &'a PlanArg {
+    plan.args
+        .iter()
+        .find(|a| a.name == name)
+        .unwrap_or_else(|| panic!("plan must carry a `{name}` arg"))
+}
+
+/// CreateFileFromReport CLEAN path: with NO file handles, the planner routes the
+/// trusted intent handle into `file.create/path` (→ Allow downstream).
+#[test]
+fn plan_from_intent_create_file_clean_routes_intent_path() {
+    let intent_vid = ValueId::new();
+    let intent = CaprunIntent::CreateFileFromReport { path: "report.txt".into() };
+
+    let plan = planner::plan_from_intent(&intent, intent_vid.clone(), &[]);
+
+    assert_eq!(plan.sink, SinkId("file.create".into()));
+    assert_eq!(plan.args.len(), 2, "file.create must carry path + contents");
+    assert_eq!(
+        arg(&plan, "path").value_id,
+        intent_vid,
+        "clean path: `path` must carry the UserTrusted intent handle"
+    );
+    assert_eq!(
+        arg(&plan, "contents").value_id,
+        intent_vid,
+        "`contents` resolves via the trusted intent handle"
+    );
+}
+
+/// CreateFileFromReport HOSTILE path: when the workspace read yielded a tainted
+/// RelativePath handle, the planner routes THAT (attacker-controlled) handle into
+/// `file.create/path` (→ Block downstream), never the intent handle.
+#[test]
+fn plan_from_intent_create_file_hostile_routes_tainted_path() {
+    let intent_vid = ValueId::new();
+    let file_vid = ValueId::new();
+    let intent = CaprunIntent::CreateFileFromReport { path: "safe.txt".into() };
+
+    let plan = planner::plan_from_intent(&intent, intent_vid.clone(), &[file_vid.clone()]);
+
+    assert_eq!(plan.sink, SinkId("file.create".into()));
+    assert_eq!(
+        arg(&plan, "path").value_id,
+        file_vid,
+        "hostile path: `path` must carry the tainted file handle → Block"
+    );
+    assert_ne!(
+        arg(&plan, "path").value_id,
+        intent_vid,
+        "hostile path must NOT be laundered to the trusted intent handle"
+    );
+}
+
 /// Core mapping: SendEmailSummary + intent_vid → PlanNode for email.send.
 ///
 /// Asserts:
