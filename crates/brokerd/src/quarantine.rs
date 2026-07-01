@@ -158,7 +158,12 @@ pub fn mint_from_read(
     // provenance_chain[0] == event_id — the genuine-taint anchor.
     // The §9 test asserts: store.resolve(value_id).provenance_chain[0] == event_id
     // AND find_event_by_type("file_read").id == event_id.
-    let value_id = store.mint(claim.value.clone(), taint, vec![event_id]);
+    // No behavior change: taint + provenance are always non-empty here, so mint
+    // never errors on the live path. Propagate the typed invariant error into
+    // anyhow so a future regression fails closed rather than silently.
+    let value_id = store
+        .mint(claim.value.clone(), taint, vec![event_id])
+        .map_err(|e| anyhow::anyhow!("mint invariant: {e:?}"))?;
 
     Ok((event_id, read_hash, value_id))
 }
@@ -230,7 +235,10 @@ pub fn mint_from_intent(
     // make HARD-02 vacuous — UserTrusted must be explicit so the predicate fix is meaningful).
     // provenance_chain[0] == event_id — the genuine-provenance anchor (T-06-04).
     let taint = vec![TaintLabel::UserTrusted];
-    let value_id = store.mint(literal, taint, vec![event_id]);
+    // No behavior change: [UserTrusted] + non-empty provenance always mints Ok.
+    let value_id = store
+        .mint(literal, taint, vec![event_id])
+        .map_err(|e| anyhow::anyhow!("mint invariant: {e:?}"))?;
 
     Ok((event_id, intent_hash, value_id))
 }
