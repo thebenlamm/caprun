@@ -6,7 +6,10 @@
 /// spawns `caprun-worker` (which self-confines AFTER connecting). Every effect
 /// is logged to the SQLite audit DAG with an unbroken SHA-256 hash chain.
 ///
-/// Usage: caprun <workspace-file> [audit-db-path]
+/// Usage: caprun <intent-kind> <intent-param> <workspace-file> [audit-db-path]
+///
+/// Intent kinds:
+///   send-email-summary <recipient>  — send a workspace summary to the recipient
 ///
 /// # Single dispatch authority (ASM-01)
 ///
@@ -29,17 +32,40 @@ use brokerd::{
     session::{create_session, persist_session},
 };
 use chrono::Utc;
-use runtime_core::Event;
+use runtime_core::{intent::CaprunIntent, Event};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
-    let workspace_path = args
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("usage: caprun <workspace-file> [audit-db-path]"))?;
+
+    // ── Parse typed intent from positional args (PLAN-01) ────────────────────
+    // Signature: caprun <intent-kind> <intent-param> <workspace-file> [audit-db-path]
+    let intent_kind = args.next().ok_or_else(|| {
+        anyhow::anyhow!(
+            "usage: caprun <intent-kind> <intent-param> <workspace-file> [audit-db-path]"
+        )
+    })?;
+    let intent_param = args.next().ok_or_else(|| {
+        anyhow::anyhow!(
+            "usage: caprun <intent-kind> <intent-param> <workspace-file> [audit-db-path]"
+        )
+    })?;
+    let workspace_path = args.next().ok_or_else(|| {
+        anyhow::anyhow!(
+            "usage: caprun <intent-kind> <intent-param> <workspace-file> [audit-db-path]"
+        )
+    })?;
     let audit_path = args.next().unwrap_or_else(|| ":memory:".to_string());
+
+    // Map intent kind → typed enum. Fail closed on unknown kinds (V5).
+    let intent = match intent_kind.as_str() {
+        "send-email-summary" => CaprunIntent::SendEmailSummary {
+            recipient: intent_param,
+        },
+        _ => anyhow::bail!("unknown intent kind: {intent_kind}"),
+    };
 
     // ── 1. Open audit DB ────────────────────────────────────────────────────
     let conn = Arc::new(Mutex::new(
@@ -99,6 +125,10 @@ async fn main() -> anyhow::Result<()> {
         .env("BROKER_SOCK", format!("/agentos/{session_id}"))
         .env("SESSION_ID", session_id.to_string())
         .env("WORKSPACE_FILE", &workspace_path)
+        // Serialised CaprunIntent — worker deserialises this and sends ProvideIntent
+        // to the broker, which mints it authoritatively in the per-connection
+        // ValueStore. Never passed raw bytes here; always the typed intent enum.
+        .env("INTENT", serde_json::to_string(&intent).context("serialise intent")?)
         .spawn()
         .context("spawn caprun-worker")?;
 
