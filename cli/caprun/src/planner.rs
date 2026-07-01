@@ -46,19 +46,23 @@ use runtime_core::{
 /// inside the `CaprunIntent` variant. The literal already lives in the broker's
 /// `ValueStore`, accessible only via the returned `ValueId` handle — the planner
 /// never needs (and must never access) the literal directly.
-#[allow(dead_code)] // Used by worker.rs via `mod planner;`; stub phase only.
 pub fn plan_from_intent(
     intent: &CaprunIntent,
     intent_value_id: ValueId,
     _file_value_ids: &[ValueId],
 ) -> PlanNode {
-    // RED: stub — returns wrong sink so tests fail, proving RED state.
-    // GREEN will replace this with the correct implementation.
-    let _ = intent_value_id;
     match intent {
         CaprunIntent::SendEmailSummary { .. } => PlanNode {
-            sink: SinkId("STUB_NOT_IMPLEMENTED".into()),
-            args: vec![],
+            // The `..` intentionally ignores `recipient` — the literal already
+            // lives in the broker's ValueStore, reachable only via `intent_value_id`.
+            sink: SinkId("email.send".into()),
+            args: vec![PlanArg {
+                name: "to".into(),
+                // Use the UserTrusted handle — not a file-derived tainted handle.
+                // This is the clean allow-path: executor sees [UserTrusted] taint →
+                // is_untrusted() = false → Allowed (HARD-02).
+                value_id: intent_value_id,
+            }],
         },
     }
 }
