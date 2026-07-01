@@ -91,3 +91,51 @@ impl Event {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plan_node::TaintLabel;
+
+    /// GOLDEN BYTE-FIXTURE (DESIGN §5 / §7): an `anchor: None` Event serializes to
+    /// JSON with NO `"anchor"` key — proving `skip_serializing_if` keeps pre-anchor
+    /// events byte-identical to the pre-change format (no DB migration). The event
+    /// also round-trips: `#[serde(default)]` supplies `anchor: None` on deserialize.
+    #[test]
+    fn anchor_none_event_serializes_byte_identical_and_round_trips() {
+        let event = Event::new(
+            Uuid::nil(),
+            None,
+            Uuid::nil(),
+            "worker".to_string(),
+            "file_read".to_string(),
+            DateTime::from_timestamp(0, 0).expect("epoch timestamp"),
+            vec![TaintLabel::ExternalUntrusted],
+        );
+
+        let json = serde_json::to_string(&event).expect("serialize");
+
+        // Byte-exact match against the pre-anchor serialized form — NO "anchor" key.
+        const GOLDEN: &str = "{\"id\":\"00000000-0000-0000-0000-000000000000\",\
+\"parent_id\":null,\
+\"session_id\":\"00000000-0000-0000-0000-000000000000\",\
+\"actor\":\"worker\",\
+\"event_type\":\"file_read\",\
+\"timestamp\":\"1970-01-01T00:00:00Z\",\
+\"taint\":[\"ExternalUntrusted\"]}";
+        assert_eq!(
+            json, GOLDEN,
+            "anchor:None Event must serialize byte-identical to the pre-anchor JSON \
+             (skip_serializing_if omits the field — no DB migration)"
+        );
+        assert!(
+            !json.contains("anchor"),
+            "serialized anchor:None Event must contain no \"anchor\" key"
+        );
+
+        // Round-trips: #[serde(default)] supplies anchor: None on deserialize.
+        let restored: Event = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored, event, "Event must round-trip byte-identically");
+        assert!(restored.anchor.is_none(), "restored anchor must be None");
+    }
+}
