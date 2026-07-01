@@ -50,6 +50,40 @@ impl std::fmt::Display for DenyReason {
     }
 }
 
+/// The durable genuine-taint anchor for a `sink_blocked` decision (ACC-07).
+///
+/// Every field is an EXACT CLONE of the resolved broker-owned `ValueRecord`
+/// (plus the broker-minted `effect_id` and the `sink`/`arg` read from the
+/// `PlanNode`/`PlanArg`). The executor constructs NOTHING itself and NEVER sets a
+/// taint field — this is the T-04-03 anti-stapling invariant. A DB reader
+/// re-derives untrusted-ness by calling `TaintLabel::is_untrusted()` on
+/// `anchor.taint`; NO precomputed trust boolean is persisted
+/// (DESIGN-durable-anchor-and-label-partition §2, §4).
+///
+/// This anchor rides inside the hashed `payload` column of the audit event, so it
+/// is tamper-evident for free (`compute_event_hash` covers `payload`) with no DB
+/// migration (DESIGN §5).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SinkBlockedAnchor {
+    /// BROKER-minted effect identity, passed into `submit_plan_node` — keeps the
+    /// executor a pure function (DESIGN §4 rule 2).
+    pub effect_id: uuid::Uuid,
+    /// The sink the blocked plan node targeted (`plan_node.sink`).
+    pub sink: crate::plan_node::SinkId,
+    /// The routing-sensitive argument name (`PlanArg.name`); `String`, no newtype.
+    pub arg: String,
+    /// The opaque handle for the blocked value (`record.id`).
+    pub value_id: crate::plan_node::ValueId,
+    /// Byte-exact literal. DATA AT REST, never executed.
+    pub literal: String,
+    /// Verbatim clone of the record's taint labels.
+    pub taint: Vec<crate::plan_node::TaintLabel>,
+    /// Verbatim clone of the record's provenance chain; `[0]` is the root read Event id.
+    pub provenance_chain: Vec<uuid::Uuid>,
+    /// The root read Event id — equals `provenance_chain[0]` (anchor-internal invariant).
+    pub read_event_id: uuid::Uuid,
+}
+
 /// The decision the executor returns after evaluating a PlanNode.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ExecutorDecision {
@@ -57,19 +91,11 @@ pub enum ExecutorDecision {
     Allowed,
     /// Execution blocked — tainted value in sensitive sink argument; confirmation required.
     ///
-    /// Carries the literal_value, sink, and arg_name read from the broker-owned
-    /// ValueRecord, plus the `taint` labels and the ordered `provenance_chain`.
-    /// A held-out §9 test can assert the unbroken taint chain DIRECTLY from this
-    /// payload (no second query): `provenance_chain[0]` equals the file_read Event id.
-    BlockedPendingConfirmation {
-        literal_value: String,
-        sink: String,
-        arg_name: String,
-        /// Taint labels carried by the blocked value (from its ValueRecord).
-        taint: Vec<crate::plan_node::TaintLabel>,
-        /// Ordered derivation edges; `provenance_chain[0]` is the file_read Event id.
-        provenance_chain: Vec<uuid::Uuid>,
-    },
+    /// Carries the durable `SinkBlockedAnchor` (built by cloning the resolved
+    /// ValueRecord verbatim). A held-out §9 test asserts the unbroken taint chain
+    /// DIRECTLY from `anchor.provenance_chain[0]` (the file_read Event id) with no
+    /// second query.
+    BlockedPendingConfirmation { anchor: SinkBlockedAnchor },
     /// Execution denied — carries a typed `DenyReason` (never a free-form String).
     Denied { reason: DenyReason },
     /// Stub: executor not yet implemented (Phase 1 return value).

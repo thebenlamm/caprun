@@ -102,6 +102,14 @@ pub fn append_event(
     event: &Event,
     parent_hash: Option<&str>,
 ) -> Result<String> {
+    // Defect B guard (DESIGN §4 rule 7): a `sink_blocked` event with no anchor is
+    // a security-meaningless bare marker. Reject it here so it is NON-PERSISTABLE
+    // through the TCB — not merely never-triggered.
+    if event.event_type == "sink_blocked" && event.anchor.is_none() {
+        return Err(anyhow::anyhow!(
+            "sink_blocked event requires an anchor (Defect B guard)"
+        ));
+    }
     let payload = serde_json::to_string(event)?;
     let taint_str = serde_json::to_string(&event.taint)?;
     let hash = compute_event_hash(
@@ -281,15 +289,15 @@ mod tests {
 
     /// Build a minimal file_read Event with taint labels [ExternalUntrusted, EmailRaw].
     fn make_file_read_event(session_id: Uuid) -> Event {
-        Event {
-            id: Uuid::new_v4(),
-            parent_id: None,
+        Event::new(
+            Uuid::new_v4(),
+            None,
             session_id,
-            actor: "worker".to_string(),
-            event_type: "file_read".to_string(),
-            timestamp: Utc::now(),
-            taint: vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw],
-        }
+            "worker".to_string(),
+            "file_read".to_string(),
+            Utc::now(),
+            vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw],
+        )
     }
 
     #[test]

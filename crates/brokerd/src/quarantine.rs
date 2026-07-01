@@ -140,15 +140,15 @@ pub fn mint_from_read(
     // Event also mints the ValueRecord that references that Event's id.
     let taint = vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw];
     let event_id = Uuid::new_v4();
-    let event = Event {
-        id: event_id,
-        parent_id: None,
+    let event = Event::new(
+        event_id,
+        None,
         session_id,
-        actor: "confined-reader".into(),
-        event_type: "file_read".into(),
-        timestamp: Utc::now(),
-        taint: taint.clone(),
-    };
+        "confined-reader".into(),
+        "file_read".into(),
+        Utc::now(),
+        taint.clone(),
+    );
 
     // Step 2: Append the event to the audit DAG, obtaining the row hash.
     let read_hash = append_event(conn, &event, parent_hash)?;
@@ -216,15 +216,15 @@ pub fn mint_from_intent(
     // The EVENT itself carries no taint — taint lives on the ValueRecord.
     // This differs from mint_from_read where event taint == record taint.
     let event_id = Uuid::new_v4();
-    let event = Event {
-        id: event_id,
-        parent_id: None, // Phase 7 wires parent_id linkage (same as mint_from_read precedent)
+    let event = Event::new(
+        event_id,
+        None, // Phase 7 wires parent_id linkage (same as mint_from_read precedent)
         session_id,
-        actor: "user-intent".into(),
-        event_type: "intent_received".into(),
-        timestamp: Utc::now(),
-        taint: vec![], // event carries no taint
-    };
+        "user-intent".into(),
+        "intent_received".into(),
+        Utc::now(),
+        vec![], // event carries no taint
+    );
 
     // Step 2: Append the event to the audit DAG, obtaining the row hash.
     let intent_hash = append_event(conn, &event, parent_hash)?;

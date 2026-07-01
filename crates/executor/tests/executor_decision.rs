@@ -67,31 +67,30 @@ fn tainted_to_arg_blocks_with_verbatim_record_payload() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+    let effect_id = Uuid::new_v4();
+    let decision = submit_plan_node(Uuid::new_v4(), effect_id, &plan, &store);
 
     match decision {
-        ExecutorDecision::BlockedPendingConfirmation {
-            literal_value,
-            sink,
-            arg_name,
-            taint: blocked_taint,
-            provenance_chain,
-        } => {
-            // Block payload fidelity (plan acceptance criteria)
+        ExecutorDecision::BlockedPendingConfirmation { anchor } => {
+            // Block payload fidelity (plan acceptance criteria) — every field is a
+            // verbatim clone of the ValueRecord; nothing synthesized (T-04-03).
             assert_eq!(
-                literal_value, literal,
-                "literal_value must be verbatim from ValueRecord, not synthesized"
+                anchor.literal, literal,
+                "anchor.literal must be verbatim from ValueRecord, not synthesized"
             );
-            assert_eq!(sink, "email.send");
-            assert_eq!(arg_name, "to");
+            assert_eq!(anchor.sink.0, "email.send");
+            assert_eq!(anchor.arg, "to");
             assert_eq!(
-                blocked_taint, taint,
+                anchor.taint, taint,
                 "taint must equal mint input — executor must not add/remove labels"
             );
             assert_eq!(
-                provenance_chain, provenance,
+                anchor.provenance_chain, provenance,
                 "provenance_chain[0] must equal the file_read Event id from mint"
             );
+            // read_event_id is provenance_chain[0]; effect_id is the broker-supplied param.
+            assert_eq!(anchor.read_event_id, provenance[0]);
+            assert_eq!(anchor.effect_id, effect_id, "effect_id must be the passed-in param");
         }
         other => panic!("expected BlockedPendingConfirmation, got {other:?}"),
     }
@@ -119,7 +118,7 @@ fn untainted_to_arg_returns_allowed() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
 
     assert_eq!(
         decision,
@@ -141,7 +140,7 @@ fn unknown_handle_returns_denied() {
     let forged_id = ValueId::new(); // never minted
 
     let plan = email_send_with_to(forged_id);
-    let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
 
     assert!(
         matches!(decision, ExecutorDecision::Denied { .. }),
@@ -170,7 +169,7 @@ fn tainted_content_sensitive_arg_allows_in_v0() {
 
     // "subject" is content-sensitive → must NOT Block in v0
     let plan = email_send_with_arg("subject", id);
-    let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
 
     assert_eq!(
         decision,
@@ -205,7 +204,7 @@ fn tainted_cc_and_bcc_also_block() {
 
     for (arg_name, id) in [("cc", cc_id), ("bcc", bcc_id)] {
         let plan = email_send_with_arg(arg_name, id);
-        let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
         assert!(
             matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }),
             "tainted '{arg_name}' must Block; got {decision:?}"
@@ -226,7 +225,7 @@ fn tainted_body_and_attachment_allow_in_v0() {
             )
             .expect("valid mint");
         let plan = email_send_with_arg(arg_name, id);
-        let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
         assert_eq!(
             decision,
             ExecutorDecision::Allowed,
@@ -259,7 +258,7 @@ fn hard02_usertrusted_only_allows() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
 
     assert_eq!(
         decision,
@@ -283,7 +282,7 @@ fn hard02_externaltainted_still_blocks() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), &plan, &store);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
 
     assert!(
         matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }),

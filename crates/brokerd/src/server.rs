@@ -213,15 +213,15 @@ pub async fn dispatch_request(
             let session = create_session(intent_id);
             let new_session_id = session.id;
 
-            let event = Event {
-                id: Uuid::new_v4(),
-                parent_id: None,
-                session_id: new_session_id,
-                actor: "broker".into(),
-                event_type: "session_created".into(),
-                timestamp: Utc::now(),
-                taint: vec![],
-            };
+            let event = Event::new(
+                Uuid::new_v4(),
+                None,
+                new_session_id,
+                "broker".into(),
+                "session_created".into(),
+                Utc::now(),
+                vec![],
+            );
 
             let result: anyhow::Result<()> = match conn.lock() {
                 Ok(locked) => persist_session(&locked, &session)
@@ -265,15 +265,15 @@ pub async fn dispatch_request(
 
             // Append fd_granted Event — causal parent is the prior event (not None).
             let fd_event_id = Uuid::new_v4();
-            let fd_event = Event {
-                id: fd_event_id,
-                parent_id: Some(*last_event_id),
+            let fd_event = Event::new(
+                fd_event_id,
+                Some(*last_event_id),
                 session_id,
-                actor: "broker".into(),
-                event_type: "fd_granted".into(),
-                timestamp: Utc::now(),
-                taint: vec![],
-            };
+                "broker".into(),
+                "fd_granted".into(),
+                Utc::now(),
+                vec![],
+            );
             let fd_hash = {
                 let locked = conn
                     .lock()
@@ -333,25 +333,42 @@ pub async fn dispatch_request(
         }
 
         BrokerRequest::SubmitPlanNode { plan_node } => {
+            // The broker mints the effect identity (HARD-06) and passes it into the
+            // executor — the executor never mints a Uuid (DESIGN §4 rule 2).
+            let effect_id = Uuid::new_v4();
             // session_id comes from the connection — NEVER from the IPC message (HARD-03).
-            let decision = executor::submit_plan_node(session_id, &plan_node, value_store);
+            let decision =
+                executor::submit_plan_node(session_id, effect_id, &plan_node, value_store);
 
             // Durably record the decision BEFORE returning any response (ACC-02).
             // Fail-closed: an append error propagates with `?`, so the block is
             // NEVER reported to the worker as having succeeded.
-            let event_type = match &decision {
-                runtime_core::ExecutorDecision::BlockedPendingConfirmation { .. } => "sink_blocked",
-                _ => "plan_node_evaluated",
+            //
+            // A block persists the durable anchor via the broker-owned
+            // Event::sink_blocked constructor (sets Event.taint = anchor.taint,
+            // anchor = Some). The causal parent stays the chain head — NOT
+            // read_event_id (two graphs are never equated, DESIGN §0/§4 rule 3).
+            let audit_event = match &decision {
+                runtime_core::ExecutorDecision::BlockedPendingConfirmation { anchor } => {
+                    Event::sink_blocked(
+                        Uuid::new_v4(),
+                        Some(*last_event_id), // causal head — never read_event_id
+                        session_id,
+                        Utc::now(),
+                        anchor.clone(),
+                    )
+                }
+                _ => Event::new(
+                    Uuid::new_v4(),
+                    Some(*last_event_id), // causal parent preserved — not None
+                    session_id,
+                    "executor".into(),
+                    "plan_node_evaluated".into(),
+                    Utc::now(),
+                    vec![],
+                ),
             };
-            let audit_event = Event {
-                id: Uuid::new_v4(),
-                parent_id: Some(*last_event_id), // causal parent preserved — not None
-                session_id,
-                actor: "executor".into(),
-                event_type: event_type.into(),
-                timestamp: Utc::now(),
-                taint: vec![],
-            };
+            let event_type = audit_event.event_type.clone();
             let new_hash = {
                 let locked = conn
                     .lock()

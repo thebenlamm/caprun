@@ -1,7 +1,7 @@
 /// Task 2 TDD: field-presence + serde round-trip for ValueNode, Effect, ExecutorDecision
 use runtime_core::{
     DenyReason, ExecutorDecision, Effect, ObserveEffect, ReversibleEffect, IrreversibleEffect,
-    PlanArg, PlanNode, ValueId, ValueNode, SinkId, TaintLabel, Provenance,
+    PlanArg, PlanNode, SinkBlockedAnchor, ValueId, ValueNode, SinkId, TaintLabel, Provenance,
 };
 
 #[test]
@@ -68,11 +68,16 @@ fn executor_decision_has_not_implemented_variant() {
 fn executor_decision_has_all_variants() {
     let _allowed = ExecutorDecision::Allowed;
     let _blocked = ExecutorDecision::BlockedPendingConfirmation {
-        literal_value: "val".to_string(),
-        sink: "email.send".to_string(),
-        arg_name: "to".to_string(),
-        taint: vec![],
-        provenance_chain: vec![],
+        anchor: SinkBlockedAnchor {
+            effect_id: uuid::Uuid::new_v4(),
+            sink: SinkId("email.send".to_string()),
+            arg: "to".to_string(),
+            value_id: ValueId::new(),
+            literal: "val".to_string(),
+            taint: vec![TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![uuid::Uuid::nil()],
+            read_event_id: uuid::Uuid::nil(),
+        },
     };
     let _denied = ExecutorDecision::Denied { reason: DenyReason::DanglingHandle };
     let _ni = ExecutorDecision::NotImplemented;
@@ -85,20 +90,26 @@ fn blocked_decision_carries_taint_and_provenance_chain() {
     // equals the file_read Event id.
     let event_id = uuid::Uuid::new_v4();
     let decision = ExecutorDecision::BlockedPendingConfirmation {
-        literal_value: "attacker@evil.example".to_string(),
-        sink: "email.send".to_string(),
-        arg_name: "to".to_string(),
-        taint: vec![TaintLabel::EmailRaw, TaintLabel::ExternalUntrusted],
-        provenance_chain: vec![event_id],
+        anchor: SinkBlockedAnchor {
+            effect_id: uuid::Uuid::new_v4(),
+            sink: SinkId("email.send".to_string()),
+            arg: "to".to_string(),
+            value_id: ValueId::new(),
+            literal: "attacker@evil.example".to_string(),
+            taint: vec![TaintLabel::EmailRaw, TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![event_id],
+            read_event_id: event_id,
+        },
     };
-    // serde round-trips losslessly with the new fields.
+    // serde round-trips losslessly with the anchor.
     let json = serde_json::to_string(&decision).expect("serialize");
     let restored: ExecutorDecision = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(decision, restored);
     match restored {
-        ExecutorDecision::BlockedPendingConfirmation { taint, provenance_chain, .. } => {
-            assert_eq!(taint.len(), 2);
-            assert_eq!(provenance_chain[0], event_id);
+        ExecutorDecision::BlockedPendingConfirmation { anchor } => {
+            assert_eq!(anchor.taint.len(), 2);
+            assert_eq!(anchor.provenance_chain[0], event_id);
+            assert_eq!(anchor.read_event_id, event_id);
         }
         _ => panic!("expected BlockedPendingConfirmation"),
     }

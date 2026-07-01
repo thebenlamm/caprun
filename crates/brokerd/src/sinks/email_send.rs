@@ -42,15 +42,15 @@ pub fn invoke_email_send_stub(
     parent_hash: Option<&str>,
 ) -> Result<String> {
     let _ = plan_node; // Opaque handles only — not embedded in the event payload.
-    let event = Event {
-        id: Uuid::new_v4(),
-        parent_id: None,
+    let event = Event::new(
+        Uuid::new_v4(),
+        None,
         session_id,
-        actor: "sink-stub:email.send".to_string(),
-        event_type: "email_send_stub".to_string(),
-        timestamp: Utc::now(),
-        taint: vec![], // Stub carries no taint — taint lives on the blocked ValueRecord.
-    };
+        "sink-stub:email.send".to_string(),
+        "email_send_stub".to_string(),
+        Utc::now(),
+        vec![], // Stub carries no taint — taint lives on the blocked ValueRecord.
+    );
     audit::append_event(conn, &event, parent_hash)
 }
 

@@ -109,7 +109,12 @@ fn handle_from_other_connection_store_is_denied() {
         mint_from_read(&conn, &mut store_a, session_id, &claim, None).expect("mint_from_read");
 
     // Sanity: in store A the same plan blocks (the value is tainted + routing-sensitive).
-    let decision_a = executor::submit_plan_node(session_id, &email_plan(value_id.clone()), &store_a);
+    let decision_a = executor::submit_plan_node(
+        session_id,
+        Uuid::new_v4(),
+        &email_plan(value_id.clone()),
+        &store_a,
+    );
     assert!(
         matches!(decision_a, ExecutorDecision::BlockedPendingConfirmation { .. }),
         "store A must block the tainted recipient, got {decision_a:?}"
@@ -117,7 +122,8 @@ fn handle_from_other_connection_store_is_denied() {
 
     // Connection B has a DISTINCT empty store — the same handle does not resolve.
     let store_b = ValueStore::default();
-    let decision_b = executor::submit_plan_node(session_id, &email_plan(value_id), &store_b);
+    let decision_b =
+        executor::submit_plan_node(session_id, Uuid::new_v4(), &email_plan(value_id), &store_b);
     assert!(
         matches!(decision_b, ExecutorDecision::Denied { .. }),
         "cross-connection handle must resolve None → Denied, got {decision_b:?}"
@@ -190,18 +196,20 @@ async fn block_appends_durable_causal_sink_blocked() {
     .await
     .expect("dispatch_request must succeed once the append is durable");
 
-    // The sink_blocked event is durably recorded and parented onto the file_read event.
+    // The sink_blocked event is durably recorded in the DAG.
     let blocked = {
         let locked = conn.lock().unwrap();
         find_event_by_type(&locked, &session_id.to_string(), "sink_blocked")
             .expect("find_event_by_type")
             .expect("sink_blocked event must be durable in the DAG")
     };
-    assert_eq!(
-        blocked.parent_id,
-        Some(read_event_id),
-        "sink_blocked must be causally parented onto the prior (file_read) event"
-    );
+    // NOTE (DESIGN §0 — two graphs, never equated): we intentionally do NOT assert
+    // `blocked.parent_id == read_event_id`. The causal DAG (parent_id, on the chain
+    // head) and the value-lineage (anchor.provenance_chain / read_event_id) share
+    // node ids but have distinct edge semantics; forcing them equal breaks
+    // verify_chain on any multi-claim path. The genuine-taint edge lives in the
+    // anchor (asserted in s9_acceptance.rs), not in parent_id.
+    //
     // The chain head advanced to the sink_blocked event.
     assert_eq!(
         last_event_id, blocked.id,
