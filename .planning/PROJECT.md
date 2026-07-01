@@ -69,17 +69,18 @@ Shipped in **v1.0 — AgentOS v0** (2026-06-30). Full traceability archived in
 
 ### Active
 
-**v1.1 — Usable Runtime (Live §9 from the CLI).** Full REQ-IDs and traceability
-in `.planning/REQUIREMENTS.md`.
+**v1.1 — Usable Runtime (Live §9 from the CLI).** All phases complete (Phase 7
+finished 2026-07-01); full REQ-IDs and traceability in `.planning/REQUIREMENTS.md`.
+Pending milestone archival via `/gsd-complete-milestone`.
 
-- [ ] Unify `caprun` onto the `brokerd::server` dispatch (no second executor path)
-- [ ] Live §9 block fires from a real `caprun` run (email.send, then file.create)
-- [ ] Typed `ReportClaims` IPC from the confined worker — raw bytes never reach the planner
-- [ ] Deterministic intent → PlanNode planner (handles only) + `mint_from_intent`
-- [ ] `file.create` sink: schema, fail-closed, `O_EXCL`, dirfd + `openat2` hardening
-- [ ] Enforcement hardening: trusted-value taint semantics, session-scoped handles,
+- [x] Unify `caprun` onto the `brokerd::server` dispatch (no second executor path)
+- [x] Live §9 block fires from a real `caprun` run (email.send, then file.create)
+- [x] Typed `ReportClaims` IPC from the confined worker — raw bytes never reach the planner
+- [x] Deterministic intent → PlanNode planner (handles only) + `mint_from_intent`
+- [x] `file.create` sink: schema, fail-closed, `O_EXCL`, dirfd + `openat2` hardening
+- [x] Enforcement hardening: trusted-value taint semantics, session-scoped handles,
       capability-restricted reads, crash-safe audit ordering
-- [ ] §9 acceptance contract green on real Linux `caprun`
+- [x] §9 acceptance contract green on real Linux `caprun`
 
 ### Out of Scope
 
@@ -104,9 +105,14 @@ Do not build any of these until §9 holds (non-goals for v0):
   `adapter-fs`, and the `caprun` binary. `cargo test --workspace` = 51 green;
   the §9 value-injection acceptance test passes with a genuine, audited taint
   chain. Security claims are Linux-only (verified via Colima+Docker from Mac).
-- **Next milestone:** unscoped — start with `/gsd-new-milestone`. Likely v1.1
-  candidates: real sinks beyond the email.send stub, an LLM/richer planner,
-  Git/GitHub adapters, broader sink sensitivity map.
+- **v1.1 delivered (Phase 7 complete, 2026-07-01):** `file.create` is a real,
+  hardened sink (schema gate, fail-closed, `O_EXCL`, dirfd + `openat2`
+  `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`); mint invariant enforced at the source;
+  typed `DenyReason`; durable genuine-taint anchor (ACC-07) persisted across
+  process exit; live §9 hostile-block + clean-allow + unbroken causal chain green
+  on real Linux `caprun`. Verifier independently re-ran the Colima/Docker recipe.
+- **Next milestone:** unscoped — start with `/gsd-complete-milestone` (archive
+  v1.1), then `/gsd-new-milestone`.
 - **Source of truth:** `planning-docs/PLAN.md` ("AgentOS v0 — Definitive Plan").
   On any conflict, PLAN.md wins. Background detail lives under `archive/`
   (security: `archive/AGENT-RUNTIME-HANDOVER.md`; architecture narrative:
