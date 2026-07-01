@@ -9,6 +9,7 @@
 /// `value_store.resolve()`. It NEVER mints a ValueRecord and NEVER sets a taint
 /// field. The sole taint writer in the crate is `ValueStore::mint`.
 
+pub mod sink_schema;
 pub mod sink_sensitivity;
 pub mod value_store;
 
@@ -44,6 +45,15 @@ pub fn submit_plan_node(
     plan_node: &PlanNode,
     value_store: &ValueStore,
 ) -> ExecutorDecision {
+    // Step 0: arg-schema gate (HARD-01/HARD-05). Runs FIRST — before any handle
+    // resolve, taint, or sensitivity check. An unknown sink or malformed arg set
+    // (unknown/duplicate/missing arg) fails closed here, so no unvalidated plan
+    // node ever reaches the resolve/sensitivity loop. Extends the single
+    // DenyReason taxonomy (no second error type).
+    if let Err(reason) = sink_schema::validate_schema(plan_node) {
+        return ExecutorDecision::Denied { reason };
+    }
+
     for arg in &plan_node.args {
         // Step 1: Resolve the opaque handle from the trusted broker-owned store.
         // A None resolution is Denied — a dangling/forged handle never becomes Allowed.
