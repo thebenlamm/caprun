@@ -110,10 +110,10 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
   7. The audit DB shows one unbroken causal chain per run — `fd_granted → file_read → plan_node_evaluated → sink_blocked` (hostile) or `sink_executed` (clean); the blocked `PlanArg`'s `ValueId` resolves to a `ValueRecord` whose `provenance_chain[0]` equals the actual `file_read` event id; the durable audit evidence links `effect_id + sink + arg + ValueId + provenance anchor` so the proof survives process exit (anti-stapling sentinel — an event-order-only assertion is insufficient)
   8. Forged `ValueId` handles and unknown sink/arg combinations are denied; an effect-path crash leaves an explicit indeterminate audit record with no automatic retry; cross-session handle access is adversarially denied
 
-**Plans**: 2/6 plans executed
+**Plans**: 3/6 plans executed
 
 - [x] 07-01-PLAN.md
-- [ ] 07-02-PLAN.md
+- [x] 07-02-PLAN.md
 - [x] 07-03-PLAN.md
 - [ ] 07-04a-PLAN.md
 - [ ] 07-04b-PLAN.md
@@ -129,4 +129,4 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 | 4. Value-Injection Security Demo (v0 DONE) | v1.0 | 5/5 | Complete | 2026-06-30 |
 | 5. Runtime Spine & Live §9 Email Block | v1.1 | 4/4 | Complete    | 2026-06-30 |
 | 6. Deterministic Planner & Intent Input | v1.1 | 5/5 | Complete    | 2026-07-01 |
-| 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 2/6 | In Progress|  |
+| 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 3/6 | In Progress|  |
