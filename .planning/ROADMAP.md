@@ -74,11 +74,11 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
   3. `mint_from_intent` mints a `UserTrusted` `ValueId` anchored to an `intent_received` audit event, distinct from `mint_from_read`
   4. A plan node carrying `UserTrusted`/`LocalWorkspace`-only provenance passes the executor without blocking — the clean allow-path is reachable end to end
 
-**Plans**: 5 plans
+**Plans**: 1/5 plans executed
 
 **Wave 1**
 
-- [ ] 06-01-PLAN.md — runtime-core: CaprunIntent enum + TaintLabel::is_untrusted() (exhaustive) + unit tests [wave 1]
+- [x] 06-01-PLAN.md — runtime-core: CaprunIntent enum + TaintLabel::is_untrusted() (exhaustive) + unit tests [wave 1]
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -120,5 +120,5 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 | 3. Confinement & Mediation Substrate | v1.0 | 5/5 | Complete | 2026-06-29 |
 | 4. Value-Injection Security Demo (v0 DONE) | v1.0 | 5/5 | Complete | 2026-06-30 |
 | 5. Runtime Spine & Live §9 Email Block | v1.1 | 4/4 | Complete    | 2026-06-30 |
-| 6. Deterministic Planner & Intent Input | v1.1 | 0/5 | Planned | - |
+| 6. Deterministic Planner & Intent Input | v1.1 | 1/5 | In Progress|  |
 | 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 0/TBD | Not started | - |

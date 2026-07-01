@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Usable Runtime
-current_phase: 6
-current_phase_name: Deterministic Planner & Intent Input
+current_phase: 06
+current_phase_name: deterministic-planner-intent-input
 status: executing
 stopped_at: Roadmap revised (v1.1, 3 phases 05-07) — 5 peer-review deltas applied, 25 requirements mapped, 100% coverage
-last_updated: "2026-07-01T00:18:42.550Z"
-last_activity: 2026-06-30
-last_activity_desc: Phase 05 complete, transitioned to Phase 6
+last_updated: "2026-07-01T00:29:21.793Z"
+last_activity: 2026-07-01
+last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 9
+  completed_plans: 5
   percent: 33
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-30)
 
 **Core value:** A kernel-confined worker's only egress is broker-mediated plan nodes, and a genuine taint chain deterministically blocks value-injection at sensitive sink arguments.
-**Current focus:** Phase 05 — runtime-spine-live-9-email-block
+**Current focus:** Phase 06 — deterministic-planner-intent-input
 
 ## Current Position
 
-Phase: 6 — Deterministic Planner & Intent Input
-Plan: Not started
+Phase: 06 (deterministic-planner-intent-input) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-06-30 — Phase 05 complete, transitioned to Phase 6
+Last activity: 2026-07-01 — Phase 06 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -52,6 +52,8 @@ Progress: [░░░░░░░░░░] 0%
 | 07 | TBD | - | - |
 
 *Updated after each plan completion*
+| Phase 06 P01 | 4min | - tasks | - files |
+| Phase 06 P01 | 4min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -67,6 +69,7 @@ Load-bearing locked decisions for v1.1:
 - HARD-02: executor blocking predicate is over explicitly-untrusted labels; UserTrusted/LocalWorkspace-only does NOT block (clean allow-path must be reachable).
 - HARD-04 + SINK-04 share ONE workspace-root capability model — HARD-04 (read-side) is the prerequisite for SINK-04 (write-side); implement the capability once and apply to both.
 - ASM-03 phased delivery: Phase 5 ships EmailAddress variant; Phase 7 adds RelativePath (no second IPC revision).
+- [Phase ?]: .planning/phases/06-deterministic-planner-intent-input/06-01-SUMMARY.md
 
 ### Pending Todos
 
@@ -86,6 +89,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-30
+Last session: 2026-07-01T00:28:48.939Z
 Stopped at: Roadmap revised (v1.1, 3 phases 05-07) — 5 peer-review deltas applied, 25 requirements mapped, 100% coverage
 Resume file: None
