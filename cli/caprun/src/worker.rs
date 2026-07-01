@@ -60,10 +60,41 @@ async fn main() -> anyhow::Result<()> {
         serde_json::from_str(&intent_json).context("parse INTENT (unknown intent variant?)")?;
 
     // Connect to the broker's abstract-namespace UDS.
+    //
+    // The broker binds this socket in a sibling task after only a best-effort
+    // `yield_now()` in caprun main, and this worker is a freshly-spawned PROCESS
+    // that connects at startup. Under CPU oversubscription the broker's `bind()`
+    // can lose the race to this `connect()`, surfacing a transient ECONNREFUSED
+    // (connecting to an as-yet-unbound abstract address). Retry on transient
+    // "not bound yet" errors within a bounded budget so a scheduling hiccup does
+    // not fail the run; a genuinely-absent broker still fails fast once the budget
+    // is exhausted. This runs BEFORE self-confinement, so connect syscalls are
+    // still permitted (ordering invariant preserved).
     let sock_path = format!("\0{broker_sock}");
-    let stream = tokio::net::UnixStream::connect(&sock_path)
-        .await
-        .context("connect to broker abstract UDS")?;
+    let stream = {
+        use std::time::{Duration, Instant};
+        const CONNECT_BUDGET: Duration = Duration::from_secs(2);
+        const RETRY_DELAY: Duration = Duration::from_millis(25);
+        let deadline = Instant::now() + CONNECT_BUDGET;
+        loop {
+            match tokio::net::UnixStream::connect(&sock_path).await {
+                Ok(s) => break s,
+                // Transient: broker task has not reached bind() yet. Retry until the
+                // budget runs out, then fall through to the hard error below.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
+                    ) && Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(RETRY_DELAY).await;
+                }
+                // Non-transient, or budget exhausted: fail fast (do not mask a
+                // genuinely-absent broker behind an unbounded retry loop).
+                Err(e) => return Err(e).context("connect to broker abstract UDS"),
+            }
+        }
+    };
 
     // Convert to a blocking std UnixStream for all subsequent I/O.
     let std_stream = stream.into_std().context("into_std")?;

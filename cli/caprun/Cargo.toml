@@ -9,7 +9,8 @@ sandbox      = { path = "../../crates/sandbox" }
 brokerd      = { path = "../../crates/brokerd" }
 adapter-fs   = { path = "../../crates/adapter-fs" }
 runtime-core = { path = "../../crates/runtime-core" }
-tokio        = { workspace = true }
+# `time` feature: bounded retry-with-backoff on the worker's broker connect.
+tokio        = { workspace = true, features = ["time"] }
 anyhow       = { workspace = true }
 uuid         = { workspace = true }
 chrono       = { workspace = true }
