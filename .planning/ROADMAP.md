@@ -26,7 +26,7 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 **Milestone goal:** Turn the proven-in-tests value-injection defense into a real `caprun` run — a deterministic scripted planner turns an intent into PlanNodes, a confined worker drives toward a real `file.create` sink, and the deterministic I2 block fires on a genuine taint chain (with a clean, broker-minted allow-path too). Runtime assembly only — no new capability surface.
 
 - [x] **Phase 5: Runtime Spine & Live §9 Email Block** - Collapse dual dispatch, land session-scoped handle model, and prove live §9 block with durable blocked-path audit through the email.send stub (completed 2026-06-30)
-- [ ] **Phase 6: Deterministic Planner & Intent Input** - Typed intent → PlanNode planner with broker-minted trusted values for the clean allow-path
+- [x] **Phase 6: Deterministic Planner & Intent Input** - Typed intent → PlanNode planner with broker-minted trusted values for the clean allow-path (completed 2026-07-01)
 - [ ] **Phase 7: file.create Sink, Enforcement Hardening & Full Acceptance** - Real hardened sink, closed enforcement edge cases, full live §9 acceptance contract green
 
 ## Phase Details
@@ -74,7 +74,7 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
   3. `mint_from_intent` mints a `UserTrusted` `ValueId` anchored to an `intent_received` audit event, distinct from `mint_from_read`
   4. A plan node carrying `UserTrusted`/`LocalWorkspace`-only provenance passes the executor without blocking — the clean allow-path is reachable end to end
 
-**Plans**: 4/5 plans executed
+**Plans**: 5/5 plans complete
 
 **Wave 1**
 
@@ -91,7 +91,7 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 06-05-PLAN.md — clean allow-path e2e (Linux-gated): caprun exits 0, intent_received + plan_node_evaluated, no sink_blocked [wave 4]
+- [x] 06-05-PLAN.md — clean allow-path e2e (Linux-gated): caprun exits 0, intent_received + plan_node_evaluated, no sink_blocked [wave 4]
 
 ### Phase 7: file.create Sink, Enforcement Hardening & Full Acceptance
 
@@ -120,5 +120,5 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 | 3. Confinement & Mediation Substrate | v1.0 | 5/5 | Complete | 2026-06-29 |
 | 4. Value-Injection Security Demo (v0 DONE) | v1.0 | 5/5 | Complete | 2026-06-30 |
 | 5. Runtime Spine & Live §9 Email Block | v1.1 | 4/4 | Complete    | 2026-06-30 |
-| 6. Deterministic Planner & Intent Input | v1.1 | 4/5 | In Progress|  |
+| 6. Deterministic Planner & Intent Input | v1.1 | 5/5 | Complete   | 2026-07-01 |
 | 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 0/TBD | Not started | - |
