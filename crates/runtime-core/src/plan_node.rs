@@ -20,6 +20,32 @@ pub enum TaintLabel {
     WorkerExtracted,
 }
 
+impl TaintLabel {
+    /// Returns `true` for labels that signal hostile/external origin.
+    ///
+    /// `UserTrusted` and `LocalWorkspace` are TRUSTED provenance labels — they do NOT block.
+    /// The five untrusted labels (`ExternalUntrusted`, `EmailRaw`, `PdfRaw`,
+    /// `LlmGenerated`, `WorkerExtracted`) return `true` and trigger an executor block
+    /// on routing-sensitive sink arguments (HARD-02).
+    ///
+    /// # Security invariant — exhaustive match (Pitfall 5)
+    ///
+    /// This method uses an EXPLICIT `match self` with NO wildcard arm. Adding a new
+    /// `TaintLabel` variant without updating this match is a compile error, not a
+    /// silent false-allow. Do NOT replace with `matches!()` (implicit `_ => false`
+    /// would silently treat a new untrusted label as trusted).
+    pub fn is_untrusted(&self) -> bool {
+        match self {
+            TaintLabel::ExternalUntrusted
+            | TaintLabel::EmailRaw
+            | TaintLabel::PdfRaw
+            | TaintLabel::LlmGenerated
+            | TaintLabel::WorkerExtracted => true,
+            TaintLabel::UserTrusted | TaintLabel::LocalWorkspace => false,
+        }
+    }
+}
+
 /// Opaque handle for a value. The planner holds ONLY this — never the literal
 /// or taint. The broker resolves a `ValueId` to a `ValueRecord` it owns.
 ///
