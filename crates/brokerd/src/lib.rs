@@ -34,7 +34,11 @@ pub fn submit_plan_node(
     plan: runtime_core::PlanNode,
     store: &executor::value_store::ValueStore,
 ) -> runtime_core::ExecutorDecision {
-    executor::submit_plan_node(session_id, &plan, store)
+    // The broker mints the effect identity (HARD-06, DESIGN §4 rule 2) — the
+    // executor never mints a Uuid. The live dispatch path (server.rs) does the
+    // same before appending the durable sink_blocked anchor.
+    let effect_id = uuid::Uuid::new_v4();
+    executor::submit_plan_node(session_id, effect_id, &plan, store)
 }
 
 #[cfg(test)]
