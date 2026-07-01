@@ -16,39 +16,47 @@ Event → ValueNode → sensitive sink argument) deterministically blocks
 value-injection at the sink. If everything else fails, **I2 enforcement on a
 genuine taint chain must hold.**
 
-## Current Milestone: v1.1 — Usable Runtime (Live §9 from the CLI)
+## Current Milestone: v1.2 — Tainted Session, Human Gate
 
-**Goal:** Turn the proven-in-tests value-injection defense into a real `caprun`
-run — a deterministic scripted planner turns an intent into PlanNodes, a confined
-worker drives toward a real `file.create` sink, and the deterministic I2 block
-fires on a genuine taint chain (with a clean, broker-minted allow-path too).
-**One bounded new capability surface (`file.create`); no network/shell/destructive
-overwrite** — and Git/Cedar/etc. stay out.
+**Goal:** A session that touches untrusted content is mechanically demoted to
+draft-only (I1 dynamic-taint default + I0 creation rule), and a blocked sink arg
+can be released only by literal-value human confirmation — all deterministic,
+all in the audit DAG.
 
 **Target features:**
-- Unify `caprun` onto the single `brokerd::server` dispatch path (kill the dual
-  request loop + the stale "SubmitPlanNode not wired" stub) — the milestone's spine.
-- Live §9 from the CLI: a real `caprun` run blocks a tainted routing-sensitive
-  sink arg through the unified path — proven first on the existing `email.send`
-  stub, then on `file.create`.
-- Deterministic non-LLM planner: typed intent enum → `PlanNode{sink, args}`,
-  emitting only `SinkId` + `ValueId` handles; broker-owned `mint_from_intent`
-  for the clean allow-path, separate from `mint_from_read`.
-- `file.create` sink: explicit arg schema, fail-closed on unknown sink/arg,
-  routing-sensitive path, `O_EXCL` exclusive create, workspace-dirfd + `openat2`
-  (RESOLVE_BENEATH/RESOLVE_NO_SYMLINKS) — I2 is not filesystem confinement.
-- Enforcement hardening surfaced by channel review: trusted-value taint semantics
-  (block over explicitly-untrusted labels, not "any taint"), session-scoped
-  handles, capability-restricted reads, crash-safe authorize-before-invoke audit.
+- **Session taint state (I1 dynamic default):** broker tracks per-session trust
+  state; the `mint_from_read` path (raw untrusted read Event) flips the session
+  to draft-only. Draft-only sessions: `CommitIrreversible`-class plan nodes are
+  Denied (new `DenyReason` variant, decided **in the executor** — one TCB deny
+  function, one DenyReason taxonomy); `MutateReversible`/`Observe` still
+  allowed. Demotion recorded as an audit event with the causal edge to the read.
+- **I0 creation rule:** a Session whose intent/seed derives from external
+  content starts draft-only and cannot auto-authorize Tier 3+. Seed-provenance
+  field at session creation; the `caprun` CLI decides trusted-arg vs
+  file-derived seed.
+- **Confirmation loop:** `BlockedPendingConfirmation` surfaces the verbatim
+  literal + provenance to the human via a **second command**
+  (`caprun confirm <effect_id>` — testable, non-interactive-friendly); records
+  confirm/deny as an audit event anchored to `SinkBlockedAnchor.effect_id`; on
+  confirm releases exactly that (sink, arg, literal-digest) triple —
+  **single-shot**, not a session-wide waiver or standing policy. Deny is
+  durable. The release path lives in the TCB, not policy.
+- **Live acceptance (§9-style, from the CLI):** hostile workspace file → worker
+  reads it → session demoted (I1) → tainted routing arg Blocked (I2, existing)
+  → human denies → nothing sent; separately, human confirms → effect proceeds
+  exactly once; audit DAG shows the unbroken chain read → demotion → block →
+  human decision.
 
-**Acceptance:** real Linux `caprun` — hostile input → typed path claim →
-`mint_from_read` → `file.create` blocked (no file written); a second run with a
-broker-minted trusted path creates the exact file under the workspace root; the
-audit DB shows one causal chain `fd_granted → file_read → plan_node_evaluated →
-sink_blocked/sink_executed`; forged handles + unknown sinks deny.
+**Design gate:** a DESIGN doc for session-trust-state / confirmation semantics
+gates the phases that add executor behavior (same discipline as the v1.0
+executor gate).
 
-**Reviewed by:** `#caprun-630` — codex + grok (2026-06-30). Version stays v1.1
-(v1.0 = mechanism proof; v1.1 = usable runtime).
+**Explicitly not in v1.2:** more sinks, real LLM planner, Git/GitHub adapters,
+Cedar, cross-host delegation, content-sensitive arg blocking (deferred by
+design). README-vs-CaMeL positioning is a small optional add-on.
+
+**Seed:** `planning-docs/MILESTONE-v1.2-SEED.md` (2026-07-01 post-v1.1
+assessment). PLAN.md wins on any conflict.
 
 ## Requirements
 
@@ -80,10 +88,21 @@ traceability archived in `.planning/milestones/v1.1-REQUIREMENTS.md`.
 
 ### Active
 
-**Next milestone — unscoped.** Define via `/gsd-new-milestone` (questioning →
-research → requirements → roadmap). Candidate directions: real sinks beyond
-`file.create` (network egress, process exec), an LLM/richer planner behind the
-deterministic executor, Git/GitHub adapters, broader sink sensitivity map.
+**v1.2 — Tainted Session, Human Gate** (scoped 2026-07-01):
+
+- [ ] Session taint state: `mint_from_read` demotes the session to draft-only;
+      draft-only denies `CommitIrreversible` plan nodes in the executor (new
+      `DenyReason` variant); demotion is an audited event with a causal edge to
+      the read.
+- [ ] I0 creation rule: externally-seeded sessions start draft-only
+      (seed-provenance field at session creation).
+- [ ] Confirmation loop: `caprun confirm <effect_id>` releases exactly one
+      (sink, arg, literal-digest) triple, single-shot; confirm/deny audited and
+      anchored to `SinkBlockedAnchor.effect_id`; deny durable.
+- [ ] DESIGN doc (session-trust-state + confirmation semantics) gates executor
+      behavior changes.
+- [ ] Live §9-style acceptance: read → demotion → block → human deny (nothing
+      sent) / human confirm (exactly once), unbroken audit chain.
 
 ### Out of Scope
 
@@ -256,6 +275,9 @@ Python OK for non-TCB experiments only.
 | I2 in deterministic Rust TCB, never LLM (DEC-security-invariants) | LLM cannot be trusted to enforce a security invariant; enforcement must be deterministic | — Locked |
 | DESIGN docs gate executor code (DEC-canonical-docs) | Writing crates/executor before the taint/executor model is reviewed risks a wrong-shape enforcer | — Locked |
 | §9 with genuine taint = the only v0-DONE gate | Substrate proves mediation but not value-injection defense; stapled taint proves nothing | — Locked |
+| v1.2: draft-only deny decided in the executor, not a broker pre-check | Keep all deny logic in one TCB function with one DenyReason taxonomy | — Pending |
+| v1.2: confirmation UX = `caprun confirm <effect_id>` second command | Testable and non-interactive-friendly vs a TTY prompt | — Pending |
+| v1.2: confirm is single-shot (one (sink, arg, literal-digest) triple) | Standing exact-match policy is scope creep for v1.2 | — Pending |
 
 ## Evolution
 
@@ -275,7 +297,7 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-01 after v1.1 milestone (Usable Runtime — Live §9 from the
-CLI). v1.0 shipped the mechanism proof; v1.1 shipped the live runtime: a real
-`caprun` run drives a hardened `file.create` sink with a deterministic I2 block on
-a DB-durable genuine taint chain, verified on real Linux.*
+*Last updated: 2026-07-01 after starting milestone v1.2 (Tainted Session, Human
+Gate): I1 dynamic session demotion + I0 creation rule + single-shot literal-value
+confirmation loop, seeded from `planning-docs/MILESTONE-v1.2-SEED.md`. v1.0 shipped
+the mechanism proof; v1.1 shipped the live runtime.*

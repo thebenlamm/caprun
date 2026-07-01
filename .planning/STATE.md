@@ -1,20 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: — Usable Runtime
-current_phase: 1
-status: Awaiting next milestone
-stopped_at: Roadmap revised (v1.1, 3 phases 05-07) — 5 peer-review deltas applied, 25 requirements mapped, 100% coverage
-last_updated: "2026-07-01T15:51:54.029Z"
+milestone: v1.2
+milestone_name: Tainted Session, Human Gate
+status: planning
+last_updated: "2026-07-01T23:56:23.476Z"
 last_activity: 2026-07-01
-last_activity_desc: Milestone v1.1 completed and archived
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 15
-  completed_plans: 15
-  percent: 100
-current_phase_name: file-create-sink-enforcement-hardening-full-acceptance
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -28,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-06-30)
 
 ## Current Position
 
-Phase: Milestone v1.1 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-07-01 — Milestone v1.1 completed and archived
+Status: Defining requirements
+Last activity: 2026-07-01 — Milestone v1.2 started
 
 ## Performance Metrics
 
