@@ -249,9 +249,24 @@ fn s9_live_file_create_hostile_block() {
         .expect("the persisted sink_blocked event MUST carry Some(anchor)");
     assert_eq!(anchor.sink.0, "file.create", "anchor.sink must be file.create");
     assert_eq!(anchor.arg, "path", "anchor.arg must be the routing-sensitive path");
+    // The hashed anchor carries only the digest; the byte-exact literal is in the
+    // redactable side table (data at rest outside the chain).
+    let expected_digest = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(HOSTILE_FC_PATH.as_bytes());
+        hex::encode(h.finalize())
+    };
     assert_eq!(
-        anchor.literal, HOSTILE_FC_PATH,
-        "anchor.literal must be the byte-exact hostile path"
+        anchor.literal_sha256, expected_digest,
+        "anchor.literal_sha256 must be sha256(hostile path)"
+    );
+    let side_literal = brokerd::audit::get_blocked_literal(&conn, &blocked.id.to_string())
+        .expect("query blocked_literals")
+        .expect("a blocked-literal side-table row must exist");
+    assert_eq!(
+        side_literal, HOSTILE_FC_PATH,
+        "blocked_literals row must hold the byte-exact hostile path (redactable at rest)"
     );
     assert!(
         anchor.taint.iter().any(|t| t.is_untrusted()),

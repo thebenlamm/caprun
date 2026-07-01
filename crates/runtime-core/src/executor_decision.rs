@@ -98,8 +98,13 @@ pub struct SinkBlockedAnchor {
     pub arg: String,
     /// The opaque handle for the blocked value (`record.id`).
     pub value_id: crate::plan_node::ValueId,
-    /// Byte-exact literal. DATA AT REST, never executed.
-    pub literal: String,
+    /// SHA-256 digest (lowercase hex) of the byte-exact literal — the DURABLE,
+    /// tamper-evident representation. Only the digest rides inside the hashed
+    /// `payload` column; the raw literal is NEVER hashed into the chain, so it can
+    /// be redacted (delete its `blocked_literals` side-table row) without breaking
+    /// `verify_chain`. A swapped side-table literal no longer matches this digest,
+    /// so tamper-evidence is preserved while redactability is gained.
+    pub literal_sha256: String,
     /// Verbatim clone of the record's taint labels.
     pub taint: Vec<crate::plan_node::TaintLabel>,
     /// Verbatim clone of the record's provenance chain; `[0]` is the root read Event id.
@@ -116,10 +121,19 @@ pub enum ExecutorDecision {
     /// Execution blocked — tainted value in sensitive sink argument; confirmation required.
     ///
     /// Carries the durable `SinkBlockedAnchor` (built by cloning the resolved
-    /// ValueRecord verbatim). A held-out §9 test asserts the unbroken taint chain
-    /// DIRECTLY from `anchor.provenance_chain[0]` (the file_read Event id) with no
-    /// second query.
-    BlockedPendingConfirmation { anchor: SinkBlockedAnchor },
+    /// ValueRecord verbatim; its `literal_sha256` is the digest of the blocked
+    /// literal). A held-out §9 test asserts the unbroken taint chain DIRECTLY from
+    /// `anchor.provenance_chain[0]` (the file_read Event id) with no second query.
+    ///
+    /// `literal` is the LIVE byte-exact literal, carried in-memory for the
+    /// confirmation UX and as the source the broker writes to the redactable
+    /// `blocked_literals` side table. It is NOT part of the hashed anchor, so it
+    /// never enters the tamper-evident chain — only its digest (`literal_sha256`)
+    /// does. DATA, never executed.
+    BlockedPendingConfirmation {
+        anchor: SinkBlockedAnchor,
+        literal: String,
+    },
     /// Execution denied — carries a typed `DenyReason` (never a free-form String).
     Denied { reason: DenyReason },
     /// Stub: executor not yet implemented (Phase 1 return value).

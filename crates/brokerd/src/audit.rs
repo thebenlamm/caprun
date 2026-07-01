@@ -41,6 +41,18 @@ CREATE TABLE IF NOT EXISTS events (
     parent_hash TEXT,
     hash        TEXT NOT NULL
 ) STRICT;
+
+-- Redactable side table for blocked-literal data at rest. The raw literal from a
+-- `sink_blocked` event lives HERE, keyed by that event's id — NEVER in the hashed
+-- `events.payload` (only its SHA-256 digest is in the anchor/chain). Redaction is a
+-- single `DELETE FROM blocked_literals WHERE event_id = ?`: the digest remains in
+-- the tamper-evident chain as proof content existed, but the literal is gone. This
+-- resolves the tamper-evidence-vs-redactability conflict of storing the literal in
+-- the chain.
+CREATE TABLE IF NOT EXISTS blocked_literals (
+    event_id TEXT PRIMARY KEY,
+    literal  TEXT NOT NULL
+) STRICT;
 ";
 
 /// Open (or create) the audit database at `path` and run schema DDL.
@@ -57,6 +69,52 @@ pub fn open_audit_db(path: &str) -> Result<rusqlite::Connection> {
     conn.execute_batch(SCHEMA_DDL)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     Ok(conn)
+}
+
+/// Persist the raw blocked literal for a `sink_blocked` event into the redactable
+/// `blocked_literals` side table, keyed by the event id.
+///
+/// The literal lives ONLY here — never in `events.payload` (the hashed anchor
+/// carries only its SHA-256 digest). This keeps the raw literal (attacker content
+/// / PII) out of the tamper-evident chain so it can later be redacted without
+/// breaking `verify_chain`. Caller should invoke this under the same broker-owned
+/// connection lock as the `append_event` that wrote the `sink_blocked` row.
+pub fn insert_blocked_literal(
+    conn: &rusqlite::Connection,
+    event_id: &str,
+    literal: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO blocked_literals (event_id, literal) VALUES (?1, ?2)",
+        rusqlite::params![event_id, literal],
+    )?;
+    Ok(())
+}
+
+/// Fetch the raw literal for a blocked event, or `None` if it was never stored or
+/// has been redacted. Verify tamper-evidence by comparing `sha256(literal)` to the
+/// event anchor's `literal_sha256`.
+pub fn get_blocked_literal(conn: &rusqlite::Connection, event_id: &str) -> Result<Option<String>> {
+    let mut stmt = conn.prepare("SELECT literal FROM blocked_literals WHERE event_id = ?1")?;
+    let mut rows = stmt.query(rusqlite::params![event_id])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row.get(0)?)),
+        None => Ok(None),
+    }
+}
+
+/// Redact the raw literal for a blocked event: delete its `blocked_literals` row.
+///
+/// This does NOT touch the `events` chain — the anchor's `literal_sha256` digest
+/// remains, so `verify_chain` still passes and the audit record still proves that
+/// content of that digest was blocked. Returns the number of rows removed (0 if
+/// already absent). Redaction is intentionally idempotent.
+pub fn redact_blocked_literal(conn: &rusqlite::Connection, event_id: &str) -> Result<usize> {
+    let removed = conn.execute(
+        "DELETE FROM blocked_literals WHERE event_id = ?1",
+        rusqlite::params![event_id],
+    )?;
+    Ok(removed)
 }
 
 /// Compute the SHA-256 hash for an audit event row.

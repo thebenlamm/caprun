@@ -27,14 +27,25 @@
 //! tests pass on macOS and Linux — unlike the live `s9_live_block.rs` tests, which
 //! need the Linux confinement stack.
 
-use brokerd::audit::{find_event_by_type, open_audit_db, verify_chain};
+use brokerd::audit::{
+    find_event_by_type, get_blocked_literal, open_audit_db, redact_blocked_literal, verify_chain,
+};
 use brokerd::proto::BrokerRequest;
 use brokerd::quarantine::{mint_from_read, Claim};
 use brokerd::server::dispatch_request;
 use executor::value_store::ValueStore;
 use runtime_core::plan_node::{PlanArg, PlanNode, SinkId, TaintLabel, ValueId};
+use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
+
+/// Lowercase-hex SHA-256 of a literal — mirrors the digest the executor writes
+/// into `SinkBlockedAnchor.literal_sha256`.
+fn sha256_hex(s: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    hex::encode(h.finalize())
+}
 
 /// The hostile, attacker-controlled root-relative path extracted from workspace
 /// content. It is byte-exact `data at rest` in the durable anchor — never executed.
@@ -219,9 +230,47 @@ async fn after_exit_db_alone_anti_stapling_sentinel() {
         anchor.taint.iter().any(|t| t.is_untrusted()),
         "anchor.taint must itself carry an untrusted label"
     );
+    // The hashed anchor carries only the DIGEST of the literal (redactable-at-rest
+    // design). The digest must match the byte-exact hostile path...
     assert_eq!(
-        anchor.literal, HOSTILE_PATH,
-        "anchor.literal must be the byte-exact hostile path (data at rest)"
+        anchor.literal_sha256,
+        sha256_hex(HOSTILE_PATH),
+        "anchor.literal_sha256 must be sha256(hostile path) — tamper-evident digest"
+    );
+    // ...and the byte-exact literal itself is recoverable from the redactable side
+    // table (data at rest lives OUTSIDE the hashed chain), keyed by the event id.
+    let side_literal = get_blocked_literal(&reopened, &blocked.id.to_string())
+        .expect("query blocked_literals")
+        .expect("a blocked-literal side-table row must exist for the sink_blocked event");
+    assert_eq!(
+        side_literal, HOSTILE_PATH,
+        "blocked_literals row must hold the byte-exact hostile path (redactable data at rest)"
+    );
+    // Tamper cross-check: the side-table literal must hash to the anchor digest.
+    assert_eq!(
+        sha256_hex(&side_literal),
+        anchor.literal_sha256,
+        "sha256(side-table literal) must equal anchor.literal_sha256"
+    );
+    // CORE PROPERTY (the reason this fix exists): the raw literal must NOT be in the
+    // hashed `payload` column — only its digest — so it stays redactable. This is
+    // the falsification guard: reintroducing `literal` into the anchor would pass
+    // the digest checks above but fail HERE.
+    let raw_payload: String = reopened
+        .query_row(
+            "SELECT payload FROM events WHERE id = ?1",
+            rusqlite::params![blocked.id.to_string()],
+            |row| row.get(0),
+        )
+        .expect("query raw payload");
+    assert!(
+        !raw_payload.contains(HOSTILE_PATH),
+        "the raw literal MUST NOT appear in the hashed payload (redactability requires \
+         only the digest is chained)"
+    );
+    assert!(
+        raw_payload.contains(&anchor.literal_sha256),
+        "the payload must contain the literal digest (tamper-evident anchor)"
     );
     // The blocked arg is the routing-sensitive file.create `path`.
     assert_eq!(anchor.sink.0, "file.create", "anchor.sink must be file.create");
@@ -264,21 +313,24 @@ async fn tamper_evidence_mutating_payload_breaks_verify_chain() {
         );
     }
 
-    // Tamper: mutate the REAL `payload` column — change the anchor's literal inside
-    // the serialized Event payload. The anchor is part of the hashed payload, so
-    // this MUST invalidate the recomputed hash.
+    // Tamper: mutate the REAL `payload` column — swap the anchor's literal DIGEST
+    // inside the serialized Event payload. The digest is part of the hashed payload,
+    // so this MUST invalidate the recomputed hash. (The raw literal is no longer in
+    // the payload — only its sha256 digest is — so we tamper the digest.)
     {
         let conn = open_audit_db(db_path.to_str().unwrap()).expect("reopen for tamper");
+        let real_digest = sha256_hex(HOSTILE_PATH);
+        let forged_digest = sha256_hex("reports/harmless.txt");
         let changed = conn
             .execute(
                 "UPDATE events SET payload = REPLACE(payload, ?1, ?2) \
                  WHERE event_type = 'sink_blocked'",
-                rusqlite::params![HOSTILE_PATH, "reports/harmless.txt"],
+                rusqlite::params![real_digest, forged_digest],
             )
             .expect("tamper UPDATE must execute");
         assert_eq!(
             changed, 1,
-            "exactly one sink_blocked row must be tampered (the literal must be present in the payload)"
+            "exactly one sink_blocked row must be tampered (the digest must be present in the payload)"
         );
     }
 
@@ -287,10 +339,79 @@ async fn tamper_evidence_mutating_payload_breaks_verify_chain() {
         let reopened = open_audit_db(db_path.to_str().unwrap()).expect("reopen after tamper");
         assert!(
             !verify_chain(&reopened, &sid),
-            "verify_chain MUST return FALSE after the anchor literal was mutated in the \
+            "verify_chain MUST return FALSE after the anchor digest was mutated in the \
              payload column — the durable anchor is tamper-evident (rides in the hashed payload)"
         );
     }
 
+    cleanup_db(&db_path);
+}
+
+/// Redactability (the tamper-evidence ↔ redactability reconciliation): the raw
+/// blocked literal lives in the `blocked_literals` side table, NOT the hashed
+/// chain. Deleting that row (redaction) removes the attacker content / PII while
+/// leaving `verify_chain` TRUE and the anchor digest intact as proof-of-existence.
+#[tokio::test]
+async fn redacting_side_table_literal_preserves_verify_chain_and_digest() {
+    let (db_path, session_id, _read_event_id) = build_hostile_block_db("redact").await;
+    let sid = session_id.to_string();
+
+    let reopened = open_audit_db(db_path.to_str().unwrap()).expect("reopen audit DB");
+    let blocked = find_event_by_type(&reopened, &sid, "sink_blocked")
+        .expect("query sink_blocked")
+        .expect("a durable sink_blocked event must exist");
+    let anchor = blocked.anchor.as_ref().expect("sink_blocked must carry an anchor");
+    let event_id = blocked.id.to_string();
+
+    // Pre-redaction: chain verifies, literal present, digest matches.
+    assert!(verify_chain(&reopened, &sid), "chain must verify before redaction");
+    let before = get_blocked_literal(&reopened, &event_id)
+        .expect("query side table")
+        .expect("literal present before redaction");
+    assert_eq!(before, HOSTILE_PATH, "side-table literal must be the hostile path");
+    assert_eq!(
+        sha256_hex(&before),
+        anchor.literal_sha256,
+        "digest must match the literal before redaction"
+    );
+    let digest_before = anchor.literal_sha256.clone();
+
+    // Redact: delete the side-table row.
+    let removed = redact_blocked_literal(&reopened, &event_id).expect("redact");
+    assert_eq!(removed, 1, "exactly one side-table row must be redacted");
+
+    // Post-redaction: literal is GONE, but the chain still verifies and the digest
+    // in the (unmodified) hashed anchor remains as proof content of that hash existed.
+    assert!(
+        get_blocked_literal(&reopened, &event_id)
+            .expect("query side table")
+            .is_none(),
+        "the raw literal must be gone after redaction"
+    );
+    assert!(
+        verify_chain(&reopened, &sid),
+        "verify_chain MUST stay TRUE after redaction — the hashed chain was untouched"
+    );
+    let blocked_after = find_event_by_type(&reopened, &sid, "sink_blocked")
+        .expect("re-query sink_blocked")
+        .expect("sink_blocked still present");
+    assert_eq!(
+        blocked_after
+            .anchor
+            .as_ref()
+            .expect("anchor still present")
+            .literal_sha256,
+        digest_before,
+        "the anchor digest must survive redaction as proof-of-existence"
+    );
+
+    // Redaction is idempotent.
+    assert_eq!(
+        redact_blocked_literal(&reopened, &event_id).expect("re-redact"),
+        0,
+        "redacting an already-absent literal must remove 0 rows (idempotent)"
+    );
+
+    drop(reopened);
     cleanup_db(&db_path);
 }

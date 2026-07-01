@@ -100,11 +100,13 @@ dependencies = [
  "anyhow",
  "brokerd",
  "chrono",
+ "hex",
  "runtime-core",
  "rusqlite",
  "sandbox",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "uuid",
 ]
@@ -205,9 +207,11 @@ name = "executor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hex",
  "runtime-core",
  "serde",
  "serde_json",
+ "sha2",
  "uuid",
 ]
 
