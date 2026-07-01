@@ -360,24 +360,32 @@ pub async fn dispatch_request(
             // Event::sink_blocked constructor (sets Event.taint = anchor.taint,
             // anchor = Some). The causal parent stays the chain head — NOT
             // read_event_id (two graphs are never equated, DESIGN §0/§4 rule 3).
-            let audit_event = match &decision {
-                runtime_core::ExecutorDecision::BlockedPendingConfirmation { anchor } => {
+            // On a block, capture the LIVE literal so it can be written to the
+            // redactable `blocked_literals` side table (keyed by the sink_blocked
+            // event id). The literal is NEVER put in the hashed event payload — the
+            // anchor carries only its digest (`literal_sha256`).
+            let (audit_event, blocked_literal) = match &decision {
+                runtime_core::ExecutorDecision::BlockedPendingConfirmation { anchor, literal } => (
                     Event::sink_blocked(
                         Uuid::new_v4(),
                         Some(*last_event_id), // causal head — never read_event_id
                         session_id,
                         Utc::now(),
                         anchor.clone(),
-                    )
-                }
-                _ => Event::new(
-                    Uuid::new_v4(),
-                    Some(*last_event_id), // causal parent preserved — not None
-                    session_id,
-                    "executor".into(),
-                    "plan_node_evaluated".into(),
-                    Utc::now(),
-                    vec![],
+                    ),
+                    Some(literal.clone()),
+                ),
+                _ => (
+                    Event::new(
+                        Uuid::new_v4(),
+                        Some(*last_event_id), // causal parent preserved — not None
+                        session_id,
+                        "executor".into(),
+                        "plan_node_evaluated".into(),
+                        Utc::now(),
+                        vec![],
+                    ),
+                    None,
                 ),
             };
             let event_type = audit_event.event_type.clone();
@@ -385,10 +393,26 @@ pub async fn dispatch_request(
                 let locked = conn
                     .lock()
                     .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
-                append_event(&locked, &audit_event, Some(last_event_hash)).map_err(|e| {
-                    eprintln!("[brokerd] {event_type} audit append FAILED (fail-closed): {e}");
-                    anyhow::anyhow!("audit append failed: {e}")
-                })?
+                let hash =
+                    append_event(&locked, &audit_event, Some(last_event_hash)).map_err(|e| {
+                        eprintln!("[brokerd] {event_type} audit append FAILED (fail-closed): {e}");
+                        anyhow::anyhow!("audit append failed: {e}")
+                    })?;
+                // Write the raw literal to the redactable side table under the SAME
+                // lock as the event append (fail-closed: a failure here aborts the
+                // block before any response is sent).
+                if let Some(literal) = &blocked_literal {
+                    crate::audit::insert_blocked_literal(
+                        &locked,
+                        &audit_event.id.to_string(),
+                        literal,
+                    )
+                    .map_err(|e| {
+                        eprintln!("[brokerd] blocked-literal side-table write FAILED (fail-closed): {e}");
+                        anyhow::anyhow!("blocked-literal write failed: {e}")
+                    })?;
+                }
+                hash
             };
             *last_event_id = audit_event.id;
             *last_event_hash = new_hash;

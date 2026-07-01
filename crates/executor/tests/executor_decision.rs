@@ -13,6 +13,7 @@
 /// passed to mint (not synthesized in the executor).
 
 use executor::{submit_plan_node, value_store::ValueStore};
+use sha2::{Digest, Sha256};
 use runtime_core::{
     plan_node::{PlanArg, PlanNode, SinkId, TaintLabel, ValueId},
     ExecutorDecision,
@@ -71,12 +72,23 @@ fn tainted_to_arg_blocks_with_verbatim_record_payload() {
     let decision = submit_plan_node(Uuid::new_v4(), effect_id, &plan, &store);
 
     match decision {
-        ExecutorDecision::BlockedPendingConfirmation { anchor } => {
+        ExecutorDecision::BlockedPendingConfirmation { anchor, literal: block_literal } => {
             // Block payload fidelity (plan acceptance criteria) — every field is a
             // verbatim clone of the ValueRecord; nothing synthesized (T-04-03).
+            // The LIVE literal rides on the decision (verbatim); the anchor carries
+            // only its SHA-256 digest (redactable-at-rest, tamper-evident).
             assert_eq!(
-                anchor.literal, literal,
-                "anchor.literal must be verbatim from ValueRecord, not synthesized"
+                block_literal, literal,
+                "decision.literal must be verbatim from ValueRecord, not synthesized"
+            );
+            let expected_digest = {
+                let mut h = Sha256::new();
+                h.update(literal.as_bytes());
+                hex::encode(h.finalize())
+            };
+            assert_eq!(
+                anchor.literal_sha256, expected_digest,
+                "anchor.literal_sha256 must be sha256(literal) — tamper-evidence anchor"
             );
             assert_eq!(anchor.sink.0, "email.send");
             assert_eq!(anchor.arg, "to");

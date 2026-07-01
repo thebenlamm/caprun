@@ -14,6 +14,7 @@ pub mod sink_sensitivity;
 pub mod value_store;
 
 use runtime_core::{plan_node::PlanNode, DenyReason, ExecutorDecision, SinkBlockedAnchor};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use value_store::ValueStore;
 
@@ -99,17 +100,38 @@ pub fn submit_plan_node(
             // and sets NO taint — every field is a clone of plan_node/arg/record
             // (T-04-03 anti-stapling). read_event_id == provenance_chain[0]
             // (07-01's mint invariant guarantees provenance is non-empty).
+            //
+            // The anchor carries only the SHA-256 DIGEST of the literal, so the
+            // raw literal never enters the hashed audit chain (redactable at rest,
+            // still tamper-evident). The live literal travels separately on the
+            // decision for the confirmation UX / side-table write.
+            let literal_sha256 = {
+                let mut hasher = Sha256::new();
+                hasher.update(record.literal.as_bytes());
+                hex::encode(hasher.finalize())
+            };
+            let read_event_id = record.provenance_chain[0];
+            // Item-4 hardening: read_event_id is denormalized from
+            // provenance_chain[0]; assert they agree at construction so the
+            // indexing field can never silently drift from the chain root.
+            debug_assert_eq!(
+                read_event_id, record.provenance_chain[0],
+                "anchor.read_event_id must equal provenance_chain[0]"
+            );
             let anchor = SinkBlockedAnchor {
                 effect_id,
                 sink: plan_node.sink.clone(),
                 arg: arg.name.clone(),
                 value_id: arg.value_id.clone(),
-                literal: record.literal.clone(),
+                literal_sha256,
                 taint: record.taint.clone(),
                 provenance_chain: record.provenance_chain.clone(),
-                read_event_id: record.provenance_chain[0],
+                read_event_id,
             };
-            return ExecutorDecision::BlockedPendingConfirmation { anchor };
+            return ExecutorDecision::BlockedPendingConfirmation {
+                anchor,
+                literal: record.literal.clone(),
+            };
         }
 
         // Step 3: Content-sensitive tainted args (subject/body/attachment) do NOT

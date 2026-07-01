@@ -73,11 +73,12 @@ fn executor_decision_has_all_variants() {
             sink: SinkId("email.send".to_string()),
             arg: "to".to_string(),
             value_id: ValueId::new(),
-            literal: "val".to_string(),
+            literal_sha256: "0".repeat(64),
             taint: vec![TaintLabel::ExternalUntrusted],
             provenance_chain: vec![uuid::Uuid::nil()],
             read_event_id: uuid::Uuid::nil(),
         },
+        literal: "val".to_string(),
     };
     let _denied = ExecutorDecision::Denied { reason: DenyReason::DanglingHandle };
     let _ni = ExecutorDecision::NotImplemented;
@@ -95,18 +96,19 @@ fn blocked_decision_carries_taint_and_provenance_chain() {
             sink: SinkId("email.send".to_string()),
             arg: "to".to_string(),
             value_id: ValueId::new(),
-            literal: "attacker@evil.example".to_string(),
+            literal_sha256: "a".repeat(64),
             taint: vec![TaintLabel::EmailRaw, TaintLabel::ExternalUntrusted],
             provenance_chain: vec![event_id],
             read_event_id: event_id,
         },
+        literal: "attacker@evil.example".to_string(),
     };
     // serde round-trips losslessly with the anchor.
     let json = serde_json::to_string(&decision).expect("serialize");
     let restored: ExecutorDecision = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(decision, restored);
     match restored {
-        ExecutorDecision::BlockedPendingConfirmation { anchor } => {
+        ExecutorDecision::BlockedPendingConfirmation { anchor, .. } => {
             assert_eq!(anchor.taint.len(), 2);
             assert_eq!(anchor.provenance_chain[0], event_id);
             assert_eq!(anchor.read_event_id, event_id);

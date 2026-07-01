@@ -1,0 +1,14 @@
+{
+  "doc_path": "docs/CONFIGURATION.md",
+  "claims_checked": 13,
+  "claims_passed": 12,
+  "claims_failed": 1,
+  "failures": [
+    {
+      "line": 119,
+      "claim": "crates/sandbox/Cargo.toml contains `landlock = \"0.4.5\"`, `seccompiler = \"0.5.0\"`, `nix = \"0.31.3\"` as direct version strings",
+      "expected": "direct version strings in [target.'cfg(target_os = \"linux\")'.dependencies]",
+      "actual": "actual file uses workspace references: `landlock = { workspace = true }`, `seccompiler = { workspace = true }`, `nix = { workspace = true }` — version numbers live in root Cargo.toml [workspace.dependencies]"
+    }
+  ]
+}

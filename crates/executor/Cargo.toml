@@ -14,7 +14,13 @@ uuid         = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 anyhow       = { workspace = true }
+# Pure, deterministic digest of the blocked literal for the redactable durable
+# anchor (literal_sha256). No I/O — keeps the executor a pure function.
+sha2         = { workspace = true }
+hex          = { workspace = true }
 
 [dev-dependencies]
 runtime-core = { path = "../runtime-core" }
 uuid         = { workspace = true }
+sha2         = { workspace = true }
+hex          = { workspace = true }

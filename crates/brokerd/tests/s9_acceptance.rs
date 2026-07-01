@@ -23,7 +23,16 @@ use brokerd::quarantine::{extract_email_claims, mint_from_intent, mint_from_read
 use executor::value_store::ValueStore;
 use runtime_core::plan_node::{PlanArg, PlanNode, SinkId, TaintLabel};
 use runtime_core::ExecutorDecision;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+/// Lowercase-hex SHA-256 — mirrors the digest the executor writes into
+/// `SinkBlockedAnchor.literal_sha256`.
+fn sha256_hex(s: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    hex::encode(h.finalize())
+}
 
 /// §9 end-to-end acceptance test — the single gate for v0 DONE.
 ///
@@ -114,18 +123,23 @@ fn s9_acceptance() {
     let effect_id = Uuid::new_v4();
     let decision = executor::submit_plan_node(session_id, effect_id, &plan_node, &store);
 
-    let anchor = match decision {
-        ExecutorDecision::BlockedPendingConfirmation { anchor } => anchor,
+    let (anchor, literal_value) = match decision {
+        ExecutorDecision::BlockedPendingConfirmation { anchor, literal } => (anchor, literal),
         other => panic!("expected BlockedPendingConfirmation, got {:?}", other),
     };
-    let literal_value = anchor.literal.clone();
     let taint = anchor.taint.clone();
     let provenance_chain = anchor.provenance_chain.clone();
 
-    // Literal is the byte-exact attacker address.
+    // The LIVE literal (on the decision) is the byte-exact attacker address; the
+    // anchor carries only its SHA-256 digest (redactable-at-rest, tamper-evident).
     assert_eq!(
         literal_value, "accounts@ev1l.com",
-        "anchor.literal must be the exact attacker address"
+        "decision.literal must be the exact attacker address"
+    );
+    assert_eq!(
+        anchor.literal_sha256,
+        sha256_hex("accounts@ev1l.com"),
+        "anchor.literal_sha256 must be sha256(attacker address)"
     );
     // Sink and arg are correctly propagated (sink is now a SinkId — compare .0).
     assert_eq!(anchor.sink.0, "email.send", "sink must be email.send");
@@ -409,20 +423,26 @@ fn s9_acceptance_file_create_path_block() {
 
     let effect_id = Uuid::new_v4();
     let decision = executor::submit_plan_node(session_id, effect_id, &plan_node, &store);
-    let anchor = match decision {
-        ExecutorDecision::BlockedPendingConfirmation { anchor } => anchor,
+    let (anchor, block_literal) = match decision {
+        ExecutorDecision::BlockedPendingConfirmation { anchor, literal } => (anchor, literal),
         other => panic!(
             "expected BlockedPendingConfirmation for a tainted file.create path, got {:?}",
             other
         ),
     };
 
-    // The anchor pins the routing-sensitive file.create `path` and its byte-exact literal.
+    // The anchor pins the routing-sensitive file.create `path`; the live literal is
+    // byte-exact and the anchor holds its digest.
     assert_eq!(anchor.sink.0, "file.create", "sink must be file.create");
     assert_eq!(anchor.arg, "path", "arg must be the routing-sensitive path");
     assert_eq!(
-        anchor.literal, hostile_path,
-        "anchor.literal must be the byte-exact hostile path"
+        block_literal, hostile_path,
+        "decision.literal must be the byte-exact hostile path"
+    );
+    assert_eq!(
+        anchor.literal_sha256,
+        sha256_hex(hostile_path),
+        "anchor.literal_sha256 must be sha256(hostile path)"
     );
     assert_eq!(
         anchor.effect_id, effect_id,

@@ -1,0 +1,20 @@
+{
+  "doc_path": "docs/ARCHITECTURE.md",
+  "claims_checked": 25,
+  "claims_passed": 23,
+  "claims_failed": 2,
+  "failures": [
+    {
+      "line": 383,
+      "claim": "crates/sandbox/bin/confine-probe",
+      "expected": "file exists at crates/sandbox/bin/confine-probe",
+      "actual": "file not found at that path; actual location is crates/sandbox/src/bin/confine-probe.rs"
+    },
+    {
+      "line": 408,
+      "claim": "sqlx",
+      "expected": "package 'sqlx' in Cargo.toml dependencies",
+      "actual": "sqlx not found in workspace Cargo.toml or any crate Cargo.toml; only rusqlite is present"
+    }
+  ]
+}
