@@ -305,29 +305,37 @@ pub async fn dispatch_request(
             // directly on the live path (taint stapling fails §9, T-04-03/T-05-05).
             let mut value_ids = Vec::new();
             for claim in claims {
-                match claim {
-                    WorkerClaim::EmailAddress(addr) => {
-                        let quarantine_claim = Claim {
-                            claim_type: "email_address".into(),
-                            value: addr,
-                        };
-                        let (read_event_id, read_hash, value_id) = {
-                            let locked = conn
-                                .lock()
-                                .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
-                            mint_from_read(
-                                &locked,
-                                value_store,
-                                session_id,
-                                &quarantine_claim,
-                                Some(last_event_hash),
-                            )?
-                        };
-                        *last_event_id = read_event_id;
-                        *last_event_hash = read_hash;
-                        value_ids.push(value_id);
-                    } // Exhaustive enum: any future variant fails closed at deserialize.
-                }
+                // Map the wire variant to a broker-side quarantine Claim. The
+                // broker independently assigns the claim_type; the worker cannot
+                // launder trust — mint_from_read taints purely by claim_type
+                // (email → EmailRaw, relative_path → PathRaw). Exhaustive match:
+                // any future WorkerClaim variant is a compile-forced arm here (and
+                // an unknown wire `kind` already fails closed at deserialize).
+                let quarantine_claim = match claim {
+                    WorkerClaim::EmailAddress(addr) => Claim {
+                        claim_type: "email_address".into(),
+                        value: addr,
+                    },
+                    WorkerClaim::RelativePath(path) => Claim {
+                        claim_type: "relative_path".into(),
+                        value: path,
+                    },
+                };
+                let (read_event_id, read_hash, value_id) = {
+                    let locked = conn
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                    mint_from_read(
+                        &locked,
+                        value_store,
+                        session_id,
+                        &quarantine_claim,
+                        Some(last_event_hash),
+                    )?
+                };
+                *last_event_id = read_event_id;
+                *last_event_hash = read_hash;
+                value_ids.push(value_id);
             }
             send_response(stream, &BrokerResponse::ClaimsReceived { value_ids }).await?;
         }
