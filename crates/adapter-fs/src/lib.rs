@@ -17,6 +17,7 @@
 /// - At least one iov byte sent alongside cmsg (some kernels require >=1 byte)
 
 pub mod protocol;
+pub mod workspace;
 
 use std::os::fd::RawFd;
 

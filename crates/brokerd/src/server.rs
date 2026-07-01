@@ -84,6 +84,7 @@ pub async fn run_broker_server(
     session_id_uuid: Uuid,
     initial_last_event_id: Uuid,
     initial_last_event_hash: String,
+    workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
 ) -> anyhow::Result<()> {
     // Approach A: tokio detects the leading NUL and calls from_abstract_name internally.
     let sock_path = format!("\0/agentos/{session_id}");
@@ -92,6 +93,8 @@ pub async fn run_broker_server(
     loop {
         let (stream, _addr) = listener.accept().await?;
         let conn_clone = conn.clone();
+        // Workspace-root capability — cloned per connection exactly like `conn`.
+        let workspace_root_clone = workspace_root.clone();
         // Pass connection state by value — each connection owns its own chain state.
         let initial_hash = initial_last_event_hash.clone();
         tokio::spawn(async move {
@@ -101,6 +104,7 @@ pub async fn run_broker_server(
                 session_id_uuid,
                 initial_last_event_id,
                 initial_hash,
+                workspace_root_clone,
             )
             .await
             {
@@ -124,6 +128,7 @@ async fn handle_connection(
     session_id: Uuid,
     mut last_event_id: Uuid,
     mut last_event_hash: String,
+    workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
 ) -> anyhow::Result<()> {
     // Per-connection ValueStore — scoped to this session ONLY (HARD-03 fix).
     let mut value_store = ValueStore::default();
@@ -177,6 +182,7 @@ async fn handle_connection(
             &mut last_event_id,
             &mut last_event_hash,
             &mut value_store,
+            &workspace_root,
         )
         .await?;
     }
@@ -198,6 +204,7 @@ pub async fn dispatch_request(
     last_event_id: &mut Uuid,
     last_event_hash: &mut String,
     value_store: &mut ValueStore,
+    workspace_root: &Arc<adapter_fs::workspace::WorkspaceRoot>,
 ) -> anyhow::Result<()> {
     match request {
         BrokerRequest::CreateSession { intent_id } => {
@@ -246,9 +253,14 @@ pub async fn dispatch_request(
         }
 
         BrokerRequest::RequestFd { path } => {
-            // Broker opens the file — broker has ambient fs access.
-            let file = std::fs::File::open(&path)
-                .with_context(|| format!("broker: open {path}"))?;
+            // HARD-04: resolve the worker-supplied path BENEATH the workspace
+            // dirfd anchor via a single openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)
+            // syscall. Absolute paths, `..` traversal, and symlink escapes are
+            // rejected at kernel resolution time (fail-closed) — the broker no
+            // longer opens a worker-controlled path via ambient std::fs::File::open.
+            let file = workspace_root
+                .read_within(&path)
+                .with_context(|| format!("broker: read_within {path}"))?;
             let file_fd = file.as_raw_fd();
 
             // Append fd_granted Event — causal parent is the prior event (not None).

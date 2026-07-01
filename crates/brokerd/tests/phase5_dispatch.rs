@@ -36,6 +36,15 @@ fn shared_db() -> Arc<Mutex<rusqlite::Connection>> {
     Arc::new(Mutex::new(open_audit_db(":memory:").expect("open_audit_db")))
 }
 
+/// A workspace-root anchor for dispatch calls. These tests drive SubmitPlanNode,
+/// which never exercises RequestFd — any valid directory anchors the root.
+fn ws_root() -> Arc<adapter_fs::workspace::WorkspaceRoot> {
+    Arc::new(
+        adapter_fs::workspace::WorkspaceRoot::open(std::env::temp_dir().as_path())
+            .expect("open ws root"),
+    )
+}
+
 /// A scripted email.send PlanNode routing `to` through the given handle.
 fn email_plan(value_id: runtime_core::plan_node::ValueId) -> PlanNode {
     PlanNode {
@@ -176,6 +185,7 @@ async fn block_appends_durable_causal_sink_blocked() {
         &mut last_event_id,
         &mut last_event_hash,
         &mut store,
+        &ws_root(),
     )
     .await
     .expect("dispatch_request must succeed once the append is durable");
@@ -250,6 +260,7 @@ async fn append_failure_is_fail_closed() {
         &mut last_event_id,
         &mut last_event_hash,
         &mut store,
+        &ws_root(),
     )
     .await;
 

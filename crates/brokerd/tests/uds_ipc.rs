@@ -56,6 +56,11 @@ mod linux_tests {
 
         let conn_clone = conn.clone();
         let session_id_clone = server_session_id.clone();
+        // CreateSession never exercises RequestFd; any valid dir anchors the root.
+        let ws_root = std::sync::Arc::new(
+            adapter_fs::workspace::WorkspaceRoot::open(std::env::temp_dir().as_path())
+                .expect("open ws root"),
+        );
         let server_handle = tokio::spawn(async move {
             // CreateSession path is session-independent; the chain-state args are unused
             // by it, so fresh placeholders are fine here.
@@ -65,6 +70,7 @@ mod linux_tests {
                 Uuid::new_v4(),
                 Uuid::new_v4(),
                 String::new(),
+                ws_root,
             )
             .await;
         });
@@ -103,6 +109,11 @@ mod linux_tests {
 
         let conn_clone = conn.clone();
         let session_id_clone = server_session_id.clone();
+        // CreateSession never exercises RequestFd; any valid dir anchors the root.
+        let ws_root = std::sync::Arc::new(
+            adapter_fs::workspace::WorkspaceRoot::open(std::env::temp_dir().as_path())
+                .expect("open ws root"),
+        );
         let server_handle = tokio::spawn(async move {
             let _ = run_broker_server(
                 &session_id_clone,
@@ -110,6 +121,7 @@ mod linux_tests {
                 Uuid::new_v4(),
                 Uuid::new_v4(),
                 String::new(),
+                ws_root,
             )
             .await;
         });
