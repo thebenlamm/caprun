@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: — Usable Runtime
-current_phase: 07
-status: executing
+current_phase: 1
+status: Awaiting next milestone
 stopped_at: Roadmap revised (v1.1, 3 phases 05-07) — 5 peer-review deltas applied, 25 requirements mapped, 100% coverage
-last_updated: "2026-07-01T10:37:23.907Z"
+last_updated: "2026-07-01T15:51:54.029Z"
 last_activity: 2026-07-01
-last_activity_desc: Phase 07 complete
+last_activity_desc: Milestone v1.1 completed and archived
 progress:
   total_phases: 3
   completed_phases: 3
@@ -28,12 +28,10 @@ See: .planning/PROJECT.md (updated 2026-06-30)
 
 ## Current Position
 
-Phase: 07
-Plan: Not started
-Status: Executing Phase 07
-Last activity: 2026-07-01 — Phase 07 complete
-
-Progress: [░░░░░░░░░░] 0% (planning complete)
+Phase: Milestone v1.1 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-01 — Milestone v1.1 completed and archived
 
 ## Performance Metrics
 
@@ -90,12 +88,18 @@ None yet.
 
 ## Deferred Items
 
+Items acknowledged and deferred at v1.1 milestone close on 2026-07-01:
+
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| *(none)* | | | |
+| uat | 03-UAT.md (Phase 03, v1.0 milestone — passed, 0 pending scenarios; benign stale flag) | passed | 2026-07-01 |
 
 ## Session Continuity
 
 Last session: 2026-07-01T01:27:42.157Z
 Stopped at: Roadmap revised (v1.1, 3 phases 05-07) — 5 peer-review deltas applied, 25 requirements mapped, 100% coverage
 Resume file: None
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

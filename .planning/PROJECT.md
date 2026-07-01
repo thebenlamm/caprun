@@ -67,20 +67,23 @@ Shipped in **v1.0 — AgentOS v0** (2026-06-30). Full traceability archived in
   with a genuine, audited taint chain (`mint_from_read` is the sole broker
   taint-mint site; stapled taint fails the test). `cargo test --workspace` = 51 green.
 
+Shipped in **v1.1 — Usable Runtime (Live §9 from the CLI)** (2026-07-01). Full
+traceability archived in `.planning/milestones/v1.1-REQUIREMENTS.md`.
+
+- ✓ Unified `caprun` onto the `brokerd::server` dispatch (no second executor path) — v1.1
+- ✓ Typed `ReportClaims` IPC from the confined worker — raw bytes never reach the planner — v1.1
+- ✓ Session-scoped handles; cross-session resolution denied (HARD-03) — v1.1
+- ✓ Deterministic intent → PlanNode planner (handles only) + `mint_from_intent`; clean allow-path reachable (HARD-02) — v1.1
+- ✓ `file.create` sink: arg-schema fail-closed, `O_EXCL`, dirfd + `openat2 RESOLVE_BENEATH` (SINK-01..04, HARD-04) — v1.1
+- ✓ Mint invariant at source (HARD-05), typed `DenyReason`, broker-minted `effect_id` (HARD-06) — v1.1
+- ✓ Durable genuine-taint anchor (ACC-07) + full live §9 acceptance green on real Linux (ACC-01/03/04/05/06) — v1.1
+
 ### Active
 
-**v1.1 — Usable Runtime (Live §9 from the CLI).** All phases complete (Phase 7
-finished 2026-07-01); full REQ-IDs and traceability in `.planning/REQUIREMENTS.md`.
-Pending milestone archival via `/gsd-complete-milestone`.
-
-- [x] Unify `caprun` onto the `brokerd::server` dispatch (no second executor path)
-- [x] Live §9 block fires from a real `caprun` run (email.send, then file.create)
-- [x] Typed `ReportClaims` IPC from the confined worker — raw bytes never reach the planner
-- [x] Deterministic intent → PlanNode planner (handles only) + `mint_from_intent`
-- [x] `file.create` sink: schema, fail-closed, `O_EXCL`, dirfd + `openat2` hardening
-- [x] Enforcement hardening: trusted-value taint semantics, session-scoped handles,
-      capability-restricted reads, crash-safe audit ordering
-- [x] §9 acceptance contract green on real Linux `caprun`
+**Next milestone — unscoped.** Define via `/gsd-new-milestone` (questioning →
+research → requirements → roadmap). Candidate directions: real sinks beyond
+`file.create` (network egress, process exec), an LLM/richer planner behind the
+deterministic executor, Git/GitHub adapters, broader sink sensitivity map.
 
 ### Out of Scope
 
@@ -100,11 +103,14 @@ Do not build any of these until §9 holds (non-goals for v0):
 
 ## Context
 
-- **Current state (v1.0 shipped 2026-06-30):** v0 is DONE. 4 phases, 15 plans,
-  ~4,600 Rust LOC across `runtime-core`, `sandbox`, `brokerd`, `executor`,
-  `adapter-fs`, and the `caprun` binary. `cargo test --workspace` = 51 green;
-  the §9 value-injection acceptance test passes with a genuine, audited taint
-  chain. Security claims are Linux-only (verified via Colima+Docker from Mac).
+- **Current state (v1.1 shipped 2026-07-01):** v0 done (v1.0) + Usable Runtime
+  (v1.1). 7 phases, 30 plans across `runtime-core`, `sandbox`, `brokerd`,
+  `executor`, `adapter-fs`, and the `caprun` binary. A real kernel-confined
+  `caprun` run drives a live `file.create` sink: hostile input is
+  deterministically blocked on a genuine, DB-durable taint chain; a trusted
+  intent path is allowed. `cargo test --workspace` green on macOS; full live §9
+  acceptance (ACC-03/04/05/07) green on real Linux (Colima+Docker). Security
+  claims remain Linux-only.
 - **v1.1 delivered (Phase 7 complete, 2026-07-01):** `file.create` is a real,
   hardened sink (schema gate, fail-closed, `O_EXCL`, dirfd + `openat2`
   `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`); mint invariant enforced at the source;
@@ -269,6 +275,7 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-30 after starting milestone v1.1 (Usable Runtime — Live §9
-from the CLI). v1.0 mechanism proof shipped; v1.1 assembles the live runtime.
-Scope reviewed by `#caprun-630` (codex + grok).*
+*Last updated: 2026-07-01 after v1.1 milestone (Usable Runtime — Live §9 from the
+CLI). v1.0 shipped the mechanism proof; v1.1 shipped the live runtime: a real
+`caprun` run drives a hardened `file.create` sink with a deterministic I2 block on
+a DB-durable genuine taint chain, verified on real Linux.*
