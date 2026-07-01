@@ -355,6 +355,18 @@ pub async fn dispatch_request(
             send_response(stream, &BrokerResponse::PlanNodeDecision { decision }).await?;
         }
 
+        BrokerRequest::ProvideIntent { .. } => {
+            // Placeholder: Task 3 (06-03) replaces this with the real dispatch arm that
+            // calls mint_from_intent and returns IntentAccepted { value_id }.
+            send_response(
+                stream,
+                &BrokerResponse::Error {
+                    message: "ProvideIntent dispatch not yet implemented (Task 3 pending)".into(),
+                },
+            )
+            .await?;
+        }
+
         BrokerRequest::ReportRead { .. } => {
             // Deprecated: the live taint path is ReportClaims (typed extracts).
             // The variant remains in proto for wire compatibility but is no longer

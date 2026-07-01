@@ -30,6 +30,17 @@ pub enum WorkerClaim {
 pub enum BrokerRequest {
     /// Create a new broker session for the given intent.
     CreateSession { intent_id: uuid::Uuid },
+    /// Worker declares the user's typed intent. Broker calls `mint_from_intent` and
+    /// returns an opaque `UserTrusted` ValueId handle.
+    ///
+    /// Sent BEFORE `RequestFd` (matches the ordering invariant in worker.rs:
+    /// connect → set_nonblocking → apply_confinement → ProvideIntent → RequestFd).
+    ///
+    /// SECURITY CONTRACT: The literal flows from the trusted orchestrator env var;
+    /// the broker mints the ValueRecord authoritatively — the worker NEVER constructs
+    /// a ValueRecord or sets taint. The per-connection ValueStore ensures the returned
+    /// ValueId resolves only within this session's executor evaluation (HARD-03 / Pitfall 1).
+    ProvideIntent { intent: runtime_core::intent::CaprunIntent },
     /// Request an open file descriptor for `path`.
     /// The broker opens the file and delivers the fd via SCM_RIGHTS.
     RequestFd { path: String },
@@ -69,6 +80,14 @@ pub enum BrokerResponse {
     Ack,
     /// The broker encountered an error; the worker should log and exit.
     Error { message: String },
+    /// Acknowledgement for `ProvideIntent`: opaque handle for the minted `UserTrusted`
+    /// ValueRecord. Mirrors `ClaimsReceived` but singular — one intent value per session.
+    ///
+    /// The `value_id` resolves ONLY within the per-connection ValueStore created for
+    /// this session; using it in a different connection yields `Denied` (HARD-03 / Pitfall 1).
+    IntentAccepted {
+        value_id: runtime_core::plan_node::ValueId,
+    },
     /// Acknowledgement for ReportClaims: opaque ValueId handles per minted claim,
     /// in the same order as the claims submitted in the ReportClaims message.
     ClaimsReceived {
