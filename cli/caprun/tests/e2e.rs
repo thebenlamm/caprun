@@ -14,6 +14,21 @@
 /// NOTE: These tests spawn the real `caprun` and `caprun-worker` binaries using
 /// `env!("CARGO_BIN_EXE_caprun")` — Cargo resolves these paths at compile time
 /// from the integration-test build context.
+///
+/// TEST ISOLATION (dag_chain_integrity flake): the two tests below each spawn a
+/// full `caprun` → broker + worker process tree. The broker binds a per-run-unique
+/// abstract UDS (`\0/agentos/{session_id}`, a fresh UUID), so this is NOT a
+/// socket-name collision. The intermittent failure under parallel runs is a
+/// spawn/accept ordering race: caprun (`#[tokio::main]`, multi-threaded) spawns the
+/// broker task with only a best-effort `yield_now()` before spawning the worker,
+/// and the worker connects to the abstract socket exactly once (no retry). Under
+/// CPU oversubscription (default cargo test runs these two tests on parallel
+/// threads) the broker's `bind()` can lose the race to the worker's single-shot
+/// `connect()`. Serializing the two tests removes that in-binary contention so each
+/// caprun process tree comes up uncontended. This is a test-scoped isolation fix;
+/// it does not touch the broker/worker wiring.
+#[cfg(target_os = "linux")]
+static E2E_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// substrate_demo — the no-LLM complete-mediation proof.
 ///
@@ -31,6 +46,10 @@
 #[test]
 fn substrate_demo() {
     use brokerd::audit::open_audit_db;
+
+    // Serialize against dag_chain_integrity (same binary) — see TEST ISOLATION note.
+    // Poison-safe: a panic in the peer test must not wedge this one.
+    let _serial = E2E_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
 
     // ── Setup: temp workspace file + audit DB path ───────────────────────────
     let run_id = uuid::Uuid::new_v4();
@@ -118,6 +137,10 @@ fn substrate_demo() {
 #[test]
 fn dag_chain_integrity() {
     use brokerd::audit::{open_audit_db, verify_chain};
+
+    // Serialize against substrate_demo (same binary) — see TEST ISOLATION note.
+    // Poison-safe: a panic in the peer test must not wedge this one.
+    let _serial = E2E_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
 
     // ── Setup ────────────────────────────────────────────────────────────────
     let run_id = uuid::Uuid::new_v4();
