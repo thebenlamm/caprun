@@ -35,7 +35,7 @@ The spine: collapse the dual dispatch and make the executor reachable from a liv
 
 ### Planner & Intent (PLAN)
 
-- [ ] **PLAN-01**: `caprun` accepts an intent input alongside the workspace (not
+- [x] **PLAN-01**: `caprun` accepts an intent input alongside the workspace (not
   just a bare file path)
 
 - [x] **PLAN-02**: A deterministic non-LLM planner maps a small typed intent enum
@@ -163,7 +163,7 @@ Explicitly excluded for v1.1. Documented to prevent scope creep.
 | ASM-04 | Phase 5 | Complete |
 | HARD-03 | Phase 5 | Complete |
 | ACC-02 | Phase 5 | Complete |
-| PLAN-01 | Phase 6 | Pending |
+| PLAN-01 | Phase 6 | Complete |
 | PLAN-02 | Phase 6 | Complete |
 | PLAN-03 | Phase 6 | Complete |
 | PLAN-04 | Phase 6 | Complete |

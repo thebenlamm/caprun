@@ -74,7 +74,7 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
   3. `mint_from_intent` mints a `UserTrusted` `ValueId` anchored to an `intent_received` audit event, distinct from `mint_from_read`
   4. A plan node carrying `UserTrusted`/`LocalWorkspace`-only provenance passes the executor without blocking — the clean allow-path is reachable end to end
 
-**Plans**: 3/5 plans executed
+**Plans**: 4/5 plans executed
 
 **Wave 1**
 
@@ -87,7 +87,7 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 06-04-PLAN.md — CLI: planner.rs (plan_from_intent) + intent arg parsing + worker ProvideIntent round-trip (PLAN-01/02/03) [wave 3]
+- [x] 06-04-PLAN.md — CLI: planner.rs (plan_from_intent) + intent arg parsing + worker ProvideIntent round-trip (PLAN-01/02/03) [wave 3]
 
 **Wave 4** *(blocked on Wave 3)*
 
@@ -120,5 +120,5 @@ Full detail archived in [`milestones/v1.0-ROADMAP.md`](milestones/v1.0-ROADMAP.m
 | 3. Confinement & Mediation Substrate | v1.0 | 5/5 | Complete | 2026-06-29 |
 | 4. Value-Injection Security Demo (v0 DONE) | v1.0 | 5/5 | Complete | 2026-06-30 |
 | 5. Runtime Spine & Live §9 Email Block | v1.1 | 4/4 | Complete    | 2026-06-30 |
-| 6. Deterministic Planner & Intent Input | v1.1 | 3/5 | In Progress|  |
+| 6. Deterministic Planner & Intent Input | v1.1 | 4/5 | In Progress|  |
 | 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 0/TBD | Not started | - |
