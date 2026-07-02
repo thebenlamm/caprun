@@ -1,0 +1,93 @@
+# Requirements: AgentOS — v1.2 Tainted Session, Human Gate
+
+**Defined:** 2026-07-01
+**Core Value:** A session that touches untrusted content is mechanically demoted to draft-only (I1 + I0), and a blocked sink arg can be released only by literal-value human confirmation — all deterministic, all in the audit DAG.
+
+## v1 Requirements
+
+Requirements for milestone v1.2. Each maps to roadmap phases.
+
+### Session Taint State (I1)
+
+- [ ] **TAINT-01**: A session is demoted to draft-only when `mint_from_read` taints a value inside it (raw untrusted read flips session trust state)
+- [ ] **TAINT-02**: A draft-only session denies `CommitIrreversible`-class plan nodes via a new `DenyReason` variant, decided in the executor (one TCB deny function, one taxonomy)
+- [ ] **TAINT-03**: A draft-only session still allows `MutateReversible`/`Observe`-class plan nodes
+- [ ] **TAINT-04**: Session demotion is recorded as an audit event with a causal edge to the triggering read event
+
+### Session Creation (I0)
+
+- [ ] **ORIGIN-01**: Session creation records a seed-provenance field (trusted-arg vs file-derived); the `caprun` CLI decides which at creation time
+- [ ] **ORIGIN-02**: A session whose intent/seed derives from external content starts draft-only and cannot auto-authorize Tier 3+ effects
+
+### Confirmation Loop
+
+- [ ] **CONFIRM-01**: `BlockedPendingConfirmation` is releasable via a second command, `caprun confirm <effect_id>`, surfacing the verbatim literal + provenance to the human
+- [ ] **CONFIRM-02**: A confirm releases exactly one `(sink, arg, literal-digest)` triple, single-shot — never a session-wide waiver or standing policy
+- [ ] **CONFIRM-03**: A deny is durable; the effect never proceeds and cannot be re-confirmed
+- [ ] **CONFIRM-04**: Confirm/deny decisions are audited and anchored to `SinkBlockedAnchor.effect_id`; the release path lives in the TCB, not policy
+
+### Process
+
+- [ ] **PROC-01**: A DESIGN doc for session-trust-state and confirmation semantics exists and is reviewed before any executor code implementing this milestone is written
+
+### Acceptance
+
+- [ ] **ACC-01**: Live acceptance (deny path): hostile workspace file → worker reads it → session demoted (I1) → tainted routing arg Blocked (I2) → human denies → no effect proceeds
+- [ ] **ACC-02**: Live acceptance (confirm path): same scenario, human confirms via `caprun confirm` → effect proceeds exactly once
+- [ ] **ACC-03**: The audit DAG shows one unbroken causal chain: read → demotion → block → human decision, for both the deny and confirm runs
+
+## v2 Requirements
+
+Deferred to future release. Tracked but not in current roadmap.
+
+### Content Sensitivity
+
+- **CONTENT-01**: Content-sensitive sink args (not just routing-sensitive) block on taint (e.g. email body exfiltration)
+
+### Positioning
+
+- **DOC-01**: README positions caprun vs Google CaMeL (2025) — kernel enforcement + audit DAG as differentiators
+
+## Out of Scope
+
+Explicitly excluded. Documented to prevent scope creep.
+
+| Feature | Reason |
+|---------|--------|
+| More sinks beyond `file.create`/`email.send` | Linear engineering, proves nothing new for this milestone's I1/I0/confirmation focus |
+| Real LLM planner | Stub/LLM-shaped planner is sufficient per PLAN.md scope lock |
+| Git/GitHub adapters | Deferred — not required to prove I1/I0/confirmation |
+| Cedar policy engine | I2/I1/I0 stay hardcoded in the Rust TCB, not a policy engine |
+| Cross-host delegation / Biscuit crypto | v3 concern per PLAN.md |
+| Standing/exact-match confirmation policy | Confirm is single-shot in v1.2; standing policy is scope creep |
+| Interactive TTY confirmation prompt | `caprun confirm <effect_id>` (second command) chosen for testability and headless use |
+
+## Traceability
+
+Which phases cover which requirements. Updated during roadmap creation.
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| TAINT-01 | TBD | Pending |
+| TAINT-02 | TBD | Pending |
+| TAINT-03 | TBD | Pending |
+| TAINT-04 | TBD | Pending |
+| ORIGIN-01 | TBD | Pending |
+| ORIGIN-02 | TBD | Pending |
+| CONFIRM-01 | TBD | Pending |
+| CONFIRM-02 | TBD | Pending |
+| CONFIRM-03 | TBD | Pending |
+| CONFIRM-04 | TBD | Pending |
+| PROC-01 | TBD | Pending |
+| ACC-01 | TBD | Pending |
+| ACC-02 | TBD | Pending |
+| ACC-03 | TBD | Pending |
+
+**Coverage:**
+- v1 requirements: 14 total
+- Mapped to phases: 0
+- Unmapped: 14 ⚠️ (roadmap not yet created)
+
+---
+*Requirements defined: 2026-07-01*
+*Last updated: 2026-07-01 after initial definition*
