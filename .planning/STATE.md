@@ -6,7 +6,7 @@ status: planning
 last_updated: "2026-07-01T23:56:23.476Z"
 last_activity: 2026-07-01
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,25 +17,27 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-30)
+See: .planning/PROJECT.md (updated 2026-07-01)
 
-**Core value:** A kernel-confined worker's only egress is broker-mediated plan nodes, and a genuine taint chain deterministically blocks value-injection at sensitive sink arguments.
-**Current focus:** Phase 07 — file-create-sink-enforcement-hardening-full-acceptance
+**Core value:** A session that touches untrusted content is mechanically demoted to draft-only (I1 dynamic-taint default + I0 creation rule), and a blocked sink arg can be released only by literal-value human confirmation — all deterministic, all in the audit DAG.
+**Current focus:** Phase 8 — Session-Trust & Confirmation Design Gate
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-07-01 — Milestone v1.2 started
+Phase: 8 of 11 (Phase 8: Session-Trust & Confirmation Design Gate)
+Plan: — (not yet planned)
+Status: Ready to plan
+Last activity: 2026-07-01 — ROADMAP.md created for v1.2 (Phases 8-11), 14/14 requirements mapped, 100% coverage
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 15 (v1.0)
+- Total plans completed: 30 (v1.0 + v1.1)
 - Average duration: — min
-- Total execution time: 0 hours (v1.1)
+- Total execution time: 0 hours (v1.2)
 
 **By Phase (v1.1):**
 
@@ -58,19 +60,14 @@ Last activity: 2026-07-01 — Milestone v1.2 started
 ### Decisions
 
 Decisions are logged in PROJECT.MD (Locked Decisions + Key Decisions table).
-Load-bearing locked decisions for v1.1:
+Load-bearing decisions/mappings for v1.2:
 
-- DEC-architectural-lock-plan-nodes: broker effect path takes PlanNode/ValueNode; no raw EffectRequest→sink. Plan-node API is locked.
-- DEC-security-invariants: I2 enforced by deterministic non-LLM executor in the Rust TCB; I0/I1/I2 all required.
-- CON-s9-taint-genuineness: taint stapled at the sink fails the acceptance test — must propagate through the audit DAG. ACC-07 is the load-bearing anti-stapling sentinel alongside ACC-03/ACC-05.
-- Sequencing: Phase 05 kills dual dispatch first + lands session-scoped handle model (HARD-03) + ships blocked-path audit primitive (ACC-02); Phase 06 adds planner; Phase 07 adds file.create + full acceptance + RelativePath claim variant.
-- HARD-02: executor blocking predicate is over explicitly-untrusted labels; UserTrusted/LocalWorkspace-only does NOT block (clean allow-path must be reachable).
-- HARD-04 + SINK-04 share ONE workspace-root capability model — HARD-04 (read-side) is the prerequisite for SINK-04 (write-side); implement the capability once and apply to both.
-- ASM-03 phased delivery: Phase 5 ships EmailAddress variant; Phase 7 adds RelativePath (no second IPC revision).
-- [Phase ?]: .planning/phases/06-deterministic-planner-intent-input/06-01-SUMMARY.md
-- [Phase ?]: executor predicate uses is_untrusted(); UserTrusted-only passes
-- [Phase ?]: mint_from_intent uses taint: [UserTrusted] not [] (explicit positive provenance makes HARD-02 predicate meaningful)
-- [Phase ?]: ProvideIntent IPC round-trip is the ONLY path to mint intent values (per-connection ValueStore scope — Pitfall 1)
+- Roadmap combines I1 (session taint state) and I0 (creation rule) into one Phase 9 — both flip the same per-session trust-state field and share one executor deny function/DenyReason taxonomy; splitting them would produce two thin phases around the same mechanism.
+- Phase 8 is a dedicated design-gate phase (mirrors v1.0 Phase 2): PROC-01 requires the DESIGN doc to exist and be reviewed before Phase 9 or Phase 10 write any executor code. Phase 9 and Phase 10 both depend on Phase 8; neither depends on the other (I1/I0 demotion and the confirmation-release path are independent mechanisms).
+- Phase 11 (live acceptance) depends on both Phase 9 and Phase 10 — the deny/confirm scenarios require the session-demotion path and the confirmation-release path both landed.
+- Draft-only deny decision must live in the executor (one TCB deny function, one DenyReason taxonomy), never a broker pre-check — carried forward from the seed doc's recommendation.
+- Confirmation UX is `caprun confirm <effect_id>` (second command), not an interactive TTY prompt; confirm is single-shot (one triple), never a standing/session-wide policy.
+- Prior milestones: DEC-architectural-lock-plan-nodes, DEC-security-invariants, CON-s9-taint-genuineness (all still load-bearing; see PROJECT.md).
 
 ### Pending Todos
 
@@ -78,9 +75,9 @@ None yet.
 
 ### Blockers/Concerns
 
-- Phase 07 is the v1.1 DONE gate: ACC-03/04/05/06/07 must all pass on real Linux (Colima+Docker).
-- Taint provenance must anchor to the real read/intent event — no stapling. ACC-07 is the sentinel that fails for any stapled-taint implementation.
-- Blocked-path audit durability (ACC-02/HARD-05): append-failure must fail closed; causal parent must be preserved. This primitive is established in Phase 5 and extended for ALLOWED effects in Phase 7.
+- Phase 8 (design gate) blocks Phase 9 and Phase 10 — no executor code implementing I1/I0 demotion or confirmation release may be written until the DESIGN doc exists and is reviewed (PROC-01).
+- Phase 11 is the v1.2 DONE gate: ACC-01/02/03 must all pass live on real Linux (Colima+Docker), showing one unbroken causal chain for both the deny and confirm runs.
+- I2's existing sensitivity map and mint invariants (non-empty taint + provenance) are unchanged in v1.2 — Phase 9/10 must not regress the v1.1 live §9 acceptance.
 
 ## Deferred Items
 
@@ -92,10 +89,10 @@ Items acknowledged and deferred at v1.1 milestone close on 2026-07-01:
 
 ## Session Continuity
 
-Last session: 2026-07-01T01:27:42.157Z
-Stopped at: Roadmap revised (v1.1, 3 phases 05-07) — 5 peer-review deltas applied, 25 requirements mapped, 100% coverage
+Last session: 2026-07-01T23:56:23.476Z
+Stopped at: ROADMAP.md created for v1.2 (Phases 8-11) — 14/14 requirements mapped, 100% coverage, REQUIREMENTS.md traceability updated
 Resume file: None
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Review the roadmap draft, then `/gsd-plan-phase 8` to start the design-gate phase

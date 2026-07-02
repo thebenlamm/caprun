@@ -68,26 +68,26 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TAINT-01 | TBD | Pending |
-| TAINT-02 | TBD | Pending |
-| TAINT-03 | TBD | Pending |
-| TAINT-04 | TBD | Pending |
-| ORIGIN-01 | TBD | Pending |
-| ORIGIN-02 | TBD | Pending |
-| CONFIRM-01 | TBD | Pending |
-| CONFIRM-02 | TBD | Pending |
-| CONFIRM-03 | TBD | Pending |
-| CONFIRM-04 | TBD | Pending |
-| PROC-01 | TBD | Pending |
-| ACC-01 | TBD | Pending |
-| ACC-02 | TBD | Pending |
-| ACC-03 | TBD | Pending |
+| TAINT-01 | Phase 9 | Pending |
+| TAINT-02 | Phase 9 | Pending |
+| TAINT-03 | Phase 9 | Pending |
+| TAINT-04 | Phase 9 | Pending |
+| ORIGIN-01 | Phase 9 | Pending |
+| ORIGIN-02 | Phase 9 | Pending |
+| CONFIRM-01 | Phase 10 | Pending |
+| CONFIRM-02 | Phase 10 | Pending |
+| CONFIRM-03 | Phase 10 | Pending |
+| CONFIRM-04 | Phase 10 | Pending |
+| PROC-01 | Phase 8 | Pending |
+| ACC-01 | Phase 11 | Pending |
+| ACC-02 | Phase 11 | Pending |
+| ACC-03 | Phase 11 | Pending |
 
 **Coverage:**
 - v1 requirements: 14 total
-- Mapped to phases: 0
-- Unmapped: 14 ⚠️ (roadmap not yet created)
+- Mapped to phases: 14
+- Unmapped: 0 ✓ (roadmap created 2026-07-01: Phases 8-11)
 
 ---
 *Requirements defined: 2026-07-01*
-*Last updated: 2026-07-01 after initial definition*
+*Last updated: 2026-07-01 after ROADMAP.md creation (Phases 8-11, 100% coverage)*
