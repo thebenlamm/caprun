@@ -59,12 +59,12 @@ Full detail archived in [`milestones/v1.1-ROADMAP.md`](milestones/v1.1-ROADMAP.m
   2. The same (or a paired) DESIGN doc defines confirmation-release semantics: single-shot `(sink, arg, literal-digest)` triple release, durable deny, and TCB-resident (not policy-file) release path.
   3. The doc explicitly assigns the draft-only deny decision to one executor TCB function — not a broker pre-check — before Phase 9 or Phase 10 executor code is written.
 
-**Plans**: 3 plans
+**Plans**: 2/3 plans executed
 Plans:
 **Wave 1**
 
-- [ ] 08-01-PLAN.md — Author DESIGN-session-trust-state.md (I1 demotion + I0 creation rule + SessionStatus::Draft + executor deny mechanism)
-- [ ] 08-02-PLAN.md — Author DESIGN-confirmation-release.md (PendingConfirmation checkpoint + confirm/deny semantics + CLI contract)
+- [x] 08-01-PLAN.md — Author DESIGN-session-trust-state.md (I1 demotion + I0 creation rule + SessionStatus::Draft + executor deny mechanism)
+- [x] 08-02-PLAN.md — Author DESIGN-confirmation-release.md (PendingConfirmation checkpoint + confirm/deny semantics + CLI contract)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -122,7 +122,7 @@ Plans:
 | 5. Runtime Spine & Live §9 Email Block | v1.1 | 4/4 | Complete | 2026-06-30 |
 | 6. Deterministic Planner & Intent Input | v1.1 | 5/5 | Complete | 2026-07-01 |
 | 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 6/6 | Complete | 2026-07-01 |
-| 8. Session-Trust & Confirmation Design Gate | v1.2 | 0/? | Not started | - |
+| 8. Session-Trust & Confirmation Design Gate | v1.2 | 2/3 | In Progress|  |
 | 9. Session Trust State (I1 + I0) | v1.2 | 0/? | Not started | - |
 | 10. Single-Shot Confirmation Loop | v1.2 | 0/? | Not started | - |
 | 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 0/? | Not started | - |
