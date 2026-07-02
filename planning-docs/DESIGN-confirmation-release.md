@@ -176,3 +176,195 @@ is never mutated or removed by a confirm — monotonicity is preserved exactly a
 audit edge (`confirm_granted`, anchored to `effect_id`) now exists, and the broker's confirm path
 reads that edge — via the `PendingConfirmation` checkpoint, never via `submit_plan_node` — to decide
 whether to invoke the sink for this one effect_id.
+
+---
+
+## caprun confirm CLI Contract
+
+**Invocation:** `caprun confirm <effect_id> [audit-db-path]` — the same positional-arg shape as the
+existing `caprun` binary's `audit_path` trailer (`cli/caprun/src/main.rs`), defaulting to the same
+convention if omitted.
+
+This is a **SECOND, EXPLICIT command** — never an interactive TTY prompt. This is a locked UX
+decision (mirroring the locked confirm-UX decision in STATE.md and `REQUIREMENTS.md`'s Out of Scope
+table): `caprun confirm <effect_id>` MUST be scriptable and testable — invocable from a script, a
+CI harness, or a human's shell — without requiring a live interactive terminal session attached to
+the original blocking process. It MUST NOT be implemented as a prompt embedded inside the original
+`caprun` invocation that blocks waiting for stdin.
+
+**Exact terminal output format on confirm-prompt** (mirrors `DESIGN-plan-executor.md` §Literal-Value
+Confirmation UX — verbatim, not abstract):
+
+```
+$ caprun confirm <effect_id>
+
+Effect blocked pending confirmation.
+
+Effect ID:         <effect_id>
+Sink:               file.create
+Arg:                path
+Literal value:      "../../etc/passwd"
+Taint:              [external.untrusted, path.raw]
+Source:             file_read evt_a1b2c3...  (session <session_id>)
+Provenance chain:   evt_a1b2c3... -> evt_d4e5f6... -> (this arg)
+
+This value came from untrusted content read during this session. Confirm this
+EXACT value to proceed, or deny to block it permanently.
+
+[ Confirm ]  [ Deny ]
+```
+
+The output MUST show: the literal value verbatim (not a category or summary), the sink and arg
+name, the taint labels, the source read Event id and session id, and the `provenance_chain`
+summary — the same "raw value, not a vague warning" discipline
+`DESIGN-plan-executor.md` §Literal-Value Confirmation UX Rule 1 requires for the original Block
+prompt.
+
+**Exit-code contract:**
+
+| Outcome | Exit code |
+|---------|-----------|
+| Confirm succeeds; sink invoked | 0 |
+| Deny recorded | non-zero |
+| Unknown `effect_id` (no `PendingConfirmation` row found) | non-zero |
+| `effect_id` already terminal (`Confirmed` or `Denied`) — refused | non-zero |
+
+Only a successful confirm-and-release returns 0. Every other outcome — deny, unknown id,
+already-terminal id — MUST return a non-zero exit code, so scripting/CI callers can distinguish
+"released" from every non-release outcome without parsing output text.
+
+---
+
+## Single-Shot Release Semantics (CONFIRM-02)
+
+A confirm releases **EXACTLY ONE** `(sink, arg, literal-digest)` triple. This is unambiguous and
+MUST hold without exception:
+
+- A confirm on `effect_id` X MUST NOT create any standing policy, exact-match allowlist entry, or
+  session-wide waiver. It authorizes exactly one already-blocked, already-adjudicated occurrence —
+  the one identified by `effect_id`.
+- Every future block — even of the byte-identical literal, in the same sink/arg, in the same or a
+  different session — MUST require its own separate `caprun confirm <new_effect_id>` call. A prior
+  confirm MUST NOT be consulted, matched against, or auto-applied to any later block.
+- Standing/pattern confirmation policy (an allowlist that pre-permits future occurrences of a
+  literal or a pattern) is EXPLICITLY OUT OF SCOPE for this milestone
+  (`.planning/REQUIREMENTS.md` Out of Scope table: "Standing/exact-match confirmation policy —
+  Confirm is single-shot in v1.2; standing policy is scope creep"). This document MUST NOT imply,
+  anywhere, that a confirm has any effect beyond its own `effect_id`.
+
+This is a narrower semantics than `DESIGN-taint-model.md`'s Declassification & Endorsement section,
+which describes a *post-v1.2* design where an endorsement Event MAY later be consulted for a
+byte-identical literal. **For v1.2, that consultation step is explicitly NOT implemented** — the
+endorsement Event exists (as `confirm_granted`, anchored to `effect_id`) for audit completeness, but
+nothing in the confirm/deny path reads a PRIOR endorsement Event to auto-resolve a NEW block. Every
+block requires its own confirm. Building the "auto-resolve against a prior endorsement" consultation
+step is deferred to a future milestone.
+
+---
+
+## Durable-Deny Semantics (CONFIRM-03)
+
+Once `PendingConfirmation.state` transitions to `Denied`:
+
+- The blocked effect MUST NEVER proceed. The sink adapter MUST NEVER be invoked for that
+  `effect_id` after a deny.
+- The same `effect_id` MUST NEVER later be confirmed. There is no retry path, no override, no
+  "deny was a mistake, try again" flow. A denied `effect_id` is terminal forever.
+- This durability MUST be enforced by reading the persisted `PendingConfirmation.state` column from
+  the audit DB — never from any in-memory state — because (restating the cross-process constraint
+  from "Confirmation Decision Logic" Step 3 for CLI-contract completeness) the process that decides
+  confirm-or-deny is never the same process that created the original block, and a second, later
+  invocation of `caprun confirm` on an already-`Denied` `effect_id` is itself a distinct THIRD
+  process that MUST see the same durable `Denied` state and refuse identically.
+
+---
+
+## TCB-Residency (CONFIRM-04)
+
+The confirm/deny decision logic and the sink re-invocation specified in this document MUST be Rust
+functions living inside `crates/brokerd` and/or `crates/executor` — the TCB. They MUST NEVER be:
+
+- a configuration file,
+- a policy engine (Cedar or otherwise),
+- or any externally swappable component that a non-TCB actor could edit to alter the release
+  decision.
+
+This mirrors `CON-i2-non-bypassable` and `DESIGN-taint-model.md`'s I2 framing — "Policy files may
+gate which sinks are callable; they MUST NOT disable I2" — and extends that same framing explicitly
+to the confirmation-release path: policy MAY exist post-v1.2 to gate which sinks are eligible for
+confirmation at all, but the confirm/deny decision itself, the terminal-state check, and the sink
+re-invocation MUST remain hardcoded, TCB-resident Rust — never a swappable policy artifact.
+
+---
+
+## Relationship to Session-Trust-State DESIGN Doc & Done-When
+
+### Two Independent Mechanisms
+
+`DESIGN-session-trust-state.md` (session-trust-state: I1 dynamic demotion + I0 draft-only creation)
+and this document (confirmation-release) are **two independent mechanisms.** Neither subsumes the
+other, and satisfying one does not imply anything about the other:
+
+- A Draft session's `CommitIrreversible`-class denial (I1/I0, decided by the executor's draft-only
+  deny check) is a DISTINCT code path from a routing-sensitive I2 `Block`-then-Confirm. A session
+  does NOT need to be `Draft` for a sink call to `Block` on a tainted routing-sensitive arg — I2
+  applies regardless of session trust state, exactly as `DESIGN-plan-executor.md`'s executor
+  decision logic always has.
+- Confirming a `Block` (this document's mechanism) does NOT change the Session's trust state.
+  `PendingConfirmation.state` transitioning to `Confirmed` has no effect on `SessionStatus`; a
+  Session that was `Draft` before a confirm remains `Draft` after it, and vice versa. The two state
+  machines are orthogonal.
+
+### Done-When Predicate
+
+This document satisfies PROC-01 (for the confirmation-release half) when the following are all
+true:
+
+1. `caprun confirm <effect_id>` displays the verbatim literal + provenance to the human, in the
+   exact output format specified above (CONFIRM-01).
+2. A confirm releases exactly one `(sink, arg, literal-digest)` triple — single-shot, with no
+   standing policy, allowlist, or session-wide waiver created or consulted (CONFIRM-02).
+3. A deny is durable: the effect never proceeds, and the same `effect_id` can never later be
+   confirmed (CONFIRM-03).
+4. Confirm and deny decisions are audited (`confirm_granted` / `confirm_denied` Events) and
+   anchored to the same `effect_id` as `SinkBlockedAnchor.effect_id`, preserving one unbroken
+   causal chain from block through decision (CONFIRM-04).
+5. The confirm/deny decision logic and the sink re-invocation live in the TCB (`crates/brokerd` /
+   `crates/executor`), never in a policy file or externally swappable artifact (CONFIRM-04).
+
+All 5 conditions MUST hold simultaneously.
+
+---
+
+## Accepted Residual Risks
+
+**1. A human confirming the wrong literal due to display-format limitations**
+
+`DESIGN-plan-executor.md`'s Literal-Value Confirmation UX section specifies raw-AND-canonical
+display, punycode-decoding, homoglyph-folding, and RTL-marker surfacing for the ORIGINAL Block
+prompt (email recipients specifically). This document's `caprun confirm` output format (above)
+reuses the same "show the literal, not a category" discipline and the same source/provenance
+display, but v0/v1.2's `file.create` sink's blocked arg is a filesystem path, not an email address
+— punycode/homoglyph canonicalization is an email-specific concern that does not directly apply to
+paths. Path-specific confusables (e.g., visually similar Unicode characters in a filename, or a
+path that looks locally-scoped but resolves outside the workspace root) are a distinct residual
+risk this document does not fully canonicalize.
+
+*Accepted for v1.2:* The literal path is displayed byte-exact (no truncation, no elision) and the
+`provenance_chain` is shown, giving the human the raw material to inspect. Path-specific
+canonicalization display rules (e.g., explicit `..`/symlink-target resolution shown alongside the
+raw string) are deferred to a future milestone alongside any additional sinks that reintroduce
+email-shaped routing args.
+
+**2. A confirmed effect executing against a workspace that has changed between Block and Confirm**
+
+Because `caprun confirm` re-invokes the sink using the FROZEN Block-time-resolved args (per
+"Confirmation Decision Logic" Step 4a.4), and confirm may run an arbitrary amount of time after the
+original block, the on-disk workspace state at confirm time may differ from what it was at block
+time (e.g., a file at the target path may since have been created by an unrelated process).
+
+*Accepted for v1.2:* The sink adapter's own invariants (e.g., `file.create`'s `O_EXCL` +
+`openat2 RESOLVE_BENEATH`, per PROJECT.md's `SINK-01..04`) still apply at confirm-invocation time
+and will fail closed on conflicts (e.g., `O_EXCL` rejects a pre-existing file) — this document does
+not weaken those adapter-level guarantees. A broader workspace-snapshot-consistency guarantee across
+the block/confirm boundary is out of scope for v1.2.
