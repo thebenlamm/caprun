@@ -55,12 +55,24 @@ is therefore a sibling record, persisted alongside (never inside) the anchor.
 
 ```rust
 // planning-docs shape — not yet in crates/. Phase 10 implements this exactly.
+// Fixes Pitfall M1: PlanNode carries only opaque ValueId handles (see
+// crates/runtime-core/src/plan_node.rs) — it cannot hold literal/taint/provenance data, and the
+// in-memory ValueStore that could resolve those handles is gone by confirm time (see "The Problem
+// Being Solved"). PendingConfirmation therefore persists a RESOLVED SNAPSHOT, not a PlanNode.
 struct PendingConfirmation {
-    effect_id:  Uuid,                    // SAME anchor key as SinkBlockedAnchor.effect_id
-    session_id: Uuid,
-    plan_node:  PlanNode,                // FULL resolved arg set — every arg's ValueRecord,
-                                          // not just the one blocked arg
-    state:      PendingConfirmationState,
+    effect_id:    Uuid,                  // SAME anchor key as SinkBlockedAnchor.effect_id
+    session_id:   Uuid,
+    sink:         SinkId,                // the blocked plan node's sink (from PlanNode.sink)
+    resolved_args: Vec<ResolvedArg>,     // FULL resolved arg set, captured at Block time
+    state:        PendingConfirmationState,
+}
+
+struct ResolvedArg {
+    name:             String,            // matches the original PlanArg.name
+    value_id:         ValueId,           // the original PlanArg.value_id, kept for audit traceability
+    literal:          String,            // the dereferenced ValueRecord's literal, frozen at Block time
+    taint:            Vec<TaintLabel>,   // the dereferenced ValueRecord's taint set, frozen at Block time
+    provenance_chain: Vec<Uuid>,         // the dereferenced ValueRecord's provenance chain, frozen at Block time
 }
 
 enum PendingConfirmationState {
@@ -75,8 +87,9 @@ enum PendingConfirmationState {
 | Field | Purpose |
 |-------|---------|
 | `effect_id` | The SAME identifier as `SinkBlockedAnchor.effect_id` (CONFIRM-04's anchor key). Confirm/deny audit Events anchor to this identical id, preserving one unbroken causal chain from block through decision. Broker-minted, never client- or worker-supplied. |
-| `session_id` | The Session the blocked `PlanNode` belonged to. Required so `caprun confirm` can look up session context and so the confirm/deny Event can be appended under the correct `session_id` in the `events` table. |
-| `plan_node` | The FULL resolved arg set for the blocked sink call: every `PlanArg { name, value_id }` together with its dereferenced `ValueRecord` (`literal`, `taint`, `provenance_chain`) — not merely the one arg that triggered the Block. This is what makes re-invocation of a multi-arg sink (e.g., `file.create`'s `path` AND `contents`) possible without re-resolving anything at confirm time. |
+| `session_id` | The Session the blocked plan node belonged to. Required so `caprun confirm` can look up session context and so the confirm/deny Event can be appended under the correct `session_id` in the `events` table. |
+| `sink` | The blocked plan node's `SinkId` (e.g. `file.create`), copied from the original `PlanNode.sink` at Block time. `PlanNode` itself is never persisted here — only this locked, opaque identifier. |
+| `resolved_args` | The FULL resolved arg set for the blocked sink call: one `ResolvedArg` per original `PlanArg`, each carrying its dereferenced `ValueRecord`'s `literal`, `taint`, and `provenance_chain` — not merely the one arg that triggered the Block. This is what makes re-invocation of a multi-arg sink (e.g., `file.create`'s `path` AND `contents`) possible without re-resolving anything at confirm time, and it is the field M1 required: `PlanNode` alone (opaque `ValueId` handles) cannot carry this data once the original process's `ValueStore` is gone. |
 | `state` | `Pending \| Confirmed \| Denied`. MUST start `Pending` at persistence time. Transitions exactly once, in exactly one direction: `Pending → Confirmed` or `Pending → Denied`. Never `Confirmed → Denied`, never `Denied → Confirmed`, never re-entry into `Pending`. |
 
 **Persistence contract (MUST):**
@@ -95,16 +108,26 @@ enum PendingConfirmationState {
   vice versa) — the two writes MUST succeed or fail together, so a `sink_blocked` Event can never
   exist without a corresponding `PendingConfirmation` row, and no orphaned `PendingConfirmation` can
   exist without an anchoring `sink_blocked` Event.
+- **Redaction interplay (fixes Pitfall m3):** `blocked_literals` is redactable by design (v1.1) —
+  redacting a blocked literal MUST also redact (or otherwise invalidate for release) the same literal
+  wherever it appears inside that `effect_id`'s `PendingConfirmation.resolved_args`. A
+  `PendingConfirmation` row holds the blocked arg's literal PLUS every other arg's literal, so
+  redacting only the `blocked_literals` side table while leaving an un-redacted copy in
+  `resolved_args` would silently defeat the redaction. Phase 10 MUST either redact both side tables
+  in the same operation, or have `caprun confirm` refuse to release (fail closed) any `effect_id`
+  whose `blocked_literals` entry has been redacted.
 
 ---
 
 ## Confirmation Decision Logic
 
-`caprun confirm <effect_id>` executes the following ordered steps. Every rule is MUST / MUST NOT.
+`caprun confirm <effect_id>` and `caprun deny <effect_id>` (see "caprun confirm CLI Contract" below —
+fixes Pitfall M2) share Steps 1–3 as common setup, then branch by WHICH COMMAND was invoked — never
+by an interactive prompt inside one command. Every rule is MUST / MUST NOT.
 
-**Step 1 — Reopen the persistent audit DB.** `caprun confirm` MUST reopen the SAME persistent
+**Step 1 — Reopen the persistent audit DB.** Both commands MUST reopen the SAME persistent
 SQLite file the original `caprun` run used (passed as the audit-db-path argument, mirroring
-`cli/caprun/src/main.rs`'s existing `audit_path` parameter). It MUST NOT operate against `:memory:`
+`cli/caprun/src/main.rs`'s existing `audit_path` parameter). Neither MUST operate against `:memory:`
 — an in-memory DB has no state to resume from a prior process.
 
 **Step 2 — Look up the `PendingConfirmation` row by `effect_id`.** This MUST use an indexed lookup
@@ -112,17 +135,17 @@ keyed on `effect_id` — a new capability, since no `find_event_by_effect_id`-eq
 `crates/brokerd/src/audit.rs` today (only `find_event_by_type` and `query_events_by_session`, both
 keyed by `session_id`, not `effect_id`). Phase 10 MUST add either a dedicated
 `find_pending_confirmation(conn, effect_id) -> Option<PendingConfirmation>` function or an indexed
-`effect_id` column on the new side table (or both). If no row is found for `effect_id`, `caprun
-confirm` MUST fail closed: report "unknown effect_id" and exit non-zero — it MUST NOT silently
+`effect_id` column on the new side table (or both). If no row is found for `effect_id`, both
+commands MUST fail closed: report "unknown effect_id" and exit non-zero — neither MUST silently
 proceed or silently no-op as success.
 
 **Step 3 — Check `state`.** The lookup result's `state` field MUST be read from persisted
 `PendingConfirmation.state`, never from any in-memory value, because the process granting or
 denying is never the same OS process as the one that created the block (Step 1's constraint). If
-`state` is already `Confirmed` or `Denied`, `caprun confirm` MUST refuse: no re-transition, no
+`state` is already `Confirmed` or `Denied`, both commands MUST refuse: no re-transition, no
 retry, exit non-zero (CONFIRM-03). Only `state == Pending` MUST proceed to Step 4.
 
-**Step 4a — Confirm path.** If the human selects confirm:
+**Step 4a — `caprun confirm <effect_id>` path:**
 
 1. Display the verbatim literal + provenance to the human (CONFIRM-01) — see "caprun confirm CLI
    Contract" below for the exact output format.
@@ -132,12 +155,29 @@ retry, exit non-zero (CONFIRM-03). Only `state == Pending` MUST proceed to Step 
 3. Transition `PendingConfirmation.state` from `Pending` to `Confirmed` — persisted, atomic with the
    `confirm_granted` Event append, same transaction discipline as the original Block-time write.
 4. Directly invoke the sink adapter (e.g. `invoke_file_create`) using the FROZEN, Block-time-resolved
-   args from the `PendingConfirmation.plan_node` snapshot. These args MUST NOT be re-resolved at
+   args from the `PendingConfirmation.resolved_args` snapshot. These args MUST NOT be re-resolved at
    confirm time — the executor's `ValueStore` from the original process is gone (per "The Problem
    Being Solved"), and re-resolving would reopen a TOCTOU-shaped question the frozen-snapshot design
    avoids by construction.
+5. **At-most-once semantics (fixes Pitfall M3, MUST be explicit):** steps 3 and 4 are NOT one atomic
+   transaction — a durable state transition to `Confirmed` is written before the sink is invoked,
+   because the sink invocation itself cannot be made transactional with a SQLite write (it is a
+   syscall against the filesystem/network, e.g. `openat2`). This document deliberately chooses
+   **at-most-once**, not exactly-once, for confirm: if the process crashes, or the sink invocation
+   fails (e.g. `O_EXCL` conflict, per Accepted Residual Risk 2 below), the state remains permanently
+   `Confirmed` with no retry (Step 3 refuses re-transition). This is an accepted risk, not an
+   oversight — see the exit-code table and the `sink_invocation_failed` Event below for how a caller
+   observes this outcome.
+   - If the sink invocation in step 4 fails, append a `sink_invocation_failed` Event to the audit
+     DAG, anchored to the same `effect_id`, `parent_id` set to the `confirm_granted` Event's id — so
+     the DAG shows `confirm_granted` with no successful invocation, distinguishing this outcome from
+     both a clean confirm-and-release and a deny.
+   - `caprun confirm` MUST exit non-zero in this case (see the exit-code table's dedicated row) —
+     a scripted caller MUST be able to distinguish "released" (exit 0) from "confirm recorded, sink
+     invocation failed" (exit non-zero, distinct from deny/unknown/already-terminal) without parsing
+     stdout text.
 
-**Step 4b — Deny path.** If the human selects deny:
+**Step 4b — `caprun deny <effect_id>` path:**
 
 1. Append a `confirm_denied` Event to the audit DAG, anchored to `effect_id`, `parent_id` set to the
    `sink_blocked` Event's id.
@@ -181,19 +221,26 @@ whether to invoke the sink for this one effect_id.
 
 ## caprun confirm CLI Contract
 
-**Invocation:** `caprun confirm <effect_id> [audit-db-path]` — the same positional-arg shape as the
-existing `caprun` binary's `audit_path` trailer (`cli/caprun/src/main.rs`), defaulting to the same
-convention if omitted.
+**Invocation (fixes Pitfall M2 — two distinct verbs, no interactive branch):**
 
-This is a **SECOND, EXPLICIT command** — never an interactive TTY prompt. This is a locked UX
+- `caprun confirm <effect_id> [audit-db-path]` — releases the blocked effect (Step 4a).
+- `caprun deny <effect_id> [audit-db-path]` — durably denies it (Step 4b).
+
+Both use the same positional-arg shape as the existing `caprun` binary's `audit_path` trailer
+(`cli/caprun/src/main.rs`), defaulting to the same convention if omitted. WHICH command the human
+runs is what selects the branch in "Confirmation Decision Logic" above — there is no in-process
+choice between confirm and deny; the two verbs are the only decision surface.
+
+Both are **SECOND, EXPLICIT commands** — never an interactive TTY prompt. This is a locked UX
 decision (mirroring the locked confirm-UX decision in STATE.md and `REQUIREMENTS.md`'s Out of Scope
-table): `caprun confirm <effect_id>` MUST be scriptable and testable — invocable from a script, a
-CI harness, or a human's shell — without requiring a live interactive terminal session attached to
-the original blocking process. It MUST NOT be implemented as a prompt embedded inside the original
-`caprun` invocation that blocks waiting for stdin.
+table): `caprun confirm <effect_id>` and `caprun deny <effect_id>` MUST both be scriptable and
+testable — invocable from a script, a CI harness, or a human's shell — without requiring a live
+interactive terminal session attached to the original blocking process. Neither MUST be implemented
+as a prompt embedded inside the original `caprun` invocation that blocks waiting for stdin.
 
-**Exact terminal output format on confirm-prompt** (mirrors `DESIGN-plan-executor.md` §Literal-Value
-Confirmation UX — verbatim, not abstract):
+**Exact terminal output format when the block is pending** (mirrors `DESIGN-plan-executor.md`
+§Literal-Value Confirmation UX — verbatim, not abstract; shown by both `caprun confirm` and
+`caprun deny` before acting, so the human sees the same evidence regardless of which verb they run):
 
 ```
 $ caprun confirm <effect_id>
@@ -208,11 +255,13 @@ Taint:              [external.untrusted, path.raw]
 Source:             file_read evt_a1b2c3...  (session <session_id>)
 Provenance chain:   evt_a1b2c3... -> evt_d4e5f6... -> (this arg)
 
-This value came from untrusted content read during this session. Confirm this
-EXACT value to proceed, or deny to block it permanently.
-
-[ Confirm ]  [ Deny ]
+This value came from untrusted content read during this session. Run
+`caprun confirm <effect_id>` to release this EXACT value, or
+`caprun deny <effect_id>` to block it permanently.
 ```
+
+No interactive chooser is presented (fixes Pitfall M2's contradiction with the non-interactive lock
+above) — the two commands to run are printed as text, and the human picks by which one they invoke.
 
 The output MUST show: the literal value verbatim (not a category or summary), the sink and arg
 name, the taint labels, the source read Event id and session id, and the `provenance_chain`
@@ -225,13 +274,16 @@ prompt.
 | Outcome | Exit code |
 |---------|-----------|
 | Confirm succeeds; sink invoked | 0 |
+| Confirm recorded (`confirm_granted` appended, state → `Confirmed`) but sink invocation failed (fixes Pitfall M3) | non-zero, distinct from every row below |
 | Deny recorded | non-zero |
 | Unknown `effect_id` (no `PendingConfirmation` row found) | non-zero |
 | `effect_id` already terminal (`Confirmed` or `Denied`) — refused | non-zero |
 
-Only a successful confirm-and-release returns 0. Every other outcome — deny, unknown id,
-already-terminal id — MUST return a non-zero exit code, so scripting/CI callers can distinguish
-"released" from every non-release outcome without parsing output text.
+Only a successful confirm-and-release returns 0. Every other outcome — confirm-recorded-but-failed,
+deny, unknown id, already-terminal id — MUST return a non-zero exit code, and the
+confirm-recorded-but-failed case MUST be distinguishable from the others (e.g. a dedicated exit code
+value), so a scripting/CI caller reading only the exit code can tell "released" from "confirm was
+granted but nothing actually ran" from every other non-release outcome, without parsing output text.
 
 ---
 
@@ -314,6 +366,14 @@ other, and satisfying one does not imply anything about the other:
   `PendingConfirmation.state` transitioning to `Confirmed` has no effect on `SessionStatus`; a
   Session that was `Draft` before a confirm remains `Draft` after it, and vice versa. The two state
   machines are orthogonal.
+- **This composition is designed, not incidental (amended per B1).** `DESIGN-session-trust-state.md`
+  §8/§9/§11 requires the per-arg I2 Block to take precedence over the class-level draft-only deny —
+  which means a `Draft` session's tainted routing-sensitive arg reaches exactly this document's
+  Block-then-confirm mechanism, never the silent class-level Denied. A `caprun confirm` on that Block
+  IS the literal-value human gate I0/I1 demand ("cannot **auto**-authorize Tier 3+ effects" —
+  `REQUIREMENTS.md` ORIGIN-02): a human-endorsed, single-shot, TCB-resident confirm is not
+  auto-authorization, so releasing a `Draft` session's confirmed Block is exactly the intended,
+  designed interaction between the two mechanisms, not an accidental escape hatch.
 
 ### Done-When Predicate
 
