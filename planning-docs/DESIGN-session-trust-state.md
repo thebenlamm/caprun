@@ -299,34 +299,66 @@ enum for Phase 7 ... never introduce a second denial error type." A second, para
 
 ---
 
-## 8. Executor decision-logic placement — "Step 0.5," executor-only, one TCB function
+## 8. Executor decision-logic placement — post-loop class deny, executor-only, one TCB function
 
 `crates/executor/src/lib.rs`'s current `submit_plan_node` ordering is: Step 0 (schema validation,
 fail-closed) → per-arg loop (Step 1 resolve, Step 1a empty-taint guard, Step 1b empty-provenance
 guard, Step 2 routing-sensitivity block, Step 3 content-sensitive marking, unimplemented) → `Allowed`.
 
-**New "Step 0.5" (MUST, placement is fixed):** The draft-only `CommitIrreversible` deny check MUST
-run as a new Step 0.5 — immediately after Step 0 (schema validation) and before the per-arg
-resolve/taint loop begins. This placement is deliberate (RESEARCH Open Question 1): the check depends
-only on the session's status and the sink's effect class, not on any individual arg's taint, so it
-does not need to iterate args at all, and placing it before the per-arg loop fails closed as early as
-possible — consistent with the existing "fail closed as early as possible" ordering discipline
-`crates/executor/src/lib.rs` already documents for Step 0.
+**Precedence rule (MUST, amended per DESIGN-REVIEW-v1.2-round1.md B1):** The per-arg I2 taint Block
+(Steps 1/1a/1b/2/3) MUST take precedence over the draft-only class deny. If any arg Blocks during the
+per-arg loop, `submit_plan_node` returns `BlockedPendingConfirmation` exactly as it does today — the
+draft-only check below is never reached for that call. The draft-only deny is a class-level backstop
+that fires only when the per-arg loop completes with no Block: a session may be `Draft`, its args may
+all look clean (untainted, or tainted but not routing-sensitive), yet the session itself is still
+untrustworthy — this is exactly TAINT-01/ORIGIN-02's target case (clean-looking values from an
+untrusted context; instructions may be injected even where no single arg trips the I2 routing-sensitive
+check). Reversing this precedence — denying before the loop runs, as round 1 of this document
+specified — makes ACC-01/ACC-02 unsatisfiable (the I2 Block never fires on any `Draft` session) and
+breaks the v1.1 §9 live acceptance test; see the round-1 review for the full trace.
 
-**Predicate (MUST):**
+**New "Step 0.5" (MUST, placement corrected):** The draft-only `CommitIrreversible` deny check MUST
+run as a new Step 0.5 — **after the per-arg loop completes with no Block**, and before the function
+returns `Allowed`. (The name "Step 0.5" is retained from the original numbering for continuity with
+RESEARCH.md and the round-1 gate record; it does not imply the check runs before Step 0's neighbors —
+its actual position in the ordered sequence is last, immediately before the `Allowed` return.)
+
+**Predicate (MUST) — exhaustive match over `SessionStatus` (fixes Pitfall m1):**
 
 ```rust
-// Step 0.5 — after schema validation (Step 0), before the per-arg loop.
-if sink_effect_class(&plan_node.sink) == EffectClass::CommitIrreversible
-    && *session_status == SessionStatus::Draft
-{
-    return ExecutorDecision::Denied {
-        reason: DenyReason::DraftOnlySessionDeniesCommitIrreversible {
-            sink: plan_node.sink.clone(),
-        },
-    };
+// Step 0.5 — after the per-arg loop completes with NO Block, before returning Allowed.
+match *session_status {
+    SessionStatus::Draft => {
+        if sink_effect_class(&plan_node.sink) == EffectClass::CommitIrreversible {
+            return ExecutorDecision::Denied {
+                reason: DenyReason::DraftOnlySessionDeniesCommitIrreversible {
+                    sink: plan_node.sink.clone(),
+                },
+            };
+        }
+        // Draft + non-CommitIrreversible: fall through to Allowed (TAINT-03).
+    }
+    SessionStatus::Active => {
+        // No deny from this gate; fall through to Allowed.
+    }
+    SessionStatus::WaitingApproval
+    | SessionStatus::Done
+    | SessionStatus::Failed
+    | SessionStatus::RolledBack => {
+        // No deny from THIS gate. These states are not a session-trust concern this document
+        // governs — the broker's session-lifecycle contract does not route new plan-node
+        // submissions to a WaitingApproval/Done/Failed/RolledBack session in the first place
+        // (submit_plan_node is only reachable for a session actively accepting effects). Matched
+        // explicitly, not with a wildcard arm, so a future SessionStatus variant is a compile
+        // error here, not a silent fail-open (consistent with §10's exhaustive-match discipline).
+    }
 }
 ```
+
+The exhaustive match (rather than a bare `== Draft` equality check) is a defense-in-depth fix for
+Pitfall m1: it costs nothing functionally (behavior for every current variant is unchanged) and
+guarantees a future `SessionStatus` variant cannot silently bypass this gate through an unhandled
+wildcard arm.
 
 **Executor-only, never a broker pre-check (MUST, locked decision restated):** This decision MUST be
 made in ONE executor TCB function — `submit_plan_node` — and MUST NOT be duplicated or pre-empted as
@@ -340,16 +372,29 @@ the deny decision itself belongs exclusively to the executor.
 
 ## 9. Non-regression MUSTs
 
+- **A `Draft` session with a tainted routing-sensitive arg MUST Block (I2), never Denied (I1/I0)
+  (ACC-01/ACC-02, amended per B1).** The per-arg loop (Steps 1/1a/1b/2/3) runs to completion — or
+  returns `BlockedPendingConfirmation` — for every session regardless of `session_status`. Step 0.5
+  (the draft-only class deny) is reached ONLY when the loop completes with no Block. This is the
+  precedence B1 required: I2's per-arg Block always wins over I1/I0's class-level deny when both would
+  otherwise apply to the same call.
 - **A `Draft` session MUST still allow `MutateReversible` and `Observe` class plan nodes (TAINT-03).**
-  Step 0.5's predicate is conjunctive (`CommitIrreversible AND Draft`) — a `Draft` session submitting
-  a plan node whose `sink_effect_class` is `Observe` or `MutateReversible` MUST proceed past Step 0.5
-  unaffected and reach the existing per-arg loop exactly as an `Active` session would.
+  A `Draft` session submitting a plan node whose `sink_effect_class` is `Observe` or
+  `MutateReversible` MUST pass through the per-arg loop exactly as an `Active` session would, and MUST
+  NOT be denied by the post-loop Step 0.5 check — Step 0.5's predicate is conjunctive
+  (`CommitIrreversible AND Draft`), so a non-`CommitIrreversible` sink never trips it regardless of
+  session state. *(Pitfall m2: both current production sinks — `email.send`, `file.create` — are
+  `CommitIrreversible`, so this requirement is untestable against `KNOWN_SINKS` as it stands today.
+  Phase 9's verifier MUST exercise it via a test-only sink registered with
+  `EffectClass::Observe`/`MutateReversible` (or an equivalent fake sink registry) — name the chosen
+  fixture explicitly in Phase 9's plan so verification does not stall on an untestable requirement.)*
 - **The new check MUST NOT alter or weaken the existing I2 routing-sensitivity block on genuine
-  taint.** Step 0.5 is purely additive — it runs once, before the loop, and returns early only on its
-  own predicate. It MUST NOT change Step 1/1a/1b/2/3's existing logic, ordering, or the values they
-  read from `value_store`. This protects the v1.1 §9 acceptance test unchanged: an `Active` session
-  with a tainted routing-sensitive arg still Blocks exactly as it does today (Step 0.5's predicate
-  requires `Draft`, so it never fires for an `Active` session).
+  taint.** Step 0.5 is purely additive and runs strictly after the loop — it MUST NOT change Step
+  1/1a/1b/2/3's existing logic, ordering, or the values they read from `value_store`, and it MUST NOT
+  run before them. This protects the v1.1 §9 acceptance test unchanged: an `Active` session with a
+  tainted routing-sensitive arg still Blocks exactly as it does today, reaching Step 0.5 only if no
+  Block fired — Step 0.5's predicate requires `Draft`, so it never denies for an `Active` session
+  either way.
 
 ---
 
@@ -389,24 +434,36 @@ every `submit_plan_node` call in scope of this design:
 2. **An externally-seeded session starts `Draft` at creation.** A Session whose seed provenance is
    file-derived (as determined by the trusted `caprun` CLI path and passed to the broker's
    `create_session`) MUST start with `status == Draft`, never `Active` followed by a later demotion.
-3. **A `CommitIrreversible` plan node on a `Draft` session is Denied, decided in the executor.** A
-   plan node whose `sink_effect_class(sink) == EffectClass::CommitIrreversible`, submitted while
-   `session_status == SessionStatus::Draft`, MUST return
-   `ExecutorDecision::Denied { reason: DraftOnlySessionDeniesCommitIrreversible { sink } }`, and this
-   decision MUST be made inside `submit_plan_node` — never by a broker pre-check that short-circuits
-   before the executor is called.
-4. **`MutateReversible`/`Observe` still succeed on a `Draft` session.** A plan node whose
+3. **A `CommitIrreversible` plan node on a `Draft` session, that does NOT already Block on I2, is
+   Denied, decided in the executor (amended per B1).** A plan node whose
+   `sink_effect_class(sink) == EffectClass::CommitIrreversible`, submitted while
+   `session_status == SessionStatus::Draft`, and whose per-arg loop completes with NO Block, MUST
+   return `ExecutorDecision::Denied { reason: DraftOnlySessionDeniesCommitIrreversible { sink } }`,
+   and this decision MUST be made inside `submit_plan_node` — never by a broker pre-check that
+   short-circuits before the executor is called.
+4. **The per-arg I2 Block always takes precedence over condition (3)'s class-level deny (B1).** A
+   plan node carrying a tainted routing-sensitive arg MUST return `BlockedPendingConfirmation` from
+   the per-arg loop regardless of `session_status` — including on a `Draft` session — and Step 0.5
+   MUST NOT be evaluated (and therefore cannot pre-empt the Block) whenever the loop returns a Block.
+   This is what keeps ACC-01/ACC-02 satisfiable: confirming a Block on a `Draft` session's tainted arg
+   IS the literal-value human-gate act I0/I1 require, per `DESIGN-confirmation-release.md`'s "Two
+   Independent Mechanisms."
+5. **`MutateReversible`/`Observe` still succeed on a `Draft` session.** A plan node whose
    `sink_effect_class` is `Observe` or `MutateReversible`, submitted on a `Draft` session, MUST NOT be
    denied by Step 0.5 and MUST proceed through the existing per-arg taint checks unaffected.
 
-All 5 conditions MUST hold simultaneously. Condition (0) is what makes (1), (2), and (3) meaningful:
-without trusted, broker-resolved trust-state sourcing, an injected worker or planner simply asserts
-its session is `Active` and bypasses Step 0.5 entirely — the identical shape as the taint-stripping
-hole the `ValueId` handle model closes for I2, and the identical shape as the self-declaration hole
-`DESIGN-taint-model.md`'s I0 Acceptance Predicate condition 0 already closes for session creation.
-Condition (4) exists so that the mechanism's restriction is verifiably scoped — a demoted session is
-not rendered inert, only restricted from `CommitIrreversible` effects, which is what TAINT-03
-requires and what makes the I1 dynamic-taint model usable rather than a de facto kill switch.
+All 6 conditions MUST hold simultaneously. Condition (0) is what makes (1), (2), (3), and (4)
+meaningful: without trusted, broker-resolved trust-state sourcing, an injected worker or planner
+simply asserts its session is `Active` and bypasses Step 0.5 entirely — the identical shape as the
+taint-stripping hole the `ValueId` handle model closes for I2, and the identical shape as the
+self-declaration hole `DESIGN-taint-model.md`'s I0 Acceptance Predicate condition 0 already closes
+for session creation. Condition (4) is what keeps this document's mechanism from silently defeating
+`DESIGN-confirmation-release.md`'s: without I2-Block-takes-precedence, no `Draft` session's tainted
+arg could ever reach a confirmable Block, and the confirmation-release mechanism would have no live
+entry point — this was the round-1 bug this amendment fixes. Condition (5) exists so that the
+mechanism's restriction is verifiably scoped — a demoted session is not rendered inert, only
+restricted from `CommitIrreversible` effects, which is what TAINT-03 requires and what makes the I1
+dynamic-taint model usable rather than a de facto kill switch.
 
 ---
 
