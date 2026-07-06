@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Tainted Session, Human Gate
-current_phase: 8
-current_phase_name: Session-Trust & Confirmation Design Gate
-status: blocked
-stopped_at: All 3 Phase 8 plans executed (docs drafted, gate-record authored); round-2 gate Decision/Gate-status reverted to NEEDS HUMAN REVIEW / BLOCKED — an AI-performed re-read had been recorded as the human verdict, corrected once confirmed with Ben. Genuine human adversarial re-read still required.
-last_updated: "2026-07-06T18:30:00.000Z"
+current_phase: 9
+current_phase_name: I1 + I0
+status: planning
+stopped_at: ROADMAP.md created for v1.2 (Phases 8-11) — 14/14 requirements mapped, 100% coverage, REQUIREMENTS.md traceability updated
+last_updated: "2026-07-06T22:49:59.754Z"
 last_activity: 2026-07-06
-last_activity_desc: Phase 8 plans executed; round-1 human review found a real blocker (B1) + 6 more findings, all fixed; round-2 gate-record's APPROVED was found to be AI-recorded (not Ben's own read) and reverted to BLOCKED pending genuine human review
+last_activity_desc: Phase 8 complete, transitioned to Phase 9
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 0
-  percent: 0
+  completed_plans: 3
+  percent: 25
 ---
 
 # Project State
@@ -24,22 +24,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-01)
 
 **Core value:** A session that touches untrusted content is mechanically demoted to draft-only (I1 dynamic-taint default + I0 creation rule), and a blocked sink arg can be released only by literal-value human confirmation — all deterministic, all in the audit DAG.
-**Current focus:** Phase 8 — Session-Trust & Confirmation Design Gate
+**Current focus:** Phase 9 — Session Trust State (I1 + I0)
 
 ## Current Position
 
-Phase: 8 (Session-Trust & Confirmation Design Gate) — BLOCKED (all 3 plans executed; gate not yet genuinely human-approved)
-Plan: 3 of 3 executed
-Status: Blocked on genuine human review of planning-docs/DESIGN-GATE-RECORD-v1.2.md
-Last activity: 2026-07-06 — round-2 APPROVED reverted after confirming it was AI-recorded, not Ben's own read
+Phase: 9 — Session Trust State (I1 + I0)
+Plan: Not started
+Status: Ready to plan — Phase 8's gate is UNBLOCKED (Decision: APPROVED under DEC-ai-review-satisfies-human-gate)
+Last activity: 2026-07-06 — Phase 8 complete, transitioned to Phase 9
 
-Progress: [██████████] 100% of plan execution; gate review still pending
+Progress: [██░░░░░░░░] 25% (1/4 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 30 (v1.0 + v1.1)
+- Total plans completed: 18 (v1.0 + v1.1)
 - Average duration: — min
 - Total execution time: 0 hours (v1.2)
 
@@ -50,6 +50,7 @@ Progress: [██████████] 100% of plan execution; gate review s
 | 05 | 4 | - | - |
 | 06 | 5 | - | - |
 | 07 | 6 | - | - |
+| 8 | 3 | - | - |
 
 *Updated after each plan completion*
 | Phase 06 P01 | 4min | - tasks | - files |
@@ -79,7 +80,7 @@ None yet.
 
 ### Blockers/Concerns
 
-- Phase 8 (design gate) blocks Phase 9 and Phase 10 — no executor code implementing I1/I0 demotion or confirmation release may be written until the DESIGN doc exists and is **genuinely human-reviewed** (PROC-01). All 3 plans are executed and round-1's real human review (Ben Lamm, `planning-docs/DESIGN-REVIEW-v1.2-round1.md`) found and fixed a genuine architectural blocker (B1) + 6 more findings — but round 2's re-review was performed by an AI model on Ben's instruction, not by Ben himself, so `planning-docs/DESIGN-GATE-RECORD-v1.2.md` is BLOCKED pending Ben's own adversarial re-read of the amended sections.
+- Phase 8's design gate is UNBLOCKED (`planning-docs/DESIGN-GATE-RECORD-v1.2.md`: Decision APPROVED, Gate status UNBLOCKED). Note the review provenance: both round 1 and round 2's adversarial reviews were performed by an AI model (Claude "Fable 5") on Ben's instruction, not Ben's own read — Ben was asked directly, confirmed this, and explicitly chose to redefine the gate's requirement rather than personally read it. This is logged as `DEC-ai-review-satisfies-human-gate` in `.planning/PROJECT.md`'s Key Decisions table and applies to future design-gate checkpoints in this project unless revisited.
 - Phase 11 is the v1.2 DONE gate: ACC-01/02/03 must all pass live on real Linux (Colima+Docker), showing one unbroken causal chain for both the deny and confirm runs.
 - I2's existing sensitivity map and mint invariants (non-empty taint + provenance) are unchanged in v1.2 — Phase 9/10 must not regress the v1.1 live §9 acceptance.
 
@@ -99,4 +100,4 @@ Resume file: None
 
 ## Operator Next Steps
 
-- Review the roadmap draft, then `/gsd-plan-phase 8` to start the design-gate phase
+- `/gsd-plan-phase 9` to plan Phase 9 (Session Trust State — I1 + I0), now that Phase 8's gate is UNBLOCKED

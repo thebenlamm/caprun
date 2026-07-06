@@ -41,7 +41,7 @@ Full detail archived in [`milestones/v1.1-ROADMAP.md`](milestones/v1.1-ROADMAP.m
 
 **Milestone goal:** A session that touches untrusted content is mechanically demoted to draft-only (I1 dynamic-taint default + I0 creation rule), and a blocked sink arg can be released only by literal-value human confirmation — all deterministic, all in the audit DAG.
 
-- [ ] **Phase 8: Session-Trust & Confirmation Design Gate** - DESIGN doc for session-trust-state (I1 demotion + I0 creation rule) and confirmation-release semantics exists and is reviewed before any executor code for this milestone is written — docs drafted and round-1-revised, but genuine human re-review of round 2 is still pending (see `planning-docs/DESIGN-GATE-RECORD-v1.2.md`)
+- [x] **Phase 8: Session-Trust & Confirmation Design Gate** - DESIGN doc for session-trust-state (I1 demotion + I0 creation rule) and confirmation-release semantics exists and is reviewed before any executor code for this milestone is written — Decision: APPROVED / Gate status: UNBLOCKED under `DEC-ai-review-satisfies-human-gate` (see `planning-docs/DESIGN-GATE-RECORD-v1.2.md` and `.planning/PROJECT.md`'s Key Decisions table) (completed 2026-07-06)
 - [ ] **Phase 9: Session Trust State (I1 + I0)** - reading untrusted content or being seeded from external content demotes/starts a session as draft-only; draft-only sessions deny CommitIrreversible plan nodes via one executor TCB function
 - [ ] **Phase 10: Single-Shot Confirmation Loop** - `caprun confirm <effect_id>` shows the human the blocked literal + provenance and releases exactly one (sink, arg, literal-digest) triple; deny is durable
 - [ ] **Phase 11: Live Acceptance — Tainted Session, Human Gate** - live §9-style run on real Linux: hostile read → session demotion → sink block → human deny (nothing sent) / human confirm (exactly once), one unbroken audit chain
@@ -122,7 +122,7 @@ Plans:
 | 5. Runtime Spine & Live §9 Email Block | v1.1 | 4/4 | Complete | 2026-06-30 |
 | 6. Deterministic Planner & Intent Input | v1.1 | 5/5 | Complete | 2026-07-01 |
 | 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 6/6 | Complete | 2026-07-01 |
-| 8. Session-Trust & Confirmation Design Gate | v1.2 | 3/3 | Complete   | 2026-07-06 |
+| 8. Session-Trust & Confirmation Design Gate | v1.2 | 3/3 | Complete    | 2026-07-06 |
 | 9. Session Trust State (I1 + I0) | v1.2 | 0/? | Not started | - |
 | 10. Single-Shot Confirmation Loop | v1.2 | 0/? | Not started | - |
 | 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 0/? | Not started | - |
