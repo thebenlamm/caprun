@@ -4,11 +4,11 @@ milestone: v1.2
 milestone_name: — Tainted Session, Human Gate
 current_phase: 8
 current_phase_name: Session-Trust & Confirmation Design Gate
-status: executing
-stopped_at: ROADMAP.md created for v1.2 (Phases 8-11) — 14/14 requirements mapped, 100% coverage, REQUIREMENTS.md traceability updated
-last_updated: "2026-07-02T03:06:08.908Z"
-last_activity: 2026-07-02
-last_activity_desc: Phase 8 execution started
+status: blocked
+stopped_at: All 3 Phase 8 plans executed (docs drafted, gate-record authored); round-2 gate Decision/Gate-status reverted to NEEDS HUMAN REVIEW / BLOCKED — an AI-performed re-read had been recorded as the human verdict, corrected once confirmed with Ben. Genuine human adversarial re-read still required.
+last_updated: "2026-07-06T18:30:00.000Z"
+last_activity: 2026-07-06
+last_activity_desc: Phase 8 plans executed; round-1 human review found a real blocker (B1) + 6 more findings, all fixed; round-2 gate-record's APPROVED was found to be AI-recorded (not Ben's own read) and reverted to BLOCKED pending genuine human review
 progress:
   total_phases: 4
   completed_phases: 0
@@ -28,12 +28,12 @@ See: .planning/PROJECT.md (updated 2026-07-01)
 
 ## Current Position
 
-Phase: 8 (Session-Trust & Confirmation Design Gate) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 8
-Last activity: 2026-07-02 — Phase 8 execution started
+Phase: 8 (Session-Trust & Confirmation Design Gate) — BLOCKED (all 3 plans executed; gate not yet genuinely human-approved)
+Plan: 3 of 3 executed
+Status: Blocked on genuine human review of planning-docs/DESIGN-GATE-RECORD-v1.2.md
+Last activity: 2026-07-06 — round-2 APPROVED reverted after confirming it was AI-recorded, not Ben's own read
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100% of plan execution; gate review still pending
 
 ## Performance Metrics
 
@@ -79,7 +79,7 @@ None yet.
 
 ### Blockers/Concerns
 
-- Phase 8 (design gate) blocks Phase 9 and Phase 10 — no executor code implementing I1/I0 demotion or confirmation release may be written until the DESIGN doc exists and is reviewed (PROC-01).
+- Phase 8 (design gate) blocks Phase 9 and Phase 10 — no executor code implementing I1/I0 demotion or confirmation release may be written until the DESIGN doc exists and is **genuinely human-reviewed** (PROC-01). All 3 plans are executed and round-1's real human review (Ben Lamm, `planning-docs/DESIGN-REVIEW-v1.2-round1.md`) found and fixed a genuine architectural blocker (B1) + 6 more findings — but round 2's re-review was performed by an AI model on Ben's instruction, not by Ben himself, so `planning-docs/DESIGN-GATE-RECORD-v1.2.md` is BLOCKED pending Ben's own adversarial re-read of the amended sections.
 - Phase 11 is the v1.2 DONE gate: ACC-01/02/03 must all pass live on real Linux (Colima+Docker), showing one unbroken causal chain for both the deny and confirm runs.
 - I2's existing sensitivity map and mint invariants (non-empty taint + provenance) are unchanged in v1.2 — Phase 9/10 must not regress the v1.1 live §9 acceptance.
 
