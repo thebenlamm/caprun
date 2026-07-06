@@ -186,18 +186,29 @@ Before setting Decision and Gate status, the reviewer MUST:
 | m2 | TAINT-03's test vehicle (test-only sink) named explicitly for Phase 9 | applied |
 | m3 | Redaction of `blocked_literals` MUST also cover `PendingConfirmation.resolved_args` | applied |
 
-**Decision:** APPROVED
-**Decided:** 2026-07-06 by Ben Lamm (round 2)
+**Decision:** NEEDS HUMAN REVIEW (corrected — see note below)
+**Decided:** not yet decided by a human reviewer
 
-Round-1 NEEDS REVISION findings (B1 blocker + M1/M2/M3 major + m1/m2/m3 minor) are all resolved in
-the revised docs re-hashed above. The reviewer re-read the amended sections (§8/§9/§11 of
-`DESIGN-session-trust-state.md`; PendingConfirmation Schema, Confirmation Decision Logic, CLI
-Contract, and Two Independent Mechanisms of `DESIGN-confirmation-release.md`) and confirmed the B1
-fix (I2 Block precedence) closes the round-1 defect without introducing a new loophole. Approval is
-pinned to the round-2 sha256 hashes above; a later edit to either DESIGN doc invalidates this
-approval and requires a fresh gate round.
+**Correction, 2026-07-06:** This record briefly showed `Decision: APPROVED` across two commits
+(`f95837b`, `8834db7`) recorded in two different sessions within minutes of each other, both
+believed at the time to reflect Ben Lamm's own adversarial re-read. On direct question, Ben
+confirmed he did **not** personally read the amended sections — an AI model ("Fable 5") performed
+the round-2 technical re-read on his instruction, and that verdict was recorded as though it were
+the required human judgment call. Per Task 2's own contract ("a human reviewer, not the executing
+agent, sets the final Decision/Gate-status values") and the threat model's T-08-09 mitigation
+("never auto-approved by the executing agent"), an AI-performed re-read — however thorough — does
+not satisfy this requirement, regardless of which session or model performs it. Both APPROVED
+recordings are **void**. This is not a reflection on the technical fixes themselves (all 7 round-1
+findings are still verified applied by grep and independently confirmed by the phase verifier
+against actual `crates/` source) — it is specifically that the human-judgment step has not yet
+happened.
 
-> Prior round-1 decision: NEEDS REVISION (superseded by this round-2 APPROVED).
+**Round-1 fixes remain verified as applied (unaffected by this correction):** see table above.
+
+> Prior round-1 decision: NEEDS REVISION (`planning-docs/DESIGN-REVIEW-v1.2-round1.md`, commit
+> `43055b9`) — this remains the last decision genuinely made by a human reviewer. Round 2 awaits
+> that same standard: Ben Lamm reading the amended sections end-to-end as an attacker, per the
+> How-to-Verify steps above, and recording his own verdict.
 
 ---
 
@@ -207,9 +218,11 @@ approval and requires a fresh gate round.
 > implementing session-trust or confirmation-release logic until this record shows
 > Decision: APPROVED and Gate status: UNBLOCKED.**
 
-**`crates/executor` / `crates/brokerd` (session-trust + confirmation-release additions) is: UNBLOCKED**
+**`crates/executor` / `crates/brokerd` (session-trust + confirmation-release additions) is: BLOCKED**
 
 Available resolutions: [ UNBLOCKED / BLOCKED ]
+
+Gate status reverted to BLOCKED pending a genuine human review (see Decision correction above).
 
 Decision: APPROVED is recorded above (round 2, 2026-07-06). Phase 9 and Phase 10 are authorized to
 author `crates/executor`/`crates/brokerd` code against the revised DESIGN docs pinned by the
