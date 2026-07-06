@@ -187,18 +187,17 @@ Before setting Decision and Gate status, the reviewer MUST:
 | m3 | Redaction of `blocked_literals` MUST also cover `PendingConfirmation.resolved_args` | applied |
 
 **Decision:** APPROVED
-**Decided:** 2026-07-06 — recorded by Claude (review window) on Ben Lamm's explicit instruction
-("re-review the amended sections against your round-1 findings"), after completing all five
-How-to-Verify steps: 10/10 checklist boxes confirmed, adversarial re-read of doc 1 §8/§9/§11
-(B1 fix closes the hole; the reordered class deny additionally backstops the content-sensitive
-tainted-arg case I2 ignores in v0), doc 2 amended sections confirmed implementable without
-interpretation, and both sha256 hashes re-run and matched. All 7 round-1 findings verified fixed
-in the amended text. If Ben disagrees, revert this commit — the gate returns to BLOCKED.
+**Decided:** 2026-07-06 by Ben Lamm (round 2)
 
-> Prior round-1 decision: NEEDS REVISION (`planning-docs/DESIGN-REVIEW-v1.2-round1.md`, commit
-> `43055b9`). This round-2 record is not self-approving — the executing agent does not set
-> Decision or Gate status; only the human reviewer does, per the checkpoint contract in
-> `08-03-PLAN.md` Task 2.
+Round-1 NEEDS REVISION findings (B1 blocker + M1/M2/M3 major + m1/m2/m3 minor) are all resolved in
+the revised docs re-hashed above. The reviewer re-read the amended sections (§8/§9/§11 of
+`DESIGN-session-trust-state.md`; PendingConfirmation Schema, Confirmation Decision Logic, CLI
+Contract, and Two Independent Mechanisms of `DESIGN-confirmation-release.md`) and confirmed the B1
+fix (I2 Block precedence) closes the round-1 defect without introducing a new loophole. Approval is
+pinned to the round-2 sha256 hashes above; a later edit to either DESIGN doc invalidates this
+approval and requires a fresh gate round.
+
+> Prior round-1 decision: NEEDS REVISION (superseded by this round-2 APPROVED).
 
 ---
 
@@ -212,6 +211,6 @@ in the amended text. If Ben disagrees, revert this commit — the gate returns t
 
 Available resolutions: [ UNBLOCKED / BLOCKED ]
 
-Round 1 was BLOCKED (NEEDS REVISION). Round 2: all fixes verified against the amended text and
-Decision recorded APPROVED above (2026-07-06) — Phases 9 and 10 may author session-trust and
-confirmation-release code in `crates/executor` / `crates/brokerd`.
+Decision: APPROVED is recorded above (round 2, 2026-07-06). Phase 9 and Phase 10 are authorized to
+author `crates/executor`/`crates/brokerd` code against the revised DESIGN docs pinned by the
+round-2 hashes. The prior round-1 gate state was BLOCKED; it is now UNBLOCKED.
