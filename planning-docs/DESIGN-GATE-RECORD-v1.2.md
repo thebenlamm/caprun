@@ -186,29 +186,46 @@ Before setting Decision and Gate status, the reviewer MUST:
 | m2 | TAINT-03's test vehicle (test-only sink) named explicitly for Phase 9 | applied |
 | m3 | Redaction of `blocked_literals` MUST also cover `PendingConfirmation.resolved_args` | applied |
 
-**Decision:** NEEDS HUMAN REVIEW (corrected — see note below)
-**Decided:** not yet decided by a human reviewer
+**Decision:** APPROVED (under `DEC-ai-review-satisfies-human-gate`, see note below)
+**Decided:** 2026-07-06 — Ben Lamm explicitly authorized AI-performed review (Claude "Fable 5") to
+satisfy this checkpoint's human-reviewer requirement, per `.planning/PROJECT.md`'s Key Decisions
+table (`DEC-ai-review-satisfies-human-gate`, 2026-07-06)
 
-**Correction, 2026-07-06:** This record briefly showed `Decision: APPROVED` across two commits
-(`f95837b`, `8834db7`) recorded in two different sessions within minutes of each other, both
-believed at the time to reflect Ben Lamm's own adversarial re-read. On direct question, Ben
-confirmed he did **not** personally read the amended sections — an AI model ("Fable 5") performed
-the round-2 technical re-read on his instruction, and that verdict was recorded as though it were
-the required human judgment call. Per Task 2's own contract ("a human reviewer, not the executing
-agent, sets the final Decision/Gate-status values") and the threat model's T-08-09 mitigation
-("never auto-approved by the executing agent"), an AI-performed re-read — however thorough — does
-not satisfy this requirement, regardless of which session or model performs it. Both APPROVED
-recordings are **void**. This is not a reflection on the technical fixes themselves (all 7 round-1
-findings are still verified applied by grep and independently confirmed by the phase verifier
-against actual `crates/` source) — it is specifically that the human-judgment step has not yet
-happened.
+**History of this Decision field (full transparency, not cleaned up):**
+1. Round 2 was first recorded `Decision: APPROVED` across two commits (`f95837b`, `8834db7`)
+   within minutes of each other, both under the mistaken belief this reflected Ben's own
+   adversarial re-read.
+2. On direct question, Ben confirmed he had not personally read the amended sections — Claude
+   Fable 5 performed the technical re-read on his instruction. Per Task 2's original contract ("a
+   human reviewer, not the executing agent, sets the final Decision/Gate-status values") and the
+   threat model's T-08-09 mitigation, this did not satisfy the requirement as originally written.
+   Decision/Gate-status were reverted to `NEEDS HUMAN REVIEW` / `BLOCKED` (commit `cfa43d2`).
+3. When asked to choose between (a) personally doing the read, (b) a fresh independent AI
+   re-check, or (c) explicitly redefining the gate's requirement, Ben chose (c). This is now
+   logged as `DEC-ai-review-satisfies-human-gate` in `.planning/PROJECT.md`'s Key Decisions table
+   — a conscious, visible tradeoff, not a silent one. **Round 1's review** (`planning-docs/DESIGN-REVIEW-v1.2-round1.md`,
+   commit `43055b9`) is now also understood to have been Fable-authored, not Ben's own read;
+   it is accepted under this same decision.
+4. This APPROVED is therefore genuinely authorized — by Ben's explicit, informed, logged decision
+   to change what "human reviewer" means for this project's design gates — not by an
+   agent inferring consent from an ambiguous instruction.
 
-**Round-1 fixes remain verified as applied (unaffected by this correction):** see table above.
+**Round-1 fixes — verification status (all applied, technically verified by the phase verifier
+against live `crates/` source, independent of the Decision-provenance question above):**
+
+| # | Required fix (round 1) | Status |
+|---|------------------------|--------|
+| B1 | I2 per-arg Block takes precedence over the class-level draft-only deny; Step 0.5 moved to run after the loop; TAINT-02 amended | applied |
+| M1 | `PendingConfirmation` carries a resolved-snapshot (`sink` + `resolved_args: Vec<ResolvedArg>`), not a bare `PlanNode` | applied |
+| M2 | `caprun deny <effect_id>` added as a distinct command; interactive `[ Confirm ] [ Deny ]` chooser removed from mock output | applied |
+| M3 | At-most-once semantics stated explicitly; `sink_invocation_failed` Event + dedicated exit-code row added | applied |
+| m1 | Step 0.5 predicate is now an exhaustive `match` over `SessionStatus` | applied |
+| m2 | TAINT-03's test vehicle (test-only sink) named explicitly for Phase 9 | applied |
+| m3 | Redaction of `blocked_literals` MUST also cover `PendingConfirmation.resolved_args` | applied |
 
 > Prior round-1 decision: NEEDS REVISION (`planning-docs/DESIGN-REVIEW-v1.2-round1.md`, commit
-> `43055b9`) — this remains the last decision genuinely made by a human reviewer. Round 2 awaits
-> that same standard: Ben Lamm reading the amended sections end-to-end as an attacker, per the
-> How-to-Verify steps above, and recording his own verdict.
+> `43055b9`). Superseded by this round-2 APPROVED, itself authorized under
+> `DEC-ai-review-satisfies-human-gate`.
 
 ---
 
@@ -218,12 +235,10 @@ happened.
 > implementing session-trust or confirmation-release logic until this record shows
 > Decision: APPROVED and Gate status: UNBLOCKED.**
 
-**`crates/executor` / `crates/brokerd` (session-trust + confirmation-release additions) is: BLOCKED**
+**`crates/executor` / `crates/brokerd` (session-trust + confirmation-release additions) is: UNBLOCKED**
 
 Available resolutions: [ UNBLOCKED / BLOCKED ]
 
-Gate status reverted to BLOCKED pending a genuine human review (see Decision correction above).
-
-Decision: APPROVED is recorded above (round 2, 2026-07-06). Phase 9 and Phase 10 are authorized to
-author `crates/executor`/`crates/brokerd` code against the revised DESIGN docs pinned by the
-round-2 hashes. The prior round-1 gate state was BLOCKED; it is now UNBLOCKED.
+Decision: APPROVED is recorded above (round 2, 2026-07-06, under `DEC-ai-review-satisfies-human-gate`).
+Phase 9 and Phase 10 are authorized to author `crates/executor`/`crates/brokerd` code against the
+revised DESIGN docs pinned by the round-2 hashes.
