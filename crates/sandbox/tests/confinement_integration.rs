@@ -4,18 +4,22 @@
 //!   - read filesystem paths (REQ-sandbox / T-03-03 — `negative_fs`)
 //!   - open outbound network sockets (REQ-sandbox / T-03-04 — `negative_net`)
 //!   - exec new processes (REQ-sandbox / T-03-05 — `negative_exec`)
+//!   - connect() to a real SMTP endpoint, e.g. Mailpit (SMTP-01, T-13-07 —
+//!     `negative_net_smtp_mailpit`)
 //!
 //! Each test spawns the `confine-probe` binary (via `env!("CARGO_BIN_EXE_confine-probe")`)
-//! with the corresponding argument (`fs`, `net`, `exec`). The probe applies
-//! confinement to itself, attempts the forbidden operation, and exits 0 if the
-//! operation was correctly blocked (EACCES or EPERM).
+//! with the corresponding argument (`fs`, `net`, `exec`, `smtp <host> <port>`). The
+//! probe applies confinement to itself, attempts the forbidden operation, and
+//! exits 0 if the operation was correctly blocked (EACCES or EPERM).
 //!
 //! Spawning a fresh single-purpose binary avoids async-signal-safety hazards
 //! that arise from calling fork() inside the multithreaded libtest process.
 //!
 //! All tests are `#[cfg(target_os = "linux")]` — they are not compiled or run
 //! on macOS dev machines. They run on Linux CI (ubuntu ≥ 22.04, Landlock-capable
-//! kernel ≥ 5.13). `cargo test -p sandbox` exits 0 on macOS with 0 tests run.
+//! kernel ≥ 5.13). `cargo test -p sandbox` exits 0 on macOS with 0 tests run —
+//! this is EXPECTED, not a gap (see project CLAUDE.md's "Linux-only security
+//! tests" section). Run via the Colima+Docker recipe to actually execute them.
 
 /// Spawn `confine-probe <op>` and assert it exits 0 (operation correctly blocked).
 #[cfg(target_os = "linux")]
@@ -61,4 +65,45 @@ fn negative_net() {
 #[test]
 fn negative_exec() {
     assert_probe_blocked("exec");
+}
+
+/// A confined worker's direct attempt to `connect()` to the Mailpit SMTP
+/// endpoint is kernel-denied — not merely "the adapter code doesn't call SMTP
+/// from the worker" by inspection (SMTP-01, T-13-07, D-05).
+///
+/// Reuses the SAME seccomp mechanism `negative_net` exercises
+/// (`apply_worker_filter()` denies `socket(AF_INET/AF_INET6, ...)` with
+/// EPERM) via the new `confine-probe smtp <host> <port>` op, pointed at the
+/// real Mailpit host:port so the assertion actually references the target
+/// endpoint rather than a destination-independent probe.
+///
+/// Host/port are read from `CAPRUN_SMTP_HOST`/`CAPRUN_SMTP_PORT` so this test
+/// can run against a live Mailpit sidecar under the project's Colima+Docker
+/// recipe; they default to `127.0.0.1`/`1025` (Mailpit's default SMTP port)
+/// so the test is runnable without the sidecar too — the confinement denial
+/// happens at `socket()`, before any TCP handshake, so no listener needs to
+/// be present for the assertion to hold.
+///
+/// On macOS this test is not compiled (`cargo test -p sandbox` shows "0
+/// passed") — that is expected, not a gap; the kernel-enforced claim is only
+/// verifiable on real Linux.
+#[cfg(target_os = "linux")]
+#[test]
+fn negative_net_smtp_mailpit() {
+    let host = std::env::var("CAPRUN_SMTP_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port = std::env::var("CAPRUN_SMTP_PORT").unwrap_or_else(|_| "1025".to_string());
+
+    let binary = env!("CARGO_BIN_EXE_confine-probe");
+    let status = std::process::Command::new(binary)
+        .args(["smtp", &host, &port])
+        .status()
+        .unwrap_or_else(|e| panic!("failed to spawn confine-probe smtp {host} {port}: {e}"));
+
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "confine-probe smtp {host} {port}: expected exit 0 (correctly blocked) but got {:?}. \
+         Exit codes: 0=blocked, 1=not-blocked, 2=unexpected-error, 100=non-Linux-sentinel",
+        status.code()
+    );
 }
