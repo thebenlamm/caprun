@@ -101,10 +101,20 @@ traceability archived in `.planning/milestones/v1.1-REQUIREMENTS.md`.
       (sink, arg, literal-digest) triple, single-shot; confirm/deny audited and
       anchored to `SinkBlockedAnchor.effect_id`; deny durable. — validated in
       Phase 10 (2026-07-07)
-- [ ] DESIGN doc (session-trust-state + confirmation semantics) gates executor
-      behavior changes.
-- [ ] Live §9-style acceptance: read → demotion → block → human deny (nothing
-      sent) / human confirm (exactly once), unbroken audit chain.
+- [x] DESIGN doc (session-trust-state + confirmation semantics) gates executor
+      behavior changes. — validated in Phase 8 (2026-07-06)
+- [x] Live §9-style acceptance: read → demotion → block → human deny (nothing
+      sent) / human confirm (exactly once), unbroken audit chain. — validated
+      live on real Linux (Colima+Docker) in Phase 11 (2026-07-07): both
+      `live_acceptance_deny_path` and `live_acceptance_confirm_path` pass,
+      `verify_chain()` true, and a pre-existing stale assertion in
+      `s9_live_block.rs` (never previously run on Linux since Phase 9) was
+      caught and fixed as part of this phase.
+
+**All v1.2 requirements are now validated.** Formal milestone close-out
+(archiving to `.planning/milestones/v1.2-REQUIREMENTS.md`, moving this block
+under Validated, cutting the next milestone) happens via
+`/gsd-complete-milestone`, not automatically here.
 
 ### Out of Scope
 
@@ -124,7 +134,19 @@ Do not build any of these until §9 holds (non-goals for v0):
 
 ## Context
 
-- **Current state (v1.1 shipped 2026-07-01):** v0 done (v1.0) + Usable Runtime
+- **Current state (v1.2 requirements complete 2026-07-07, pending formal
+  milestone close-out):** v0 done (v1.0) + Usable Runtime (v1.1) + Tainted
+  Session, Human Gate (v1.2). 11 phases, 34 plans across `runtime-core`,
+  `sandbox`, `brokerd`, `executor`, `adapter-fs`, and the `caprun` binary.
+  Live on real Linux: a session demoted mid-run by a hostile read (I1) has its
+  tainted routing arg Blocked at `file.create` (I2), and a human `caprun
+  deny`/`caprun confirm` either durably blocks the effect or releases it
+  exactly once — one unbroken audit-DAG causal chain
+  (`fd_granted→file_read→session_demoted→sink_blocked→confirm_{denied,granted}`)
+  proven for both outcomes via Colima+Docker (ACC-01/02/03). `cargo test
+  --workspace` green on macOS (Linux-gated tests correctly show as excluded,
+  not "0 passed" gaps).
+- **Prior state (v1.1 shipped 2026-07-01):** v0 done (v1.0) + Usable Runtime
   (v1.1). 7 phases, 30 plans across `runtime-core`, `sandbox`, `brokerd`,
   `executor`, `adapter-fs`, and the `caprun` binary. A real kernel-confined
   `caprun` run drives a live `file.create` sink: hostile input is
@@ -300,13 +322,18 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-07 after Phase 10 (Single-Shot Confirmation Loop)
-completed and verified: `caprun confirm`/`caprun deny` release/deny a blocked
-effect via a durable, effect_id-keyed `PendingConfirmation` checkpoint;
-confirm/deny live in the TCB (`crates/brokerd`), never re-invoke
-`executor::submit_plan_node`, and are anchored to the `sink_blocked` event via
-`parent_id`. Cross-process integration tests prove single-shot release and
-durable deny across separate `caprun` invocations (`cargo test --workspace
---no-fail-fast` green). Next: Phase 11 (live acceptance — tainted session,
-human gate). v1.0 shipped the mechanism proof; v1.1 shipped the live runtime;
-v1.2 is now confirmation-loop complete, pending live acceptance.*
+*Last updated: 2026-07-07 after Phase 11 (Live Acceptance — Tainted Session,
+Human Gate) completed and verified: a new Linux-gated integration test
+(`cli/caprun/tests/live_acceptance_tainted_session.rs`) proves ACC-01/02/03
+live on real Linux via Colima+Docker — hostile read → I1 demotion →
+I2 block → human deny (nothing sent) / human confirm (effect proceeds
+exactly once), one unbroken causal chain (`verify_chain()` true, corrected
+`parent_id` walk) for both outcomes. A pre-existing stale assertion in
+`s9_live_block.rs` (dating to Phase 9's chain-head fix, never previously
+exercised on Linux) was caught and fixed as part of this phase. VERIFICATION.md
+records both the initial gsd-verifier pass (macOS, correctly scored
+human_needed for the Linux-only claims) and the orchestrator's independent
+same-session Colima+Docker re-run that closed the gap with real evidence.
+v1.0 shipped the mechanism proof; v1.1 shipped the live runtime; **v1.2's
+requirements are now all validated** (ACC-01/02/03 complete) — formal
+milestone close-out is the next step, via `/gsd-complete-milestone`.*
