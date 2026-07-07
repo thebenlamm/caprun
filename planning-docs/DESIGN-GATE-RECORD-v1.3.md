@@ -548,7 +548,7 @@ Before setting Decision and Gate status, the reviewer MUST:
 
 ## Decision
 
-**Decision:** NEEDS REVISION
+**Decision:** APPROVED
 
 **Round 1 (COMPLETE, NEEDS REVISION):** 8 findings — 1 BLOCKER, 2 MAJOR, 2 GAP, 1 MUST-RESOLVE, 1
 UNDERSPECIFIED, 1 SHOULD-FIX — all fixed (commits `5dc1e67`, `92c6487`).
@@ -560,17 +560,57 @@ History above). Round 1's provenance-threading fix, blocked-arg-subset digest DE
 `attachment` descope were **CONFIRMED CLOSED**. The round-2 BLOCKER was that round-1's
 "send-in-broker-daemon" mandate is UNBUILDABLE — the broker is ephemeral/session-scoped with no daemon
 binary and no confirm/send control channel — a claim round 1 string-grepped rather than substrate-checked
-(process lesson recorded above). **Round 2 fixes applied (commits: `30addc6` [content-adapter-mediation.md,
+(process lesson recorded above). Round 2 fixes applied (commits: `30addc6` [content-adapter-mediation.md,
 finding #1 daemon reversal + D-04 restatement], `d0ec29a` [both docs, findings #2 at-most-once /
-#3 literal-leak / #4 digest partition-blindness / #5 same-snapshot / #6 grep-gate spec]).** Both docs
-re-hashed in the Documents Under Review table above (round-3 input hashes; full history preserved).
+#3 literal-leak / #4 digest partition-blindness / #5 same-snapshot / #6 grep-gate spec]).
 
-**Awaiting round-3 review by caprun-opus-77's fresh-context panel.** Decision remains NEEDS REVISION
-and MUST NOT be set to APPROVED by this authoring session — only a fresh round-3 adversarial pass by
-the same external panel (confirming the 6 round-2 fixes hold and open no new defect, re-verifying D-21,
-and re-running `shasum -a 256` against the round-3-input hashes) may set Decision: APPROVED / Gate
-status: UNBLOCKED. Per D-11 and the recorded v1.2 revert-when-self-reviewed precedent, this session
-cannot self-approve. This is a normal fix→re-review iteration (v1.2 iterated too).
+**Round 3 (COMPLETE, CLEAN — CONDITIONAL APPROVE):** a fresh-context adversarial panel arranged by
+caprun-opus-77 under `DEC-ai-review-satisfies-human-gate`, independently verified by opus, NOT the
+authoring session (D-11). **No blocker, no major.** Both reviewers independently reached approve-ready;
+round-2's daemon reversal, partition-safe digest, CAS at-most-once, and literal-leak-on-failure fixes
+were all **CONFIRMED CLOSED**, with the at-most-once CAS specifically verified one-winner under SQLite
+locking with no double-send window, and the partition-safe digest verified collision-free. A holistic
+sweep found no dangling daemon references, Done-When matching the document bodies, and cross-document
+agreement. The panel required 3 tightenings before sign-off (all applied, commit `d13385b`, and
+independently re-verified by opus against the committed source, not just the fix report):
+
+1. SMTP endpoint (host:port) sourcing MUST come from trusted local broker config or a hardcoded
+   default — never the audit DB, a plan node, or any block-time-writable field (closes a redirect
+   vector `combined_digest` doesn't cover).
+2. The opaque-payload MUST (no confirmed literal or raw SMTP response in a hashed Event payload) was
+   extended from `email_send_failed` alone to ALL THREE send Events (`email_send_attempted`,
+   `email_send_succeeded`, `email_send_failed`) — closing a success-path variant of the same literal-leak
+   class the round-2 fix closed on the failure path.
+3. Two doc-clarity fixes: a wrong section-name citation for the provenance-threading contract, and a
+   misleading "equivalent" length-prefix digest-encoding alternative retracted and marked non-normative.
+
+Two known, pre-existing, explicitly-out-of-scope items were recorded (not silently dropped, not fixed
+in v1.3): (i) `file.create`'s inherited `Err(_) => Ok(ConfirmedButSinkFailed)` swallow-shape, which
+`email.send`'s design now forbids for itself but does not retroactively fix in the existing sink; (ii)
+a benign `confirm_granted`-appended-before-CAS audit-legibility wart on a losing double-confirm racer,
+already acknowledged in the existing code's comments, non-security (the CAS remains the sole
+authorization gate, so no double-send results).
+
+**Final hashes (post-round-3-tightening, as APPROVED):**
+- `planning-docs/DESIGN-content-adapter-mediation.md`:
+  `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9`
+- `planning-docs/DESIGN-confirm-binding.md`:
+  `fab14ec90db3a8fc5c41864fa045b1db5bf9644615c74bd33530408f35c08c17`
+
+**Authorization and sign-off:** Ben Lamm authorized AI-panel-only adversarial review (no personal
+human read) under `DEC-ai-review-satisfies-human-gate` (`.planning/PROJECT.md` Key Decisions table),
+the same precedent established at v1.2's Phase 8 design gate. Three fresh-context adversarial rounds
+ran in total, each independent of the authoring session per D-11: **Round 1 caught the
+provenance-laundering BLOCKER** (a transform-derived mint could re-anchor its provenance root,
+satisfying the letter of "an unbroken edge exists" while laundering lineage — exactly the "taint
+stapled at the sink proves nothing" failure `CLAUDE.md`'s hard constraint #1 forbids). **Round 2 caught
+the unbuildable-broker-daemon BLOCKER that the coordinator's (caprun-opus-77's) own round-1 mandate had
+introduced** — traced to the actual codebase as "string-grepped, not substrate-checked," the process
+lesson being that an architecturally-plausible-sounding resolution mandate must still be checked
+against the real codebase before being issued, not just asserted. **Round 3 was clean modulo 3
+one-sentence pins**, now applied and independently source-verified by the coordinator.
+caprun-opus-77 (coordinator, delegated milestone-level decision authority by Ben Lamm) signs off on
+this Decision: APPROVED on behalf of the fresh-context adversarial process described above.
 
 ---
 
@@ -580,17 +620,17 @@ cannot self-approve. This is a normal fix→re-review iteration (v1.2 iterated t
 > CONTENT-01, SMTP-05, or CONFIRM-03 until this record shows Decision: APPROVED and Gate status:
 > UNBLOCKED.**
 
-**crates/executor / crates/brokerd (CONTENT-01 / SMTP-05 / CONFIRM-03 additions) is: BLOCKED**
+**crates/executor / crates/brokerd (CONTENT-01 / SMTP-05 / CONFIRM-03 additions) is: UNBLOCKED**
 
 Available resolutions: [ UNBLOCKED / BLOCKED ]
 
-No executor/TCB code for CONTENT-01, SMTP-05, or CONFIRM-03 exists in the repo as of this record
-(round-2 fixes applied, 2026-07-07; commits `30addc6`, `d0ec29a`, atop round-1's `5dc1e67`, `92c6487`) —
-consistent with this phase's documentation-only scope. No `crates/` file and no
-`scripts/check-invariants.sh` change were made in the round-2 fix cycle (the finding-#6 grep gate is a
-DESIGN-level spec for a future phase, not built now). Gate status stays BLOCKED through the round-2
-fix→re-review loop; it is set to UNBLOCKED ONLY after caprun-opus-77's round-3 fresh-context review
-resolves with no unresolved blocker/major and Decision is set to APPROVED. Round 2 finding a BLOCKER
-(finding #1, the unbuildable broker-daemon mandate that round 1 string-grepped rather than
-substrate-checked) and being fixed is the expected, successful "gate earns its cost" outcome — as
-v1.2's B1 and round-1's provenance BLOCKER were — not a process failure.
+No executor/TCB code for CONTENT-01, SMTP-05, or CONFIRM-03 existed in the repo at any point during
+this phase's three review rounds (2026-07-07; commits `5dc1e67`/`92c6487` round 1, `30addc6`/`d0ec29a`
+round 2, `d13385b` round-3 tightenings) — consistent with this phase's documentation-only scope. No
+`crates/` file and no `scripts/check-invariants.sh` change were made at any point (the finding-#6 grep
+gate remains a DESIGN-level spec for a future phase, not built now). Gate status is now **UNBLOCKED**:
+Phases 13-16 may proceed to author `crates/executor`/`crates/brokerd` code implementing CONTENT-01,
+SMTP-05, and CONFIRM-03 against the DESIGN docs pinned by the final hashes above. Three rounds finding
+and fixing real blockers (round 1's provenance-laundering, round 2's unbuildable daemon) before any
+code existed is the expected, successful "gate earns its cost" outcome — as v1.0/v1.2's own design
+gates were — not a process failure.
