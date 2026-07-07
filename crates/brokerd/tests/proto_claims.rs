@@ -100,6 +100,7 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
     let mut store = ValueStore::default();
     let mut last_event_id = Uuid::new_v4();
     let mut last_event_hash = "genesis-hash".to_string();
+    let mut session_status = runtime_core::SessionStatus::Active;
     // ProvideIntent never exercises RequestFd; any valid dir anchors the root.
     let ws_root = Arc::new(
         adapter_fs::workspace::WorkspaceRoot::open(std::env::temp_dir().as_path())
@@ -123,6 +124,7 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
         &mut last_event_hash,
         &mut store,
         &ws_root,
+        &mut session_status,
     )
     .await
     .expect("dispatch ProvideIntent must succeed");

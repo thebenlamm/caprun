@@ -47,7 +47,7 @@ use adapter_fs::pass_fd;
 use anyhow::Context;
 use chrono::Utc;
 use executor::value_store::ValueStore;
-use runtime_core::Event;
+use runtime_core::{Event, SeedProvenance, SessionStatus};
 use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -73,6 +73,10 @@ const MAX_MSG_SIZE: usize = 64 * 1024;
 /// * `session_id_uuid`       — broker-authoritative session identity (HARD-03).
 /// * `initial_last_event_id` — id of the `session_created` event minted upstream.
 /// * `initial_last_event_hash` — hash of that event row (chain anchor).
+/// * `initial_session_status` — the session's status at creation time (from
+///   `create_session`'s result), seeded into every connection's per-connection
+///   `session_status` local (threaded exactly like `initial_last_event_id`/
+///   `initial_last_event_hash`, RESEARCH Pitfall 2).
 ///
 /// The `value_store` is NO LONGER a parameter — it is created fresh per
 /// connection inside `handle_connection` to enforce session-scoped resolution.
@@ -84,6 +88,7 @@ pub async fn run_broker_server(
     session_id_uuid: Uuid,
     initial_last_event_id: Uuid,
     initial_last_event_hash: String,
+    initial_session_status: SessionStatus,
     workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
 ) -> anyhow::Result<()> {
     // Approach A: tokio detects the leading NUL and calls from_abstract_name internally.
@@ -97,6 +102,7 @@ pub async fn run_broker_server(
         let workspace_root_clone = workspace_root.clone();
         // Pass connection state by value — each connection owns its own chain state.
         let initial_hash = initial_last_event_hash.clone();
+        let initial_status = initial_session_status.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_connection(
                 stream,
@@ -104,6 +110,7 @@ pub async fn run_broker_server(
                 session_id_uuid,
                 initial_last_event_id,
                 initial_hash,
+                initial_status,
                 workspace_root_clone,
             )
             .await
@@ -120,18 +127,25 @@ pub async fn run_broker_server(
 /// Guard: length > 64 KiB → reject with Error response, never allocate.
 ///
 /// Owns a per-connection `ValueStore` (HARD-03: session-scoped resolution) and
-/// threads `last_event_id` / `last_event_hash` across every message so each
-/// appended event chains causally onto the previous one.
+/// threads `last_event_id` / `last_event_hash` / `session_status` across every
+/// message so each appended event chains causally onto the previous one and
+/// the session's trust state is resolved from broker-owned in-memory state,
+/// never re-derived from IPC (RESEARCH Pitfall 2).
 async fn handle_connection(
     mut stream: tokio::net::UnixStream,
     conn: Arc<Mutex<rusqlite::Connection>>,
     session_id: Uuid,
     mut last_event_id: Uuid,
     mut last_event_hash: String,
+    initial_session_status: SessionStatus,
     workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
 ) -> anyhow::Result<()> {
     // Per-connection ValueStore — scoped to this session ONLY (HARD-03 fix).
     let mut value_store = ValueStore::default();
+    // Per-connection session_status local — seeded from create_session's
+    // result, updated in place after mint_from_read demotes (never re-queried
+    // from the DB per call, DESIGN §4, RESEARCH Pitfall 2).
+    let mut session_status = initial_session_status;
 
     loop {
         // Read 4-byte LE length prefix; clean EOF ends the connection loop.
@@ -183,6 +197,7 @@ async fn handle_connection(
             &mut last_event_hash,
             &mut value_store,
             &workspace_root,
+            &mut session_status,
         )
         .await?;
     }
@@ -196,6 +211,10 @@ async fn handle_connection(
 ///
 /// `last_event_id` / `last_event_hash` are advanced (after a successful append)
 /// by every arm that records an event, preserving the causal chain.
+/// `session_status` is the broker-owned, per-connection trust-state local —
+/// advanced to `Draft` after `ReportClaims` demotes, and passed by reference
+/// (never re-derived from IPC/PlanNode) into `executor::submit_plan_node`
+/// (DESIGN-session-trust-state.md §4/§11 condition 0).
 pub async fn dispatch_request(
     request: BrokerRequest,
     stream: &mut tokio::net::UnixStream,
@@ -205,19 +224,33 @@ pub async fn dispatch_request(
     last_event_hash: &mut String,
     value_store: &mut ValueStore,
     workspace_root: &Arc<adapter_fs::workspace::WorkspaceRoot>,
+    session_status: &mut SessionStatus,
 ) -> anyhow::Result<()> {
     match request {
         BrokerRequest::CreateSession { intent_id } => {
             // Session-independent: mints its own fresh session (parent_id None);
-            // does NOT thread the connection chain.
-            let session = create_session(intent_id);
+            // does NOT thread the connection chain. This in-broker IPC path is
+            // test-only (the live cli/caprun path calls create_session directly,
+            // not through this arm) and always seeds SeedProvenance::TrustedArg.
+            let seed_provenance = SeedProvenance::TrustedArg;
+            let session = create_session(intent_id, seed_provenance.clone());
             let new_session_id = session.id;
 
+            // ORIGIN-01: record the seed-provenance determination in the
+            // session_created Event. `Event` carries no free-form metadata
+            // field (its serialized form IS the audit `payload` column), so
+            // the provenance tag rides in `actor` — still part of the hashed
+            // payload — as an explicit, exhaustively-matched tag (never a
+            // silent default).
+            let actor = match seed_provenance {
+                SeedProvenance::TrustedArg => "broker:seed_provenance=trusted_arg",
+                SeedProvenance::FileDerived => "broker:seed_provenance=file_derived",
+            };
             let event = Event::new(
                 Uuid::new_v4(),
                 None,
                 new_session_id,
-                "broker".into(),
+                actor.into(),
                 "session_created".into(),
                 Utc::now(),
                 vec![],
@@ -321,7 +354,7 @@ pub async fn dispatch_request(
                         value: path,
                     },
                 };
-                let (read_event_id, read_hash, value_id) = {
+                let (_read_event_id, _read_hash, value_id, demoted_event_id, demoted_hash) = {
                     let locked = conn
                         .lock()
                         .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
@@ -337,8 +370,20 @@ pub async fn dispatch_request(
                         Some(last_event_hash),
                     )?
                 };
-                *last_event_id = read_event_id;
-                *last_event_hash = read_hash;
+                // Advance the chain head to `session_demoted` — the LAST event
+                // mint_from_read appended — NOT to the file_read event. Using
+                // file_read's own id/hash here would make the NEXT appended
+                // event a SIBLING of session_demoted (both children of
+                // file_read), forking the causal DAG and breaking
+                // audit::verify_chain's single-linear-chain walk.
+                *last_event_id = demoted_event_id;
+                *last_event_hash = demoted_hash;
+                // mint_from_read already demoted the session's DB row to Draft
+                // (TAINT-01, atomically with the file_read append above). Update
+                // the in-memory per-connection local to match — unconditionally,
+                // since Draft is one-way/idempotent (mirrors how *last_event_id/
+                // *last_event_hash are updated after each append).
+                *session_status = SessionStatus::Draft;
                 value_ids.push(value_id);
             }
             send_response(stream, &BrokerResponse::ClaimsReceived { value_ids }).await?;
@@ -349,8 +394,15 @@ pub async fn dispatch_request(
             // executor — the executor never mints a Uuid (DESIGN §4 rule 2).
             let effect_id = Uuid::new_v4();
             // session_id comes from the connection — NEVER from the IPC message (HARD-03).
-            let decision =
-                executor::submit_plan_node(session_id, effect_id, &plan_node, value_store);
+            // session_status likewise — broker-owned, per-connection state, NEVER
+            // read from plan_node/IPC (DESIGN §4/§11 condition 0).
+            let decision = executor::submit_plan_node(
+                session_id,
+                effect_id,
+                &plan_node,
+                value_store,
+                &*session_status,
+            );
 
             // Durably record the decision BEFORE returning any response (ACC-02).
             // Fail-closed: an append error propagates with `?`, so the block is

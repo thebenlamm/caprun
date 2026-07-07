@@ -35,6 +35,7 @@ use brokerd::quarantine::{mint_from_read, Claim};
 use brokerd::server::dispatch_request;
 use executor::value_store::ValueStore;
 use runtime_core::plan_node::{PlanArg, PlanNode, SinkId, TaintLabel, ValueId};
+use runtime_core::SessionStatus;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -99,13 +100,22 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
         claim_type: "relative_path".into(),
         value: HOSTILE_PATH.into(),
     };
-    let (read_event_id, read_hash, path_value_id) = {
+    let (read_event_id, _read_hash, path_value_id, demoted_event_id, demoted_hash) = {
         let locked = conn.lock().unwrap();
         mint_from_read(&locked, &mut store, session_id, &claim, None, None).expect("mint_from_read")
     };
 
-    let mut last_event_id = read_event_id;
-    let mut last_event_hash = read_hash;
+    // Chain onto the session_demoted event (the LAST event mint_from_read
+    // appended) — not the file_read event (`read_event_id`, still returned
+    // below as the genuine-taint anchor identity) — to avoid forking the
+    // causal DAG (see mint_from_read's doc comment).
+    let mut last_event_id = demoted_event_id;
+    let mut last_event_hash = demoted_hash;
+    // mint_from_read above already demoted this session to Draft in the DB
+    // (TAINT-01); this harness thread mirrors the broker's in-memory local
+    // starting from an Active seed and preserves this test's existing
+    // Active-session semantics (a block on I2 fires regardless of session_status).
+    let mut session_status = SessionStatus::Active;
 
     // `path` is FIRST so the executor blocks on the tainted routing-sensitive arg
     // before it ever resolves `contents` (a block short-circuits — `contents` is
@@ -136,6 +146,7 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
         &mut last_event_hash,
         &mut store,
         &ws_root(),
+        &mut session_status,
     )
     .await
     .expect("dispatch_request must succeed once the block append is durable");

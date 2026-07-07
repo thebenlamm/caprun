@@ -18,6 +18,7 @@ mod linux_tests {
     use brokerd::proto::{BrokerRequest, BrokerResponse};
     use brokerd::server::run_broker_server;
     use rusqlite::Connection;
+    use runtime_core::SessionStatus;
     use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use uuid::Uuid;
@@ -70,6 +71,7 @@ mod linux_tests {
                 Uuid::new_v4(),
                 Uuid::new_v4(),
                 String::new(),
+                SessionStatus::Active,
                 ws_root,
             )
             .await;
@@ -121,6 +123,7 @@ mod linux_tests {
                 Uuid::new_v4(),
                 Uuid::new_v4(),
                 String::new(),
+                SessionStatus::Active,
                 ws_root,
             )
             .await;

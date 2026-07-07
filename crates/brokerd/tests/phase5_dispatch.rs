@@ -25,7 +25,7 @@ use brokerd::quarantine::{mint_from_read, Claim};
 use brokerd::server::dispatch_request;
 use executor::value_store::ValueStore;
 use runtime_core::plan_node::{PlanArg, PlanNode, SinkId};
-use runtime_core::ExecutorDecision;
+use runtime_core::{ExecutorDecision, SessionStatus};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -70,7 +70,7 @@ fn mint_anchors_provenance_to_file_read_event() {
         value: HOSTILE_ADDR.into(),
     };
 
-    let (read_event_id, _hash, value_id) =
+    let (read_event_id, _hash, value_id, _demoted_id, _demoted_hash) =
         mint_from_read(&conn, &mut store, session_id, &claim, None, None).expect("mint_from_read");
 
     // The resolved record's provenance chain anchors to the returned read event id.
@@ -105,7 +105,7 @@ fn handle_from_other_connection_store_is_denied() {
         claim_type: "email_address".into(),
         value: HOSTILE_ADDR.into(),
     };
-    let (_id, _hash, value_id) =
+    let (_id, _hash, value_id, _demoted_id, _demoted_hash) =
         mint_from_read(&conn, &mut store_a, session_id, &claim, None, None).expect("mint_from_read");
 
     // Sanity: in store A the same plan blocks (the value is tainted + routing-sensitive).
@@ -114,6 +114,7 @@ fn handle_from_other_connection_store_is_denied() {
         Uuid::new_v4(),
         &email_plan(value_id.clone()),
         &store_a,
+        &SessionStatus::Active,
     );
     assert!(
         matches!(decision_a, ExecutorDecision::BlockedPendingConfirmation { .. }),
@@ -122,8 +123,13 @@ fn handle_from_other_connection_store_is_denied() {
 
     // Connection B has a DISTINCT empty store — the same handle does not resolve.
     let store_b = ValueStore::default();
-    let decision_b =
-        executor::submit_plan_node(session_id, Uuid::new_v4(), &email_plan(value_id), &store_b);
+    let decision_b = executor::submit_plan_node(
+        session_id,
+        Uuid::new_v4(),
+        &email_plan(value_id),
+        &store_b,
+        &SessionStatus::Active,
+    );
     assert!(
         matches!(decision_b, ExecutorDecision::Denied { .. }),
         "cross-connection handle must resolve None → Denied, got {decision_b:?}"
@@ -170,13 +176,17 @@ async fn block_appends_durable_causal_sink_blocked() {
         claim_type: "email_address".into(),
         value: HOSTILE_ADDR.into(),
     };
-    let (read_event_id, read_hash, value_id) = {
+    let (_read_event_id, _read_hash, value_id, demoted_event_id, demoted_hash) = {
         let locked = conn.lock().unwrap();
         mint_from_read(&locked, &mut store, session_id, &claim, None, None).expect("mint_from_read")
     };
 
-    let mut last_event_id = read_event_id;
-    let mut last_event_hash = read_hash;
+    // Chain onto the session_demoted event (the LAST event mint_from_read
+    // appended) — not the file_read event — to avoid forking the causal DAG
+    // (see mint_from_read's doc comment).
+    let mut last_event_id = demoted_event_id;
+    let mut last_event_hash = demoted_hash;
+    let mut session_status = SessionStatus::Active;
 
     // Drive the real dispatch_request SubmitPlanNode arm over a UnixStream pair.
     let (mut server_end, _client_end) =
@@ -192,6 +202,7 @@ async fn block_appends_durable_causal_sink_blocked() {
         &mut last_event_hash,
         &mut store,
         &ws_root(),
+        &mut session_status,
     )
     .await
     .expect("dispatch_request must succeed once the append is durable");
@@ -233,7 +244,7 @@ async fn append_failure_is_fail_closed() {
         claim_type: "email_address".into(),
         value: HOSTILE_ADDR.into(),
     };
-    let (read_event_id, read_hash, value_id) = {
+    let (_read_event_id, _read_hash, value_id, demoted_event_id, demoted_hash) = {
         let locked = conn.lock().unwrap();
         mint_from_read(&locked, &mut store, session_id, &claim, None, None).expect("mint_from_read")
     };
@@ -253,8 +264,12 @@ async fn append_failure_is_fail_closed() {
         locked.execute("DROP TABLE events", []).expect("drop events table");
     }
 
-    let mut last_event_id = read_event_id;
-    let mut last_event_hash = read_hash;
+    // Chain onto the session_demoted event (the LAST event mint_from_read
+    // appended), mirroring the fix above — not load-bearing for this test's
+    // assertion (the table is already dropped), but kept consistent.
+    let mut last_event_id = demoted_event_id;
+    let mut last_event_hash = demoted_hash;
+    let mut session_status = SessionStatus::Active;
 
     let (mut server_end, _client_end) =
         tokio::net::UnixStream::pair().expect("UnixStream::pair");
@@ -269,6 +284,7 @@ async fn append_failure_is_fail_closed() {
         &mut last_event_hash,
         &mut store,
         &ws_root(),
+        &mut session_status,
     )
     .await;
 
@@ -279,7 +295,7 @@ async fn append_failure_is_fail_closed() {
         "audit append failure must propagate as Err (fail-closed) — block not reported durable"
     );
     assert_eq!(
-        last_event_id, read_event_id,
+        last_event_id, demoted_event_id,
         "chain head must NOT advance when the durable append failed"
     );
 }

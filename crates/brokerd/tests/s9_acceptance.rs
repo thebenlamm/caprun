@@ -22,7 +22,7 @@ use brokerd::audit::{find_event_by_type, open_audit_db, verify_chain};
 use brokerd::quarantine::{extract_email_claims, mint_from_intent, mint_from_read};
 use executor::value_store::ValueStore;
 use runtime_core::plan_node::{PlanArg, PlanNode, SinkId, TaintLabel};
-use runtime_core::ExecutorDecision;
+use runtime_core::{ExecutorDecision, SessionStatus};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -94,7 +94,7 @@ fn s9_acceptance() {
     // grep on this file for "store.mint" enforces this invariant in CI.
     // -----------------------------------------------------------------------
     let claim = &claims[0];
-    let (read_event_id, _read_hash, value_id) =
+    let (read_event_id, _read_hash, value_id, _demoted_id, _demoted_hash) =
         mint_from_read(&conn, &mut store, session_id, claim, None, None)
             .expect("mint_from_read failed");
 
@@ -121,7 +121,8 @@ fn s9_acceptance() {
     // -----------------------------------------------------------------------
     // The broker mints the effect identity (HARD-06) and passes it to the executor.
     let effect_id = Uuid::new_v4();
-    let decision = executor::submit_plan_node(session_id, effect_id, &plan_node, &store);
+    let decision =
+        executor::submit_plan_node(session_id, effect_id, &plan_node, &store, &SessionStatus::Active);
 
     let (anchor, literal_value) = match decision {
         ExecutorDecision::BlockedPendingConfirmation { anchor, literal } => (anchor, literal),
@@ -313,7 +314,13 @@ fn clean_path_intent_value_evaluates_to_allowed() {
     // UserTrusted-only provenance must NOT block — record.taint.iter().any(|t| t.is_untrusted())
     // returns false for [UserTrusted], so the executor returns Allowed.
     // -----------------------------------------------------------------------
-    let decision = executor::submit_plan_node(session_id, Uuid::new_v4(), &plan_node, &store);
+    let decision = executor::submit_plan_node(
+        session_id,
+        Uuid::new_v4(),
+        &plan_node,
+        &store,
+        &SessionStatus::Active,
+    );
 
     assert!(
         matches!(decision, ExecutorDecision::Allowed),
@@ -400,7 +407,7 @@ fn s9_acceptance_file_create_path_block() {
         claim_type: "relative_path".into(),
         value: hostile_path.into(),
     };
-    let (read_event_id, _read_hash, path_value_id) =
+    let (read_event_id, _read_hash, path_value_id, _demoted_id, _demoted_hash) =
         mint_from_read(&conn, &mut store, session_id, &claim, None, None).expect("mint_from_read failed");
 
     // file.create requires {path, contents}. `path` is FIRST and tainted, so the
@@ -422,7 +429,8 @@ fn s9_acceptance_file_create_path_block() {
     };
 
     let effect_id = Uuid::new_v4();
-    let decision = executor::submit_plan_node(session_id, effect_id, &plan_node, &store);
+    let decision =
+        executor::submit_plan_node(session_id, effect_id, &plan_node, &store, &SessionStatus::Active);
     let (anchor, block_literal) = match decision {
         ExecutorDecision::BlockedPendingConfirmation { anchor, literal } => (anchor, literal),
         other => panic!(

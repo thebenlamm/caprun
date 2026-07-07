@@ -29,16 +29,21 @@ pub mod approval;
 /// This function is the sole public effect entry point for brokerd. It takes a
 /// PlanNode (opaque-handle args only) and returns an `ExecutorDecision`. There is
 /// no path from a raw `EffectRequest` or literal value directly to a sink. (planner-discipline-allow)
+///
+/// `session_status` is forwarded to `executor::submit_plan_node` unchanged
+/// (RESEARCH Open Question 1: extend rather than delete this wrapper). Callers
+/// preserving today's behavior pass `&SessionStatus::Active`.
 pub fn submit_plan_node(
     session_id: uuid::Uuid,
     plan: runtime_core::PlanNode,
     store: &executor::value_store::ValueStore,
+    session_status: &runtime_core::SessionStatus,
 ) -> runtime_core::ExecutorDecision {
     // The broker mints the effect identity (HARD-06, DESIGN §4 rule 2) — the
     // executor never mints a Uuid. The live dispatch path (server.rs) does the
     // same before appending the durable sink_blocked anchor.
     let effect_id = uuid::Uuid::new_v4();
-    executor::submit_plan_node(session_id, effect_id, &plan, store)
+    executor::submit_plan_node(session_id, effect_id, &plan, store, session_status)
 }
 
 #[cfg(test)]
@@ -55,13 +60,14 @@ mod tests {
     /// registered sink to exercise the Allowed path.
     #[test]
     fn submit_plan_node_empty_args_returns_allowed() {
+        use runtime_core::SessionStatus;
         let session_id = Uuid::new_v4();
         let plan = PlanNode {
             sink: SinkId("email.send".into()),
             args: vec![],
         };
         let store = ValueStore::default();
-        let result = submit_plan_node(session_id, plan, &store);
+        let result = submit_plan_node(session_id, plan, &store, &SessionStatus::Active);
         assert_eq!(result, ExecutorDecision::Allowed);
     }
 
@@ -69,14 +75,14 @@ mod tests {
     /// a sink absent from `KNOWN_SINKS` is denied BEFORE any resolve/sensitivity.
     #[test]
     fn submit_plan_node_unknown_sink_denied() {
-        use runtime_core::DenyReason;
+        use runtime_core::{DenyReason, SessionStatus};
         let session_id = Uuid::new_v4();
         let plan = PlanNode {
             sink: SinkId("test.sink".into()),
             args: vec![],
         };
         let store = ValueStore::default();
-        let result = submit_plan_node(session_id, plan, &store);
+        let result = submit_plan_node(session_id, plan, &store, &SessionStatus::Active);
         assert_eq!(
             result,
             ExecutorDecision::Denied {
