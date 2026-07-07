@@ -3,11 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: — Doc → Action Assistant
 current_phase: 13
-status: planned
+current_phase_name: Real Broker-Mediated SMTP Adapter
+status: executing
 stopped_at: Phase 13 planned (4 plans, 3 waves); ready for execution
-last_updated: "2026-07-07T22:28:24.153Z"
+last_updated: "2026-07-07T22:32:56.126Z"
 last_activity: 2026-07-07
-last_activity_desc: Phase 12 marked complete
+last_activity_desc: Phase 13 execution started
 progress:
   total_phases: 6
   completed_phases: 1
@@ -23,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — now extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, and (v1.3, in progress) with content-sensitive body blocking plus a real broker-mediated SMTP send, both proven live on real Linux.
-**Current focus:** v1.3 in progress (Phases 12-17). Phase 12 (DESIGN-01 gate) is APPROVED/complete. Phase 13 (Real Broker-Mediated SMTP Adapter) is planned (4 plans, 3 waves) and ready to execute. Next: `/gsd-execute-phase 13`.
+**Current focus:** Phase 13 — Real Broker-Mediated SMTP Adapter
 
 ## Current Position
 
-Phase: 13 — Real Broker-Mediated SMTP Adapter (planned, ready to execute)
-Plan: 4 plans (13-01..13-04) across 3 waves — none executed yet
-Status: Ready to execute
-Last activity: 2026-07-07 — Phase 13 planned (RESEARCH.md + 4 PLAN.md, verification passed)
+Phase: 13 (Real Broker-Mediated SMTP Adapter) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 13
+Last activity: 2026-07-07 — Phase 13 execution started
 
 ## Performance Metrics
 
