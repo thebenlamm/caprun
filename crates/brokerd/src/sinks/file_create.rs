@@ -35,6 +35,7 @@ use uuid::Uuid;
 use adapter_fs::workspace::WorkspaceRoot;
 
 use crate::audit::append_event;
+use crate::confirmation::ResolvedArg;
 
 /// Invoke the live `file.create` sink for an `Allowed` plan node.
 ///
@@ -124,6 +125,99 @@ fn resolve_arg(store: &ValueStore, plan_node: &PlanNode, name: &str) -> Result<S
         .resolve(&arg.value_id)
         .ok_or_else(|| anyhow::anyhow!("file.create `{name}` handle did not resolve"))?;
     Ok(record.literal.clone())
+}
+
+/// Look up a named literal directly from a frozen `ResolvedArg` snapshot.
+fn resolved_literal<'a>(resolved_args: &'a [ResolvedArg], name: &str) -> Result<&'a str> {
+    resolved_args
+        .iter()
+        .find(|a| a.name == name)
+        .map(|a| a.literal.as_str())
+        .ok_or_else(|| anyhow::anyhow!("frozen resolved_args missing `{name}` arg"))
+}
+
+/// Re-invoke the live `file.create` sink from a FROZEN `ResolvedArg` snapshot
+/// (confirm-time re-invocation; DESIGN-confirmation-release.md Step 4a.4).
+///
+/// A `ValueStore`-free sibling of `invoke_file_create`: this is called by a later,
+/// separate `caprun confirm` process after a human has released exactly one
+/// (sink, arg, literal-digest) triple. The literals are already adjudicated and
+/// frozen at Block time (`crate::confirmation::PendingConfirmation.resolved_args`)
+/// — this function never constructs a `ValueStore`, never calls `store.resolve`,
+/// never calls `store.mint`, and never calls `executor::submit_plan_node` (I2 is
+/// neither re-run nor bypassable here; T-10-05 / CON-i2-non-bypassable).
+///
+/// Copies `invoke_file_create`'s two-phase durable-audit structure verbatim,
+/// changing ONLY the arg source (`resolved_args` lookup instead of
+/// `ValueStore::resolve`). On a filesystem error this appends a
+/// `sink_invocation_failed` event (NOT `sink_execution_failed` — that event type
+/// is reserved for the allow-path's `invoke_file_create`, distinguishing a
+/// confirm-time sink failure from an allow-time one per DESIGN Step 4a.5), THEN
+/// propagates the original error (no retry).
+///
+/// # Arguments
+/// * `conn`            — open rusqlite connection (broker-owned).
+/// * `session_id`      — the Session the blocked plan node belonged to.
+/// * `effect_id`       — the SAME `effect_id` as the original block's anchor.
+/// * `resolved_args`   — the frozen `ResolvedArg` snapshot from `PendingConfirmation`.
+/// * `workspace_root`  — the workspace root reopened at confirm time (same root the
+///   broker opened at Block time; `PendingConfirmation.workspace_root_path`).
+/// * `parent_id`       — causal predecessor event id.
+/// * `parent_hash`     — hash of that predecessor row (chain anchor).
+///
+/// # Returns
+/// `(event_id, hash)` of the appended `sink_executed` event on success.
+///
+/// # Errors
+/// On a filesystem error a `sink_invocation_failed` event is durably appended
+/// FIRST, then the original error is propagated (no retry).
+#[allow(clippy::too_many_arguments)]
+pub fn invoke_file_create_from_resolved(
+    conn: &rusqlite::Connection,
+    session_id: Uuid,
+    effect_id: Uuid,
+    resolved_args: &[ResolvedArg],
+    workspace_root: &WorkspaceRoot,
+    parent_id: Uuid,
+    parent_hash: &str,
+) -> Result<(Uuid, String)> {
+    // Look up the frozen literals directly — never re-resolve, never re-decide.
+    let path = resolved_literal(resolved_args, "path")?;
+    let contents = resolved_literal(resolved_args, "contents")?;
+
+    match workspace_root.create_exclusive_within(path, contents.as_bytes()) {
+        Ok(()) => {
+            let event = Event::new(
+                Uuid::new_v4(),
+                Some(parent_id),
+                session_id,
+                format!("sink:file.create:{effect_id}"),
+                "sink_executed".into(),
+                Utc::now(),
+                vec![], // the executed effect carries no taint (frozen literal was adjudicated)
+            );
+            let hash = append_event(conn, &event, Some(parent_hash))
+                .context("append sink_executed")?;
+            Ok((event.id, hash))
+        }
+        Err(e) => {
+            // Two-phase durable audit: record an explicit indeterminate outcome,
+            // then propagate. NO automatic retry. Distinct event type from the
+            // allow-path's `sink_execution_failed` (DESIGN Step 4a.5).
+            let event = Event::new(
+                Uuid::new_v4(),
+                Some(parent_id),
+                session_id,
+                format!("sink:file.create:{effect_id}"),
+                "sink_invocation_failed".into(),
+                Utc::now(),
+                vec![],
+            );
+            append_event(conn, &event, Some(parent_hash))
+                .context("append sink_invocation_failed")?;
+            Err(anyhow::Error::new(e).context("file.create create_exclusive_within (from_resolved) failed"))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -242,6 +336,133 @@ mod tests {
                 .unwrap()
                 .is_none(),
             "no sink_executed on the failure path"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // ── invoke_file_create_from_resolved (10-02 Task 3, frozen-literal re-invocation) ──
+
+    /// A minimal 2-element ResolvedArg snapshot for {path, contents} — mirrors
+    /// what a `PendingConfirmation.resolved_args` payload would carry.
+    fn resolved_args_for(path: &str, contents: &str) -> Vec<ResolvedArg> {
+        let ev = Uuid::new_v4();
+        vec![
+            ResolvedArg {
+                name: "path".into(),
+                value_id: runtime_core::plan_node::ValueId::new(),
+                literal: path.to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![ev],
+            },
+            ResolvedArg {
+                name: "contents".into(),
+                value_id: runtime_core::plan_node::ValueId::new(),
+                literal: contents.to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![ev],
+            },
+        ]
+    }
+
+    /// Seed a causal-root event in a fresh in-memory DB. Returns (conn, session_id, root_id, root_hash).
+    fn seed_root() -> (rusqlite::Connection, Uuid, Uuid, String) {
+        let conn = open_audit_db(":memory:").unwrap();
+        let session_id = Uuid::new_v4();
+        let root = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "session_created".into(),
+            Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(&conn, &root, None).unwrap();
+        (conn, session_id, root.id, root_hash)
+    }
+
+    /// On success, invoke_file_create_from_resolved creates the file from frozen
+    /// literals (never a ValueStore) and records a chained `sink_executed` event.
+    #[test]
+    fn invoke_file_create_from_resolved_success_records_sink_executed() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_fc_resolved_ok_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let (conn, session_id, parent_id, parent_hash) = seed_root();
+        let effect_id = Uuid::new_v4();
+        let resolved_args = resolved_args_for("created.txt", "hi");
+
+        let (evt_id, hash) = invoke_file_create_from_resolved(
+            &conn,
+            session_id,
+            effect_id,
+            &resolved_args,
+            &ws,
+            parent_id,
+            &parent_hash,
+        )
+        .expect("invoke_file_create_from_resolved must succeed on a fresh path");
+
+        assert!(!hash.is_empty());
+        let on_disk = std::fs::read_to_string(root.join("created.txt")).unwrap();
+        assert_eq!(on_disk, "hi");
+
+        let evt = find_event_by_type(&conn, &session_id.to_string(), "sink_executed")
+            .unwrap()
+            .expect("sink_executed event must exist");
+        assert_eq!(evt.id, evt_id);
+        assert_eq!(evt.actor, format!("sink:file.create:{effect_id}"));
+        assert_eq!(evt.parent_id, Some(parent_id));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// On a pre-existing target path, invoke_file_create_from_resolved records a
+    /// `sink_invocation_failed` event (NOT `sink_execution_failed`) and propagates
+    /// the error; the original file is left untouched.
+    #[test]
+    fn invoke_file_create_from_resolved_failure_records_sink_invocation_failed() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_fc_resolved_err_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("dup.txt"), b"original").unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let (conn, session_id, parent_id, parent_hash) = seed_root();
+        let effect_id = Uuid::new_v4();
+        let resolved_args = resolved_args_for("dup.txt", "clobber");
+
+        let result = invoke_file_create_from_resolved(
+            &conn,
+            session_id,
+            effect_id,
+            &resolved_args,
+            &ws,
+            parent_id,
+            &parent_hash,
+        );
+        assert!(result.is_err(), "exclusive create on an existing path must fail");
+
+        assert_eq!(std::fs::read_to_string(root.join("dup.txt")).unwrap(), "original");
+
+        let evt = find_event_by_type(&conn, &session_id.to_string(), "sink_invocation_failed")
+            .unwrap()
+            .expect("sink_invocation_failed event must exist");
+        assert_eq!(evt.parent_id, Some(parent_id));
+        assert!(
+            find_event_by_type(&conn, &session_id.to_string(), "sink_executed")
+                .unwrap()
+                .is_none(),
+            "no sink_executed on the failure path"
+        );
+        assert!(
+            find_event_by_type(&conn, &session_id.to_string(), "sink_execution_failed")
+                .unwrap()
+                .is_none(),
+            "sink_invocation_failed must be distinct from the allow-path's sink_execution_failed"
         );
 
         std::fs::remove_dir_all(&root).ok();
