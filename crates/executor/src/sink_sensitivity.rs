@@ -9,6 +9,48 @@
 
 use runtime_core::plan_node::SinkId;
 
+/// A sink-level effect classification (DESIGN-session-trust-state.md §6),
+/// mirroring the locked 3-class `Effect` ontology in `runtime_core::effect`.
+/// Exactly three variants — do NOT add a fourth. This is returned by a
+/// hardcoded classifier keyed by `SinkId`, never a `PlanNode` field
+/// (`CON-i2-non-bypassable`, `DEC-architectural-lock-plan-nodes`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum EffectClass {
+    Observe,
+    MutateReversible,
+    CommitIrreversible,
+}
+
+/// Returns the hardcoded `EffectClass` for `sink`.
+///
+/// v0/v1.2 mapping: both live sinks (`email.send`, `file.create`) are
+/// `CommitIrreversible` (irreversible/external effects). Unknown sinks are
+/// fail-closed to `CommitIrreversible` (the most restrictive class) — never a
+/// permissive default. In practice this branch is unreachable in the live
+/// path because Step 0's schema gate (`sink_schema::validate_schema`) already
+/// rejects unregistered sinks before `sink_effect_class` is ever consulted
+/// (DESIGN §6, Accepted Residual Risk 2); it is specified explicitly here so a
+/// future refactor that reorders/removes that gate cannot silently reintroduce
+/// a permissive default.
+///
+/// This is an internal `&str` match on the sink name (permitted to keep a `_`
+/// arm per DESIGN §10) — NOT a match over the `EffectClass` enum itself; every
+/// call site that matches on the RETURNED `EffectClass` must still be
+/// exhaustive with no wildcard.
+pub fn sink_effect_class(sink: &SinkId) -> EffectClass {
+    match sink.0.as_str() {
+        "email.send" => EffectClass::CommitIrreversible,
+        "file.create" => EffectClass::CommitIrreversible,
+        // #[cfg(test)] fixture (DESIGN §9 Pitfall m2 / RESEARCH Pitfall 3): the
+        // ONLY vehicle that makes TAINT-03 (Draft + Observe still Allowed)
+        // testable end-to-end, since both live sinks are CommitIrreversible.
+        // Never present in a production (non-test) build.
+        #[cfg(test)]
+        "test.observe" => EffectClass::Observe,
+        _ => EffectClass::CommitIrreversible,
+    }
+}
+
 /// Args of email.send that determine WHERE the effect is delivered.
 /// A tainted value in any of these args → `ExecutorDecision::BlockedPendingConfirmation`.
 pub const EMAIL_SEND_ROUTING_SENSITIVE: &[&str] = &["to", "cc", "bcc"];
@@ -101,5 +143,42 @@ mod tests {
     fn unknown_sink_not_routing_sensitive() {
         assert!(!is_routing_sensitive(&other(), "to"));
         assert!(!is_routing_sensitive(&other(), "url"));
+    }
+
+    // -----------------------------------------------------------------
+    // sink_effect_class (TAINT-02/03 classifier)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn email_send_is_commit_irreversible() {
+        assert_eq!(
+            sink_effect_class(&SinkId("email.send".to_string())),
+            EffectClass::CommitIrreversible
+        );
+    }
+
+    #[test]
+    fn file_create_is_commit_irreversible() {
+        assert_eq!(
+            sink_effect_class(&SinkId("file.create".to_string())),
+            EffectClass::CommitIrreversible
+        );
+    }
+
+    #[test]
+    fn unregistered_sink_is_fail_closed_commit_irreversible() {
+        assert_eq!(
+            sink_effect_class(&SinkId("http.post".to_string())),
+            EffectClass::CommitIrreversible,
+            "unknown sink must fail-closed to the most restrictive class"
+        );
+    }
+
+    #[test]
+    fn test_observe_fixture_is_observe() {
+        assert_eq!(
+            sink_effect_class(&SinkId("test.observe".to_string())),
+            EffectClass::Observe
+        );
     }
 }

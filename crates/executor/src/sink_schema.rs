@@ -53,9 +53,40 @@ pub const KNOWN_SINKS: &[SinkSchema] = &[
     },
 ];
 
+/// `#[cfg(test)]`-only sink registry (RESEARCH.md Pitfall 3 / DESIGN §9 Pitfall
+/// m2): a fixture sink with a minimal/empty arg schema, existing solely so
+/// TAINT-03 (`Draft` + `Observe` still Allowed) can be driven through the FULL
+/// `submit_plan_node` path — Step 0 schema gate -> per-arg loop -> Step 0.5 —
+/// rather than unit-testing `sink_effect_class` in isolation. Both live
+/// entries in `KNOWN_SINKS` are `CommitIrreversible`, so without this fixture
+/// TAINT-03 has no real sink to exercise. This NEVER appears in the production
+/// `KNOWN_SINKS` surface.
+#[cfg(test)]
+pub const TEST_KNOWN_SINKS: &[SinkSchema] = &[SinkSchema {
+    sink: "test.observe",
+    allowed: &[],
+    required: &[],
+}];
+
 /// The schema for `sink`, or `None` if the sink is not registered.
 pub fn schema_for(sink: &str) -> Option<&'static SinkSchema> {
-    KNOWN_SINKS.iter().find(|s| s.sink == sink)
+    KNOWN_SINKS
+        .iter()
+        .find(|s| s.sink == sink)
+        .or_else(|| test_schema_for(sink))
+}
+
+/// `#[cfg(test)]`-only lookup into `TEST_KNOWN_SINKS`. Under a non-test build
+/// this always returns `None` (`test.observe` is not a callable sink in
+/// production).
+#[cfg(test)]
+fn test_schema_for(sink: &str) -> Option<&'static SinkSchema> {
+    TEST_KNOWN_SINKS.iter().find(|s| s.sink == sink)
+}
+
+#[cfg(not(test))]
+fn test_schema_for(_sink: &str) -> Option<&'static SinkSchema> {
+    None
 }
 
 /// Validate a plan node's sink + arg set against the hardcoded schema.
