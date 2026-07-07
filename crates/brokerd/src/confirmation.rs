@@ -610,7 +610,8 @@ mod tests {
     // ── confirm/deny decision logic (Task 1) ──────────────────────────────
 
     use crate::audit::{
-        append_event, find_event_by_type, insert_blocked_literal, redact_blocked_literal,
+        append_event, find_event_by_type, insert_blocked_literal, query_events_by_session,
+        redact_blocked_literal,
     };
     use adapter_fs::workspace::WorkspaceRoot;
     use runtime_core::executor_decision::SinkBlockedAnchor;
@@ -846,6 +847,287 @@ mod tests {
             ConfirmOutcome::UnknownEffect
         );
 
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // ── email.send atomic CAS + email_send_attempted (Task 2, SEND-01/SEND-02) ──
+
+    /// Seed a Pending email.send block: a causal-root event, a `sink_blocked`
+    /// event carrying a genuine `SinkBlockedAnchor` on the tainted `to` arg,
+    /// its `blocked_literals` row, and a matching `PendingConfirmation` —
+    /// mirrors `seed_pending_file_create_block` but for the `email.send` sink.
+    /// `workspace_root_path` is set to a throwaway value: `confirm()`'s
+    /// `email.send` arm never reads it (only `file.create` does).
+    ///
+    /// Returns `(effect_id, session_id, blocked_event_id)`.
+    fn seed_pending_email_send_block(
+        conn: &rusqlite::Connection,
+        to: &str,
+        subject: &str,
+        body: &str,
+    ) -> (Uuid, Uuid, Uuid) {
+        let session_id = Uuid::new_v4();
+        let effect_id = Uuid::new_v4();
+        let read_event_id = Uuid::new_v4();
+
+        let root = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "session_created".into(),
+            chrono::Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(conn, &root, None).unwrap();
+
+        let literal_sha256 = {
+            let mut hasher = Sha256::new();
+            hasher.update(to.as_bytes());
+            hex::encode(hasher.finalize())
+        };
+        let anchor = SinkBlockedAnchor {
+            effect_id,
+            sink: SinkId("email.send".into()),
+            arg: "to".into(),
+            value_id: ValueId::new(),
+            literal_sha256,
+            taint: vec![TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![read_event_id],
+            read_event_id,
+        };
+        let blocked_event = Event::sink_blocked(
+            Uuid::new_v4(),
+            Some(root.id),
+            session_id,
+            chrono::Utc::now(),
+            anchor,
+        );
+        let blocked_event_id = blocked_event.id;
+        append_event(conn, &blocked_event, Some(&root_hash)).unwrap();
+        insert_blocked_literal(conn, &blocked_event_id.to_string(), to).unwrap();
+
+        let pc = PendingConfirmation {
+            effect_id,
+            session_id,
+            blocked_event_id,
+            sink: SinkId("email.send".into()),
+            resolved_args: vec![
+                ResolvedArg {
+                    name: "to".to_string(),
+                    value_id: ValueId::new(),
+                    literal: to.to_string(),
+                    taint: vec![TaintLabel::ExternalUntrusted],
+                    provenance_chain: vec![read_event_id],
+                },
+                ResolvedArg {
+                    name: "subject".to_string(),
+                    value_id: ValueId::new(),
+                    literal: subject.to_string(),
+                    taint: vec![TaintLabel::UserTrusted],
+                    provenance_chain: vec![],
+                },
+                ResolvedArg {
+                    name: "body".to_string(),
+                    value_id: ValueId::new(),
+                    literal: body.to_string(),
+                    taint: vec![TaintLabel::UserTrusted],
+                    provenance_chain: vec![],
+                },
+            ],
+            workspace_root_path: "/unused-for-email-send".to_string(),
+            state: PendingConfirmationState::Pending,
+        };
+        insert_pending_confirmation(conn, &pc).unwrap();
+
+        (effect_id, session_id, blocked_event_id)
+    }
+
+    /// Minimal in-process fake SMTP server for the SEND-01 "first confirm
+    /// really sends" test path — accepts exactly ONE connection and speaks
+    /// just enough SMTP for `lettre::SmtpTransport::send` to complete
+    /// successfully (banner, EHLO, MAIL FROM, RCPT TO, DATA, dot-terminated
+    /// message body, QUIT), then closes. Runs on a background thread bound to
+    /// an OS-assigned ephemeral port. Returns the port to point
+    /// `CAPRUN_SMTP_HOST`/`CAPRUN_SMTP_PORT` at.
+    fn spawn_fake_smtp_accept_server() -> u16 {
+        use std::io::{BufRead, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                let mut writer = stream;
+                let _ = writer.write_all(b"220 test.local ESMTP\r\n");
+                let mut in_data = false;
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    let n = reader.read_line(&mut line).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    if in_data {
+                        if line == ".\r\n" {
+                            in_data = false;
+                            let _ = writer.write_all(b"250 2.0.0 OK: queued\r\n");
+                        }
+                        continue;
+                    }
+                    let upper = line.to_ascii_uppercase();
+                    if upper.starts_with("EHLO") {
+                        let _ = writer.write_all(b"250 test.local\r\n");
+                    } else if upper.starts_with("MAIL FROM") {
+                        let _ = writer.write_all(b"250 2.1.0 OK\r\n");
+                    } else if upper.starts_with("RCPT TO") {
+                        let _ = writer.write_all(b"250 2.1.5 OK\r\n");
+                    } else if upper.starts_with("DATA") {
+                        let _ = writer.write_all(b"354 Start mail input\r\n");
+                        in_data = true;
+                    } else if upper.starts_with("QUIT") {
+                        let _ = writer.write_all(b"221 2.0.0 Bye\r\n");
+                        break;
+                    } else {
+                        let _ = writer.write_all(b"250 OK\r\n");
+                    }
+                }
+            }
+        });
+        port
+    }
+
+    /// Count events of `event_type` for `session_id` (there is no dedicated
+    /// count helper in `audit.rs`; `query_events_by_session` + filter is the
+    /// simplest way to assert "exactly one" without adding new production API
+    /// surface for a test-only need).
+    fn count_events_of_type(conn: &rusqlite::Connection, session_id: Uuid, event_type: &str) -> usize {
+        query_events_by_session(conn, &session_id.to_string())
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.event_type == event_type)
+            .count()
+    }
+
+    /// (SEND-01) A first confirm of a Pending email.send block releases: the
+    /// CAS + `email_send_attempted` append committed atomically, the adapter's
+    /// real send succeeded (fake SMTP server), and `email_send_succeeded` was
+    /// recorded. A SECOND confirm on the SAME effect_id refuses
+    /// (AlreadyTerminal) and does NOT append a second `email_send_attempted` —
+    /// exactly ONE exists in the audit DAG for this effect_id, proving the CAS
+    /// + attempt-append atomicity closes the double-fire window.
+    #[test]
+    fn confirm_email_send_twice_records_exactly_one_attempted_event() {
+        let _guard = crate::sinks::email_smtp::SMTP_ENV_LOCK.lock().unwrap();
+
+        let port = spawn_fake_smtp_accept_server();
+        std::env::set_var("CAPRUN_SMTP_HOST", "127.0.0.1");
+        std::env::set_var("CAPRUN_SMTP_PORT", port.to_string());
+
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_confirm_email_ok_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, _blocked_event_id) =
+            seed_pending_email_send_block(&conn, "recipient@example.com", "hello", "hi there");
+
+        let first = confirm(&mut conn, &effect_id.to_string(), &ws).expect("first confirm");
+        assert_eq!(
+            first,
+            ConfirmOutcome::Released,
+            "first confirm of a Pending email.send block must Release (real send succeeded)"
+        );
+
+        let second = confirm(&mut conn, &effect_id.to_string(), &ws).expect("second confirm");
+        assert_eq!(
+            second,
+            ConfirmOutcome::AlreadyTerminal,
+            "a re-issued confirm on the same effect_id must refuse, never re-send"
+        );
+
+        assert_eq!(
+            count_events_of_type(&conn, session_id, "email_send_attempted"),
+            1,
+            "exactly ONE email_send_attempted event must exist regardless of how many confirms were issued (SEND-01)"
+        );
+        assert_eq!(
+            count_events_of_type(&conn, session_id, "email_send_succeeded"),
+            1,
+            "exactly ONE email_send_succeeded event must exist (the second confirm never re-sent)"
+        );
+
+        std::env::remove_var("CAPRUN_SMTP_HOST");
+        std::env::remove_var("CAPRUN_SMTP_PORT");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// (SEND-02) When the adapter's real send fails (closed/unbound port),
+    /// `confirm()` returns the distinct `ConfirmOutcome::EmailSendFailed` —
+    /// never the file.create-style `ConfirmedButSinkFailed` swallow-shape.
+    /// The CAS + `email_send_attempted` append have ALREADY committed
+    /// (atomically, before the socket was ever opened) — a durable
+    /// `email_send_failed` event also exists, and NO `email_send_succeeded`
+    /// event was ever appended. No auto-retry: this is a one-shot decision.
+    #[test]
+    fn confirm_email_send_adapter_failure_yields_email_send_failed() {
+        let _guard = crate::sinks::email_smtp::SMTP_ENV_LOCK.lock().unwrap();
+
+        // Bind an ephemeral port then immediately drop the listener — nothing
+        // is listening on it for the rest of this test, so a connect attempt
+        // is refused (ECONNREFUSED) almost immediately (mirrors
+        // email_smtp.rs's own transport-failure test).
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        std::env::set_var("CAPRUN_SMTP_HOST", "127.0.0.1");
+        std::env::set_var("CAPRUN_SMTP_PORT", port.to_string());
+
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_confirm_email_fail_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, _blocked_event_id) =
+            seed_pending_email_send_block(&conn, "recipient@example.com", "hello", "hi there");
+
+        let outcome = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm");
+        assert_eq!(
+            outcome,
+            ConfirmOutcome::EmailSendFailed,
+            "a closed-port send failure must surface as the distinct EmailSendFailed outcome, never ConfirmedButSinkFailed or a swallowed Ok"
+        );
+
+        assert_eq!(
+            count_events_of_type(&conn, session_id, "email_send_attempted"),
+            1,
+            "the CAS + email_send_attempted transaction must have committed BEFORE the failed send attempt"
+        );
+        assert_eq!(
+            count_events_of_type(&conn, session_id, "email_send_failed"),
+            1,
+            "a durable email_send_failed event must be appended on adapter failure"
+        );
+        assert_eq!(
+            count_events_of_type(&conn, session_id, "email_send_succeeded"),
+            0,
+            "no email_send_succeeded event may exist on the failure path"
+        );
+
+        // A re-confirm must not retry the send — it is already terminal
+        // (Confirmed), refusing per the CAS (no auto-retry, SEND-02).
+        let second = confirm(&mut conn, &effect_id.to_string(), &ws).expect("second confirm");
+        assert_eq!(second, ConfirmOutcome::AlreadyTerminal);
+        assert_eq!(
+            count_events_of_type(&conn, session_id, "email_send_attempted"),
+            1,
+            "a re-confirm after a send failure must NOT append a second email_send_attempted"
+        );
+
+        std::env::remove_var("CAPRUN_SMTP_HOST");
+        std::env::remove_var("CAPRUN_SMTP_PORT");
         std::fs::remove_dir_all(&root).ok();
     }
 }
