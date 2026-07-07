@@ -441,6 +441,48 @@ pub async fn dispatch_request(
                 ),
             };
             let event_type = audit_event.event_type.clone();
+
+            // On a block, resolve the FULL arg set from the still-live per-
+            // connection ValueStore into a Vec<ResolvedArg> snapshot — this is
+            // the ONLY moment those literals are recoverable (the ValueStore
+            // does not survive process exit; DESIGN-confirmation-release.md
+            // "The Problem Being Solved"). A handle that fails to resolve here
+            // is a broker-internal invariant violation (validate_schema already
+            // guaranteed presence) — fail closed, never persist a partial
+            // snapshot.
+            let pending_confirmation = if let runtime_core::ExecutorDecision::BlockedPendingConfirmation {
+                anchor,
+                ..
+            } = &decision
+            {
+                let mut resolved_args = Vec::with_capacity(plan_node.args.len());
+                for arg in &plan_node.args {
+                    let record = value_store.resolve(&arg.value_id).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "block-time snapshot: arg `{}` handle did not resolve",
+                            arg.name
+                        )
+                    })?;
+                    resolved_args.push(crate::confirmation::ResolvedArg {
+                        name: arg.name.clone(),
+                        value_id: arg.value_id.clone(),
+                        literal: record.literal.clone(),
+                        taint: record.taint.clone(),
+                        provenance_chain: record.provenance_chain.clone(),
+                    });
+                }
+                Some(crate::confirmation::PendingConfirmation {
+                    effect_id: anchor.effect_id,
+                    session_id,
+                    blocked_event_id: audit_event.id,
+                    sink: plan_node.sink.clone(),
+                    resolved_args,
+                    workspace_root_path: workspace_root.root_path().to_string_lossy().into_owned(),
+                    state: crate::confirmation::PendingConfirmationState::Pending,
+                })
+            } else {
+                None
+            };
             let new_hash = {
                 let locked = conn
                     .lock()
@@ -462,6 +504,18 @@ pub async fn dispatch_request(
                     .map_err(|e| {
                         eprintln!("[brokerd] blocked-literal side-table write FAILED (fail-closed): {e}");
                         anyhow::anyhow!("blocked-literal write failed: {e}")
+                    })?;
+                }
+                // The pending_confirmations checkpoint commits under the SAME
+                // lock as the sink_blocked event append + blocked-literal write
+                // — they succeed or fail together (T-10-02 / DESIGN Persistence
+                // contract): a sink_blocked event can never exist without its
+                // checkpoint, and no orphaned checkpoint without an anchoring
+                // block.
+                if let Some(pc) = &pending_confirmation {
+                    crate::confirmation::insert_pending_confirmation(&locked, pc).map_err(|e| {
+                        eprintln!("[brokerd] pending_confirmations insert FAILED (fail-closed): {e}");
+                        anyhow::anyhow!("pending_confirmations insert failed: {e}")
                     })?;
                 }
                 hash

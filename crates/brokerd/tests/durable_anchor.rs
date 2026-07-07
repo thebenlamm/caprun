@@ -34,7 +34,7 @@ use brokerd::proto::BrokerRequest;
 use brokerd::quarantine::{mint_from_read, Claim};
 use brokerd::server::dispatch_request;
 use executor::value_store::ValueStore;
-use runtime_core::plan_node::{PlanArg, PlanNode, SinkId, TaintLabel, ValueId};
+use runtime_core::plan_node::{PlanArg, PlanNode, SinkId, TaintLabel};
 use runtime_core::SessionStatus;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
@@ -118,9 +118,19 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
     let mut session_status = SessionStatus::Active;
 
     // `path` is FIRST so the executor blocks on the tainted routing-sensitive arg
-    // before it ever resolves `contents` (a block short-circuits — `contents` is
-    // never resolved on this path, so its handle need not resolve). Both args are
-    // present so `validate_schema` (file.create requires {path, contents}) passes.
+    // before it ever resolves `contents` for the ALLOW/DENY decision itself (a
+    // block short-circuits the executor's own decision). Both args are present so
+    // `validate_schema` (file.create requires {path, contents}) passes. `contents`
+    // IS minted (trusted) into the store because the block arm (10-02) now builds a
+    // full-arg-set `PendingConfirmation` snapshot at Block time, resolving EVERY
+    // plan_node arg — not only the one the executor blocked on.
+    let contents_value_id = store
+        .mint(
+            "hostile block harness contents".into(),
+            vec![TaintLabel::UserTrusted],
+            vec![read_event_id],
+        )
+        .expect("mint contents value");
     let plan_node = PlanNode {
         sink: SinkId("file.create".into()),
         args: vec![
@@ -130,7 +140,7 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
             },
             PlanArg {
                 name: "contents".into(),
-                value_id: ValueId::new(),
+                value_id: contents_value_id,
             },
         ],
     };
