@@ -37,6 +37,15 @@ pub enum DenyReason {
     DuplicateArg(String),
     /// A required arg of the target sink is absent from the plan node.
     MissingArg(String),
+
+    // ── v1.2 addition (TAINT-02, DESIGN-session-trust-state.md §7) ────────────
+    /// A `CommitIrreversible` plan node was submitted while the session is
+    /// `SessionStatus::Draft` and no per-arg I2 Block already fired. Carries the
+    /// offending `SinkId` (RESEARCH Open Question 3), matching the existing
+    /// `UnknownSink(String)` convention of carrying the offending identity for
+    /// audit/CLI legibility. This is an append to the ONE denial taxonomy above —
+    /// never a second, parallel denial error type.
+    DraftOnlySessionDeniesCommitIrreversible { sink: crate::plan_node::SinkId },
 }
 
 impl DenyReason {
@@ -50,6 +59,9 @@ impl DenyReason {
             DenyReason::UnknownArg(_) => "unknown_arg",
             DenyReason::DuplicateArg(_) => "duplicate_arg",
             DenyReason::MissingArg(_) => "missing_arg",
+            DenyReason::DraftOnlySessionDeniesCommitIrreversible { .. } => {
+                "draft_only_session_denies_commit_irreversible"
+            }
         }
     }
 }
@@ -70,6 +82,11 @@ impl std::fmt::Display for DenyReason {
             DenyReason::UnknownArg(arg) => write!(f, "unknown arg `{arg}` for sink"),
             DenyReason::DuplicateArg(arg) => write!(f, "duplicate arg `{arg}` in plan node"),
             DenyReason::MissingArg(arg) => write!(f, "missing required arg `{arg}` for sink"),
+            DenyReason::DraftOnlySessionDeniesCommitIrreversible { sink } => write!(
+                f,
+                "draft-only session denies CommitIrreversible sink `{sink}`",
+                sink = sink.0
+            ),
         }
     }
 }
