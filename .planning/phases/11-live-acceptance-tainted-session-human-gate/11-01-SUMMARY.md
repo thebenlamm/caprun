@@ -223,3 +223,13 @@ None — no external service configuration required. Colima/Docker are already-p
 ---
 *Phase: 11-live-acceptance-tainted-session-human-gate*
 *Completed: 2026-07-07*
+
+## Self-Check: PASSED
+
+- FOUND: cli/caprun/tests/live_acceptance_tainted_session.rs
+- FOUND: cli/caprun/tests/s9_live_block.rs
+- FOUND: .planning/phases/11-live-acceptance-tainted-session-human-gate/11-01-SUMMARY.md
+- FOUND commit: 02e9948 (Task 1)
+- FOUND commit: 8258e9c (Task 2)
+- FOUND commit: f6876ba (Task 3 deviation fix)
+- FOUND commit: 42d5313 (SUMMARY.md)
