@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-07-01)
 ## Current Position
 
 Phase: 9 — Session Trust State (I1 + I0)
-Plan: Not started
-Status: Ready to plan — Phase 8's gate is UNBLOCKED (Decision: APPROVED under DEC-ai-review-satisfies-human-gate)
-Last activity: 2026-07-06 — Phase 8 complete, transitioned to Phase 9
+Plan: 4 plans across 4 waves (09-01 through 09-04), strictly sequential (executor::submit_plan_node signature change ripples runtime-core → executor → brokerd → cli)
+Status: Ready to execute — plans created and verified (gsd-plan-checker: VERIFICATION PASSED, 6/6 requirements covered, no CONTEXT.md needed since planning-docs/DESIGN-session-trust-state.md is the approved authoritative spec)
+Last activity: 2026-07-06 — Phase 9 planned (4 plans, 4 waves)
 
 Progress: [██░░░░░░░░] 25% (1/4 phases complete)
 
@@ -100,4 +100,4 @@ Resume file: None
 
 ## Operator Next Steps
 
-- `/gsd-plan-phase 9` to plan Phase 9 (Session Trust State — I1 + I0), now that Phase 8's gate is UNBLOCKED
+- `/gsd-execute-phase 9` to execute Phase 9 (Session Trust State — I1 + I0) — 4 plans ready, verified

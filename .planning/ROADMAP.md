@@ -83,9 +83,20 @@ Plans:
   4. Submitting a `MutateReversible` or `Observe`-class plan node against a draft-only session still succeeds.
 
 **Plans**: 4 plans (sequential — the `submit_plan_node` signature change ripples down the crate dependency chain runtime-core → executor → brokerd → cli)
+**Wave 1**
+
 - [ ] 09-01-PLAN.md — runtime-core domain types: `SessionStatus::Draft`, `SeedProvenance`, `DenyReason::DraftOnlySessionDeniesCommitIrreversible`
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 09-02-PLAN.md — executor draft-only deny: `EffectClass`/`sink_effect_class`, `#[cfg(test)]` fixture sink, `session_status` param, post-loop Step 0.5 (TAINT-02/03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 09-03-PLAN.md — brokerd wiring: `update_session_status`, `create_session` Draft-on-file-derived, `mint_from_read` atomic demotion, per-connection `session_status` threading, all call-site reconciliation (TAINT-01/04, ORIGIN-02)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 09-04-PLAN.md — caprun CLI `--seed-from-file` on-ramp + provenance→status integration test (ORIGIN-01/02)
 
 ### Phase 10: Single-Shot Confirmation Loop
