@@ -78,32 +78,32 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DESIGN-01 | TBD | Pending |
-| SMTP-01 | TBD | Pending |
-| SMTP-02 | TBD | Pending |
-| SMTP-03 | TBD | Pending |
-| SMTP-05 | TBD | Pending |
-| CONTENT-01 | TBD | Pending |
-| CONTENT-02 | TBD | Pending |
-| EXTRACT-01 | TBD | Pending |
-| EXTRACT-02 | TBD | Pending |
-| EXTRACT-03 | TBD | Pending |
-| CONFIRM-01 | TBD | Pending |
-| CONFIRM-02 | TBD | Pending |
-| CONFIRM-03 | TBD | Pending |
-| CONFIRM-04 | TBD | Pending |
-| CONTROL-01 | TBD | Pending |
-| CONTROL-02 | TBD | Pending |
-| SEND-01 | TBD | Pending |
-| SEND-02 | TBD | Pending |
-| DOC-01 | TBD | Pending |
-| ACCEPT-01 | TBD | Pending |
+| DESIGN-01 | Phase 12 | Pending |
+| SMTP-01 | Phase 13 | Pending |
+| SMTP-02 | Phase 13 | Pending |
+| SMTP-03 | Phase 13 | Pending |
+| SMTP-05 | Phase 13 | Pending |
+| CONTENT-01 | Phase 14 | Pending |
+| CONTENT-02 | Phase 14 | Pending |
+| EXTRACT-01 | Phase 15 | Pending |
+| EXTRACT-02 | Phase 15 | Pending |
+| EXTRACT-03 | Phase 15 | Pending |
+| CONFIRM-01 | Phase 16 | Pending |
+| CONFIRM-02 | Phase 15 | Pending |
+| CONFIRM-03 | Phase 16 | Pending |
+| CONFIRM-04 | Phase 16 | Pending |
+| CONTROL-01 | Phase 16 | Pending |
+| CONTROL-02 | Phase 16 | Pending |
+| SEND-01 | Phase 13 | Pending |
+| SEND-02 | Phase 13 | Pending |
+| DOC-01 | Phase 17 | Pending |
+| ACCEPT-01 | Phase 17 | Pending |
 
 **Coverage:**
 - v1 requirements: 20 total
-- Mapped to phases: 0 (roadmapper fills this in)
-- Unmapped: 20 ⚠️ (expected pre-roadmap)
+- Mapped to phases: 20/20 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-07*
-*Last updated: 2026-07-07 after initial v1.3 definition (caprun-opus-77 sign-off)*
+*Last updated: 2026-07-07 after ROADMAP.md creation — all 20 v1 requirements mapped to Phases 12-17, Phase 12 (DESIGN-01) is the mandatory design gate preceding CONTENT-01/SMTP-05/CONFIRM-03 executor code.*

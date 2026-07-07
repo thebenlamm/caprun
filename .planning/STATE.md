@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Doc → Action Assistant
-status: planning
-last_updated: "2026-07-07T16:53:16.617Z"
+status: roadmapped
+last_updated: "2026-07-07T17:30:00.000Z"
 last_activity: 2026-07-07
 progress:
-  total_phases: 0
+  total_phases: 6
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -19,15 +19,15 @@ progress:
 
 See: .planning/PROJECT.md (updated 2026-07-07)
 
-**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — now extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, both proven live on real Linux.
-**Current focus:** Planning next milestone — run `/gsd-new-milestone`
+**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — now extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, and (v1.3, in progress) with content-sensitive body blocking plus a real broker-mediated SMTP send, both proven live on real Linux.
+**Current focus:** v1.3 roadmapped (Phases 12-17). Next: `/gsd-discuss-phase 12` or `/gsd-plan-phase 12` — Phase 12 is the mandatory DESIGN-01 gate and must complete before any executor/TCB code for CONTENT-01, SMTP-05, or CONFIRM-03.
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 12 — Content, Adapter & Confirm-Binding Design Gate (not started)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-07-07 — Milestone v1.3 started
+Status: Roadmap approved; awaiting phase discussion/planning
+Last activity: 2026-07-07 — ROADMAP.md created for v1.3 (Phases 12-17), REQUIREMENTS.md traceability updated
 
 ## Performance Metrics
 
@@ -36,69 +36,56 @@ Last activity: 2026-07-07 — Milestone v1.3 started
 - Total plans completed: 41 (v1.0: 15 + v1.1: 15 + v1.2: 11)
 - Average duration: — min
 
-**By Phase (v1.1):**
+**By Phase (v1.2):**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 05 | 4 | - | - |
-| 06 | 5 | - | - |
-| 07 | 6 | - | - |
 | 8 | 3 | - | - |
 | 9 | 4 | - | - |
 | 10 | 3 | - | - |
 | 11 | 1 | - | - |
 
-*Updated after each plan completion*
-| Phase 06 P01 | 4min | - tasks | - files |
-| Phase 06 P01 | 4min | 3 tasks | 4 files |
-| Phase 06 P02 | 2 | 2 tasks | 2 files |
-| Phase 06 P03 | 5m | 3 tasks | 5 files |
-| Phase 06 P04 | 5m | 3 tasks | 5 files |
-| Phase 06 P05 | 12m | 3 tasks | 2 files |
-| Phase 09 P01 | 8min | 2 tasks | 3 files |
-| Phase 09 P02 | 35min | 3 tasks | 5 files |
-| Phase 09 P03 | 25min | 3 tasks | 9 files |
-| Phase 09 P04 | 10min | 2 tasks | 2 files |
+*Updated after each plan completion. v1.3 phases (12-17) have no plans yet — table rows added once `/gsd-plan-phase` runs.*
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md (Locked Decisions + Key Decisions table).
-v1.2's decisions (draft-only deny lives in the executor; confirmation UX is
-`caprun confirm <effect_id>`; single-shot release; DEC-ai-review-satisfies-human-gate;
-programmatic confirm/deny satisfies "human decision" for acceptance) are all
-recorded there and in `.planning/milestones/v1.2-ROADMAP.md`. Cleared here at
-v1.2 milestone close (2026-07-07) — this section starts fresh for the next
-milestone.
+v1.3 scoping decisions (CONTENT-01 and the real SMTP adapter reopened; LLM
+planner remains out; live SES downgraded to optional post-milestone) are
+recorded in `.planning/PROJECT.md`'s Key Decisions table and
+`.planning/REQUIREMENTS.md`. Phase 12 is a hard design gate — CONTENT-01,
+SMTP-05, and CONFIRM-03 executor/TCB code may not be written before it
+completes and is adversarially reviewed (mirrors v1.0 Phase 2 / v1.2 Phase 8).
 
 ### Pending Todos
 
-None.
+- Run `/gsd-discuss-phase 12` (or `/gsd-plan-phase 12`) to begin the v1.3 design gate.
 
 ### Blockers/Concerns
 
-None open. v1.2's blockers all resolved at milestone close: Phase 8's design
-gate UNBLOCKED (see `DEC-ai-review-satisfies-human-gate` in PROJECT.md); Phase
-11's DONE gate (ACC-01/02/03) passed live on real Linux, independently
-re-verified by the orchestrator; no regression to the v1.1 live §9 acceptance.
+None open yet. Structural blocker to respect going forward: no phase after
+Phase 12 that touches executor/TCB code for CONTENT-01, SMTP-05, or CONFIRM-03
+may be sequenced before Phase 12 completes (see ROADMAP.md Phase 12).
 
 ## Deferred Items
 
-Items acknowledged and deferred at v1.1 milestone close on 2026-07-01:
+Items acknowledged and deferred at prior milestone closes:
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| uat | 03-UAT.md (Phase 03, v1.0 milestone — passed, 0 pending scenarios; benign stale flag) | passed | 2026-07-01 |
+| uat | 03-UAT.md (Phase 03, v1.0 milestone — passed, 0 pending scenarios; benign stale artifact) | passed | 2026-07-01 |
 
-Re-acknowledged unchanged at v1.2 milestone close on 2026-07-07 (same pre-existing item, still benign — 0 pending scenarios, nothing new from v1.2 phases).
+Re-acknowledged unchanged at v1.2 milestone close on 2026-07-07 (same
+pre-existing item, still benign). No new deferrals from roadmap creation.
 
 ## Session Continuity
 
-Last session: 2026-07-07T15:48:29.813Z
-Stopped at: Milestone v1.2 completed and archived
-Resume file: None — nothing to resume; next step is scoping a new milestone
+Last session: 2026-07-07T17:30:00.000Z
+Stopped at: v1.3 ROADMAP.md + STATE.md written, REQUIREMENTS.md traceability updated; awaiting user approval and phase kickoff
+Resume file: None — next step is `/gsd-discuss-phase 12` or `/gsd-plan-phase 12`
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Review ROADMAP.md's Phase 12-17 structure and success criteria for v1.3.
+- Start Phase 12 (the DESIGN-01 gate) with `/gsd-discuss-phase 12` or `/gsd-plan-phase 12`.
