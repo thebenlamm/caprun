@@ -1,5 +1,24 @@
 # Milestones
 
+## v1.2 Tainted Session, Human Gate (Shipped: 2026-07-07)
+
+**Phases completed:** 4 phases, 11 plans, 25 tasks
+
+**Key accomplishments:**
+
+- Authored `planning-docs/DESIGN-confirmation-release.md` — the PendingConfirmation durable checkpoint schema, confirmation decision logic, `caprun confirm <effect_id>` CLI contract, single-shot release semantics, durable-deny rule, and TCB-residency requirement that unblock Phase 10's confirmation-loop implementation.
+- An adversarial review (AI-performed, per PROJECT.md's DEC-ai-review-satisfies-human-gate) caught a genuine architectural blocker before it reached code — the draft-only session-trust deny and the I2 taint-Block mechanism composed into a dead end — and the gate correctly stopped the phase until it was fixed and the review's provenance was resolved with Ben directly.
+- Added `SessionStatus::Draft`, a new `SeedProvenance` typed enum, and `DenyReason::DraftOnlySessionDeniesCommitIrreversible { sink }` to `runtime-core` — the pure vocabulary Plans 02-04 build the I1/I0 mechanism on.
+- Added the single TCB deny function for I1/I0: a hardcoded `EffectClass`/`sink_effect_class` classifier, a `session_status: &SessionStatus` parameter on `executor::submit_plan_node`, and a post-loop Step 0.5 that denies `Draft`+`CommitIrreversible` plan nodes while never pre-empting the existing per-arg I2 Block.
+- Wired the broker to the executor's draft-only mechanism: `mint_from_read` now atomically demotes a session to `Draft` with a causally-linked `session_demoted` audit event, `create_session` starts file-derived sessions `Draft` at creation, and a broker-owned `session_status` is threaded per-connection into `executor::submit_plan_node` — while fixing a causal-DAG fork the new demotion event introduced.
+- Added the `--seed-from-file <path>` CLI on-ramp that lets `caprun` decide seed-provenance and feed it to the broker's `create_session`, giving ORIGIN-01/02 something concrete to exercise for the first time — closing the "no on-ramp exists" gap and bringing `cargo test --workspace` fully green for the first time this phase.
+- Durable pending_confirmations SQLite side table + confirmation.rs record types/accessors giving a later, separate `caprun confirm`/`deny` process the SQL-guarded one-way state machine and full resolved-arg snapshot it needs to resume a block.
+- Block-time full-arg-set snapshot persisted atomically with `sink_blocked`, plus a ValueStore-free `invoke_file_create_from_resolved` that re-invokes the sink from frozen literals — no re-decision, no I2 bypass.
+- TCB-resident `confirm`/`deny` decision logic in `crates/brokerd/src/confirmation.rs`, `caprun confirm`/`caprun deny` CLI verbs with a 6-way exit-code contract, and a cross-process integration test proving single-shot release and durable deny across separate OS processes.
+- Live, Colima+Docker-verified proof that a real confined caprun worker's hostile file read demotes the session (I1), the same tainted value blocks file.create (I2), and a separate `caprun confirm`/`caprun deny` process either releases the effect exactly once or blocks it forever — with one unbroken audit-DAG causal chain for both outcomes.
+
+---
+
 ## v1.1 Usable Runtime (Shipped: 2026-07-01)
 
 **Phases completed:** 3 phases (5-7), 15 plans

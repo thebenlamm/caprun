@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: — Tainted Session, Human Gate
-current_phase: 11
-status: executing
+current_phase: 2
+status: Awaiting next milestone
 stopped_at: Phase 11 context gathered
-last_updated: "2026-07-07T15:40:22.686Z"
+last_updated: "2026-07-07T15:48:29.813Z"
 last_activity: 2026-07-07
-last_activity_desc: Phase 11 complete
+last_activity_desc: Milestone v1.2 completed and archived
 progress:
   total_phases: 4
   completed_phases: 4
@@ -28,12 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-01)
 
 ## Current Position
 
-Phase: 11
-Plan: Not started
-Status: Executing Phase 11
-Last activity: 2026-07-07 — Phase 11 complete
-
-Progress: [█████░░░░░] 50% (2/4 phases complete)
+Phase: Milestone v1.2 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-07 — Milestone v1.2 completed and archived
 
 ## Performance Metrics
 
@@ -105,6 +103,8 @@ Items acknowledged and deferred at v1.1 milestone close on 2026-07-01:
 |----------|------|--------|-------------|
 | uat | 03-UAT.md (Phase 03, v1.0 milestone — passed, 0 pending scenarios; benign stale flag) | passed | 2026-07-01 |
 
+Re-acknowledged unchanged at v1.2 milestone close on 2026-07-07 (same pre-existing item, still benign — 0 pending scenarios, nothing new from v1.2 phases).
+
 ## Session Continuity
 
 Last session: 2026-07-07T14:55:41.403Z
@@ -113,4 +113,4 @@ Resume file: .planning/phases/11-live-acceptance-tainted-session-human-gate/11-C
 
 ## Operator Next Steps
 
-- `/gsd-execute-phase 9` to execute Phase 9 (Session Trust State — I1 + I0) — 4 plans ready, verified
+- Start the next milestone with /gsd-new-milestone

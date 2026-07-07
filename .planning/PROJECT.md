@@ -16,14 +16,22 @@ Event → ValueNode → sensitive sink argument) deterministically blocks
 value-injection at the sink. If everything else fails, **I2 enforcement on a
 genuine taint chain must hold.**
 
-## Current Milestone: v1.2 — Tainted Session, Human Gate
+## Current Milestone: none — v1.2 shipped 2026-07-07, next milestone not yet scoped
+
+Run `/gsd-new-milestone` to scope the next milestone (questioning → research →
+requirements → roadmap). Full v1.2 detail archived in
+[`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.md) and
+[`milestones/v1.2-REQUIREMENTS.md`](milestones/v1.2-REQUIREMENTS.md).
+
+<details>
+<summary>✅ v1.2 — Tainted Session, Human Gate — SHIPPED 2026-07-07</summary>
 
 **Goal:** A session that touches untrusted content is mechanically demoted to
 draft-only (I1 dynamic-taint default + I0 creation rule), and a blocked sink arg
 can be released only by literal-value human confirmation — all deterministic,
 all in the audit DAG.
 
-**Target features:**
+**Delivered:**
 - **Session taint state (I1 dynamic default):** broker tracks per-session trust
   state; the `mint_from_read` path (raw untrusted read Event) flips the session
   to draft-only. Draft-only sessions: `CommitIrreversible`-class plan nodes are
@@ -45,18 +53,22 @@ all in the audit DAG.
   reads it → session demoted (I1) → tainted routing arg Blocked (I2, existing)
   → human denies → nothing sent; separately, human confirms → effect proceeds
   exactly once; audit DAG shows the unbroken chain read → demotion → block →
-  human decision.
+  human decision — proven live on real Linux via Colima+Docker in Phase 11.
 
 **Design gate:** a DESIGN doc for session-trust-state / confirmation semantics
-gates the phases that add executor behavior (same discipline as the v1.0
-executor gate).
+gated the phases that added executor behavior (same discipline as the v1.0
+executor gate) — `planning-docs/DESIGN-session-trust-state.md` +
+`planning-docs/DESIGN-confirmation-release.md`, Phase 8.
 
 **Explicitly not in v1.2:** more sinks, real LLM planner, Git/GitHub adapters,
-Cedar, cross-host delegation, content-sensitive arg blocking (deferred by
-design). README-vs-CaMeL positioning is a small optional add-on.
+Cedar, cross-host delegation, content-sensitive arg blocking (deferred to v2 —
+tracked as `CONTENT-01`/`DOC-01`). README-vs-CaMeL positioning remains a small
+optional add-on, still not done.
 
 **Seed:** `planning-docs/MILESTONE-v1.2-SEED.md` (2026-07-01 post-v1.1
 assessment). PLAN.md wins on any conflict.
+
+</details>
 
 ## Requirements
 
@@ -86,57 +98,56 @@ traceability archived in `.planning/milestones/v1.1-REQUIREMENTS.md`.
 - ✓ Mint invariant at source (HARD-05), typed `DenyReason`, broker-minted `effect_id` (HARD-06) — v1.1
 - ✓ Durable genuine-taint anchor (ACC-07) + full live §9 acceptance green on real Linux (ACC-01/03/04/05/06) — v1.1
 
+Shipped in **v1.2 — Tainted Session, Human Gate** (2026-07-07). Full
+traceability archived in `.planning/milestones/v1.2-REQUIREMENTS.md`.
+
+- ✓ Session taint state: `mint_from_read` demotes the session to draft-only;
+  draft-only denies `CommitIrreversible` plan nodes in the executor, one TCB
+  deny function (TAINT-01..04) — v1.2
+- ✓ I0 creation rule: externally-seeded sessions start draft-only via
+  `--seed-from-file` (ORIGIN-01/02) — v1.2
+- ✓ Confirmation loop: `caprun confirm`/`caprun deny <effect_id>` releases or
+  durably blocks exactly one (sink, arg, literal-digest) triple, TCB-resident,
+  single-shot (CONFIRM-01..04) — v1.2
+- ✓ DESIGN doc (session-trust-state + confirmation semantics) gated all
+  executor behavior changes before code (PROC-01) — v1.2
+- ✓ **Live acceptance on real Linux (v1.2 DONE gate):** hostile read → I1
+  demotion → I2 block → human deny (nothing sent) / human confirm (effect
+  proceeds exactly once), one unbroken audit-DAG causal chain for both
+  outcomes, proven via Colima+Docker (ACC-01/02/03). Caught and fixed a
+  pre-existing stale test assertion (`s9_live_block.rs`, dating to Phase 9,
+  never previously exercised on Linux) in the process.
+
 ### Active
 
-**v1.2 — Tainted Session, Human Gate** (scoped 2026-07-01):
-
-- [x] Session taint state: `mint_from_read` demotes the session to draft-only;
-      draft-only denies `CommitIrreversible` plan nodes in the executor (new
-      `DenyReason` variant); demotion is an audited event with a causal edge to
-      the read. — validated in Phase 9 (2026-07-07)
-- [x] I0 creation rule: externally-seeded sessions start draft-only
-      (seed-provenance field at session creation). — validated in Phase 9
-      (2026-07-07)
-- [x] Confirmation loop: `caprun confirm <effect_id>` releases exactly one
-      (sink, arg, literal-digest) triple, single-shot; confirm/deny audited and
-      anchored to `SinkBlockedAnchor.effect_id`; deny durable. — validated in
-      Phase 10 (2026-07-07)
-- [x] DESIGN doc (session-trust-state + confirmation semantics) gates executor
-      behavior changes. — validated in Phase 8 (2026-07-06)
-- [x] Live §9-style acceptance: read → demotion → block → human deny (nothing
-      sent) / human confirm (exactly once), unbroken audit chain. — validated
-      live on real Linux (Colima+Docker) in Phase 11 (2026-07-07): both
-      `live_acceptance_deny_path` and `live_acceptance_confirm_path` pass,
-      `verify_chain()` true, and a pre-existing stale assertion in
-      `s9_live_block.rs` (never previously run on Linux since Phase 9) was
-      caught and fixed as part of this phase.
-
-**All v1.2 requirements are now validated.** Formal milestone close-out
-(archiving to `.planning/milestones/v1.2-REQUIREMENTS.md`, moving this block
-under Validated, cutting the next milestone) happens via
-`/gsd-complete-milestone`, not automatically here.
+None — awaiting next milestone. Run `/gsd-new-milestone` to scope one.
 
 ### Out of Scope
 
-Do not build any of these until §9 holds (non-goals for v0):
+Non-goals, reviewed at each milestone close (v0/v1.1/v1.2) — still valid as of
+2026-07-07:
 
-- Git / GitHub adapters — defer to v1 (post-§9)
+- Git / GitHub adapters — post-v1.2, no milestone has needed them yet
 - Cedar policy engine — simple TOML/rules for sink access is fine; I2 stays in
-  Rust
+  Rust (still true through v1.2 — the executor's `sink_effect_class` table
+  remains hardcoded, not policy-driven)
 - Cross-host delegation / Biscuit crypto — v3 concern
-- gVisor / Firecracker — bubblewrap + seccomp + Landlock is the v0 boundary
-- LLM planner — a hard-coded / stub planner is sufficient for v0
+- gVisor / Firecracker — bubblewrap + seccomp + Landlock remains the boundary
+  through v1.2
+- LLM planner — a hard-coded / deterministic planner remains sufficient
+  (confirmed again through v1.2's scripted `create-file-from-report` intent)
+- Content-sensitive sink-arg blocking (only routing-sensitive args block on
+  taint) — explicitly deferred to v2 as `CONTENT-01` when v1.2 was scoped
 - Rich approval-policy learning, undo snapshots, broad effect taxonomy
 - Web UI, marketplace, long-term memory, browser control, natural-language
   policy authoring
-- Mac / WSL2 support — deferred post-v0 best-effort; all v0 security claims are
-  Linux-only
+- Mac / WSL2 support — deferred best-effort; all security claims remain
+  Linux-only through v1.2
 
 ## Context
 
-- **Current state (v1.2 requirements complete 2026-07-07, pending formal
-  milestone close-out):** v0 done (v1.0) + Usable Runtime (v1.1) + Tainted
-  Session, Human Gate (v1.2). 11 phases, 34 plans across `runtime-core`,
+- **Current state (v1.2 shipped 2026-07-07):** v0 done (v1.0) + Usable Runtime
+  (v1.1) + Tainted Session, Human Gate (v1.2). 11 phases, 34 plans across `runtime-core`,
   `sandbox`, `brokerd`, `executor`, `adapter-fs`, and the `caprun` binary.
   Live on real Linux: a session demoted mid-run by a hostile read (I1) has its
   tainted routing arg Blocked at `file.create` (I2), and a human `caprun
@@ -160,8 +171,8 @@ Do not build any of these until §9 holds (non-goals for v0):
   typed `DenyReason`; durable genuine-taint anchor (ACC-07) persisted across
   process exit; live §9 hostile-block + clean-allow + unbroken causal chain green
   on real Linux `caprun`. Verifier independently re-ran the Colima/Docker recipe.
-- **Next milestone:** unscoped — start with `/gsd-complete-milestone` (archive
-  v1.1), then `/gsd-new-milestone`.
+- **Next milestone:** unscoped — run `/gsd-new-milestone` (questioning →
+  research → requirements → roadmap).
 - **Source of truth:** `planning-docs/PLAN.md` ("AgentOS v0 — Definitive Plan").
   On any conflict, PLAN.md wins. Background detail lives under `archive/`
   (security: `archive/AGENT-RUNTIME-HANDOVER.md`; architecture narrative:
@@ -303,6 +314,7 @@ Python OK for non-TCB experiments only.
 | v1.2: confirmation UX = `caprun confirm <effect_id>` second command | Testable and non-interactive-friendly vs a TTY prompt | — Locked (Phase 10) |
 | v1.2: confirm is single-shot (one (sink, arg, literal-digest) triple) | Standing exact-match policy is scope creep for v1.2 | — Locked (Phase 10) |
 | **DEC-ai-review-satisfies-human-gate** (2026-07-06): an AI-performed adversarial re-read (by the current best-available Claude model) may satisfy the "human reviewer" requirement in design-gate checkpoints (e.g. `08-03-PLAN.md` Task 2's `checkpoint:human-verify`), when Ben Lamm explicitly authorizes it in place of his own read | Ben's explicit call after being shown the tension directly: this reverses the checkpoint's original intent — mirrored from v1.0 Phase 2 and from this milestone's own core value (AI/agent judgment is insufficient for consequential decisions; hence I0/I1/I2 + human confirmation) — but he chose to accept an AI review (Fable 5) as equivalent to his own for Phase 8's gate, after the tradeoff was named explicitly (raised: self-review of one's own prior finding is a weaker check than independent human adversarial judgment; a fresh-session independent AI check was offered as a middle ground and declined) | **Locked, retroactive to Phase 8's round-2 gate.** Applies going forward to future design-gate checkpoints unless revisited. Does NOT retroactively bless anything already recorded as "reviewed by Ben personally" elsewhere (e.g. round 1, `planning-docs/DESIGN-REVIEW-v1.2-round1.md`, is now understood to have also been Fable-authored — accepted under this same decision, not because it was independently re-verified as human work). |
+| v1.2: programmatic `caprun confirm`/`caprun deny` invocation (by an integration test or an agent) satisfies "human decision" for ACC-01/02 live-acceptance purposes — Ben typing the commands himself is additive, not required | Consistent with `DEC-ai-review-satisfies-human-gate`'s precedent; the confirm/deny CLI verbs ARE the human-interface artifact regardless of who invokes them, and Phase 10's `confirm.rs` already proved the mechanism this way | — Locked (Phase 11, discuss-phase D-05). Independently re-verified anyway: the orchestrator ran the live Colima+Docker proof itself at Phase 11 verification, closing gsd-verifier's `human_needed` gap with real evidence rather than relying solely on the executor's self-report. |
 
 ## Evolution
 
@@ -322,18 +334,21 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-07 after Phase 11 (Live Acceptance — Tainted Session,
-Human Gate) completed and verified: a new Linux-gated integration test
+*Last updated: 2026-07-07 after v1.2 — Tainted Session, Human Gate — milestone
+close (Phases 8-11, `/gsd-complete-milestone`). v1.2's DONE gate (Phase 11):
+a new Linux-gated integration test
 (`cli/caprun/tests/live_acceptance_tainted_session.rs`) proves ACC-01/02/03
-live on real Linux via Colima+Docker — hostile read → I1 demotion →
-I2 block → human deny (nothing sent) / human confirm (effect proceeds
-exactly once), one unbroken causal chain (`verify_chain()` true, corrected
-`parent_id` walk) for both outcomes. A pre-existing stale assertion in
-`s9_live_block.rs` (dating to Phase 9's chain-head fix, never previously
-exercised on Linux) was caught and fixed as part of this phase. VERIFICATION.md
-records both the initial gsd-verifier pass (macOS, correctly scored
-human_needed for the Linux-only claims) and the orchestrator's independent
-same-session Colima+Docker re-run that closed the gap with real evidence.
-v1.0 shipped the mechanism proof; v1.1 shipped the live runtime; **v1.2's
-requirements are now all validated** (ACC-01/02/03 complete) — formal
-milestone close-out is the next step, via `/gsd-complete-milestone`.*
+live on real Linux via Colima+Docker — hostile read → I1 demotion → I2 block
+→ human deny (nothing sent) / human confirm (effect proceeds exactly once),
+one unbroken causal chain (`verify_chain()` true, corrected `parent_id` walk)
+for both outcomes. A pre-existing stale assertion in `s9_live_block.rs`
+(dating to Phase 9's chain-head fix, never previously exercised on Linux) was
+caught and fixed as part of this phase. VERIFICATION.md records both the
+initial gsd-verifier pass (macOS, correctly scored human_needed for the
+Linux-only claims) and the orchestrator's independent same-session
+Colima+Docker re-run that closed the gap with real evidence. v1.0 shipped
+the mechanism proof; v1.1 shipped the live runtime; **v1.2 shipped the
+tainted-session human gate** — draft-only demotion (I1/I0) and single-shot
+confirmation (CONFIRM-01..04) are now proven live, not just unit-tested.
+Full v1.2 detail archived to `.planning/milestones/`. Next: unscoped — run
+`/gsd-new-milestone`.*

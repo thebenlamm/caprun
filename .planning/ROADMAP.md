@@ -4,7 +4,8 @@
 
 - ✅ **v1.0 MVP — AgentOS v0** — Phases 1-4 (shipped 2026-06-30)
 - ✅ **v1.1 — Usable Runtime (Live §9 from the CLI)** — Phases 5-7 (shipped 2026-07-01)
-- 🚧 **v1.2 — Tainted Session, Human Gate** — Phases 8-11 (in progress)
+- ✅ **v1.2 — Tainted Session, Human Gate** — Phases 8-11 (shipped 2026-07-07)
+- 📋 **Next milestone** — unscoped, run `/gsd-new-milestone`
 
 ## Phases
 
@@ -37,110 +38,21 @@ Full detail archived in [`milestones/v1.1-ROADMAP.md`](milestones/v1.1-ROADMAP.m
 
 </details>
 
-### 🚧 v1.2 — Tainted Session, Human Gate (Phases 8-11) — IN PROGRESS
+<details>
+<summary>✅ v1.2 — Tainted Session, Human Gate (Phases 8-11) — SHIPPED 2026-07-07</summary>
+
+Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.md).
 
 **Milestone goal:** A session that touches untrusted content is mechanically demoted to draft-only (I1 dynamic-taint default + I0 creation rule), and a blocked sink arg can be released only by literal-value human confirmation — all deterministic, all in the audit DAG.
 
-- [x] **Phase 8: Session-Trust & Confirmation Design Gate** - DESIGN doc for session-trust-state (I1 demotion + I0 creation rule) and confirmation-release semantics exists and is reviewed before any executor code for this milestone is written — Decision: APPROVED / Gate status: UNBLOCKED under `DEC-ai-review-satisfies-human-gate` (see `planning-docs/DESIGN-GATE-RECORD-v1.2.md` and `.planning/PROJECT.md`'s Key Decisions table) (completed 2026-07-06)
-- [x] **Phase 9: Session Trust State (I1 + I0)** - reading untrusted content or being seeded from external content demotes/starts a session as draft-only; draft-only sessions deny CommitIrreversible plan nodes via one executor TCB function (completed 2026-07-07)
-- [x] **Phase 10: Single-Shot Confirmation Loop** - `caprun confirm <effect_id>` shows the human the blocked literal + provenance and releases exactly one (sink, arg, literal-digest) triple; deny is durable (completed 2026-07-07)
-- [x] **Phase 11: Live Acceptance — Tainted Session, Human Gate** - live §9-style run on real Linux: hostile read → session demotion → sink block → human deny (nothing sent) / human confirm (exactly once), one unbroken audit chain (completed 2026-07-07)
+- [x] **Phase 8: Session-Trust & Confirmation Design Gate** (3/3 plans) — DESIGN doc for session-trust-state (I1 demotion + I0 creation rule) and confirmation-release semantics, reviewed before any executor code — completed 2026-07-06
+- [x] **Phase 9: Session Trust State (I1 + I0)** (4/4 plans) — reading untrusted content or being seeded from external content demotes/starts a session as draft-only; draft-only sessions deny CommitIrreversible plan nodes via one executor TCB function — completed 2026-07-07
+- [x] **Phase 10: Single-Shot Confirmation Loop** (3/3 plans) — `caprun confirm <effect_id>` shows the human the blocked literal + provenance and releases exactly one (sink, arg, literal-digest) triple; deny is durable — completed 2026-07-07
+- [x] **Phase 11: Live Acceptance — Tainted Session, Human Gate** (1/1 plans) — live run on real Linux: hostile read → session demotion → sink block → human deny (nothing sent) / human confirm (exactly once), one unbroken audit chain — completed 2026-07-07
 
-## Phase Details
+**v1.2 DONE gate cleared:** live on real Linux via Colima+Docker, a hostile workspace-file read demotes the session (I1), the same tainted value Blocks `file.create` (I2), and a human `caprun deny`/`caprun confirm` either durably blocks the effect or releases it exactly once — one unbroken audit-DAG causal chain (`fd_granted→file_read→session_demoted→sink_blocked→confirm_{denied,granted}`) for both outcomes (ACC-01/02/03). A pre-existing stale test assertion in `s9_live_block.rs` (dating to Phase 9, never previously run on Linux) was caught and fixed in the process. All 14 v1.2 requirement IDs Complete.
 
-### Phase 8: Session-Trust & Confirmation Design Gate
-
-**Goal**: A reviewed DESIGN doc for session-trust-state (I1 dynamic demotion + I0 creation rule) and confirmation-release semantics exists, gating all executor code written for this milestone — mirroring the v1.0 Phase 2 design-gate discipline.
-**Depends on**: Phase 7 (v1.1 shipped; this is the first v1.2 phase)
-**Requirements**: PROC-01
-**Success Criteria** (what must be TRUE):
-
-  1. A DESIGN doc exists under `planning-docs/` defining the draft-only demotion rule (I1 trigger = `mint_from_read`), the I0 session-creation rule, and the new `DenyReason` variant/taxonomy for draft-only denial.
-  2. The same (or a paired) DESIGN doc defines confirmation-release semantics: single-shot `(sink, arg, literal-digest)` triple release, durable deny, and TCB-resident (not policy-file) release path.
-  3. The doc explicitly assigns the draft-only deny decision to one executor TCB function — not a broker pre-check — before Phase 9 or Phase 10 executor code is written.
-
-**Plans**: 3/3 plans complete
-Plans:
-**Wave 1**
-
-- [x] 08-01-PLAN.md — Author DESIGN-session-trust-state.md (I1 demotion + I0 creation rule + SessionStatus::Draft + executor deny mechanism)
-- [x] 08-02-PLAN.md — Author DESIGN-confirmation-release.md (PendingConfirmation checkpoint + confirm/deny semantics + CLI contract)
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 08-03-PLAN.md — Author DESIGN-GATE-RECORD-v1.2.md + blocking human-review checkpoint (depends on 08-01, 08-02)
-
-### Phase 9: Session Trust State (I1 + I0)
-
-**Goal**: A session's trust state is mechanically tracked: reading untrusted content or being seeded from externally-derived content demotes/starts a session as draft-only, and draft-only sessions deterministically deny irreversible effects while still permitting reversible ones.
-**Depends on**: Phase 8
-**Requirements**: TAINT-01, TAINT-02, TAINT-03, TAINT-04, ORIGIN-01, ORIGIN-02
-**Success Criteria** (what must be TRUE):
-
-  1. A session that triggers `mint_from_read` (a raw untrusted read) is demoted to draft-only, with the demotion recorded as an audit event carrying a causal edge to the triggering read event.
-  2. A session created with an externally-derived seed starts draft-only from creation, with the seed-provenance (trusted-arg vs file-derived) recorded and decided by the `caprun` CLI.
-  3. Submitting a `CommitIrreversible`-class plan node against a draft-only session is Denied with a new `DenyReason` variant, decided in the executor (one TCB function, one taxonomy).
-  4. Submitting a `MutateReversible` or `Observe`-class plan node against a draft-only session still succeeds.
-
-**Plans**: 4/4 plans complete
-**Wave 1**
-
-- [x] 09-01-PLAN.md — runtime-core domain types: `SessionStatus::Draft`, `SeedProvenance`, `DenyReason::DraftOnlySessionDeniesCommitIrreversible`
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 09-02-PLAN.md — executor draft-only deny: `EffectClass`/`sink_effect_class`, `#[cfg(test)]` fixture sink, `session_status` param, post-loop Step 0.5 (TAINT-02/03)
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 09-03-PLAN.md — brokerd wiring: `update_session_status`, `create_session` Draft-on-file-derived, `mint_from_read` atomic demotion, per-connection `session_status` threading, all call-site reconciliation (TAINT-01/04, ORIGIN-02)
-
-**Wave 4** *(blocked on Wave 3 completion)*
-
-- [x] 09-04-PLAN.md — caprun CLI `--seed-from-file` on-ramp + provenance→status integration test (ORIGIN-01/02)
-
-### Phase 10: Single-Shot Confirmation Loop
-
-**Goal**: A human can inspect a blocked effect's verbatim literal and provenance, then release it exactly once or durably deny it, via a second CLI command — never a session-wide waiver or standing policy.
-**Depends on**: Phase 8
-**Requirements**: CONFIRM-01, CONFIRM-02, CONFIRM-03, CONFIRM-04
-**Success Criteria** (what must be TRUE):
-
-  1. Running `caprun confirm <effect_id>` against a `BlockedPendingConfirmation` effect displays the verbatim literal value and its provenance to the human.
-  2. Confirming releases exactly that one `(sink, arg, literal-digest)` triple — the effect proceeds once, and no standing policy or session-wide waiver is created.
-  3. Denying is durable: the effect never proceeds, and the same `effect_id` cannot later be confirmed.
-  4. Every confirm/deny decision is recorded as an audit event anchored to `SinkBlockedAnchor.effect_id`, and the release path executes in the TCB (not a policy file).
-
-**Plans**: 3/3 plans complete
-
-**Wave 1**
-
-- [x] 10-01-PLAN.md — PendingConfirmation types + pending_confirmations side table + accessors (durable checkpoint substrate)
-
-**Wave 2** *(blocked on Wave 1)*
-
-- [x] 10-02-PLAN.md — block-time PendingConfirmation persistence (atomic with sink_blocked) + invoke_file_create_from_resolved frozen-snapshot re-invocation
-
-**Wave 3** *(blocked on Wave 2)*
-
-- [x] 10-03-PLAN.md — confirm/deny TCB decision logic + caprun confirm/deny CLI verbs + cross-process integration test
-
-### Phase 11: Live Acceptance — Tainted Session, Human Gate
-
-**Goal**: The full chain — hostile read, session demotion, sink block, and human decision — runs live on real Linux `caprun` with one unbroken, auditable causal chain, for both the deny and confirm outcomes.
-**Depends on**: Phase 9, Phase 10
-**Requirements**: ACC-01, ACC-02, ACC-03
-**Success Criteria** (what must be TRUE):
-
-  1. Deny path: a hostile workspace file is read by the worker, the session is demoted (I1), a tainted routing arg is Blocked (I2), and a human deny via `caprun confirm` results in no effect ever proceeding.
-  2. Confirm path: the same scenario, but a human confirm via `caprun confirm` results in the effect proceeding exactly once.
-  3. For both runs, the audit DAG shows one unbroken causal chain: read → demotion → block → human decision.
-
-**Plans**: 1/1 plans complete
-
-**Wave 1**
-
-- [x] 11-01-PLAN.md — Live Linux acceptance: new `live_acceptance_tainted_session.rs` (deny + confirm tests, ACC-01/02/03), fix stale `s9_live_block.rs` block-edge assertion (Pitfall 1), and capture the Colima+Docker acceptance record (D-06)
+</details>
 
 ## Progress
 
@@ -153,7 +65,7 @@ Plans:
 | 5. Runtime Spine & Live §9 Email Block | v1.1 | 4/4 | Complete | 2026-06-30 |
 | 6. Deterministic Planner & Intent Input | v1.1 | 5/5 | Complete | 2026-07-01 |
 | 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 6/6 | Complete | 2026-07-01 |
-| 8. Session-Trust & Confirmation Design Gate | v1.2 | 3/3 | Complete    | 2026-07-06 |
-| 9. Session Trust State (I1 + I0) | v1.2 | 4/4 | Complete    | 2026-07-07 |
-| 10. Single-Shot Confirmation Loop | v1.2 | 3/3 | Complete    | 2026-07-07 |
-| 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 1/1 | Complete    | 2026-07-07 |
+| 8. Session-Trust & Confirmation Design Gate | v1.2 | 3/3 | Complete | 2026-07-06 |
+| 9. Session Trust State (I1 + I0) | v1.2 | 4/4 | Complete | 2026-07-07 |
+| 10. Single-Shot Confirmation Loop | v1.2 | 3/3 | Complete | 2026-07-07 |
+| 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 1/1 | Complete | 2026-07-07 |
