@@ -88,9 +88,53 @@ The v1.0 mechanism proof became a real `caprun` run:
 - 6 plans across 5 waves; wall-clock dominated by Rust workspace compile per worktree (each isolated `target/`).
 - Notable: the live-Linux proof was run twice (executor + verifier independently) — deliberate redundancy for the security gate.
 
+## Milestone: v1.2 — Tainted Session, Human Gate
+
+**Shipped:** 2026-07-07
+**Phases:** 4 (8-11) | **Plans:** 11 | **Tasks:** 25
+
+### What Was Built
+
+Draft-only session demotion and single-shot human confirmation, proven live on real Linux:
+
+- **Design gate (Phase 8)** — `DESIGN-session-trust-state.md` (I1 dynamic demotion, I0 creation rule, `SessionStatus::Draft`, one executor deny function) + `DESIGN-confirmation-release.md` (`PendingConfirmation` checkpoint, confirm/deny semantics, CLI contract). Round-1 adversarial review caught a genuine architectural blocker (B1: I1-deny-before-I2-Block precedence would have made a Draft session's tainted arg unconfirmable — a dead end) before any executor code existed.
+- **Session trust state (Phase 9)** — `mint_from_read` atomically demotes a session to `Draft` with a causally-linked `session_demoted` event (TAINT-01/04); a single post-loop Step 0.5 in the executor denies `Draft`+`CommitIrreversible` without ever pre-empting the existing I2 Block (TAINT-02/03); `--seed-from-file` gives I0 (ORIGIN-01/02) a real CLI on-ramp.
+- **Single-shot confirmation loop (Phase 10)** — durable `pending_confirmations` side table, block-time full-arg snapshot persisted atomically with `sink_blocked`, TCB-resident `confirm`/`deny` in `crates/brokerd/src/confirmation.rs`, 6-way exit-code CLI contract, cross-process integration test proving single-shot release and durable deny across separate OS processes.
+- **Live acceptance (Phase 11)** — a new Linux-gated integration test composing the already-proven Phase 9/10 mechanisms into one live end-to-end run: hostile read → I1 demotion → I2 block → `caprun deny`/`caprun confirm`, with one unbroken audit-DAG causal chain for both outcomes (ACC-01/02/03), verified via Colima+Docker.
+
+### What Worked
+
+- **The design gate caught a real bug, not a rubber stamp.** The round-1 adversarial review of `DESIGN-session-trust-state.md` found that the I1 draft-only deny and the I2 taint-Block, as originally specified, composed into a dead end — a Draft session's tainted arg would Deny before ever reaching a confirmable Block. This was fixed in the design doc *before* Phase 9 wrote a line of executor code — the cheapest place a bug like this can be caught.
+- **Source-grounded research answered the hardest question and found a bug nobody was looking for.** Phase 11's RESEARCH.md traced the actual `parent_id` wiring through three independent source locations (not summaries) to answer ACC-03's causal-chain question definitively — and in the process discovered that `s9_live_block.rs`'s existing hostile-block assertion had been silently stale since Phase 9's chain-head fix, never caught because it's Linux-gated and never run on the macOS dev box. Fixing it became an explicit plan task instead of a surprise mid-execution.
+- **Independent live-Linux re-verification, now 2-for-2.** As in v1.1, the orchestrator did not accept the executor's SUMMARY.md claims at face value for the phase's core runtime-behavior assertion — it re-ran the actual Colima+Docker commands itself at verification time and confirmed matching output before upgrading VERIFICATION.md from `human_needed` to `passed`. Caught nothing wrong either time, but this is now a confirmed standing practice for this project's security-critical DONE gates, not a one-off.
+- **The mechanical decision-coverage gate caught a real translation gap.** `check.decision-coverage-plan` blocked planning completion because the plan substantively addressed all 6 CONTEXT.md decisions but never literally cited their `D-NN` ids in a gate-scanned location (YAML `must_haves`/`truths`/`objective` frontmatter keys, or `<objective>`/`<tasks>`/`<action>` XML bodies) — the independent `gsd-plan-checker` had already scored this dimension PASS via semantic reading, so the two checks genuinely disagreed. Resolved with a two-sentence addition inside `<objective>`; cheap, and it caught something the semantic-only checker didn't.
+
+### What Was Inefficient
+
+- **Recorded the wrong `expected_base` for a worktree merge.** When calling `worktree.record-agent` after the Phase 11 executor returned, the orchestrator used the value from the executor's own `<worktree_metadata>` return block — which turns out to hold the branch's own final-commit hash, not the dispatch-time fork point `worktree.cleanup-wave` actually needs (it computes `git merge-base HEAD <branch>` and checks that against `expected_base`). This produced a false `base_mismatch` block. Diagnosed by reading `worktree-safety.cjs`'s actual merge logic and confirming with `git merge-base` directly; fixed by editing the manifest JSON to the orchestrator's captured dispatch-time `EXPECTED_BASE` instead. Cheap fix, but worth remembering: `<worktree_metadata>`'s `expected_base` field is not the value `record-agent --base` wants.
+
+### Patterns Established
+
+- **Composition-proof phases stay thin.** Phase 11 needed only 1 plan / 3 tasks because Phases 9 and 10 had already individually proven every underlying mechanism — the actual new work was live end-to-end wiring plus catching drift between phases (the stale assertion), not new mechanism. Don't over-plan a phase whose job is proving composition, not building.
+- **Cite `D-NN` decision ids inside `<objective>` (or YAML `must_haves`/`truths`).** The decision-coverage gate only scans specific locations (YAML frontmatter `must_haves`/`truths`/`objective` keys, and `<objective>`/`<tasks>`/`<task>`/`<action>` XML tag bodies) — a custom-named XML block anywhere else is invisible to it even if the content is substantively correct.
+- **Record the dispatch-time orchestrator HEAD as a worktree's `expected_base`**, captured via `git rev-parse HEAD` *before* spawning the agent — never a value read back from the executor's own return metadata.
+
+### Key Lessons
+
+- Adversarial design review earns its cost when it's actually adversarial: the v1.2 design gate found a real precedence bug, not just prose polish. Keep gating executor code behind reviewed design docs for any milestone that adds new deny/enforcement logic.
+- "Independently re-run the live proof at verification time" is no longer a one-off caution from v1.1 — it's now this project's standing practice for security DONE gates, confirmed twice. Keep doing it even when the executor's self-report looks solid.
+- A mechanical gate and a semantic reviewer can legitimately disagree without either being wrong — the mechanical gate checks a narrower, stricter thing (literal traceability in specific locations) that the semantic reviewer doesn't. Don't drop either check in favor of the other.
+
+### Cost Observations
+
+- Model mix: orchestrator Sonnet 5; planner on Opus; researcher, pattern-mapper, plan-checker, executor, and verifier all on Sonnet.
+- 111 commits across the milestone (`git log v1.1..v1.2`); 97 files changed, +16569/-231 lines; 6 days wall-clock (2026-07-01 → 2026-07-07).
+- Notable: the live-Linux proof was run twice again (executor + orchestrator independently) — deliberate redundancy for the security gate, same as v1.1, now a confirmed pattern rather than a one-off.
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Shipped | Notes |
 |-----------|--------|-------|---------|-------|
 | v1.0 MVP  | 4      | 15    | 2026-06-30 | v0 DONE — genuine-taint §9 gate cleared |
 | v1.1 Usable Runtime | 3 | 15 | 2026-07-01 | Live §9 from the CLI — real `file.create` sink, DB-durable taint chain, Linux-verified |
+| v1.2 Tainted Session, Human Gate | 4 | 11 | 2026-07-07 | Draft-only session demotion (I1/I0) + single-shot confirmation loop, live-proven on real Linux; independent live-run re-verification now a confirmed 2/2 pattern |
