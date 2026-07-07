@@ -126,3 +126,7 @@ None - no external service configuration required. (Mailpit sidecar setup for fu
 ---
 *Phase: 13-real-broker-mediated-smtp-adapter*
 *Completed: 2026-07-07*
+
+## Self-Check: PASSED
+
+All 4 created/modified files confirmed present on disk; all 4 task/summary commit hashes (`b0279b2`, `368d613`, `bbf40d6`, `efba552`) confirmed present in `git log --oneline --all`.
