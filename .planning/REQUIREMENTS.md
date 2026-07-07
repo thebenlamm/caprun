@@ -9,15 +9,15 @@ Requirements for milestone v1.2. Each maps to roadmap phases.
 
 ### Session Taint State (I1)
 
-- [ ] **TAINT-01**: A session is demoted to draft-only when `mint_from_read` taints a value inside it (raw untrusted read flips session trust state)
+- [x] **TAINT-01**: A session is demoted to draft-only when `mint_from_read` taints a value inside it (raw untrusted read flips session trust state)
 - [x] **TAINT-02**: A draft-only session denies `CommitIrreversible`-class plan nodes that do not already Block on I2, via a new `DenyReason` variant, decided in the executor (one TCB deny function, one taxonomy). *(Amended 2026-07-02 per DESIGN-REVIEW-v1.2-round1.md B1: the seed doc's original wording did not specify precedence between the I1/I0 class-deny and the I2 per-arg taint Block; the per-arg I2 Block MUST take precedence — see DESIGN-session-trust-state.md §8/§11.)*
 - [x] **TAINT-03**: A draft-only session still allows `MutateReversible`/`Observe`-class plan nodes
-- [ ] **TAINT-04**: Session demotion is recorded as an audit event with a causal edge to the triggering read event
+- [x] **TAINT-04**: Session demotion is recorded as an audit event with a causal edge to the triggering read event
 
 ### Session Creation (I0)
 
 - [ ] **ORIGIN-01**: Session creation records a seed-provenance field (trusted-arg vs file-derived); the `caprun` CLI decides which at creation time
-- [ ] **ORIGIN-02**: A session whose intent/seed derives from external content starts draft-only and cannot auto-authorize Tier 3+ effects
+- [x] **ORIGIN-02**: A session whose intent/seed derives from external content starts draft-only and cannot auto-authorize Tier 3+ effects
 
 ### Confirmation Loop
 
@@ -71,7 +71,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TAINT-01 | Phase 9 | Pending (types landed 09-01; behavior lands 09-03) |
 | TAINT-02 | Phase 9 | Pending (types landed 09-01; behavior lands 09-02) |
 | TAINT-03 | Phase 9 | Complete |
-| TAINT-04 | Phase 9 | Pending |
+| TAINT-04 | Phase 9 | Complete |
 | ORIGIN-01 | Phase 9 | Pending (types landed 09-01; behavior lands 09-04) |
 | ORIGIN-02 | Phase 9 | Pending (types landed 09-01; behavior lands 09-03/09-04) |
 | CONFIRM-01 | Phase 10 | Pending |
