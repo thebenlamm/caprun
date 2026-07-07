@@ -8,6 +8,7 @@
 //!
 //! ```text
 //! confine-probe <fs|net|exec>
+//! confine-probe smtp <host> <port>
 //! ```
 //!
 //! # Exit codes
@@ -38,26 +39,38 @@ fn main() {
     {
         let args: Vec<String> = std::env::args().collect();
         if args.len() < 2 {
-            eprintln!("Usage: confine-probe <fs|net|exec>");
+            eprintln!("Usage: confine-probe <fs|net|exec> | confine-probe smtp <host> <port>");
             std::process::exit(2);
         }
-        run_linux(&args[1]);
+        run_linux(&args);
     }
 }
 
 /// Linux implementation: apply confinement, then attempt the forbidden op.
+///
+/// `args` is the full argv (args[0] is the binary path, args[1] is the op).
+/// The `smtp` op additionally consumes args[2] (host) and args[3] (port);
+/// all other ops (`fs`/`net`/`exec`) take no extra arguments, unchanged.
 #[cfg(target_os = "linux")]
-fn run_linux(op: &str) {
+fn run_linux(args: &[String]) {
     if let Err(e) = sandbox::apply_confinement() {
         eprintln!("[confine-probe] apply_confinement failed: {e}");
         std::process::exit(2);
     }
+    let op = args[1].as_str();
     eprintln!("[confine-probe] confinement applied, attempting op: {op}");
 
     match op {
         "fs" => probe_fs(),
         "net" => probe_net(),
         "exec" => probe_exec(),
+        "smtp" => {
+            if args.len() < 4 {
+                eprintln!("Usage: confine-probe smtp <host> <port>");
+                std::process::exit(2);
+            }
+            probe_smtp(&args[2], &args[3]);
+        }
         other => {
             eprintln!("[confine-probe] unknown op: {other}");
             std::process::exit(2);
@@ -152,6 +165,57 @@ fn probe_net() {
         unsafe { libc::close(fd) };
         eprintln!("[confine-probe] net: socket(AF_INET) succeeded — seccomp not enforced!");
         std::process::exit(1);
+    }
+}
+
+/// smtp probe: attempt an actual TCP `connect()` to `host:port` (Pitfall 5
+/// option (b) — explicit decision, see 13-RESEARCH.md).
+///
+/// `apply_confinement()` has already run when this is called (see
+/// `run_linux`), so the seccomp filter installed by
+/// `sandbox::seccomp::apply_worker_filter()` already denies
+/// `socket(AF_INET, ...)`/`socket(AF_INET6, ...)` with `EPERM` — the same
+/// mechanism `probe_net()` exercises. `TcpStream::connect` must call
+/// `socket()` before it can call `connect()`, so the syscall-level denial
+/// fires before any connection attempt reaches `host:port`. This op exists
+/// as defense-in-depth: if the seccomp filter is ever loosened to allow
+/// `socket()` but still deny outbound `connect()`, this probe would still
+/// correctly detect and report the denial (or the regression) at the
+/// `connect()` boundary instead of stopping at `socket()`.
+///
+/// Exit codes mirror the other probes: 0 = correctly blocked, 1 = confinement
+/// regressed (connection unexpectedly succeeded), 2 = unexpected error.
+#[cfg(target_os = "linux")]
+fn probe_smtp(host: &str, port: &str) {
+    let addr = format!("{host}:{port}");
+    eprintln!("[confine-probe] smtp: attempting connect() to {addr}");
+
+    match std::net::TcpStream::connect(&addr) {
+        Err(e) => {
+            let errno = e.raw_os_error().unwrap_or(0);
+            if errno == libc::EPERM || errno == libc::EACCES {
+                eprintln!("[confine-probe] smtp: correctly blocked (errno={errno}, addr={addr})");
+                std::process::exit(0);
+            } else {
+                // Any other connect()-stage failure (e.g. ECONNREFUSED because
+                // no listener is up) is NOT a proof of kernel-enforced denial —
+                // it means socket() unexpectedly succeeded and only the
+                // downstream connect() failed for an unrelated reason. Report
+                // as an unexpected error rather than silently treating it as
+                // "blocked" (that would mask a seccomp regression).
+                eprintln!(
+                    "[confine-probe] smtp: unexpected error connecting to {addr}: {e} (errno={errno})"
+                );
+                std::process::exit(2);
+            }
+        }
+        Ok(stream) => {
+            drop(stream);
+            eprintln!(
+                "[confine-probe] smtp: connect() to {addr} succeeded — seccomp not enforced!"
+            );
+            std::process::exit(1);
+        }
     }
 }
 
