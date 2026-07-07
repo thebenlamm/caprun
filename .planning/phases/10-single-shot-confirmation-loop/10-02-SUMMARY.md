@@ -132,3 +132,7 @@ None - no external service configuration required.
 ---
 *Phase: 10-single-shot-confirmation-loop*
 *Completed: 2026-07-07*
+
+## Self-Check: PASSED
+
+All modified files present on disk; all 5 commit hashes (a35db45, 1cee2e2, aa641c2, fe75c0f, 4358a6c) found in git log.
