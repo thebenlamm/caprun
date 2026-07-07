@@ -35,32 +35,65 @@ use brokerd::{
     session::{create_session, persist_session},
 };
 use chrono::Utc;
-use runtime_core::{intent::CaprunIntent, Event};
+use runtime_core::{intent::CaprunIntent, Event, SeedProvenance};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let mut args = std::env::args().skip(1);
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    let mut idx = 0usize;
+
+    // ── Parse optional --seed-from-file flag BEFORE positional args (ORIGIN-01/02) ──
+    // The caprun CLI is the ONLY place that decides seed-provenance (DESIGN §3):
+    // presence of this flag means the intent parameter is read from external file
+    // content (untrusted source) => SeedProvenance::FileDerived; absence means
+    // today's trusted-argv behavior is unchanged => SeedProvenance::TrustedArg.
+    // The broker (create_session) — not the CLI — turns that provenance into the
+    // session's initial Draft/Active status; the CLI only forwards it.
+    let seed_from_file_path: Option<String> =
+        if raw_args.get(idx).map(String::as_str) == Some("--seed-from-file") {
+            idx += 1;
+            let path = raw_args.get(idx).cloned().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "usage: caprun --seed-from-file <path> <intent-kind> <workspace-file> [audit-db-path]"
+                )
+            })?;
+            idx += 1;
+            Some(path)
+        } else {
+            None
+        };
+
+    let mut args = raw_args[idx..].iter().cloned();
+
+    let usage = if seed_from_file_path.is_some() {
+        "usage: caprun --seed-from-file <path> <intent-kind> <workspace-file> [audit-db-path]"
+    } else {
+        "usage: caprun <intent-kind> <intent-param> <workspace-file> [audit-db-path]"
+    };
 
     // ── Parse typed intent from positional args (PLAN-01) ────────────────────
-    // Signature: caprun <intent-kind> <intent-param> <workspace-file> [audit-db-path]
-    let intent_kind = args.next().ok_or_else(|| {
-        anyhow::anyhow!(
-            "usage: caprun <intent-kind> <intent-param> <workspace-file> [audit-db-path]"
-        )
-    })?;
-    let intent_param = args.next().ok_or_else(|| {
-        anyhow::anyhow!(
-            "usage: caprun <intent-kind> <intent-param> <workspace-file> [audit-db-path]"
-        )
-    })?;
-    let workspace_path = args.next().ok_or_else(|| {
-        anyhow::anyhow!(
-            "usage: caprun <intent-kind> <intent-param> <workspace-file> [audit-db-path]"
-        )
-    })?;
+    let intent_kind = args.next().ok_or_else(|| anyhow::anyhow!(usage))?;
+
+    // The file-derived intent parameter REPLACES the positional <intent-param>
+    // slot entirely (RESEARCH Pitfall 4 / A2) — no redundant positional value is
+    // consumed when --seed-from-file is present. Fail-closed (V5): a missing or
+    // unreadable seed file is a hard error, NEVER a silent fallback to trusted-arg.
+    let (seed_provenance, intent_param) = match &seed_from_file_path {
+        Some(path) => {
+            let content = std::fs::read_to_string(path)
+                .with_context(|| format!("--seed-from-file: failed to read {path}"))?;
+            (SeedProvenance::FileDerived, content)
+        }
+        None => {
+            let param = args.next().ok_or_else(|| anyhow::anyhow!(usage))?;
+            (SeedProvenance::TrustedArg, param)
+        }
+    };
+
+    let workspace_path = args.next().ok_or_else(|| anyhow::anyhow!(usage))?;
     let audit_path = args.next().unwrap_or_else(|| ":memory:".to_string());
 
     // Map intent kind → typed enum. Fail closed on unknown kinds (V5).
@@ -99,16 +132,30 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // ── 2. Create session + persist + append session_created event ──────────
+    // The CLI decides seed_provenance (above); create_session (broker-side,
+    // Plan 03) is the ONLY place that turns provenance into the session's
+    // initial SessionStatus (Draft for FileDerived, Active for TrustedArg) —
+    // the CLI never self-declares status (DESIGN §3).
     let intent_id = Uuid::new_v4();
-    let session = create_session(intent_id);
+    let session = create_session(intent_id, seed_provenance.clone());
     let session_id = session.id;
+    let initial_session_status = session.status.clone();
 
+    // ORIGIN-01: record the seed-provenance determination in the
+    // session_created Event's actor field — Event carries no free-form
+    // metadata field (its serialized form IS the hashed audit payload), so the
+    // provenance tag rides in `actor`, exhaustively matched (mirrors the
+    // broker's own in-process CreateSession IPC arm in server.rs).
     let session_created_id = Uuid::new_v4();
+    let actor = match seed_provenance {
+        SeedProvenance::TrustedArg => "broker:seed_provenance=trusted_arg",
+        SeedProvenance::FileDerived => "broker:seed_provenance=file_derived",
+    };
     let e_session = Event::new(
         session_created_id,
         None,
         session_id,
-        "broker".into(),
+        actor.into(),
         "session_created".into(),
         Utc::now(),
         vec![],
@@ -133,6 +180,7 @@ async fn main() -> anyhow::Result<()> {
             session_id,
             session_created_id,
             session_created_hash,
+            initial_session_status,
             ws_root_for_broker,
         )
         .await
