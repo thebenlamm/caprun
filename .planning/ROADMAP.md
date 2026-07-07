@@ -99,7 +99,11 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   4. A re-issued confirm, a broker restart mid-send, or a duplicate plan-node submission cannot double-fire — the audit DAG records exactly ONE send.
   5. An adapter failure after confirm (connection refused / 5xx) surfaces the error (never swallowed), is recorded in the DAG, and cannot silently retry into a double-send.
 
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 13-01-PLAN.md — SMTP adapter module (email_smtp.rs) + lettre dep + structural CRLF gate (SMTP-05)
+- [ ] 13-02-PLAN.md — confirm-path rewire: &mut Connection, atomic CAS+attempt tx, EmailSendFailed variant, stub delete (SEND-01, SEND-02)
+- [ ] 13-03-PLAN.md — kernel negative-net (confine-probe smtp op) + secrets-absence gate (SMTP-01, SMTP-02)
+- [ ] 13-04-PLAN.md — Mailpit acceptance + CRLF fixture + reusable verification recipe (SMTP-03, SMTP-05)
 
 ### Phase 14: Content-Sensitive Sink-Arg Blocking
 
