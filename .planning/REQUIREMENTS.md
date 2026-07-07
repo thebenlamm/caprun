@@ -39,8 +39,8 @@ Scoped with caprun-opus-77 (coordinator, delegated by Ben Lamm) plus an advisor 
 
 ### SEND (idempotency — bounded)
 
-- [ ] **SEND-01**: The confirm-triggered send is idempotent — a re-issued confirm, a broker restart mid-send, or a duplicate plan-node submission CANNOT double-fire; the audit DAG records exactly ONE send. Bound to single-confirm idempotency — NOT distributed exactly-once/delivery semantics.
-- [ ] **SEND-02**: Adapter send failing AFTER confirm (connection refused / 5xx) surfaces the error (never swallowed), records it in the DAG, and no silent retry can double-send; confirm-token consumption is defined for the failure path.
+- [x] **SEND-01**: The confirm-triggered send is idempotent — a re-issued confirm, a broker restart mid-send, or a duplicate plan-node submission CANNOT double-fire; the audit DAG records exactly ONE send. Bound to single-confirm idempotency — NOT distributed exactly-once/delivery semantics.
+- [x] **SEND-02**: Adapter send failing AFTER confirm (connection refused / 5xx) surfaces the error (never swallowed), records it in the DAG, and no silent retry can double-send; confirm-token consumption is defined for the failure path.
 
 ### DESIGN (process gate)
 
@@ -94,12 +94,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONFIRM-04 | Phase 16 | Pending |
 | CONTROL-01 | Phase 16 | Pending |
 | CONTROL-02 | Phase 16 | Pending |
-| SEND-01 | Phase 13 | Pending |
-| SEND-02 | Phase 13 | Pending |
+| SEND-01 | Phase 13 | Complete |
+| SEND-02 | Phase 13 | Complete |
 | DOC-01 | Phase 17 | Pending |
 | ACCEPT-01 | Phase 17 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 20 total
 - Mapped to phases: 20/20 ✓
 - Unmapped: 0
