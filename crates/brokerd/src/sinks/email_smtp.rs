@@ -161,9 +161,58 @@ fn build_message(resolved_args: &[ResolvedArg]) -> Result<Message> {
         .context("email_smtp: build_message body construction failed (fail-closed)")
 }
 
+/// Invoke the real `email.send` SMTP sink from a FROZEN `ResolvedArg`
+/// snapshot (confirm-time re-invocation, mirrors
+/// `file_create.rs::invoke_file_create_from_resolved`'s frozen-snapshot
+/// shape). This is the ONLY code path in the whole TCB that performs an SMTP
+/// call (D-03) — never called from the confined worker, never from the
+/// allow-path plan-node dispatch, only from Plan 02's confirm-path special
+/// case AFTER the CAS + `email_send_attempted` transaction commits.
+///
+/// RED-phase stub (Task 2, TDD): always reports success and never actually
+/// calls `build_message`/the transport, so the transport-failure test below
+/// fails, proving the test exercises the eventual real behavior.
+///
+/// # Arguments
+/// * `conn`          — open rusqlite connection (broker-owned; used for the
+///   succeeded/failed append AFTER the caller's CAS transaction commits).
+/// * `session_id`    — the Session the blocked plan node belonged to.
+/// * `effect_id`     — the SAME `effect_id` as the original block's anchor.
+/// * `resolved_args` — the frozen `ResolvedArg` snapshot from
+///   `PendingConfirmation`.
+/// * `parent_id`     — causal predecessor event id (the `email_send_attempted`
+///   event Plan 02 appends inside its own transaction).
+/// * `parent_hash`   — hash of that predecessor row (chain anchor).
+///
+/// # Returns
+/// `(event_id, hash)` of the appended `email_send_succeeded` event on
+/// success.
+///
+/// # Errors
+/// On a `build_message` fail-closed abort or an SMTP transport error, an
+/// `email_send_failed` event (OPAQUE payload — see module doc comment) is
+/// durably appended FIRST, then the original error is propagated (no retry,
+/// never swallowed, never `.unwrap()`/panic).
+#[allow(clippy::too_many_arguments)]
+pub fn invoke_email_smtp_from_resolved(
+    conn: &rusqlite::Connection,
+    session_id: Uuid,
+    effect_id: Uuid,
+    resolved_args: &[ResolvedArg],
+    parent_id: Uuid,
+    parent_hash: &str,
+) -> Result<(Uuid, String)> {
+    let _ = (conn, session_id, resolved_args, parent_id, parent_hash);
+    // TODO(RED, Task 2 GREEN phase): call build_message + the real SMTP
+    // transport, appending email_send_succeeded/email_send_failed as
+    // appropriate. This stub always reports success.
+    Ok((Uuid::new_v4(), "stub-hash".to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audit::{find_event_by_type, open_audit_db};
     use runtime_core::plan_node::{TaintLabel, ValueId};
 
     fn arg(name: &str, literal: &str) -> ResolvedArg {
@@ -214,5 +263,80 @@ mod tests {
         ];
         let msg = build_message(&args);
         assert!(msg.is_ok(), "absent cc/bcc must not error: {:?}", msg.err());
+    }
+
+    // ── invoke_email_smtp_from_resolved (Task 2) ──
+
+    /// Serializes tests that mutate process-global CAPRUN_SMTP_* env vars —
+    /// this module has exactly one such test, but the lock protects against
+    /// future additions racing under `cargo test`'s parallel test threads.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A transport failure (closed/unbound port) must propagate Err (never
+    /// swallowed) AND durably append an opaque-payload `email_send_failed`
+    /// event — never an `email_send_succeeded` event.
+    #[test]
+    fn invoke_email_smtp_from_resolved_transport_failure_records_email_send_failed() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        // Bind an ephemeral port then immediately drop the listener: nothing
+        // is listening on it for the rest of this test, so a connect attempt
+        // is refused (ECONNREFUSED) almost immediately — no long timeout.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        std::env::set_var("CAPRUN_SMTP_HOST", "127.0.0.1");
+        std::env::set_var("CAPRUN_SMTP_PORT", port.to_string());
+
+        let conn = open_audit_db(":memory:").unwrap();
+        let session_id = Uuid::new_v4();
+        let root = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "session_created".into(),
+            Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(&conn, &root, None).unwrap();
+
+        let effect_id = Uuid::new_v4();
+        let args = vec![
+            arg("to", "recipient@example.com"),
+            arg("subject", "hello"),
+            arg("body", "hi there"),
+        ];
+
+        let result = invoke_email_smtp_from_resolved(
+            &conn,
+            session_id,
+            effect_id,
+            &args,
+            root.id,
+            &root_hash,
+        );
+
+        std::env::remove_var("CAPRUN_SMTP_HOST");
+        std::env::remove_var("CAPRUN_SMTP_PORT");
+
+        assert!(
+            result.is_err(),
+            "a closed-port transport failure must propagate Err, never be swallowed"
+        );
+
+        let failed = find_event_by_type(&conn, &session_id.to_string(), "email_send_failed")
+            .unwrap()
+            .expect("email_send_failed event must be durably appended");
+        assert_eq!(failed.actor, format!("sink:email.send:{effect_id}"));
+        assert_eq!(failed.parent_id, Some(root.id));
+
+        assert!(
+            find_event_by_type(&conn, &session_id.to_string(), "email_send_succeeded")
+                .unwrap()
+                .is_none(),
+            "no email_send_succeeded event on the failure path"
+        );
     }
 }
