@@ -30,7 +30,8 @@ draft-only class deny to a post-loop "Step 0.5."
 
 v1.3's hero demo requires blocking a tainted email **body**, not just the recipient — reopening
 `CONTENT-01` (previously deferred to v2 at v1.2 scoping; see `PROJECT.md` Key Decisions). The
-content-sensitivity classification for `email.send`'s `subject`/`body`/`attachment` args already
+content-sensitivity classification for `email.send`'s content args (`subject`/`body` for v1.3 —
+`attachment` is **descoped**, see "Attachment Is Descoped for v1.3 (D-23)" below) already
 exists in the executor (`crates/executor/src/sink_sensitivity.rs:93-98`); today it is a documented
 no-op ("Content-sensitive tainted args do NOT Block in v0" — `crates/executor/src/lib.rs:141-142`,
 Step 3). Making CONTENT-01 real — Blocking on a tainted body — exposes a second, structurally
@@ -89,7 +90,39 @@ code and MUST be corrected against this section.
 MUST NOT accept this claim on this document's or the research doc's word — the reviewer MUST
 independently re-read `crates/executor/src/sink_sensitivity.rs:93-98` and confirm `is_content_sensitive`
 already returns `true` for `email.send`'s `subject`/`body`/`attachment` before treating this section as
-verified.
+verified. (The current code's content-sensitive set is `["subject", "body", "attachment"]`; v1.3
+narrows the *live-scoped* set to `["subject", "body"]` — see D-23 immediately below. The reviewer
+verifies the current-source claim as written; the narrowing is a mandated Phase-13/14 code change,
+not a contradiction of it.)
+
+---
+
+## Attachment Is Descoped for v1.3 (D-23, MUST)
+
+**MUST:** `attachment` is **OUT OF SCOPE for v1.3** and MUST be removed from `email.send`'s live
+surface in the two hardcoded sets that currently list it:
+
+1. `EMAIL_SEND_CONTENT_SENSITIVE` (`crates/executor/src/sink_sensitivity.rs:71`) MUST become
+   `&["subject", "body"]` — `attachment` removed.
+2. `email.send`'s schema `allowed` set (`crates/executor/src/sink_schema.rs`,
+   `KNOWN_SINKS` `email.send` entry, currently `["to", "cc", "bcc", "subject", "body", "attachment"]`)
+   MUST become `["to", "cc", "bcc", "subject", "body"]` — `attachment` removed, so a plan node
+   carrying an `attachment` arg is `Denied` with `UnknownArg` at the Step 0 schema gate, before any
+   sensitivity evaluation.
+
+**Why (start-simplest, D-01 scope discipline):** `attachment` is both schema-accepted AND
+content-sensitive today, so a tainted attachment would be Blocked → confirmed → and then MUST be
+sent — but SMTP-05's typed-builder allow-list (`.to`/`.cc`/`.bcc`/`.subject`/`.body`) has NO
+attachment path, and the `Content-Disposition` filename→header CRLF surface an attachment introduces
+is not analyzed by the D-07/D-22 defense (which reasons only about address/subject headers and the
+after-separator body). Rather than design an unanalyzed attachment-header injection surface into
+v1.3, `attachment` is dropped entirely. `subject` stays (RFC 2047 encoded-word path — analyzed and
+safe, D-07); `body` stays (after the header/body separator — analyzed and safe, D-07). Only
+`attachment` goes.
+
+**MUST NOT (scope creep guard):** This descope MUST NOT be read as a temporary stub to be re-enabled
+mid-milestone. Re-adding `attachment` requires its own DESIGN analysis of the Content-Disposition
+CRLF surface (a future milestone's work, not v1.3's).
 
 ---
 
@@ -174,13 +207,27 @@ executor mints nothing) MUST be preserved per-element in the new plural shape.
   Block, exactly as today. Reordering this — running Step 0.5 before or interleaved with the loop —
   would reintroduce a variant of B1: a `Draft` session with a tainted body would be Denied before the
   body's Block is ever collected, making the confirm path unreachable again.
-- **(D-16) The unbroken-edge anti-staple gate applies to EVERY blocked arg in the set, not just one.**
+- **(D-16) The unbroken-edge anti-staple gate applies to EVERY blocked arg in the set, not just one,
+  AND the edge MUST descend from the originating untrusted-doc read — not a re-anchored fresh root.**
   The existing genuine-taint requirement (`DESIGN-taint-model.md` §Genuine-Taint Requirement — raw-read
   Event → `ValueRecord` → sensitive sink arg, provable as an unbroken edge in the audit DAG via
   `provenance_chain[0]`) MUST hold independently for EVERY element of the blocked-arg collection. A
   two-tainted-arg Block (e.g., tainted `to` AND tainted `body`) with only ONE of the two edges proven
   in the audit DAG is a PARTIAL pass, not a pass — Phase 15's verification MUST assert the unbroken
   edge for each blocked arg individually, not merely for the decision as a whole.
+  **Provenance-threading MUST (the anti-laundering half of D-16, specified in full in
+  `DESIGN-confirm-binding.md`'s "Post-Transformation Bytes" section):** for a *transform-derived*
+  blocked arg (an EXTRACT-03 concat/base64-decode value), the unbroken edge D-16 asserts MUST be the
+  edge from the transform to EVERY input's originating untrusted-doc read Event — i.e., the derived
+  value's `provenance_chain` root MUST remain the originating read, threaded from its inputs, NOT a
+  fresh event minted in the transform call. A derived value whose `provenance_chain` is a fresh
+  single-element chain rooted at a NEW event unrelated to the original read satisfies the letter of
+  "an unbroken edge exists via `provenance_chain[0]`" while laundering lineage — copied taint labels
+  with a re-anchored root are exactly the "taint stapled on at the sink" failure `CLAUDE.md` hard
+  constraint #1 forbids. D-16's per-arg edge assertion MUST therefore check that the root is the
+  originating read (or the explicit DAG derivation edge back to it), not merely that *some* root
+  exists. See `DESIGN-confirm-binding.md` for the `mint_from_read`-successor provenance-threading
+  contract this depends on.
 - **(D-17) Single-shot semantics extend to the whole set.** `caprun confirm <effect_id>` MUST authorize
   the WHOLE `(sink, all-blocked-args, combined-digest)` set, or `caprun deny <effect_id>` MUST deny
   ALL of it. There MUST NOT be a partial-confirm path that releases a subset of the blocked args while
@@ -220,6 +267,57 @@ carries only `{ sink, args: Vec<ValueNode> }` (locked, see above) — SMTP crede
 (broker-resident, NOT confined-worker-resident), replacing the existing `invoke_email_send_stub`
 (per the RESEARCH Architectural Responsibility Map). This module is the ONLY code path that performs
 the SMTP call.
+
+**The confirmed send runs in the BROKER DAEMON, not the `caprun confirm` CLI (MUST, D-03 refinement):**
+v1.2's `file.create` confirmation pattern (`cli/caprun/main.rs` + `crates/brokerd/src/confirmation.rs`)
+has the standalone `caprun confirm` CLI process invoke the sink LOCALLY after recording the confirm.
+For a filesystem write that pattern is inside the trust boundary, but for `email.send` it would put
+the SMTP call — and therefore the SMTP secrets (D-04) — in the short-lived confirm CLI process,
+directly violating "secrets ONLY in the broker process." **Phase 13 MUST NOT follow the file.create
+local-invoke pattern for `email.send`.** Instead:
+
+- `caprun confirm <effect_id>` MUST NOT open an SMTP connection or load SMTP secrets. It records the
+  human's confirmation and hands the confirmed `effect_id` to the ALREADY-RUNNING broker daemon over
+  the existing UDS IPC channel.
+- The **broker daemon** (the long-lived reference-monitor process that already holds the audit DB and
+  the SMTP secrets per D-04) performs the `email_smtp.rs` send, in-process, on receipt of that
+  confirmed `effect_id`. The confirm CLI never touches the wire and never holds a credential.
+
+This keeps D-04 (secrets broker-only) true across the CLI/daemon split that the confirm→send flow
+introduces, and is the precondition for the at-most-once + durable-attempt discipline below.
+
+---
+
+## At-Most-Once Send + Durable Attempt Ledger — No Swallowed Errors (SEND-01/SEND-02, D-24)
+
+The finding #2 split (confirm in the CLI, send in the broker daemon) reopens the double-fire /
+silent-loss risk across two processes, and the inherited v1.2 confirm path's
+`Err(_) => Ok(ConfirmedButSinkFailed)` shape SWALLOWS the send error. Both MUST be closed explicitly.
+
+**Durable idempotency token (MUST, SEND-01):** Each confirmed send MUST carry a durable idempotency
+token keyed by `effect_id`. Before ANY wire action, the broker MUST append a durable
+`email_send_attempted` Event (anchored to the same `effect_id`, in the SHA-256 audit DAG). A send
+whose `effect_id` already has a terminal `email_send_succeeded` OR `email_send_attempted`-without-retry
+record MUST NOT be re-attempted — at-most-once for the irreversible external send.
+
+**Order of operations (MUST):**
+1. append durable `email_send_attempted` (before opening the SMTP connection);
+2. perform the `email_smtp.rs` send;
+3. on success, append `email_send_succeeded`; on error, append `email_send_failed` with the error
+   context.
+
+**No auto-retry of an irreversible send (MUST, SEND-02):** A confirmed-but-unsent state (crash or
+error between step 1 and a terminal step) MUST NOT be auto-retried by the broker. Recovery is an
+explicit, human-visible operation — the DAG shows `email_send_attempted` with no `email_send_succeeded`,
+and the operator decides. Silent re-drive of a possibly-already-delivered message is forbidden
+(at-most-once beats at-least-once for an irreversible send).
+
+**Never swallow the send error (MUST NOT):** The adapter/broker error path MUST NOT return a bare
+`Ok(...)` that hides the failure, MUST NOT `.unwrap()`/panic on a send error, and MUST NOT drop the
+error silently. It MUST `logger.error()` with context AND append the durable `email_send_failed`
+Event. The caller receives a distinct non-zero result that a scripted operator can tell apart from
+"denied" or "unknown effect_id" (mirrors v1.2's M3 `sink_invocation_failed` exit-code discipline,
+`DESIGN-confirmation-release.md`).
 
 ---
 
@@ -293,6 +391,17 @@ direct source read, not assumed):**
   header — **PROVIDED the adapter never concatenates the body literal into the header-construction
   call chain.** This is a structural (call-boundary) guarantee, not a string-scrubbing one.
 
+**lettre rejection semantics on a confirmed literal (MUST, D-07 refinement):** The by-construction
+defense above relies on `lettre` REJECTING (returning `Result::Err`) a CR/LF-bearing address or
+header at construction time. The adapter MUST define what it does with that `Err` — and it is NOT
+"proceed anyway" and NOT "panic." Any `lettre` construction `Err` (`Address::new`, `Message::builder()`
+setters, `.to()`/`.cc()`/`.bcc()`/`.subject()`/`.body()`) on a literal the human already confirmed
+MUST become a **fail-closed, AUDITED abort**: append a durable `email_send_failed` Event (same
+`effect_id`, per SEND-01/SEND-02 above) with the construction error context, `logger.error()` it, and
+return the distinct non-zero send-failed result — NEVER `.unwrap()`/panic, NEVER a silent drop, NEVER
+a fallback to a raw/`format!`-built message. A confirmed literal that `lettre` refuses to encode
+safely is a blocked-and-audited failure, not a best-effort send.
+
 **Forbid `boring-tls` (MUST NOT):** The adapter MUST NOT enable `lettre`'s `boring-tls` Cargo feature
 (RUSTSEC-2026-0141: silently disables TLS hostname verification for `0.10.1..=0.11.21`). The local
 Mailpit target needs no TLS at all; enabling this feature has no upside and a known CVSS-9.1 downside.
@@ -315,9 +424,11 @@ line, and that the token `dangerous_new_pre_encoded` never appears in that file.
 This document's design is satisfied when the following conditions ALL hold simultaneously:
 
 1. **Content-sensitivity scope is a single hardcoded match arm, already implemented.** CONTENT-01/02
-   classification for `email.send`'s `subject`/`body`/`attachment` is confirmed to already exist at
+   classification for `email.send`'s content args is confirmed to already exist at
    `crates/executor/src/sink_sensitivity.rs:93-98`; no new classification code is proposed anywhere
-   downstream of this document (D-01, D-21).
+   downstream of this document (D-01, D-21). `attachment` is descoped for v1.3 — removed from both
+   `EMAIL_SEND_CONTENT_SENSITIVE` and the schema `allowed` set, leaving the live content set as
+   `subject`/`body` (D-23).
 2. **Precedence between routing-block and body-block is explicit, not implicit.** A tainted recipient
    AND a tainted body on the same plan node both surface as Blocked; neither is dropped, masked, or
    silently pre-empted (D-02).
@@ -329,14 +440,22 @@ This document's design is satisfied when the following conditions ALL hold simul
 4. **The plan-node API is confirmed untouched.** `PlanNode { sink, args: Vec<ValueNode> }` is
    unchanged; only internal decision/anchor types become plural (D-18).
 5. **Worker-never-sends and secrets-broker-only are both stated as MUSTs**, with the adapter located
-   at `crates/brokerd/src/sinks/email_smtp.rs` (D-03, D-04).
-6. **The negative net assertion points at the existing seccomp mechanism**, not a new confinement
+   at `crates/brokerd/src/sinks/email_smtp.rs` (D-03, D-04), AND the confirmed send runs in the
+   long-lived broker daemon (not the `caprun confirm` CLI) — `caprun confirm` hands the confirmed
+   `effect_id` to the broker over UDS and never holds an SMTP secret (D-03 refinement).
+6. **At-most-once send + durable attempt ledger + no swallowed errors are stated as MUSTs.** A durable
+   idempotency token per `effect_id`, an `email_send_attempted` Event appended before any wire action,
+   `email_send_succeeded`/`email_send_failed` terminal Events, no auto-retry of a confirmed-but-unsent
+   irreversible send, and a never-swallow/never-`unwrap` error path (SEND-01/SEND-02, D-24).
+7. **The negative net assertion points at the existing seccomp mechanism**, not a new confinement
    primitive, and specifies Phase 13's reuse of the `confine-probe`/`negative_net` test pattern (D-05).
-7. **The gate test target is Mailpit, local-only, with live SES explicitly out of scope** (D-06).
-8. **CRLF/header-injection defense is specified with concrete, source-verified mechanics** (typed
+8. **The gate test target is Mailpit, local-only, with live SES explicitly out of scope** (D-06).
+9. **CRLF/header-injection defense is specified with concrete, source-verified mechanics** (typed
    builder only, `dangerous_new_pre_encoded` and `format!`-built headers forbidden, `boring-tls`
-   forbidden), AND a Phase-13 adversarial CRLF fixture test is mandated regardless of the library's
-   by-construction defense (D-07, D-22).
+   forbidden), with `lettre` construction `Err` on a confirmed literal defined as a fail-closed
+   audited abort (D-07), AND a Phase-13 adversarial CRLF fixture test is mandated regardless of the
+   library's by-construction defense (D-07, D-22). The `attachment` header/CRLF surface is out of
+   scope for v1.3 by construction (D-23).
 
 If any condition fails, this document is NOT ready for `DESIGN-GATE-RECORD-v1.3.md` to record
 APPROVED/UNBLOCKED.

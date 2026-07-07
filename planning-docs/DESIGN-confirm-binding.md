@@ -37,10 +37,14 @@ exact B1-reincarnation risk `DESIGN-content-adapter-mediation.md` names (a human
 recipient, and `confirmation.rs::confirm()`'s full-`resolved_args`-snapshot re-invocation ships the
 body too, unconfirmed) reappears at the binding layer if the digest does not cover the whole set.
 
-This document specifies the fix: `caprun confirm` binds to ONE combined SHA-256 digest over the FULL
-SET of blocked args' resolved literals — never a per-arg digest, never a digest over a subset — so
-that "confirm" and "the set the human saw" and "the set the digest attests to" and "the set the
-adapter sends" are, by construction, the same set.
+This document specifies the fix: `caprun confirm` binds to ONE combined SHA-256 digest over the
+ordered **blocked-arg subset** (the collected `Vec<BlockedArg>`) — never a per-arg digest, and never
+a digest over the FULL `resolved_args` (which also carries trusted, untainted args like an untainted
+`to`). "confirm", "the set the human saw", and "the set the digest attests to" are, by construction,
+the same set: exactly the blocked (tainted-sensitive) args. The send-side invariant is NOT "the
+adapter sends only the blocked set" — the adapter of course sends the whole message, trusted args
+included — it is: **every tainted-sensitive arg the adapter sends was in the confirmed blocked set,
+byte-for-byte, and the digest attests to exactly that subset.**
 
 ---
 
@@ -81,11 +85,21 @@ let literal_sha256 = {
 The combined-set variant of this same pattern MUST NOT introduce a new hash primitive — no HMAC, no
 keyed hash, no non-SHA-256 digest. The only change from the existing single-arg pattern is the input:
 instead of hashing one `record.literal`, the combined digest hashes a deterministic concatenation of
-every blocked arg's resolved literal, in a MUST-fixed, canonical order (e.g., the order the collected
-`Vec<BlockedArg>` was produced in by the per-arg loop, itself the stable `plan_node.args` iteration
-order) — so the same blocked-arg set always produces the same digest, and the digest is exactly
-reproducible by an independent verifier re-hashing `PendingConfirmation.resolved_args` in that same
-order.
+**every BLOCKED arg's resolved literal — the ordered blocked-arg subset only, NOT the full
+`resolved_args`** — in a MUST-fixed, canonical order (the order the collected `Vec<BlockedArg>` was
+produced in by the per-arg loop, itself the stable `plan_node.args` iteration order). The digest
+input set is exactly the collected `Vec<BlockedArg>` (the tainted-sensitive args), full stop; a
+digest that also folds in trusted, untainted args (e.g., an untainted `to`) is a DIFFERENT set and
+MUST NOT be produced.
+
+**MUST (verifier reproducibility over the subset, not the full arg set):** The digest is exactly
+reproducible by an independent verifier re-hashing the **blocked-arg subset filtered from
+`PendingConfirmation.resolved_args`** — selected by the recorded blocked arg-names in the recorded
+order — NOT by re-hashing raw `resolved_args`. `PendingConfirmation` MUST therefore persist enough to
+identify that subset deterministically (the ordered blocked arg-names, alongside the frozen
+`resolved_args`), so producer and verifier hash the identical byte sequence. A producer hashing
+`H(body)` while a verifier hashes `H(to‖body)` — the exact set-mismatch bug this finding closes —
+is impossible when both are pinned to the recorded blocked-arg-name subset.
 
 **MUST (schema extension — extends `PendingConfirmation`, does not replace it):** The combined digest
 is a NEW field alongside the existing `resolved_args: Vec<ResolvedArg>` in `PendingConfirmation`
@@ -101,8 +115,12 @@ struct PendingConfirmation {
     blocked_event_id: Uuid,
     sink:            SinkId,
     resolved_args:   Vec<ResolvedArg>,   // UNCHANGED — the existing v1.2 field, now plural-populated
-    combined_digest: String,             // NEW — SHA-256 over the full resolved_args set's literals,
-                                          // frozen at Block time, never re-derived at confirm time
+    blocked_arg_names: Vec<String>,      // NEW — ordered names of the blocked-arg SUBSET the digest
+                                          // covers (selects the subset out of resolved_args)
+    combined_digest: String,             // NEW — SHA-256 over the ordered BLOCKED-ARG SUBSET's literals
+                                          // (mirror of the value stored in the hashed sink_blocked
+                                          // anchor); frozen at Block time, recompute-and-compared
+                                          // (never overwritten) at confirm/send, fail-closed on mismatch
     workspace_root_path: String,
     state:           PendingConfirmationState,
 }
@@ -111,10 +129,31 @@ struct PendingConfirmation {
 `combined_digest` MUST be computed and persisted ONCE, at the same Block-time write that persists
 `resolved_args` (the same atomic transaction as the `sink_blocked` Event append, per
 `DESIGN-confirmation-release.md`'s existing Persistence Contract). It MUST NOT be recomputed at
-confirm time from a live re-resolution of any `ValueId` — recomputing would reopen the exact
-in-memory-`ValueStore`-is-gone problem `DESIGN-confirmation-release.md`'s "The Problem Being Solved"
-already ruled out for `resolved_args` itself. `combined_digest` is read back, verbatim, from the
-persisted row — never derived fresh by the confirm/deny process.
+confirm time from a live re-resolution of any `ValueId` — recomputing from a live `ValueStore` would
+reopen the exact in-memory-`ValueStore`-is-gone problem `DESIGN-confirmation-release.md`'s "The
+Problem Being Solved" already ruled out for `resolved_args` itself.
+
+**MUST (tamper-evidence — the digest lives inside the hashed anchor, and is recompute-and-compared):**
+A digest that is written once and only ever read back verbatim adds no tamper-evidence — nothing ever
+detects if the persisted row was altered. To make it load-bearing:
+
+- **Persist `combined_digest` INSIDE the hashed `sink_blocked` anchor payload** (the `SinkBlockedAnchor`
+  bytes that are hash-chained into the SHA-256 audit DAG), consistent with the project's existing
+  audit-persistence decision — so the DAG's own hash chain covers the digest and any post-hoc edit to
+  it (or to the anchor's frozen literals) breaks the chain. It is mirrored into `PendingConfirmation`
+  for the confirm process to read, but the DAG anchor copy is the tamper-evident source of truth.
+- **Confirm AND send MUST recompute-and-compare before releasing.** Before `caprun confirm`'s handoff
+  and before the broker performs the send, the code MUST recompute the digest **from the frozen
+  blocked-subset literals in the persisted snapshot** (NOT from any live `ValueId` re-resolution) and
+  compare it, byte-for-byte, to the `combined_digest` frozen in the `sink_blocked` anchor. On ANY
+  mismatch it MUST fail closed — refuse the confirm/send, `logger.error()` with context, and append a
+  durable failure Event — NEVER proceed. This is what turns the digest from a write-only field into an
+  actual integrity check: it catches a tampered `resolved_args` (literals changed without the digest)
+  or a tampered digest (digest changed without the literals) before any irreversible send.
+
+The recompute-and-compare is over the FROZEN persisted literals, so it does NOT reintroduce the
+live-`ValueStore` dependency the paragraph above rules out — "recompute from the frozen snapshot" and
+"never re-resolve a `ValueId` live" are both true simultaneously.
 
 ---
 
@@ -143,8 +182,54 @@ opportunity for drift to exist at all, by construction, before the hash is ever 
 **MUST NOT (the specific anti-pattern this rules out):** A Phase-15 extractor implementation MUST NOT
 resolve a `ValueId` to its literal, THEN perform a string operation (concatenation, base64-decode) on
 the result, and hand that transformed string to the sink as if it were still the same `ValueRecord`.
-Any transform MUST mint a FRESH `ValueRecord` for the transformed value, inheriting taint from its
-inputs, BEFORE that value is ever used as a plan-node arg or reaches the executor's per-arg loop.
+Any transform MUST mint a FRESH `ValueRecord` for the transformed value BEFORE that value is ever used
+as a plan-node arg or reaches the executor's per-arg loop.
+
+---
+
+## Provenance-Threading for Transform-Derived Mints (CONFIRM-03, D-16, MUST — closes the laundering BLOCKER)
+
+The fresh-mint rule above is necessary but NOT sufficient. Copying *taint labels* onto a fresh mint
+while re-anchoring its *lineage* is precisely the "taint stapled on at the sink proves nothing"
+failure `CLAUDE.md` hard constraint #1 forbids — and it silently satisfies the letter of D-16
+("an unbroken edge via `provenance_chain[0]` exists") because ANY fresh mint has *some* root. The
+live `mint_from_read` always sets `provenance_chain = vec![fresh_event_id]` rooted at an event minted
+in that same call, with no path to thread an input's provenance. A transform-derived value minted that
+way would get a fresh chain rooted at a NEW event unrelated to the originating doc read — lineage
+re-anchored, not propagated. The digest and the display would then attest to bytes whose audit-DAG
+root does NOT descend from the untrusted read that made them dangerous. This section closes that.
+
+**MUST (thread the provenance, do not re-anchor it):** A transform-derived mint's `provenance_chain`
+MUST THREAD its inputs' chains: the derived value's provenance root MUST remain the originating
+untrusted-doc read Event — OR the mint MUST record an explicit DAG derivation edge linking the
+transform Event to EVERY input's read Event, and THAT edge is what D-16's per-blocked-arg unbroken-edge
+assertion checks. Either way, tracing the derived arg's `provenance_chain` back MUST reach the
+originating untrusted read(s); it MUST NOT terminate at a fresh event minted inside the transform with
+no ancestry to the read.
+
+**MUST (fail-closed on a re-anchored derived chain):** A transform-derived value whose
+`provenance_chain` is a **fresh single-element chain** (rooted at a brand-new event with no threaded
+ancestry to any input's read) MUST be a **fail-closed mint error** — the mint is rejected, exactly
+mirroring the existing empty-`provenance_chain` guard pattern (a value with no provenance is already a
+mint error today; a derived value with a *re-anchored* provenance is the same class of defect and MUST
+be treated identically). The extractor MUST NOT produce such a value and hand it to the executor.
+
+**MUST (the `mint_from_read` successor's provenance-threading contract, explicit):** The Phase-15
+successor to `mint_from_read` (the transform/derive constructor) MUST take the input `ValueRecord`s
+(or their `ValueId`s + resolved records) as arguments and construct the derived `ValueRecord` so that:
+(1) `taint` is the union of the inputs' taint (monotonic, never narrowed); (2) `provenance_chain`
+threads the inputs' chains such that its root is the originating read Event(s), never a fresh
+transform-local root; (3) a durable transform/derivation Event is appended with parent edges to every
+input's read Event, so the audit DAG carries the derivation as a real, hash-chained edge. A single-arg
+signature that cannot receive the inputs' provenance (and would therefore be forced to fabricate a
+fresh root) MUST NOT be the constructor used for a derived value.
+
+**MUST (Phase-15 fixture — twin to D-22's CRLF fixture):** Phase 15 MUST include a fixture that, for a
+**transformed** tainted value (base64-decoded and/or concatenated), asserts the bytes shown at confirm
+time AND covered by the `combined_digest` are **byte-identical** to the envelope Mailpit captures —
+AND that the transformed arg's audit-DAG `provenance_chain` root traces back to the originating
+untrusted-doc read Event, not to a fresh transform-local event. "Threaded by construction" MUST be
+VERIFIED by this passing fixture, not assumed — the same discipline D-22 applies to the CRLF defense.
 
 ---
 
@@ -187,6 +272,16 @@ digest (above) was computed over, so the displayed order and the hashed order ag
 manually re-deriving the digest from the display (e.g., for an independent audit) MUST be able to do
 so without needing to guess an ordering convention.
 
+**MUST (Draft/untrusted-seeded posture is stated at confirm time, D-20 legibility):** The narration
+MUST state the session's trust posture — that the session is `Draft` / untrusted-seeded (I0/I1) — and
+that confirming authorizes an **irreversible EXTERNAL send** from that posture. A confirmed send
+correctly bypasses Step 0.5's draft-only class-deny by construction (the per-arg I2 Block fires before
+Step 0.5, and `caprun confirm` never re-runs `submit_plan_node` — see the Single-Shot section below),
+so the human is not shielded by the class-deny here: their confirm IS the I0/I1 human gate for an
+irreversible effect on a draft-only session. The narration MUST make that explicit — the human is told
+they are releasing attacker-tainted bytes to an external recipient from a session that was seeded from
+untrusted content — not leave it implicit behind a bare per-arg literal dump.
+
 ---
 
 ## Single-Shot Over the Whole Set — Confirm MUST NOT Re-Invoke `submit_plan_node` (CONFIRM-03, D-17/D-19)
@@ -212,9 +307,14 @@ once let a tainted body ride a recipient Block in the pre-collect-then-Block wor
 
 **MUST — confirm/deny operates over the frozen snapshot only:** Confirm/deny MUST operate over the
 frozen `resolved_args` (and frozen `combined_digest`) snapshot persisted at Block time. It MUST NOT
-re-invoke `submit_plan_node`, MUST NOT re-resolve any `ValueId` against a live `ValueStore` (which
-does not exist in the confirm process per "The Problem Being Solved" above), and MUST NOT recompute
-`combined_digest` from anything other than reading the persisted value back.
+re-invoke `submit_plan_node`, and MUST NOT re-resolve any `ValueId` against a live `ValueStore` (which
+does not exist in the confirm process per "The Problem Being Solved" above). It MUST, however,
+recompute the digest **from the frozen blocked-subset literals in that snapshot** and compare it to
+the `combined_digest` frozen in the hashed `sink_blocked` anchor, failing closed on any mismatch (see
+"tamper-evidence" under Combined-Digest Binding above). The distinction is exact: recomputing from the
+FROZEN snapshot literals is REQUIRED (it is the integrity check); recomputing from a LIVE `ValueId`
+re-resolution is FORBIDDEN (the `ValueStore` is gone). The stored digest is never overwritten — only
+recomputed-for-comparison.
 
 ---
 
@@ -222,18 +322,30 @@ does not exist in the confirm process per "The Problem Being Solved" above), and
 
 This document's design is satisfied when the following conditions ALL hold simultaneously:
 
-1. **Combined digest over the full set is specified.** `caprun confirm` binds to ONE combined
-   SHA-256 digest covering every blocked arg's resolved literal (recipient AND body together), never
-   per-arg digests and never a subset, matching the set `DESIGN-content-adapter-mediation.md`'s
+1. **Combined digest over the blocked-arg subset is specified.** `caprun confirm` binds to ONE
+   combined SHA-256 digest covering every BLOCKED arg's resolved literal (recipient AND body together)
+   — the ordered blocked-arg subset ONLY, never per-arg digests and never the full `resolved_args`
+   (which also carries trusted args). The verifier re-hashes that subset filtered from `resolved_args`
+   by recorded arg-name+order, matching the set `DESIGN-content-adapter-mediation.md`'s
    collect-then-Block section defines (D-08, D-19).
-2. **Post-transform mint rule is stated as a MUST.** The extractor mints `ValueRecord`s only AFTER
-   any transformation, with no transform permitted between mint and Block or between Block and send
-   — closing D-12(b) by construction rather than by a runtime check (CONFIRM-03, Pitfall 2).
+2. **Post-transform mint rule AND provenance-threading are stated as MUSTs.** The extractor mints
+   `ValueRecord`s only AFTER any transformation, with no transform permitted between mint and Block or
+   between Block and send; AND a transform-derived mint's `provenance_chain` MUST THREAD its inputs'
+   chains (root remains the originating untrusted read, or an explicit DAG derivation edge to every
+   input's read), with a fresh single-element re-anchored chain on a derived value a fail-closed mint
+   error — closing D-12(b) and the taint-laundering BLOCKER by construction rather than by a runtime
+   check (CONFIRM-03, Pitfall 2, D-16).
+2a. **Digest is tamper-evident.** `combined_digest` is persisted inside the hashed `sink_blocked`
+   anchor payload (covered by the audit DAG hash chain) and is recompute-and-compared — from the
+   frozen blocked-subset literals, never a live `ValueId` re-resolution — at confirm AND send time,
+   fail-closed on any mismatch (CONFIRM-03, D-08).
 3. **No-truncation display is stated as a MUST.** Every blocked arg's literal is shown verbatim, in
    full, for every arg in the set — no summary, no elision (CONFIRM-03, D-09).
-4. **Every-arg block narration is stated as a MUST.** The Block moment shows provenance for every
-   blocked arg individually, never a bare error and never only the first-matched arg (CONFIRM-04,
-   D-20).
+4. **Every-arg block narration is stated as a MUST, including the Draft posture.** The Block moment
+   shows provenance for every blocked arg individually (never a bare error, never only the
+   first-matched arg), AND states the session is `Draft`/untrusted-seeded and that confirming
+   authorizes an irreversible external send from that posture — the confirm IS the I0/I1 human gate
+   (CONFIRM-04, D-20).
 5. **Single-shot over the whole set is stated as a MUST, modeled on the existing "Confirm MUST NOT
    Re-Invoke `submit_plan_node`" pattern.** Confirm/deny is atomic over the WHOLE blocked-arg set —
    no partial confirm, no re-invocation of `submit_plan_node`, no re-resolution of any `ValueId`
