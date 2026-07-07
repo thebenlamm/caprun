@@ -18,7 +18,10 @@
 /// No block-time wiring, no confirm/deny decision logic, and no CLI live here —
 /// only the persisted-state layer everything later builds on.
 use anyhow::Result;
+use chrono::Utc;
 use rusqlite::params;
+use runtime_core::plan_node::TaintLabel;
+use uuid::Uuid;
 
 /// One resolved sink argument, frozen at Block time.
 ///
@@ -209,6 +212,275 @@ pub fn transition_state(
     Ok(affected)
 }
 
+/// The outcome of a `confirm`/`deny` decision. The CLI (`cli/caprun/src/main.rs`)
+/// maps each variant to a distinct exit code (DESIGN Exit-code contract) — no
+/// stdout parsing required by a scripted caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmOutcome {
+    /// Confirm succeeded; the sink was invoked from the frozen snapshot.
+    Released,
+    /// `confirm_granted` was appended and state transitioned to `Confirmed`,
+    /// but the sink re-invocation itself failed (DESIGN Step 4a.5 — at-most-once,
+    /// no retry; a durable `sink_invocation_failed` event was already appended by
+    /// the sink adapter).
+    ConfirmedButSinkFailed,
+    /// Deny was recorded; the sink was never invoked.
+    Denied,
+    /// No `PendingConfirmation` row exists for this `effect_id` — fail closed
+    /// (T-10-03: a forged/unknown effect_id can never be released).
+    UnknownEffect,
+    /// The row is already `Confirmed` or `Denied` — refuse to re-transition
+    /// (CONFIRM-03, T-10-01).
+    AlreadyTerminal,
+    /// The `blocked_literals` row for this `effect_id` was redacted — refuse to
+    /// release (T-10-09, Pitfall 4 fail-closed).
+    BlockedLiteralRedacted,
+}
+
+/// Stable, dotted-lowercase rendering of a `TaintLabel` for the CLI display
+/// (e.g. `external.untrusted`, `path.raw` — DESIGN "caprun confirm CLI Contract").
+///
+/// Explicit exhaustive match — mirrors `TaintLabel::is_untrusted`'s discipline
+/// (Pitfall 5): a new variant added without an arm here is a compile error,
+/// never a silent fallback.
+fn taint_label_display(label: &TaintLabel) -> &'static str {
+    match label {
+        TaintLabel::UserTrusted => "user.trusted",
+        TaintLabel::LocalWorkspace => "local.workspace",
+        TaintLabel::ExternalUntrusted => "external.untrusted",
+        TaintLabel::EmailRaw => "email.raw",
+        TaintLabel::PdfRaw => "pdf.raw",
+        TaintLabel::LlmGenerated => "llm.generated",
+        TaintLabel::WorkerExtracted => "worker.extracted",
+        TaintLabel::PathRaw => "path.raw",
+    }
+}
+
+/// Compact, display-only rendering of a Uuid's first hyphen-delimited segment
+/// (mirrors `cli/caprun/src/main.rs`'s `&hash[..8]` audit-DAG print convention).
+/// Never used for identity comparison — only for the human-facing block display.
+fn short_evt(id: &Uuid) -> String {
+    format!("evt_{}", &id.to_string()[..8])
+}
+
+/// Render the exact terminal output for a Pending block (DESIGN
+/// "caprun confirm CLI Contract"). Shown by BOTH `confirm` and `deny` before
+/// acting, so a human sees the same evidence regardless of which verb they run.
+///
+/// Selects the display arg as the FIRST `resolved_args` entry carrying an
+/// untrusted taint label (the routing-sensitive blocked arg, e.g. `path`). The
+/// literal is shown byte-exact, in quotes, with NO truncation or
+/// canonicalization (T-10-04 mitigation / DESIGN Accepted Residual Risk 1).
+pub fn render_block_display(pc: &PendingConfirmation) -> String {
+    let display_arg = pc
+        .resolved_args
+        .iter()
+        .find(|a| a.taint.iter().any(TaintLabel::is_untrusted))
+        .or_else(|| pc.resolved_args.first());
+
+    let (arg_name, literal, taint, provenance_chain): (&str, &str, &[TaintLabel], &[Uuid]) =
+        match display_arg {
+            Some(a) => (
+                a.name.as_str(),
+                a.literal.as_str(),
+                a.taint.as_slice(),
+                a.provenance_chain.as_slice(),
+            ),
+            // Fail-safe only: a genuine I2 block always has at least one arg.
+            None => ("(none)", "(none)", &[], &[]),
+        };
+
+    let taint_str = taint
+        .iter()
+        .map(taint_label_display)
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let source_evt = provenance_chain
+        .first()
+        .map(short_evt)
+        .unwrap_or_else(|| "(none)".to_string());
+
+    let mut chain_str = provenance_chain
+        .iter()
+        .map(short_evt)
+        .collect::<Vec<_>>()
+        .join(" -> ");
+    if !chain_str.is_empty() {
+        chain_str.push_str(" -> ");
+    }
+    chain_str.push_str("(this arg)");
+
+    let effect_id = pc.effect_id;
+    format!(
+        "Effect blocked pending confirmation.\n\
+         \n\
+         Effect ID:         {effect_id}\n\
+         Sink:               {sink}\n\
+         Arg:                {arg_name}\n\
+         Literal value:      \"{literal}\"\n\
+         Taint:              [{taint_str}]\n\
+         Source:             file_read {source_evt}  (session {session_id})\n\
+         Provenance chain:   {chain_str}\n\
+         \n\
+         This value came from untrusted content read during this session. Run\n\
+         `caprun confirm {effect_id}` to release this EXACT value, or\n\
+         `caprun deny {effect_id}` to block it permanently.",
+        sink = pc.sink.0,
+        session_id = pc.session_id,
+    )
+}
+
+/// `caprun confirm <effect_id>` decision logic — Steps 1-4a of DESIGN
+/// "Confirmation Decision Logic".
+///
+/// Re-reads `PendingConfirmation.state` from the persisted DB on EVERY
+/// invocation — never a cache — because the process running `confirm` is
+/// never the same OS process that created the block (CONFIRM-03 cross-process
+/// durability guarantee). NEVER calls `executor::submit_plan_node`, constructs a
+/// `ValueStore`, or reads/writes any allowlist/standing-policy structure
+/// (CONFIRM-02, T-10-05, "Confirm MUST NOT Re-Invoke submit_plan_node").
+pub fn confirm(
+    conn: &rusqlite::Connection,
+    effect_id: &str,
+    workspace_root: &adapter_fs::workspace::WorkspaceRoot,
+) -> Result<ConfirmOutcome> {
+    // Step 1: fresh, indexed lookup — fail closed on an unknown/forged id (T-10-03).
+    let pc = match find_pending_confirmation(conn, effect_id)? {
+        Some(pc) => pc,
+        None => return Ok(ConfirmOutcome::UnknownEffect),
+    };
+
+    // Step 2: terminal-state check, read from the persisted row (never a cache).
+    if pc.state != PendingConfirmationState::Pending {
+        return Ok(ConfirmOutcome::AlreadyTerminal);
+    }
+
+    // Step 3: redaction gate (Pitfall 4) — refuse to release if the anchoring
+    // blocked_literals row was deleted, even though this PendingConfirmation
+    // snapshot still holds its own copy of the literal (fail-closed per DESIGN
+    // Persistence contract's redaction interplay, T-10-09).
+    if crate::audit::get_blocked_literal(conn, &pc.blocked_event_id.to_string())?.is_none() {
+        return Ok(ConfirmOutcome::BlockedLiteralRedacted);
+    }
+
+    // Step 4: display the verbatim literal + provenance (CONFIRM-01).
+    println!("{}", render_block_display(&pc));
+
+    // Step 5: append confirm_granted, anchored onto the sink_blocked event —
+    // preserving one unbroken causal chain (CONFIRM-04).
+    let block_hash = crate::audit::event_hash_by_id(conn, &pc.blocked_event_id.to_string())?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "internal invariant violation: no event hash for blocked_event_id {}",
+                pc.blocked_event_id
+            )
+        })?;
+    let granted_event = runtime_core::Event::new(
+        Uuid::new_v4(),
+        Some(pc.blocked_event_id),
+        pc.session_id,
+        format!("confirm:{effect_id}"),
+        "confirm_granted".into(),
+        Utc::now(),
+        vec![],
+    );
+    let granted_event_id = granted_event.id;
+    let granted_hash = crate::audit::append_event(conn, &granted_event, Some(&block_hash))?;
+
+    // Step 6: at-most-once — the state transition is persisted BEFORE the sink
+    // is invoked (DESIGN Step 4a.5). A `0` return means a raced re-transition
+    // between Step 2 and here — refuse (CONFIRM-03), even though a confirm_granted
+    // event was already appended per the DESIGN's specified ordering.
+    let affected = transition_state(conn, effect_id, PendingConfirmationState::Confirmed)?;
+    if affected == 0 {
+        return Ok(ConfirmOutcome::AlreadyTerminal);
+    }
+
+    // Step 7: dispatch to the frozen-snapshot sink re-invocation — NEVER
+    // executor::submit_plan_node (CON-i2-non-bypassable, T-10-05).
+    match pc.sink.0.as_str() {
+        "file.create" => match crate::sinks::file_create::invoke_file_create_from_resolved(
+            conn,
+            pc.session_id,
+            pc.effect_id,
+            &pc.resolved_args,
+            workspace_root,
+            granted_event_id,
+            &granted_hash,
+        ) {
+            Ok(_) => Ok(ConfirmOutcome::Released),
+            // The sink adapter already appended a durable sink_invocation_failed
+            // event; state stays Confirmed, no retry (DESIGN Step 4a.5).
+            Err(_) => Ok(ConfirmOutcome::ConfirmedButSinkFailed),
+        },
+        "email.send" => {
+            // Mirror invoke_email_send_stub's no-op append — email.send has no
+            // live effect in v1.2, so there is nothing that can fail here.
+            let plan_node = runtime_core::PlanNode {
+                sink: pc.sink.clone(),
+                args: vec![],
+            };
+            crate::sinks::email_send::invoke_email_send_stub(
+                conn,
+                pc.session_id,
+                &plan_node,
+                Some(&granted_hash),
+            )?;
+            Ok(ConfirmOutcome::Released)
+        }
+        other => Err(anyhow::anyhow!(
+            "confirm: unreachable sink `{other}` — not a registered v1.2 sink"
+        )),
+    }
+}
+
+/// `caprun deny <effect_id>` decision logic — Steps 1-3 + 4b of DESIGN
+/// "Confirmation Decision Logic".
+///
+/// `deny` NEVER invokes any sink — the effect never proceeds (CONFIRM-03).
+/// It does not need the redaction gate (it releases nothing), but MUST still
+/// find the block and set the causal parent chain onto the sink_blocked event.
+pub fn deny(conn: &rusqlite::Connection, effect_id: &str) -> Result<ConfirmOutcome> {
+    // Steps 1-2: same fresh lookup + terminal-state check as confirm.
+    let pc = match find_pending_confirmation(conn, effect_id)? {
+        Some(pc) => pc,
+        None => return Ok(ConfirmOutcome::UnknownEffect),
+    };
+    if pc.state != PendingConfirmationState::Pending {
+        return Ok(ConfirmOutcome::AlreadyTerminal);
+    }
+
+    // Both verbs show the same evidence before acting (DESIGN CLI Contract).
+    println!("{}", render_block_display(&pc));
+
+    let block_hash = crate::audit::event_hash_by_id(conn, &pc.blocked_event_id.to_string())?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "internal invariant violation: no event hash for blocked_event_id {}",
+                pc.blocked_event_id
+            )
+        })?;
+    let denied_event = runtime_core::Event::new(
+        Uuid::new_v4(),
+        Some(pc.blocked_event_id),
+        pc.session_id,
+        format!("deny:{effect_id}"),
+        "confirm_denied".into(),
+        Utc::now(),
+        vec![],
+    );
+    crate::audit::append_event(conn, &denied_event, Some(&block_hash))?;
+
+    let affected = transition_state(conn, effect_id, PendingConfirmationState::Denied)?;
+    if affected == 0 {
+        return Ok(ConfirmOutcome::AlreadyTerminal);
+    }
+
+    // Terminal. No retry path. The sink is NEVER invoked on the deny path.
+    Ok(ConfirmOutcome::Denied)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,5 +605,247 @@ mod tests {
     #[test]
     fn pending_confirmation_state_from_str_rejects_unknown_string() {
         assert!(PendingConfirmationState::from_str("bogus").is_err());
+    }
+
+    // ── confirm/deny decision logic (Task 1) ──────────────────────────────
+
+    use crate::audit::{
+        append_event, find_event_by_type, insert_blocked_literal, redact_blocked_literal,
+    };
+    use adapter_fs::workspace::WorkspaceRoot;
+    use runtime_core::executor_decision::SinkBlockedAnchor;
+    use runtime_core::Event;
+    use sha2::{Digest, Sha256};
+
+    /// Seed a Pending file.create block: a causal-root event, a `sink_blocked`
+    /// event carrying a genuine `SinkBlockedAnchor`, its `blocked_literals` row,
+    /// and a matching `PendingConfirmation` — mirroring server.rs's
+    /// `SubmitPlanNode` block-time write (minus the live `plan_node`/`ValueStore`,
+    /// which do not exist in this unit-test context).
+    ///
+    /// Returns `(effect_id, session_id, blocked_event_id)`.
+    fn seed_pending_file_create_block(
+        conn: &rusqlite::Connection,
+        path: &str,
+        contents: &str,
+        workspace_root_path: &str,
+    ) -> (Uuid, Uuid, Uuid) {
+        let session_id = Uuid::new_v4();
+        let effect_id = Uuid::new_v4();
+        let read_event_id = Uuid::new_v4();
+
+        let root = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "session_created".into(),
+            chrono::Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(conn, &root, None).unwrap();
+
+        let literal_sha256 = {
+            let mut hasher = Sha256::new();
+            hasher.update(path.as_bytes());
+            hex::encode(hasher.finalize())
+        };
+        let anchor = SinkBlockedAnchor {
+            effect_id,
+            sink: SinkId("file.create".into()),
+            arg: "path".into(),
+            value_id: ValueId::new(),
+            literal_sha256,
+            taint: vec![TaintLabel::PathRaw],
+            provenance_chain: vec![read_event_id],
+            read_event_id,
+        };
+        let blocked_event = Event::sink_blocked(
+            Uuid::new_v4(),
+            Some(root.id),
+            session_id,
+            chrono::Utc::now(),
+            anchor,
+        );
+        let blocked_event_id = blocked_event.id;
+        append_event(conn, &blocked_event, Some(&root_hash)).unwrap();
+        insert_blocked_literal(conn, &blocked_event_id.to_string(), path).unwrap();
+
+        let pc = PendingConfirmation {
+            effect_id,
+            session_id,
+            blocked_event_id,
+            sink: SinkId("file.create".into()),
+            resolved_args: vec![
+                ResolvedArg {
+                    name: "path".to_string(),
+                    value_id: ValueId::new(),
+                    literal: path.to_string(),
+                    taint: vec![TaintLabel::PathRaw],
+                    provenance_chain: vec![read_event_id],
+                },
+                ResolvedArg {
+                    name: "contents".to_string(),
+                    value_id: ValueId::new(),
+                    literal: contents.to_string(),
+                    taint: vec![TaintLabel::UserTrusted],
+                    provenance_chain: vec![],
+                },
+            ],
+            workspace_root_path: workspace_root_path.to_string(),
+            state: PendingConfirmationState::Pending,
+        };
+        insert_pending_confirmation(conn, &pc).unwrap();
+
+        (effect_id, session_id, blocked_event_id)
+    }
+
+    /// (a) confirm on a Pending file.create block releases exactly once: the
+    /// file is created, a confirm_granted event exists chained onto the
+    /// sink_blocked event, and the row transitions to Confirmed.
+    #[test]
+    fn confirm_on_pending_file_create_releases_and_creates_file() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_confirm_ok_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, blocked_event_id) =
+            seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
+
+        let outcome = confirm(&conn, &effect_id.to_string(), &ws).expect("confirm");
+        assert_eq!(outcome, ConfirmOutcome::Released);
+
+        let on_disk = std::fs::read_to_string(root.join("out.txt")).unwrap();
+        assert_eq!(on_disk, "hello");
+
+        let granted = find_event_by_type(&conn, &session_id.to_string(), "confirm_granted")
+            .unwrap()
+            .expect("confirm_granted event must exist");
+        assert_eq!(granted.actor, format!("confirm:{effect_id}"));
+        assert_eq!(granted.parent_id, Some(blocked_event_id));
+
+        let pc = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .unwrap();
+        assert_eq!(pc.state, PendingConfirmationState::Confirmed);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// (b) a second confirm on the same effect_id refuses (AlreadyTerminal) and
+    /// creates no new file (CONFIRM-03).
+    #[test]
+    fn confirm_twice_returns_already_terminal_and_creates_no_new_file() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_confirm_twice_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, _session_id, _blocked_event_id) =
+            seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
+
+        let first = confirm(&conn, &effect_id.to_string(), &ws).expect("first confirm");
+        assert_eq!(first, ConfirmOutcome::Released);
+
+        let second = confirm(&conn, &effect_id.to_string(), &ws).expect("second confirm");
+        assert_eq!(second, ConfirmOutcome::AlreadyTerminal);
+
+        let entries: Vec<_> = std::fs::read_dir(&root).unwrap().collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "a second confirm must not create any additional file"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// (c) deny on a fresh Pending block records a durable denial: a
+    /// confirm_denied event exists, state is Denied, and a subsequent confirm
+    /// refuses (durable deny, CONFIRM-03). The sink is never invoked.
+    #[test]
+    fn deny_on_pending_block_is_durable() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_deny_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, blocked_event_id) =
+            seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
+
+        let outcome = deny(&conn, &effect_id.to_string()).expect("deny");
+        assert_eq!(outcome, ConfirmOutcome::Denied);
+
+        let denied = find_event_by_type(&conn, &session_id.to_string(), "confirm_denied")
+            .unwrap()
+            .expect("confirm_denied event must exist");
+        assert_eq!(denied.actor, format!("deny:{effect_id}"));
+        assert_eq!(denied.parent_id, Some(blocked_event_id));
+
+        let pc = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .unwrap();
+        assert_eq!(pc.state, PendingConfirmationState::Denied);
+
+        let later = confirm(&conn, &effect_id.to_string(), &ws).expect("confirm after deny");
+        assert_eq!(later, ConfirmOutcome::AlreadyTerminal);
+        assert!(
+            !root.join("out.txt").exists(),
+            "deny must permanently prevent the effect from ever running"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// (d) confirm on an effect_id whose blocked_literals row was redacted
+    /// refuses to release and creates no file (T-10-09 fail-closed).
+    #[test]
+    fn confirm_with_redacted_blocked_literal_refuses_to_release() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_confirm_redacted_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, _session_id, blocked_event_id) =
+            seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
+
+        redact_blocked_literal(&conn, &blocked_event_id.to_string()).unwrap();
+
+        let outcome = confirm(&conn, &effect_id.to_string(), &ws).expect("confirm");
+        assert_eq!(outcome, ConfirmOutcome::BlockedLiteralRedacted);
+        assert!(
+            !root.join("out.txt").exists(),
+            "a redacted blocked literal must never be released"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// (e) confirm/deny on an unknown effect_id return UnknownEffect (T-10-03).
+    #[test]
+    fn confirm_and_deny_on_unknown_effect_id_return_unknown_effect() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_unknown_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let conn = open_audit_db(":memory:").unwrap();
+        let unknown = Uuid::new_v4().to_string();
+
+        assert_eq!(
+            confirm(&conn, &unknown, &ws).expect("confirm"),
+            ConfirmOutcome::UnknownEffect
+        );
+        assert_eq!(
+            deny(&conn, &unknown).expect("deny"),
+            ConfirmOutcome::UnknownEffect
+        );
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

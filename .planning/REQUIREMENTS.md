@@ -21,10 +21,10 @@ Requirements for milestone v1.2. Each maps to roadmap phases.
 
 ### Confirmation Loop
 
-- [ ] **CONFIRM-01**: `BlockedPendingConfirmation` is releasable via a second command, `caprun confirm <effect_id>`, surfacing the verbatim literal + provenance to the human
-- [ ] **CONFIRM-02**: A confirm releases exactly one `(sink, arg, literal-digest)` triple, single-shot — never a session-wide waiver or standing policy
-- [ ] **CONFIRM-03**: A deny is durable; the effect never proceeds and cannot be re-confirmed
-- [ ] **CONFIRM-04**: Confirm/deny decisions are audited and anchored to `SinkBlockedAnchor.effect_id`; the release path lives in the TCB, not policy
+- [x] **CONFIRM-01**: `BlockedPendingConfirmation` is releasable via a second command, `caprun confirm <effect_id>`, surfacing the verbatim literal + provenance to the human
+- [x] **CONFIRM-02**: A confirm releases exactly one `(sink, arg, literal-digest)` triple, single-shot — never a session-wide waiver or standing policy
+- [x] **CONFIRM-03**: A deny is durable; the effect never proceeds and cannot be re-confirmed
+- [x] **CONFIRM-04**: Confirm/deny decisions are audited and anchored to `SinkBlockedAnchor.effect_id`; the release path lives in the TCB, not policy
 
 ### Process
 
@@ -74,10 +74,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TAINT-04 | Phase 9 | Complete |
 | ORIGIN-01 | Phase 9 | Complete |
 | ORIGIN-02 | Phase 9 | Complete |
-| CONFIRM-01 | Phase 10 | Pending |
-| CONFIRM-02 | Phase 10 | Pending |
-| CONFIRM-03 | Phase 10 | Pending |
-| CONFIRM-04 | Phase 10 | Pending |
+| CONFIRM-01 | Phase 10 | Complete |
+| CONFIRM-02 | Phase 10 | Complete |
+| CONFIRM-03 | Phase 10 | Complete |
+| CONFIRM-04 | Phase 10 | Complete |
 | PROC-01 | Phase 8 | Complete |
 | ACC-01 | Phase 11 | Pending |
 | ACC-02 | Phase 11 | Pending |

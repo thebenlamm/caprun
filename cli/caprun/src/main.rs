@@ -43,6 +43,49 @@ use uuid::Uuid;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
+
+    // ── confirm/deny dispatch — VERY FIRST branch, before ANYTHING else ──────
+    // (RESEARCH Pitfall 6): `caprun confirm <effect_id> [audit-db-path]` /
+    // `caprun deny <effect_id> [audit-db-path]` have a completely different arg
+    // shape than `<intent-kind> <intent-param> <workspace-file> [audit-db-path]`,
+    // so this MUST be checked before the `--seed-from-file` pre-parse below and
+    // before the intent-kind match. Handled and the process exits explicitly
+    // here — it never falls through to the intent-kind parse.
+    if let Some(verb) = raw_args.first().map(String::as_str) {
+        if verb == "confirm" || verb == "deny" {
+            let usage = format!("usage: caprun {verb} <effect_id> [audit-db-path]");
+            let effect_id = match raw_args.get(1) {
+                Some(id) => id.as_str(),
+                None => {
+                    eprintln!("{usage}");
+                    std::process::exit(1);
+                }
+            };
+            // Fail-closed: a malformed UUID is a usage error (exit 1) — never a
+            // silent pass-through into find_pending_confirmation (which would
+            // instead report the weaker "unknown effect_id" outcome).
+            if uuid::Uuid::parse_str(effect_id).is_err() {
+                eprintln!("error: <effect_id> is not a valid UUID: {effect_id}");
+                std::process::exit(1);
+            }
+            // Defaults to ":memory:" like the existing audit_path convention —
+            // against :memory: no persisted row can exist, so this fails closed
+            // as UnknownEffect (safe; never a silent no-op success).
+            let audit_path = raw_args
+                .get(2)
+                .cloned()
+                .unwrap_or_else(|| ":memory:".to_string());
+            let code = match run_confirm_or_deny(verb, effect_id, &audit_path) {
+                Ok(code) => code,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            };
+            std::process::exit(code);
+        }
+    }
+
     let mut idx = 0usize;
 
     // ── Parse optional --seed-from-file flag BEFORE positional args (ORIGIN-01/02) ──
@@ -244,6 +287,60 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Parse args, open the SAME persistent audit DB the original `caprun` run
+/// used, dispatch into `brokerd::confirmation`'s decision logic, and map the
+/// outcome to the DESIGN Exit-code contract's distinct exit code. Extracted so
+/// `main` stays readable and the logic is unit-reachable — mirrors the "parse
+/// args, open DB, call into brokerd, map result" role `main` already plays for
+/// the intent-kind flow.
+///
+/// `confirm` needs the workspace root the block was resolved against
+/// (`PendingConfirmation.workspace_root_path`); `deny` needs no workspace root
+/// at all, since it never invokes any sink (CONFIRM-03).
+fn run_confirm_or_deny(verb: &str, effect_id: &str, audit_path: &str) -> anyhow::Result<i32> {
+    use brokerd::confirmation::{confirm, deny, find_pending_confirmation, ConfirmOutcome};
+
+    let conn = open_audit_db(audit_path).context("open_audit_db")?;
+
+    let outcome = if verb == "confirm" {
+        // find_pending_confirmation itself returns None → confirm()'s
+        // UnknownEffect for an absent row — this is what makes an omitted
+        // audit-db-path (defaulting to :memory:) fail closed rather than
+        // panic: an in-memory DB simply has no row, ever.
+        match find_pending_confirmation(&conn, effect_id)? {
+            None => ConfirmOutcome::UnknownEffect,
+            Some(pc) => {
+                let ws = adapter_fs::workspace::WorkspaceRoot::open(Path::new(
+                    &pc.workspace_root_path,
+                ))
+                .context("open workspace root for confirm")?;
+                confirm(&conn, effect_id, &ws)?
+            }
+        }
+    } else {
+        deny(&conn, effect_id)?
+    };
+
+    // Exit-code contract (DESIGN "caprun confirm CLI Contract" — each outcome
+    // distinguishable by code alone, no stdout parsing required).
+    let (code, message): (i32, Option<&str>) = match outcome {
+        ConfirmOutcome::Released => (0, None),
+        ConfirmOutcome::Denied => (2, Some("denied")),
+        ConfirmOutcome::ConfirmedButSinkFailed => {
+            (3, Some("confirmed, but the sink invocation failed"))
+        }
+        ConfirmOutcome::UnknownEffect => (4, Some("unknown effect_id")),
+        ConfirmOutcome::AlreadyTerminal => (5, Some("effect_id is already terminal")),
+        ConfirmOutcome::BlockedLiteralRedacted => {
+            (6, Some("blocked literal was redacted; refusing to release"))
+        }
+    };
+    if let Some(msg) = message {
+        eprintln!("caprun {verb}: {msg}");
+    }
+    Ok(code)
 }
 
 /// Print the audit DAG for `session_id` in causal order (depth-first CTE walk).

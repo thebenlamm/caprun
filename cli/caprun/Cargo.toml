@@ -38,3 +38,7 @@ path = "tests/e2e.rs"
 [[test]]
 name = "planner"
 path = "tests/planner.rs"
+
+[[test]]
+name = "confirm"
+path = "tests/confirm.rs"
