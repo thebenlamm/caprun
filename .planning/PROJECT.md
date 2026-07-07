@@ -97,9 +97,10 @@ traceability archived in `.planning/milestones/v1.1-REQUIREMENTS.md`.
 - [x] I0 creation rule: externally-seeded sessions start draft-only
       (seed-provenance field at session creation). — validated in Phase 9
       (2026-07-07)
-- [ ] Confirmation loop: `caprun confirm <effect_id>` releases exactly one
+- [x] Confirmation loop: `caprun confirm <effect_id>` releases exactly one
       (sink, arg, literal-digest) triple, single-shot; confirm/deny audited and
-      anchored to `SinkBlockedAnchor.effect_id`; deny durable.
+      anchored to `SinkBlockedAnchor.effect_id`; deny durable. — validated in
+      Phase 10 (2026-07-07)
 - [ ] DESIGN doc (session-trust-state + confirmation semantics) gates executor
       behavior changes.
 - [ ] Live §9-style acceptance: read → demotion → block → human deny (nothing
@@ -276,9 +277,9 @@ Python OK for non-TCB experiments only.
 | I2 in deterministic Rust TCB, never LLM (DEC-security-invariants) | LLM cannot be trusted to enforce a security invariant; enforcement must be deterministic | — Locked |
 | DESIGN docs gate executor code (DEC-canonical-docs) | Writing crates/executor before the taint/executor model is reviewed risks a wrong-shape enforcer | — Locked |
 | §9 with genuine taint = the only v0-DONE gate | Substrate proves mediation but not value-injection defense; stapled taint proves nothing | — Locked |
-| v1.2: draft-only deny decided in the executor, not a broker pre-check | Keep all deny logic in one TCB function with one DenyReason taxonomy | — Pending |
-| v1.2: confirmation UX = `caprun confirm <effect_id>` second command | Testable and non-interactive-friendly vs a TTY prompt | — Pending |
-| v1.2: confirm is single-shot (one (sink, arg, literal-digest) triple) | Standing exact-match policy is scope creep for v1.2 | — Pending |
+| v1.2: draft-only deny decided in the executor, not a broker pre-check | Keep all deny logic in one TCB function with one DenyReason taxonomy | — Locked (Phase 9) |
+| v1.2: confirmation UX = `caprun confirm <effect_id>` second command | Testable and non-interactive-friendly vs a TTY prompt | — Locked (Phase 10) |
+| v1.2: confirm is single-shot (one (sink, arg, literal-digest) triple) | Standing exact-match policy is scope creep for v1.2 | — Locked (Phase 10) |
 | **DEC-ai-review-satisfies-human-gate** (2026-07-06): an AI-performed adversarial re-read (by the current best-available Claude model) may satisfy the "human reviewer" requirement in design-gate checkpoints (e.g. `08-03-PLAN.md` Task 2's `checkpoint:human-verify`), when Ben Lamm explicitly authorizes it in place of his own read | Ben's explicit call after being shown the tension directly: this reverses the checkpoint's original intent — mirrored from v1.0 Phase 2 and from this milestone's own core value (AI/agent judgment is insufficient for consequential decisions; hence I0/I1/I2 + human confirmation) — but he chose to accept an AI review (Fable 5) as equivalent to his own for Phase 8's gate, after the tradeoff was named explicitly (raised: self-review of one's own prior finding is a weaker check than independent human adversarial judgment; a fresh-session independent AI check was offered as a middle ground and declined) | **Locked, retroactive to Phase 8's round-2 gate.** Applies going forward to future design-gate checkpoints unless revisited. Does NOT retroactively bless anything already recorded as "reviewed by Ben personally" elsewhere (e.g. round 1, `planning-docs/DESIGN-REVIEW-v1.2-round1.md`, is now understood to have also been Fable-authored — accepted under this same decision, not because it was independently re-verified as human work). |
 
 ## Evolution
@@ -299,8 +300,13 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-07 after Phase 9 (Session Trust State — I1 + I0) completed
-and verified: `mint_from_read` atomic session demotion + I0 creation-rule seed
-provenance both landed and validated (`cargo test --workspace` green). Next:
-Phase 10 (single-shot confirmation loop), then Phase 11 (live acceptance). v1.0
-shipped the mechanism proof; v1.1 shipped the live runtime.*
+*Last updated: 2026-07-07 after Phase 10 (Single-Shot Confirmation Loop)
+completed and verified: `caprun confirm`/`caprun deny` release/deny a blocked
+effect via a durable, effect_id-keyed `PendingConfirmation` checkpoint;
+confirm/deny live in the TCB (`crates/brokerd`), never re-invoke
+`executor::submit_plan_node`, and are anchored to the `sink_blocked` event via
+`parent_id`. Cross-process integration tests prove single-shot release and
+durable deny across separate `caprun` invocations (`cargo test --workspace
+--no-fail-fast` green). Next: Phase 11 (live acceptance — tainted session,
+human gate). v1.0 shipped the mechanism proof; v1.1 shipped the live runtime;
+v1.2 is now confirmation-loop complete, pending live acceptance.*
