@@ -169,10 +169,6 @@ fn build_message(resolved_args: &[ResolvedArg]) -> Result<Message> {
 /// allow-path plan-node dispatch, only from Plan 02's confirm-path special
 /// case AFTER the CAS + `email_send_attempted` transaction commits.
 ///
-/// RED-phase stub (Task 2, TDD): always reports success and never actually
-/// calls `build_message`/the transport, so the transport-failure test below
-/// fails, proving the test exercises the eventual real behavior.
-///
 /// # Arguments
 /// * `conn`          — open rusqlite connection (broker-owned; used for the
 ///   succeeded/failed append AFTER the caller's CAS transaction commits).
@@ -202,11 +198,67 @@ pub fn invoke_email_smtp_from_resolved(
     parent_id: Uuid,
     parent_hash: &str,
 ) -> Result<(Uuid, String)> {
-    let _ = (conn, session_id, resolved_args, parent_id, parent_hash);
-    // TODO(RED, Task 2 GREEN phase): call build_message + the real SMTP
-    // transport, appending email_send_succeeded/email_send_failed as
-    // appropriate. This stub always reports success.
-    Ok((Uuid::new_v4(), "stub-hash".to_string()))
+    // build_message's fail-closed Err (missing/CRLF-bearing recipient, bad
+    // body encoding) is treated identically to a transport Err below — both
+    // are audited-abort paths, never a silent drop.
+    let message = match build_message(resolved_args) {
+        Ok(m) => m,
+        Err(e) => return record_send_failed(conn, session_id, effect_id, parent_id, parent_hash, e),
+    };
+
+    let transport = SmtpTransport::builder_dangerous(smtp_host())
+        .port(smtp_port())
+        .build();
+
+    match transport.send(&message) {
+        Ok(_response) => {
+            // Opaque payload: only effect_id (in `actor`) and a static
+            // event_type marker — never a resolved literal, never the raw
+            // SMTP response (T-13-02).
+            let event = Event::new(
+                Uuid::new_v4(),
+                Some(parent_id),
+                session_id,
+                format!("sink:email.send:{effect_id}"),
+                "email_send_succeeded".into(),
+                Utc::now(),
+                vec![],
+            );
+            let hash = append_event(conn, &event, Some(parent_hash))
+                .context("append email_send_succeeded")?;
+            Ok((event.id, hash))
+        }
+        Err(e) => record_send_failed(conn, session_id, effect_id, parent_id, parent_hash, e),
+    }
+}
+
+/// Shared fail-closed audited-abort path for BOTH a `build_message` error and
+/// an SMTP transport error: route the raw error text to `logger.error()`
+/// (this codebase's `eprintln!("[brokerd] ...")` convention — the ONLY place
+/// raw SMTP response text or a CRLF-bearing literal's parse error may
+/// appear), append an OPAQUE-payload `email_send_failed` event, then
+/// propagate a distinct non-swallowed `Err`. Never `.unwrap()`/panic, never a
+/// silent drop, never `Ok(ConfirmedButSinkFailed)`-style swallowing.
+fn record_send_failed<E: std::fmt::Display>(
+    conn: &rusqlite::Connection,
+    session_id: Uuid,
+    effect_id: Uuid,
+    parent_id: Uuid,
+    parent_hash: &str,
+    err: E,
+) -> Result<(Uuid, String)> {
+    eprintln!("[brokerd] email.send failed (effect_id={effect_id}): {err}");
+    let event = Event::new(
+        Uuid::new_v4(),
+        Some(parent_id),
+        session_id,
+        format!("sink:email.send:{effect_id}"),
+        "email_send_failed".into(),
+        Utc::now(),
+        vec![],
+    );
+    append_event(conn, &event, Some(parent_hash)).context("append email_send_failed")?;
+    Err(anyhow::anyhow!("email.send SMTP send failed: {err}"))
 }
 
 #[cfg(test)]
