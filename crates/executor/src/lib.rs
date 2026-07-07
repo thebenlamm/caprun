@@ -13,8 +13,11 @@ pub mod sink_schema;
 pub mod sink_sensitivity;
 pub mod value_store;
 
-use runtime_core::{plan_node::PlanNode, DenyReason, ExecutorDecision, SinkBlockedAnchor};
+use runtime_core::{
+    plan_node::PlanNode, DenyReason, ExecutorDecision, SessionStatus, SinkBlockedAnchor,
+};
 use sha2::{Digest, Sha256};
+use sink_sensitivity::EffectClass;
 use uuid::Uuid;
 use value_store::ValueStore;
 
@@ -45,6 +48,7 @@ pub fn submit_plan_node(
     effect_id: Uuid,
     plan_node: &PlanNode,
     value_store: &ValueStore,
+    session_status: &SessionStatus,
 ) -> ExecutorDecision {
     // Step 0: arg-schema gate (HARD-01/HARD-05). Runs FIRST — before any handle
     // resolve, taint, or sensitivity check. An unknown sink or malformed arg set
@@ -136,6 +140,41 @@ pub fn submit_plan_node(
 
         // Step 3: Content-sensitive tainted args (subject/body/attachment) do NOT
         // Block in v0 — Tier-4 verbatim review is deferred to the approval-hook plan.
+    }
+
+    // Step 0.5 (DESIGN-session-trust-state.md §8, TAINT-02/03): the draft-only
+    // CommitIrreversible class deny. Runs ONLY here — after the per-arg loop
+    // (Steps 1/1a/1b/2/3) has completed with NO Block — and BEFORE the final
+    // `Allowed` return. This placement is load-bearing (round-1 blocker B1):
+    // the per-arg I2 Block always takes precedence over this I1/I0 class-level
+    // deny. If any arg Blocked above, this point is never reached.
+    //
+    // Exhaustive match over all six `SessionStatus` variants, no wildcard arm
+    // (§10) — a future variant is a compile error here, not a silent fail-open.
+    match *session_status {
+        SessionStatus::Draft => {
+            if sink_sensitivity::sink_effect_class(&plan_node.sink) == EffectClass::CommitIrreversible {
+                return ExecutorDecision::Denied {
+                    reason: DenyReason::DraftOnlySessionDeniesCommitIrreversible {
+                        sink: plan_node.sink.clone(),
+                    },
+                };
+            }
+            // Draft + non-CommitIrreversible (Observe/MutateReversible): fall
+            // through to Allowed (TAINT-03).
+        }
+        SessionStatus::Active => {
+            // No deny from this gate; fall through to Allowed.
+        }
+        SessionStatus::WaitingApproval
+        | SessionStatus::Done
+        | SessionStatus::Failed
+        | SessionStatus::RolledBack => {
+            // No deny from THIS gate — these lifecycle states are not a
+            // session-trust concern this check governs. Matched explicitly
+            // (not a wildcard) so a future SessionStatus variant is a compile
+            // error, not a silent bypass.
+        }
     }
 
     ExecutorDecision::Allowed
