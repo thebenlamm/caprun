@@ -43,7 +43,7 @@ Full detail archived in [`milestones/v1.1-ROADMAP.md`](milestones/v1.1-ROADMAP.m
 
 - [x] **Phase 8: Session-Trust & Confirmation Design Gate** - DESIGN doc for session-trust-state (I1 demotion + I0 creation rule) and confirmation-release semantics exists and is reviewed before any executor code for this milestone is written — Decision: APPROVED / Gate status: UNBLOCKED under `DEC-ai-review-satisfies-human-gate` (see `planning-docs/DESIGN-GATE-RECORD-v1.2.md` and `.planning/PROJECT.md`'s Key Decisions table) (completed 2026-07-06)
 - [x] **Phase 9: Session Trust State (I1 + I0)** - reading untrusted content or being seeded from external content demotes/starts a session as draft-only; draft-only sessions deny CommitIrreversible plan nodes via one executor TCB function (completed 2026-07-07)
-- [ ] **Phase 10: Single-Shot Confirmation Loop** - `caprun confirm <effect_id>` shows the human the blocked literal + provenance and releases exactly one (sink, arg, literal-digest) triple; deny is durable
+- [x] **Phase 10: Single-Shot Confirmation Loop** - `caprun confirm <effect_id>` shows the human the blocked literal + provenance and releases exactly one (sink, arg, literal-digest) triple; deny is durable (completed 2026-07-07)
 - [ ] **Phase 11: Live Acceptance — Tainted Session, Human Gate** - live §9-style run on real Linux: hostile read → session demotion → sink block → human deny (nothing sent) / human confirm (exactly once), one unbroken audit chain
 
 ## Phase Details
@@ -111,7 +111,7 @@ Plans:
   3. Denying is durable: the effect never proceeds, and the same `effect_id` cannot later be confirmed.
   4. Every confirm/deny decision is recorded as an audit event anchored to `SinkBlockedAnchor.effect_id`, and the release path executes in the TCB (not a policy file).
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 
 **Wave 1**
 
@@ -123,7 +123,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 10-03-PLAN.md — confirm/deny TCB decision logic + caprun confirm/deny CLI verbs + cross-process integration test
+- [x] 10-03-PLAN.md — confirm/deny TCB decision logic + caprun confirm/deny CLI verbs + cross-process integration test
 
 ### Phase 11: Live Acceptance — Tainted Session, Human Gate
 
@@ -151,5 +151,5 @@ Plans:
 | 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 6/6 | Complete | 2026-07-01 |
 | 8. Session-Trust & Confirmation Design Gate | v1.2 | 3/3 | Complete    | 2026-07-06 |
 | 9. Session Trust State (I1 + I0) | v1.2 | 4/4 | Complete    | 2026-07-07 |
-| 10. Single-Shot Confirmation Loop | v1.2 | 2/3 | In Progress|  |
+| 10. Single-Shot Confirmation Loop | v1.2 | 3/3 | Complete   | 2026-07-07 |
 | 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 0/? | Not started | - |
