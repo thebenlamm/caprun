@@ -16,10 +16,36 @@ Event → ValueNode → sensitive sink argument) deterministically blocks
 value-injection at the sink. If everything else fails, **I2 enforcement on a
 genuine taint chain must hold.**
 
-## Current Milestone: none — v1.2 shipped 2026-07-07, next milestone not yet scoped
+## Current Milestone: v1.3 "Doc → Action Assistant"
 
-Run `/gsd-new-milestone` to scope the next milestone (questioning → research →
-requirements → roadmap). Full v1.2 detail archived in
+**Goal:** caprun ingests an untrusted document containing an embedded
+injection, deterministically extracts a "send to X" action (recipient + body
+derived from the doc's content, no LLM planner), and attempts a real email
+send. The read demotes the session (I1, existing); the tainted recipient AND
+body both block at the sink (I2 + new CONTENT-01); `caprun confirm`/`deny`
+shows verbatim recipient+body+provenance; confirm sends exactly once via a
+real broker-mediated SMTP adapter, deny sends nothing — one unbroken audit DAG
+for both outcomes, plus a clean-send negative control in the same run, proven
+live on real Linux via Colima+Docker.
+
+**Target features:**
+- Real broker-mediated SMTP adapter (worker never sends; secrets live only in
+  the broker; gate test targets a local capture SMTP — MailHog/Mailpit)
+- CONTENT-01: content-sensitive sink-arg blocking (body, not just
+  recipient/routing) — reopens a decision deferred at v1.2 scoping
+- Deterministic (non-LLM), confined doc→action extraction with a manipulation
+  variant proving taint survives transformation, not just copying
+- Negative controls (trusted send proceeds ungated; tainted-body/trusted-
+  recipient still blocks) so the demo is a controlled experiment, not anecdote
+- Confirm-binding to resolved literals (anti-TOCTOU) and idempotent, failure-
+  safe send
+
+**Explicitly not reopened:** the LLM planner stays out/deterministic. v1.3
+proves taint *enforcement* through a deterministic extractor — it does not
+claim taint survives a real LLM planner's regeneration ("laundering"); that is
+v1.4+ (see `DOC-01`).
+
+Full v1.2 detail archived in
 [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.md) and
 [`milestones/v1.2-REQUIREMENTS.md`](milestones/v1.2-REQUIREMENTS.md).
 
@@ -120,29 +146,40 @@ traceability archived in `.planning/milestones/v1.2-REQUIREMENTS.md`.
 
 ### Active
 
-None — awaiting next milestone. Run `/gsd-new-milestone` to scope one.
+Scoped for **v1.3 "Doc → Action Assistant"** — see
+`.planning/REQUIREMENTS.md` for full REQ-ID list (SMTP, CONTENT, EXTRACT,
+CONFIRM, CONTROL, SEND, DESIGN, DOC, ACCEPT categories).
 
 ### Out of Scope
 
-Non-goals, reviewed at each milestone close (v0/v1.1/v1.2) — still valid as of
-2026-07-07:
+Non-goals, reviewed at each milestone close (v0/v1.1/v1.2/v1.3) — still valid
+as of 2026-07-07 unless noted:
 
 - Git / GitHub adapters — post-v1.2, no milestone has needed them yet
 - Cedar policy engine — simple TOML/rules for sink access is fine; I2 stays in
-  Rust (still true through v1.2 — the executor's `sink_effect_class` table
+  Rust (still true through v1.3 — the executor's `sink_effect_class` table
   remains hardcoded, not policy-driven)
 - Cross-host delegation / Biscuit crypto — v3 concern
 - gVisor / Firecracker — bubblewrap + seccomp + Landlock remains the boundary
-  through v1.2
-- LLM planner — a hard-coded / deterministic planner remains sufficient
-  (confirmed again through v1.2's scripted `create-file-from-report` intent)
-- Content-sensitive sink-arg blocking (only routing-sensitive args block on
-  taint) — explicitly deferred to v2 as `CONTENT-01` when v1.2 was scoped
+  through v1.3
+- LLM planner — a hard-coded / deterministic planner remains sufficient;
+  re-affirmed at v1.3 scoping (NOT reopened alongside CONTENT-01/adapter — see
+  `DOC-01`, which scopes what v1.3 does and does not prove about it)
+- Live SES / real inbox send — **downgraded from a v1.3 requirement to an
+  optional post-milestone config-swap** (was `SMTP-04` in the initial draft).
+  MailHog/Mailpit IS a real SMTP send with a web UI showing arrival, which
+  satisfies "real send" for the gate; live SES adds credentials/DNS/
+  deliverability/throttling fragility and a live exception to default-deny-net
+  at the exact claim being demoed, for ~zero legibility gain. (caprun-opus-77
+  + advisor panel, 2026-07-07)
+- General content-classification taxonomy/abstraction — `CONTENT-02` hardcodes
+  sensitivity for the email sink's args only (one match arm), not a reusable
+  framework
 - Rich approval-policy learning, undo snapshots, broad effect taxonomy
 - Web UI, marketplace, long-term memory, browser control, natural-language
   policy authoring
 - Mac / WSL2 support — deferred best-effort; all security claims remain
-  Linux-only through v1.2
+  Linux-only through v1.3
 
 ## Context
 
@@ -315,6 +352,9 @@ Python OK for non-TCB experiments only.
 | v1.2: confirm is single-shot (one (sink, arg, literal-digest) triple) | Standing exact-match policy is scope creep for v1.2 | — Locked (Phase 10) |
 | **DEC-ai-review-satisfies-human-gate** (2026-07-06): an AI-performed adversarial re-read (by the current best-available Claude model) may satisfy the "human reviewer" requirement in design-gate checkpoints (e.g. `08-03-PLAN.md` Task 2's `checkpoint:human-verify`), when Ben Lamm explicitly authorizes it in place of his own read | Ben's explicit call after being shown the tension directly: this reverses the checkpoint's original intent — mirrored from v1.0 Phase 2 and from this milestone's own core value (AI/agent judgment is insufficient for consequential decisions; hence I0/I1/I2 + human confirmation) — but he chose to accept an AI review (Fable 5) as equivalent to his own for Phase 8's gate, after the tradeoff was named explicitly (raised: self-review of one's own prior finding is a weaker check than independent human adversarial judgment; a fresh-session independent AI check was offered as a middle ground and declined) | **Locked, retroactive to Phase 8's round-2 gate.** Applies going forward to future design-gate checkpoints unless revisited. Does NOT retroactively bless anything already recorded as "reviewed by Ben personally" elsewhere (e.g. round 1, `planning-docs/DESIGN-REVIEW-v1.2-round1.md`, is now understood to have also been Fable-authored — accepted under this same decision, not because it was independently re-verified as human work). |
 | v1.2: programmatic `caprun confirm`/`caprun deny` invocation (by an integration test or an agent) satisfies "human decision" for ACC-01/02 live-acceptance purposes — Ben typing the commands himself is additive, not required | Consistent with `DEC-ai-review-satisfies-human-gate`'s precedent; the confirm/deny CLI verbs ARE the human-interface artifact regardless of who invokes them, and Phase 10's `confirm.rs` already proved the mechanism this way | — Locked (Phase 11, discuss-phase D-05). Independently re-verified anyway: the orchestrator ran the live Colima+Docker proof itself at Phase 11 verification, closing gsd-verifier's `human_needed` gap with real evidence rather than relying solely on the executor's self-report. |
+| **REOPENED v1.3** — Content-sensitive sink-arg blocking (`CONTENT-01`), deferred to v2 at v1.2 scoping, is now IN | The doc→action hero demo requires blocking a tainted email *body*, not just recipient/routing — v1.2's routing-only I2 scope can't demonstrate it | — Reopened 2026-07-07 (Ben + caprun-opus-77). Hardcoded sensitivity for the email sink's args only (`CONTENT-02`), not a general taxonomy — scope guard from the advisor panel. |
+| **REOPENED v1.3** — Real broker-mediated SMTP adapter, previously a mediated sink *stub* per `DEC-layer-roles`, is now IN | The hero demo requires an actual send (confirm → email arrives) to be a genuine live-acceptance proof, not a stub invocation | — Reopened 2026-07-07 (Ben + caprun-opus-77). Confined worker never performs the SMTP call; secrets live only in the broker; gate test targets local MailHog/Mailpit — live SES is optional and NOT gated (see Out of Scope). |
+| **NOT reopened v1.3** — LLM planner stays out/deterministic (`DEC-security-invariants`, `DEC-canonical-docs`) | v1.3 proves taint *enforcement* through a deterministic extractor; it explicitly does not claim taint survives a real LLM planner's regeneration ("laundering" — a real model can re-emit a tainted value as fresh model-authored tokens with no provenance). That is a v1.4+ concern. | — Confirmed 2026-07-07. `DOC-01` requires PROJECT.md/external claims to state this scope honestly — no claim that v1.3 proves taint-survives-a-real-agent. |
 
 ## Evolution
 
@@ -334,8 +374,10 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-07 after v1.2 — Tainted Session, Human Gate — milestone
-close (Phases 8-11, `/gsd-complete-milestone`). v1.2's DONE gate (Phase 11):
+*Last updated: 2026-07-07 after starting v1.3 "Doc → Action Assistant"
+milestone (`/gsd-new-milestone`). Reopened `CONTENT-01` and the real SMTP
+adapter (see Key Decisions); LLM planner remains out. Prior:
+v1.2's DONE gate (Phase 11):
 a new Linux-gated integration test
 (`cli/caprun/tests/live_acceptance_tainted_session.rs`) proves ACC-01/02/03
 live on real Linux via Colima+Docker — hostile read → I1 demotion → I2 block
