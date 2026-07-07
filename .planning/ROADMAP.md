@@ -82,10 +82,10 @@ Plans:
   3. Submitting a `CommitIrreversible`-class plan node against a draft-only session is Denied with a new `DenyReason` variant, decided in the executor (one TCB function, one taxonomy).
   4. Submitting a `MutateReversible` or `Observe`-class plan node against a draft-only session still succeeds.
 
-**Plans**: 4 plans (sequential — the `submit_plan_node` signature change ripples down the crate dependency chain runtime-core → executor → brokerd → cli)
+**Plans**: 1/4 plans executed
 **Wave 1**
 
-- [ ] 09-01-PLAN.md — runtime-core domain types: `SessionStatus::Draft`, `SeedProvenance`, `DenyReason::DraftOnlySessionDeniesCommitIrreversible`
+- [x] 09-01-PLAN.md — runtime-core domain types: `SessionStatus::Draft`, `SeedProvenance`, `DenyReason::DraftOnlySessionDeniesCommitIrreversible`
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -138,6 +138,6 @@ Plans:
 | 6. Deterministic Planner & Intent Input | v1.1 | 5/5 | Complete | 2026-07-01 |
 | 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 6/6 | Complete | 2026-07-01 |
 | 8. Session-Trust & Confirmation Design Gate | v1.2 | 3/3 | Complete    | 2026-07-06 |
-| 9. Session Trust State (I1 + I0) | v1.2 | 0/? | Not started | - |
+| 9. Session Trust State (I1 + I0) | v1.2 | 1/4 | In Progress|  |
 | 10. Single-Shot Confirmation Loop | v1.2 | 0/? | Not started | - |
 | 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 0/? | Not started | - |

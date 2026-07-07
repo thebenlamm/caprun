@@ -28,7 +28,7 @@ Requirements for milestone v1.2. Each maps to roadmap phases.
 
 ### Process
 
-- [ ] **PROC-01**: A DESIGN doc for session-trust-state and confirmation semantics exists and is reviewed before any executor code implementing this milestone is written
+- [x] **PROC-01**: A DESIGN doc for session-trust-state and confirmation semantics exists and is reviewed before any executor code implementing this milestone is written
 
 ### Acceptance
 
@@ -68,22 +68,23 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TAINT-01 | Phase 9 | Pending |
-| TAINT-02 | Phase 9 | Pending |
+| TAINT-01 | Phase 9 | Pending (types landed 09-01; behavior lands 09-03) |
+| TAINT-02 | Phase 9 | Pending (types landed 09-01; behavior lands 09-02) |
 | TAINT-03 | Phase 9 | Pending |
 | TAINT-04 | Phase 9 | Pending |
-| ORIGIN-01 | Phase 9 | Pending |
-| ORIGIN-02 | Phase 9 | Pending |
+| ORIGIN-01 | Phase 9 | Pending (types landed 09-01; behavior lands 09-04) |
+| ORIGIN-02 | Phase 9 | Pending (types landed 09-01; behavior lands 09-03/09-04) |
 | CONFIRM-01 | Phase 10 | Pending |
 | CONFIRM-02 | Phase 10 | Pending |
 | CONFIRM-03 | Phase 10 | Pending |
 | CONFIRM-04 | Phase 10 | Pending |
-| PROC-01 | Phase 8 | Pending |
+| PROC-01 | Phase 8 | Complete |
 | ACC-01 | Phase 11 | Pending |
 | ACC-02 | Phase 11 | Pending |
 | ACC-03 | Phase 11 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 14 total
 - Mapped to phases: 14
 - Unmapped: 0 ✓ (roadmap created 2026-07-01: Phases 8-11)
