@@ -6,14 +6,14 @@ current_phase: 9
 current_phase_name: Session Trust State (I1 + I0
 status: executing
 stopped_at: "Completed 09-01-PLAN.md (SessionStatus::Draft, SeedProvenance, DenyReason::DraftOnlySessionDeniesCommitIrreversible)"
-last_updated: "2026-07-07T02:07:00.028Z"
+last_updated: "2026-07-07T02:16:30.887Z"
 last_activity: 2026-07-07
-last_activity_desc: Phase 9 execution started
+last_activity_desc: 09-01-PLAN.md executed
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 7
-  completed_plans: 4
+  completed_plans: 5
   percent: 25
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-01)
 ## Current Position
 
 Phase: 9 (Session Trust State (I1 + I0)) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Executing — 09-01 complete (domain types), 09-02/03/04 remaining
 Last activity: 2026-07-07 — 09-01-PLAN.md executed
 
@@ -60,6 +60,7 @@ Progress: [██░░░░░░░░] 25% (1/4 phases complete)
 | Phase 06 P04 | 5m | 3 tasks | 5 files |
 | Phase 06 P05 | 12m | 3 tasks | 2 files |
 | Phase 09 P01 | 8min | 2 tasks | 3 files |
+| Phase 09 P02 | 35min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,7 @@ Load-bearing decisions/mappings for v1.2:
 - Confirmation UX is `caprun confirm <effect_id>` (second command), not an interactive TTY prompt; confirm is single-shot (one triple), never a standing/session-wide policy.
 - Prior milestones: DEC-architectural-lock-plan-nodes, DEC-security-invariants, CON-s9-taint-genuineness (all still load-bearing; see PROJECT.md).
 - [Phase 9]: SeedProvenance added as standalone enum with no struct field wired yet; Plans 03/04 decide threading/persistence — Plan 09-01 scoped only to pure type additions, per DESIGN-session-trust-state.md §3
+- [Phase ?]: Discovered mid-Task-3: bare #[cfg(test)] items are invisible to integration tests in tests/ (crate linked without --cfg test); fixed via a test-fixtures Cargo feature + self dev-dependency so test.observe is visible to both unit and integration tests while absent from production builds.
 
 ### Pending Todos
 
@@ -96,7 +98,7 @@ Items acknowledged and deferred at v1.1 milestone close on 2026-07-01:
 
 ## Session Continuity
 
-Last session: 2026-07-07T02:07:00.022Z
+Last session: 2026-07-07T02:16:26.304Z
 Stopped at: Completed 09-01-PLAN.md (SessionStatus::Draft, SeedProvenance, DenyReason::DraftOnlySessionDeniesCommitIrreversible)
 Resume file: None
 
