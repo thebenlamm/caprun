@@ -436,3 +436,65 @@ async fn redacting_side_table_literal_preserves_verify_chain_and_digest() {
     drop(reopened);
     cleanup_db(&db_path);
 }
+
+/// 10-02 (Task 2): a `BlockedPendingConfirmation` durably persists a full-snapshot
+/// `PendingConfirmation` row ATOMICALLY with its `sink_blocked` event, keyed by the
+/// same `effect_id` — reconstructed from the reopened DB alone (no in-memory state).
+#[tokio::test]
+async fn pending_confirmation_persisted_atomically_with_block() {
+    use brokerd::confirmation::{find_pending_confirmation, PendingConfirmationState};
+
+    let (db_path, session_id, _read_event_id) = build_hostile_block_db("pending_conf").await;
+    let sid = session_id.to_string();
+
+    let reopened = open_audit_db(db_path.to_str().unwrap()).expect("reopen audit DB");
+
+    let blocked = find_event_by_type(&reopened, &sid, "sink_blocked")
+        .expect("query sink_blocked")
+        .expect("a durable sink_blocked event must exist");
+    let anchor = blocked.anchor.as_ref().expect("sink_blocked must carry an anchor");
+
+    let pc = find_pending_confirmation(&reopened, &anchor.effect_id.to_string())
+        .expect("find_pending_confirmation")
+        .expect("a pending_confirmations row must exist keyed by anchor.effect_id");
+
+    assert_eq!(
+        pc.effect_id, anchor.effect_id,
+        "PendingConfirmation.effect_id must equal the sink_blocked anchor's effect_id"
+    );
+    assert_eq!(
+        pc.blocked_event_id, blocked.id,
+        "PendingConfirmation.blocked_event_id must equal the sink_blocked event's id"
+    );
+    assert_eq!(pc.session_id, session_id);
+    assert_eq!(pc.sink.0, "file.create");
+    assert_eq!(pc.state, PendingConfirmationState::Pending);
+    assert_eq!(
+        pc.workspace_root_path,
+        ws_root().root_path().to_string_lossy(),
+        "workspace_root_path must equal the workspace root the broker opened"
+    );
+
+    // The FULL arg set is captured — both `path` (the blocked, tainted arg) and
+    // `contents` (never resolved by the executor's own decision, but frozen here).
+    assert_eq!(
+        pc.resolved_args.len(),
+        2,
+        "resolved_args must contain one entry per plan_node.args entry"
+    );
+    let path_arg = pc
+        .resolved_args
+        .iter()
+        .find(|a| a.name == "path")
+        .expect("path arg present in snapshot");
+    assert_eq!(path_arg.literal, HOSTILE_PATH);
+    let contents_arg = pc
+        .resolved_args
+        .iter()
+        .find(|a| a.name == "contents")
+        .expect("contents arg present in snapshot");
+    assert_eq!(contents_arg.literal, "hostile block harness contents");
+
+    drop(reopened);
+    cleanup_db(&db_path);
+}
