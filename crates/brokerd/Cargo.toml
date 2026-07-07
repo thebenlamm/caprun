@@ -17,6 +17,10 @@ hex          = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 chrono       = { workspace = true }
+# Default features only — do NOT add `features = [...]` enabling the
+# `boring-tls` backend (RUSTSEC-2026-0141: silently disables TLS hostname
+# verification). Mailpit needs no TLS at all; builder_dangerous bypasses it.
+lettre       = "0.11.22"
 
 [dev-dependencies]
 runtime-core = { path = "../runtime-core" }
