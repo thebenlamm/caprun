@@ -68,12 +68,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TAINT-01 | Phase 9 | Pending (types landed 09-01; behavior lands 09-03) |
-| TAINT-02 | Phase 9 | Pending (types landed 09-01; behavior lands 09-02) |
+| TAINT-01 | Phase 9 | Complete |
+| TAINT-02 | Phase 9 | Complete |
 | TAINT-03 | Phase 9 | Complete |
 | TAINT-04 | Phase 9 | Complete |
-| ORIGIN-01 | Phase 9 | Pending (types landed 09-01; behavior lands 09-04) |
-| ORIGIN-02 | Phase 9 | Pending (types landed 09-01; behavior lands 09-03/09-04) |
+| ORIGIN-01 | Phase 9 | Complete |
+| ORIGIN-02 | Phase 9 | Complete |
 | CONFIRM-01 | Phase 10 | Pending |
 | CONFIRM-02 | Phase 10 | Pending |
 | CONFIRM-03 | Phase 10 | Pending |
