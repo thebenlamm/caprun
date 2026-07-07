@@ -61,6 +61,7 @@ completes and is adversarially reviewed (mirrors v1.0 Phase 2 / v1.2 Phase 8).
 ### Pending Todos
 
 - Run `/gsd-discuss-phase 12` (or `/gsd-plan-phase 12`) to begin the v1.3 design gate.
+- `.planning/todos/pending/2026-07-07-gsd-phases-clear-deletes-all-milestones.md` — GSD tooling bug: `gsd_run query phases.clear --confirm` deletes ALL milestones' phase dirs, not just the previous one's leftovers. Caught and reverted unstaged during this milestone's init; not yet fixed upstream.
 
 ### Blockers/Concerns
 
