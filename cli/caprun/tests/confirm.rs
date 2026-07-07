@@ -131,11 +131,28 @@ fn seed_pending_file_create_block(
 /// Run `caprun confirm <effect_id> <db_path>` or `caprun deny <effect_id>
 /// <db_path>` as a REAL separate OS process. Returns `(exit_code, stdout)`.
 fn run_caprun_verb(verb: &str, effect_id: Uuid, db_path: &Path) -> (i32, String) {
+    run_caprun_verb_with_env(verb, effect_id, db_path, &[])
+}
+
+/// Same as `run_caprun_verb`, but with additional environment variables set
+/// on the child process (used to point the confirm-path `email.send` adapter
+/// at a specific `CAPRUN_SMTP_HOST`/`CAPRUN_SMTP_PORT` for Phase 13's
+/// exit-code-7 acceptance test).
+fn run_caprun_verb_with_env(
+    verb: &str,
+    effect_id: Uuid,
+    db_path: &Path,
+    envs: &[(&str, &str)],
+) -> (i32, String) {
     let caprun_bin = env!("CARGO_BIN_EXE_caprun");
-    let output = Command::new(caprun_bin)
-        .arg(verb)
+    let mut cmd = Command::new(caprun_bin);
+    cmd.arg(verb)
         .arg(effect_id.to_string())
-        .arg(db_path.to_str().unwrap())
+        .arg(db_path.to_str().unwrap());
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let output = cmd
         .output()
         .unwrap_or_else(|e| panic!("spawn caprun {verb}: {e}"));
     (
@@ -284,6 +301,163 @@ fn confirm_and_deny_on_unknown_effect_id_exit_4() {
 
     let (code2, _stdout2) = run_caprun_verb("deny", unknown, &db_path);
     assert_eq!(code2, 4, "deny on an unknown effect_id must exit 4 (UnknownEffect)");
+
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
+/// Seed a Pending email.send block directly via brokerd's API against the
+/// persistent DB at `db_path` — mirrors `seed_pending_file_create_block` but
+/// for the `email.send` sink (Phase 13 Plan 02, SEND-01/SEND-02).
+///
+/// `workspace_root` MUST be a real, existing directory even though
+/// `confirm()`'s `email.send` arm never reads it: `run_confirm_or_deny`
+/// (`cli/caprun/src/main.rs`) unconditionally opens
+/// `PendingConfirmation.workspace_root_path` via `WorkspaceRoot::open` BEFORE
+/// dispatching to `confirm()`, regardless of sink — a pre-existing CLI
+/// behavior, out of this phase's scope to change.
+///
+/// Returns `(effect_id, session_id, blocked_event_id)`.
+fn seed_pending_email_send_block(
+    db_path: &Path,
+    workspace_root: &Path,
+    to: &str,
+    subject: &str,
+    body: &str,
+) -> (Uuid, Uuid, Uuid) {
+    let conn = open_audit_db(db_path.to_str().unwrap()).expect("open_audit_db for seeding");
+
+    let session_id = Uuid::new_v4();
+    let effect_id = Uuid::new_v4();
+    let read_event_id = Uuid::new_v4();
+
+    let root = Event::new(
+        Uuid::new_v4(),
+        None,
+        session_id,
+        "broker".into(),
+        "session_created".into(),
+        Utc::now(),
+        vec![],
+    );
+    let root_hash = append_event(&conn, &root, None).expect("append session_created");
+
+    let literal_sha256 = {
+        let mut hasher = Sha256::new();
+        hasher.update(to.as_bytes());
+        hex::encode(hasher.finalize())
+    };
+    let anchor = SinkBlockedAnchor {
+        effect_id,
+        sink: SinkId("email.send".into()),
+        arg: "to".into(),
+        value_id: ValueId::new(),
+        literal_sha256,
+        taint: vec![TaintLabel::ExternalUntrusted],
+        provenance_chain: vec![read_event_id],
+        read_event_id,
+    };
+    let blocked_event = Event::sink_blocked(
+        Uuid::new_v4(),
+        Some(root.id),
+        session_id,
+        Utc::now(),
+        anchor,
+    );
+    let blocked_event_id = blocked_event.id;
+    append_event(&conn, &blocked_event, Some(&root_hash)).expect("append sink_blocked");
+    insert_blocked_literal(&conn, &blocked_event_id.to_string(), to).expect("insert_blocked_literal");
+
+    let pc = PendingConfirmation {
+        effect_id,
+        session_id,
+        blocked_event_id,
+        sink: SinkId("email.send".into()),
+        resolved_args: vec![
+            ResolvedArg {
+                name: "to".into(),
+                value_id: ValueId::new(),
+                literal: to.to_string(),
+                taint: vec![TaintLabel::ExternalUntrusted],
+                provenance_chain: vec![read_event_id],
+            },
+            ResolvedArg {
+                name: "subject".into(),
+                value_id: ValueId::new(),
+                literal: subject.to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![],
+            },
+            ResolvedArg {
+                name: "body".into(),
+                value_id: ValueId::new(),
+                literal: body.to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![],
+            },
+        ],
+        workspace_root_path: workspace_root.to_string_lossy().into_owned(),
+        state: PendingConfirmationState::Pending,
+    };
+    insert_pending_confirmation(&conn, &pc).expect("insert_pending_confirmation");
+
+    (effect_id, session_id, blocked_event_id)
+}
+
+/// SEND-02, real cross-process exit-code contract: a `caprun confirm` on a
+/// Pending `email.send` block, run as a genuine separate OS process against a
+/// closed SMTP port (`CAPRUN_SMTP_HOST`/`CAPRUN_SMTP_PORT` pointed at an
+/// ephemeral port with nothing listening), exits 7 — distinct from
+/// denied (2) / confirmed-but-sink-failed (3) / unknown (4) / already-terminal
+/// (5) / redacted (6). The CAS + `email_send_attempted` transaction still
+/// committed (durable, atomic, before the socket ever opened); a re-confirm
+/// on the same effect_id is refused (5), proving no auto-retry.
+#[test]
+fn confirm_email_send_adapter_failure_exits_7() {
+    let run_id = Uuid::new_v4();
+    let tmp = std::env::temp_dir().join(format!("caprun_confirm_email_fail_{run_id}"));
+    let workspace = tmp.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace dir");
+    let db_path = tmp.join("audit.db");
+
+    // Bind an ephemeral port then drop the listener immediately — nothing is
+    // listening on it, so the adapter's real send fails fast (ECONNREFUSED).
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let (effect_id, session_id, _blocked_event_id) = seed_pending_email_send_block(
+        &db_path,
+        &workspace,
+        "recipient@example.com",
+        "hello",
+        "hi there",
+    );
+
+    let port_str = port.to_string();
+    let envs = [("CAPRUN_SMTP_HOST", "127.0.0.1"), ("CAPRUN_SMTP_PORT", port_str.as_str())];
+    let (code, _stdout) = run_caprun_verb_with_env("confirm", effect_id, &db_path, &envs);
+    assert_eq!(
+        code, 7,
+        "email.send adapter failure after confirm must exit 7, distinct from 2/3/4/5/6"
+    );
+
+    // The CAS + attempt-append committed atomically before the failed send.
+    let conn = open_audit_db(db_path.to_str().unwrap()).expect("reopen persisted audit DB");
+    let attempted_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE session_id = ?1 AND event_type = 'email_send_attempted'",
+            [session_id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(attempted_count, 1, "exactly ONE email_send_attempted event must be durable");
+
+    // No auto-retry: a re-confirm on the same effect_id refuses.
+    let (code2, _stdout2) = run_caprun_verb_with_env("confirm", effect_id, &db_path, &envs);
+    assert_eq!(
+        code2, 5,
+        "a re-confirm after a send failure must be refused (AlreadyTerminal), never retried"
+    );
 
     std::fs::remove_dir_all(&tmp).ok();
 }
