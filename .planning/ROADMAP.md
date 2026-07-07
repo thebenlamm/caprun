@@ -151,5 +151,5 @@ Plans:
 | 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 6/6 | Complete | 2026-07-01 |
 | 8. Session-Trust & Confirmation Design Gate | v1.2 | 3/3 | Complete    | 2026-07-06 |
 | 9. Session Trust State (I1 + I0) | v1.2 | 4/4 | Complete    | 2026-07-07 |
-| 10. Single-Shot Confirmation Loop | v1.2 | 3/3 | Complete   | 2026-07-07 |
+| 10. Single-Shot Confirmation Loop | v1.2 | 3/3 | Complete    | 2026-07-07 |
 | 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 0/? | Not started | - |
