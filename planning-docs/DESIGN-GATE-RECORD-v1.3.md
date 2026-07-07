@@ -5,9 +5,15 @@
 caprun-opus-77 (D-11; NOT caprun-sonnet-77, the session that authored
 `DESIGN-content-adapter-mediation.md` and `DESIGN-confirm-binding.md`), independently verified by
 opus. Authorized under `DEC-ai-review-satisfies-human-gate` (Ben Lamm, same precedent as v1.2).
-**Reviewer (round 2):** TBD — a fresh round-2 pass by the same external panel, still pending.
+**Reviewer (round 2):** Fresh-context adversarial panel arranged by caprun-opus-77 (D-11; NOT the
+authoring session), independently verified by opus. Same `DEC-ai-review-satisfies-human-gate`
+authorization. Found **1 BLOCKER (unbuildable broker-daemon mandate), 3 MAJOR, 1 MINOR, 1 SHOULD**
+(6 findings, all fixes applied); round 3 pending.
+**Reviewer (round 3):** TBD — a fresh round-3 pass by the same external panel, still pending.
 **Phase:** 12-content-adapter-confirm-binding-design-gate — Plan 03
-**Review round:** 1 COMPLETE — Decision: NEEDS REVISION (8 findings, all fixes applied); round 2 pending.
+**Review round:** 2 COMPLETE — Decision: NEEDS REVISION (6 findings, all fixes applied); round 3 pending.
+Round 1's provenance-threading fix, digest-set definition, and `attachment` descope were CONFIRMED
+CLOSED by round 2.
 
 ## Revision History
 
@@ -82,35 +88,113 @@ opus. Authorized under `DEC-ai-review-satisfies-human-gate` (Ben Lamm, same prec
      posture. *Resolution:* added that MUST to the Block Narration section. (`DESIGN-confirm-binding.md`
      Block Narration, D-20. Commit `92c6487`.)
 
-- **Round 2 — pending.** The revised docs (re-hashed below) await a fresh round-2 adversarial pass by
-  caprun-opus-77's external panel. Decision remains **NEEDS REVISION** and Gate status remains
-  **BLOCKED** until that round-2 review signs off — this authoring session MUST NOT self-approve (D-11).
+- **Round 2 — STILL NEEDS REVISION** (fresh-context adversarial panel arranged by caprun-opus-77 under
+  `DEC-ai-review-satisfies-human-gate`, independently verified by opus; NOT the authoring session, per
+  D-11). The panel re-reviewed the round-1-revised docs and found **1 BLOCKER, 3 MAJOR, 1 MINOR, 1
+  SHOULD** (6 findings). This is a normal round-3 iteration (v1.2 iterated too). Opus issued an explicit
+  resolution mandate for each finding; all 6 were implemented as specified (commits `30addc6` +
+  `d0ec29a`).
+
+  **CONFIRMED CLOSED from round 1 (independently re-verified by round 2 — do NOT re-touch):** the
+  provenance-threading section (the round-1 laundering BLOCKER, finding #1), the blocked-arg-subset
+  digest DEFINITION (which args are included — this stays; only the hash MECHANICS changed per round-2
+  finding #4), and the descope of `attachment` (round-1 finding #6).
+
+  **PROCESS LESSON from round 1 (recorded explicitly).** Round 1's finding-#2 resolution mandated that
+  the confirmed send run "in the BROKER DAEMON ... over the existing UDS IPC channel." That claim was
+  **string-grepped, not substrate-checked against the actual codebase** — round 1 asserted a persistent
+  "broker daemon" and a confirm/send UDS control channel that DO NOT EXIST. Round 2 caught it precisely
+  because it traced the mandate to source: the broker is ephemeral/session-scoped
+  (`server.rs:95-96` binds a per-session abstract socket, `main.rs:270` `broker_task.abort()`s on
+  worker exit), there is no daemon binary (no `crates/brokerd/src/bin/`), and `BrokerRequest`
+  (`proto.rs`) has no confirm/perform-send variant. The lesson: a review that greps for the presence of
+  words ("broker daemon") without checking the words describe something buildable in *this* codebase
+  can mandate an unbuildable resolution — round 2's fix was verified against source before writing.
+
+  **The 6 round-2 findings, their severity, and the mandated resolution applied:**
+
+  1. **BLOCKER — the broker daemon does not exist; round-1's "send-in-broker-daemon" mandate is
+     unbuildable (round 2 REVERSES round 1's call).** *Resolution:* do NOT design a persistent daemon;
+     for v1.3 the confirmed send runs in the confirm-path process invoking
+     `crates/brokerd/src/sinks/email_smtp.rs` from the frozen snapshot — the SAME locus as `file.create`
+     today (`confirmation.rs::confirm()`). D-03 (worker-never-sends) STILL HOLDS (the send is in the
+     separate, trusted, human-invoked confirm process, never the confined worker). D-04 restated to its
+     real intent (secrets never reach the confined worker/tainted context); the Mailpit gate is
+     unauthenticated so custody is trivially satisfied; the live-SES path is DEFERRED (SMTP-04) with its
+     own daemon+control-socket+secret-custody future-work obligation, explicitly NOT built now.
+     (`DESIGN-content-adapter-mediation.md` Adapter Mediation Boundary + D-04 restatement. Commit
+     `30addc6`.)
+  2. **MAJOR — at-most-once, now simpler because there is no process split.** *Resolution:* reuse the
+     EXISTING `transition_state` CAS (`UPDATE ... AND state='pending'`) as the SOLE gate that authorizes
+     the wire action; the CAS + the durable `email_send_attempted` append MUST be ONE atomic DB
+     transaction, so a redelivered/double `caprun confirm` cannot both pass the attempted-check and send.
+     Kept the ledger, no-auto-retry, never-swallow from round 1; dropped round-1's cross-process/UDS-
+     handoff idempotency language (it solved the phantom-daemon split). (`DESIGN-content-adapter-
+     mediation.md` At-Most-Once Send. Commit `d0ec29a`.)
+  3. **MAJOR (NEW) — tainted literal leaks into the immutable hash chain via error context.** Round 1's
+     "append `email_send_failed` with the error context" mandate, done naively, staples the confirmed
+     literal into the SHA-256 chain (SMTP rejections echo the recipient/body, e.g.
+     `550 <attacker@evil.com> rejected`). *Resolution:* the hashed `email_send_failed` payload carries
+     ONLY an opaque error code/digest — never the recipient/body literal or raw SMTP response; raw detail
+     goes to `logger.error()`/the redactable `blocked_literals` side table only. "Never swallow" done
+     RIGHT. (`DESIGN-content-adapter-mediation.md` At-Most-Once Send + Wire-Message Construction. Commit
+     `d0ec29a`.)
+  4. **MAJOR (NEW) — the combined digest is partition-blind.** Plain concatenation means
+     `H("a"‖"bc") == H("ab"‖"c")`; shifting the to/body boundary
+     (`to="mallory@evil.co"`+`body="m sent…"` → `to="mallory@evil.com"`+`body=" sent…"`) is
+     byte-identical, so recompute-and-compare PASSES and mail goes to an unconfirmed recipient.
+     *Resolution:* the combined digest is SHA-256 over each blocked arg's FIXED-WIDTH `literal_sha256`
+     (64 hex) in blocked-arg order (or length-prefixed) — still SHA-256, no new primitive; also fixes the
+     "combined digest weaker than the per-arg digests" inversion. (`DESIGN-confirm-binding.md`
+     Combined-Digest Binding. Commit `d0ec29a`.)
+  5. **MINOR (NEW) — TOCTOU same-snapshot requirement.** *Resolution:* the literals compared in
+     recompute-and-compare MUST be the SAME single in-memory read of the frozen snapshot handed to the
+     `lettre` builder — no DB re-read between compare and send. (`DESIGN-confirm-binding.md`
+     Combined-Digest Binding tamper-evidence. Commit `d0ec29a`.)
+  6. **SHOULD (hardening) — mechanical backstop for the provenance-threading rule.** *Resolution:*
+     specified a FUTURE `check-invariants.sh` grep gate restricting `mint_from_read` (and its Phase-15
+     transform successor) call sites to the raw-read extraction module, mirroring the `EffectRequest`
+     token-ban gate. DESIGN-level specification ONLY — `scripts/check-invariants.sh` is NOT modified in
+     this documentation-only phase; adding the gate is a later phase's action item.
+     (`DESIGN-confirm-binding.md` Provenance-Threading section. Commit `d0ec29a`.)
+
+- **Round 3 — pending.** The round-2-revised docs (re-hashed below) await a fresh round-3 adversarial
+  pass by caprun-opus-77's external panel. Decision remains **NEEDS REVISION** and Gate status remains
+  **BLOCKED** until that round-3 review signs off — this authoring session MUST NOT self-approve (D-11).
 
 ## Documents Under Review
 
-These are the **post-round-1-fix (round-2 input)** hashes. Both docs were revised per the 8 round-1
-findings above; the stale round-1 hashes (`c2506396…` / `c7a61423…`) no longer match and are retained
-only in this note for provenance.
+These are the **post-round-2-fix (round-3 input)** hashes. Both docs were revised per the 6 round-2
+findings above; the stale round-1-input and round-2-input hashes no longer match and are retained below
+for provenance (full hash history is kept, prior rounds' hashes are NOT overwritten/deleted).
 
-| Document | sha256 (round-2 input, post-fix) |
+| Document | sha256 (round-3 input, post-round-2-fix) |
 |----------|--------|
-| `planning-docs/DESIGN-content-adapter-mediation.md` | `bec703fef52a6342a38d2924ef4f56b0b18c6873c09388bd8a2928fa630ec07e` |
-| `planning-docs/DESIGN-confirm-binding.md` | `68dfd9d9e8c6c4e538234c5b0130914fbf77be9a0c65f6c9509292a8c54eb470` |
+| `planning-docs/DESIGN-content-adapter-mediation.md` | `ba365cd082b648b104177caedd4922d790f24e77b8019fedf31a0a654c23e792` |
+| `planning-docs/DESIGN-confirm-binding.md` | `f4b6e1c1099a5758dfd054ca79beb9a197ffaeba4218e693bbfefc9ddf2b6d49` |
 
-Hashes were re-computed with `shasum -a 256` after the round-1 fixes. The round-2 reviewer MUST
+**Hash history (provenance — do not delete prior rounds):**
+
+| Document | round-1 input | round-2 input (post-round-1-fix) | round-3 input (post-round-2-fix) |
+|----------|---------------|----------------------------------|----------------------------------|
+| `DESIGN-content-adapter-mediation.md` | `c2506396852d4bd619d7985cf2973cdd3b140177cff3c5d82f53038b3fa6724c` | `bec703fef52a6342a38d2924ef4f56b0b18c6873c09388bd8a2928fa630ec07e` | `ba365cd082b648b104177caedd4922d790f24e77b8019fedf31a0a654c23e792` |
+| `DESIGN-confirm-binding.md` | `c7a614233324f8a3d012a27836e4b891f27f2aff4197bcbd8d85e3db65b3f1f2` | `68dfd9d9e8c6c4e538234c5b0130914fbf77be9a0c65f6c9509292a8c54eb470` | `f4b6e1c1099a5758dfd054ca79beb9a197ffaeba4218e693bbfefc9ddf2b6d49` |
+
+Hashes were re-computed with `shasum -a 256` after the round-2 fixes. The round-3 reviewer MUST
 re-run `shasum -a 256 planning-docs/DESIGN-content-adapter-mediation.md planning-docs/DESIGN-confirm-binding.md`
-and confirm the values match before setting Decision: APPROVED. If the DESIGN docs are amended again
-during a further fix→re-review loop, re-hash them here and note the round.
+and confirm the values match the round-3-input row before setting Decision: APPROVED. If the DESIGN docs
+are amended again during a further fix→re-review loop, re-hash them here and note the round (append a new
+column; do not overwrite prior rounds).
 
 <!-- shasum -->
 ```
 $ shasum -a 256 planning-docs/DESIGN-content-adapter-mediation.md planning-docs/DESIGN-confirm-binding.md
-bec703fef52a6342a38d2924ef4f56b0b18c6873c09388bd8a2928fa630ec07e  planning-docs/DESIGN-content-adapter-mediation.md
-68dfd9d9e8c6c4e538234c5b0130914fbf77be9a0c65f6c9509292a8c54eb470  planning-docs/DESIGN-confirm-binding.md
+ba365cd082b648b104177caedd4922d790f24e77b8019fedf31a0a654c23e792  planning-docs/DESIGN-content-adapter-mediation.md
+f4b6e1c1099a5758dfd054ca79beb9a197ffaeba4218e693bbfefc9ddf2b6d49  planning-docs/DESIGN-confirm-binding.md
 ```
-(Re-run after round-1 fixes, 2026-07-07; commits `5dc1e67` + `92c6487`. Prior round-1 hashes:
-`c2506396852d4bd619d7985cf2973cdd3b140177cff3c5d82f53038b3fa6724c` /
-`c7a614233324f8a3d012a27836e4b891f27f2aff4197bcbd8d85e3db65b3f1f2`.)
+(Re-run after round-2 fixes, 2026-07-07; commits `30addc6` + `d0ec29a`. Full hash history — round-1
+input, round-2 input, round-3 input — is preserved in the provenance table above; prior rounds' hashes
+are retained, not overwritten.)
 
 ---
 
@@ -146,13 +230,23 @@ Unchecked items indicate missing required content — the doc(s) must be revised
   - Grep matched: `grep -c 'Collect-then-Block'` → 2; `grep -ci 'plural'` → 2;
     `grep -c 'Vec<BlockedArg>'` → 2.
 
-- [x] **Item 5 — Worker-never-sends; SMTP secrets live only in the broker** (SMTP-01/02, D-03/D-04)
-  - Grep matched: `grep -c 'Worker-never-sends'` → 1; `grep -c 'Secrets broker-only'` → 1;
-    `grep -c 'crates/brokerd/src/sinks/email_smtp.rs'` → 2.
-  - **Round-1 (findings #2, #3):** added the D-03 refinement — the confirmed send runs in the BROKER
-    DAEMON, not the `caprun confirm` CLI (which hands `effect_id` over UDS and holds no secret) — and a
-    new "At-Most-Once Send" section (durable `email_send_attempted`/`_failed` ledger, no auto-retry,
-    never-swallow error path; SEND-01/SEND-02, D-24). (Commit `5dc1e67`.)
+- [x] **Item 5 — Worker-never-sends; SMTP secrets never reach the confined worker/tainted context**
+  (SMTP-01/02, D-03/D-04)
+  - Grep matched: `grep -c 'Worker-never-sends'` → 1; `grep -ci 'Secrets never reach the confined worker'` → 1;
+    `grep -c 'crates/brokerd/src/sinks/email_smtp.rs'` → ≥2.
+  - **Round-1 (findings #2, #3):** added a D-03 refinement (confirmed send in a long-lived "broker
+    daemon" reached over UDS) and a new "At-Most-Once Send" section. — **SUPERSEDED by round 2, below.**
+  - **Round-2 (findings #1, #2, #3):** the round-1 "broker daemon" mandate was REVERSED as unbuildable
+    (the broker is ephemeral/session-scoped — `server.rs:95-96` per-session abstract socket,
+    `main.rs:270` `broker_task.abort()` — no daemon binary, and `BrokerRequest` has no confirm/send
+    control variant). The confirmed send now runs in the confirm-path process invoking
+    `crates/brokerd/src/sinks/email_smtp.rs` from the frozen snapshot — the SAME locus as `file.create`
+    (`confirmation.rs::confirm()`). D-04 restated to its real intent (secrets never reach the confined
+    worker/tainted context); Mailpit is unauthenticated so custody is trivially satisfied; SES deferred
+    with its own future-work daemon+custody design. At-most-once now reuses the EXISTING
+    `transition_state` CAS + durable `email_send_attempted` as ONE atomic transaction, and
+    `email_send_failed`'s HASHED payload is opaque-only (no literal-leak into the chain). (Commits
+    `30addc6`, `d0ec29a`.)
 
 - [x] **Item 6 — Kernel-enforced negative net assertion against the existing seccomp mechanism**
   (SMTP-01, D-05)
@@ -188,7 +282,14 @@ Unchecked items indicate missing required content — the doc(s) must be revised
     raw `resolved_args`), and `combined_digest` was made tamper-evident — persisted inside the hashed
     `sink_blocked` anchor and recompute-and-compared (fail-closed) from the frozen snapshot at
     confirm/send. (Commit `92c6487`.) NOTE: the item title's original "FULL SET" wording is superseded
-    by "blocked-arg SUBSET" per finding #4.
+    by "blocked-arg SUBSET" per round-1 finding #4.
+  - **Round-2 (findings #4, #5):** the digest MECHANICS were changed (the SUBSET definition stays). Plain
+    literal concatenation was PARTITION-BLIND (`H("a"‖"bc") == H("ab"‖"c")`), admitting a to/body
+    boundary-shift bypass; the digest is now SHA-256 over each blocked arg's FIXED-WIDTH (64-hex)
+    `literal_sha256` in blocked-arg order (or length-prefixed) — still SHA-256, no new primitive — which
+    also fixes the "combined digest weaker than the per-arg digests" inversion. A same-snapshot MUST was
+    added: the frozen literals fed to recompute-and-compare are the SAME in-memory read handed to the
+    `lettre` builder, no DB re-read between compare and send (TOCTOU). (Commit `d0ec29a`.)
 
 - [x] **Item 11 — Post-transformation-bytes rule: mint after transform, no drift between
   confirm and send; provenance threaded** (CONFIRM-03, D-08, D-16, Pitfall 2)
@@ -261,8 +362,15 @@ this authoring session.
     (`DESIGN-confirm-binding.md`); a re-anchored derived chain is now a fail-closed mint error, and a
     Phase-15 fixture verifies byte-identity + originating-read root. Also the single-shot atomicity
     that makes both args confirmable in one decision was made tamper-evident (finding #5).
-  - **Status:** OPEN — round-1 fix applied (commits `92c6487`, `5dc1e67`); AWAITING round-2
-    confirmation. NOT resolved by the authoring session (D-11).
+  - **Round-2 result + finding (#6):** the round-1 provenance-threading fix was **CONFIRMED CLOSED** —
+    the composition and its anti-laundering root-check hold. Round 2 added one hardening SHOULD
+    (finding #6): specify a FUTURE `check-invariants.sh` grep gate restricting `mint_from_read` (+ its
+    Phase-15 successor) call sites to the raw-read extraction module, giving the "don't fabricate a
+    fresh provenance root" rule a mechanical backstop (DESIGN-level spec only; the script is NOT modified
+    this phase). (Commit `d0ec29a`.)
+  - **Status:** OPEN — round-1 fix CONFIRMED CLOSED by round 2; round-2 hardening (#6) applied (commits
+    `92c6487`, `5dc1e67`, `d0ec29a`); AWAITING round-3 confirmation. NOT resolved by the authoring
+    session (D-11).
 
 - [ ] **Item 19 — D-12(b): Can CONFIRM-03's literal-binding hash be computed over pre-transformation
   bytes instead of the post-EXTRACT-03-transformation bytes actually sent?**
@@ -285,7 +393,17 @@ this authoring session.
     persisted inside the hashed `sink_blocked` anchor and recompute-and-compared (fail-closed) from
     the frozen snapshot at confirm/send — required, while a LIVE `ValueId` re-resolution stays
     forbidden; provenance threaded to the originating read. (Commits `92c6487`, `5dc1e67`.)
-  - **Status:** OPEN — round-1 fix applied; AWAITING round-2 confirmation. NOT resolved by the
+  - **Round-2 findings (#4, #5) + fixes:** the round-1 SUBSET definition was CONFIRMED CLOSED, but round
+    2 found the digest MECHANICS were partition-blind: plain literal concatenation
+    (`H("a"‖"bc") == H("ab"‖"c")`) let a to/body boundary shift produce a byte-identical digest that
+    recompute-and-compare would PASS, delivering to an unconfirmed recipient (#4); and the compare/send
+    could in principle re-read the row, opening a narrow TOCTOU window (#5). Fixed: the digest is now
+    SHA-256 over each blocked arg's FIXED-WIDTH (64-hex) `literal_sha256` in blocked-arg order (or
+    length-prefixed) — still SHA-256, also resolving the "combined weaker than per-arg" inversion; and a
+    same-snapshot MUST requires the compared literals to be the SAME in-memory read handed to the
+    `lettre` builder, no re-read between compare and send. (Commit `d0ec29a`.)
+  - **Status:** OPEN — round-1 fix applied; round-2 digest-mechanics (#4) + same-snapshot (#5) fixes
+    applied (commits `92c6487`, `5dc1e67`, `d0ec29a`); AWAITING round-3 confirmation. NOT resolved by the
     authoring session (D-11).
 
 - [ ] **Item 20 — D-12(c): Does SMTP-05's message construction have any path where a tainted
@@ -312,7 +430,15 @@ this authoring session.
     `EMAIL_SEND_CONTENT_SENSITIVE`, D-23), so the header/CRLF surface it introduced is out of scope
     by construction; a lettre construction `Err` on a confirmed literal is now a fail-closed AUDITED
     abort (durable failure Event, never panic/silent-drop, D-07 refinement). (Commit `5dc1e67`.)
-  - **Status:** OPEN — round-1 fix applied; AWAITING round-2 confirmation. NOT resolved by the
+  - **Round-2 findings (#1, #3) — cross-cutting effect on this vector:** the confirmed send (and thus the
+    lettre construction + its fail-closed abort) now runs in the confirm-path process, not a
+    (nonexistent) broker daemon (#1 reversal) — the CRLF/header-injection by-construction defense is
+    unchanged, but the fail-closed AUDITED abort's `email_send_failed` Event MUST now carry an
+    OPAQUE-only hashed payload (never the CRLF-bearing confirmed literal or raw lettre error text — #3),
+    routing raw detail to `logger.error()`/the redactable side table. The `attachment` descope and the
+    typed-builder defense are otherwise CONFIRMED unchanged. (Commits `30addc6`, `d0ec29a`.)
+  - **Status:** OPEN — round-1 fix applied; round-2 send-locus (#1) + opaque-audited-abort (#3) applied
+    (commits `5dc1e67`, `30addc6`, `d0ec29a`); AWAITING round-3 confirmation. NOT resolved by the
     authoring session (D-11).
 
 MUST/MUST NOT density: `grep -c 'MUST'` → run at review time on both files; expected to be
@@ -372,20 +498,27 @@ Before setting Decision and Gate status, the reviewer MUST:
 
 **Decision:** NEEDS REVISION
 
-**Round 1 is COMPLETE and returned NEEDS REVISION** (8 findings — 1 BLOCKER, 2 MAJOR, 2 GAP, 1
-MUST-RESOLVE, 1 UNDERSPECIFIED, 1 SHOULD-FIX — see Revision History above), by a fresh-context
-adversarial panel (3 reviewers + Fable) arranged by caprun-opus-77 under
-`DEC-ai-review-satisfies-human-gate`, independently verified by opus, NOT the authoring session
-(D-11). **Round 1 fixes applied (commits: `5dc1e67` [content-adapter-mediation.md, findings
-#2/#3/#6/#7], `92c6487` [confirm-binding.md, findings #1/#4/#5/#8]).** Both docs re-hashed in the
-Documents Under Review table above (round-2 input hashes).
+**Round 1 (COMPLETE, NEEDS REVISION):** 8 findings — 1 BLOCKER, 2 MAJOR, 2 GAP, 1 MUST-RESOLVE, 1
+UNDERSPECIFIED, 1 SHOULD-FIX — all fixed (commits `5dc1e67`, `92c6487`).
 
-**Awaiting round-2 review by caprun-opus-77's fresh-context panel.** Decision remains NEEDS REVISION
-and MUST NOT be set to APPROVED by this authoring session — only a fresh round-2 adversarial pass by
-the same external panel (confirming the 8 fixes hold and open no new defect, re-verifying D-21, and
-re-running `shasum -a 256` against the round-2 hashes) may set Decision: APPROVED / Gate status:
-UNBLOCKED. Per D-11 and the recorded v1.2 revert-when-self-reviewed precedent, this session cannot
-self-approve.
+**Round 2 (COMPLETE, STILL NEEDS REVISION):** a fresh-context adversarial panel arranged by
+caprun-opus-77 under `DEC-ai-review-satisfies-human-gate`, independently verified by opus, NOT the
+authoring session (D-11), found **6 findings — 1 BLOCKER, 3 MAJOR, 1 MINOR, 1 SHOULD** (see Revision
+History above). Round 1's provenance-threading fix, blocked-arg-subset digest DEFINITION, and
+`attachment` descope were **CONFIRMED CLOSED**. The round-2 BLOCKER was that round-1's
+"send-in-broker-daemon" mandate is UNBUILDABLE — the broker is ephemeral/session-scoped with no daemon
+binary and no confirm/send control channel — a claim round 1 string-grepped rather than substrate-checked
+(process lesson recorded above). **Round 2 fixes applied (commits: `30addc6` [content-adapter-mediation.md,
+finding #1 daemon reversal + D-04 restatement], `d0ec29a` [both docs, findings #2 at-most-once /
+#3 literal-leak / #4 digest partition-blindness / #5 same-snapshot / #6 grep-gate spec]).** Both docs
+re-hashed in the Documents Under Review table above (round-3 input hashes; full history preserved).
+
+**Awaiting round-3 review by caprun-opus-77's fresh-context panel.** Decision remains NEEDS REVISION
+and MUST NOT be set to APPROVED by this authoring session — only a fresh round-3 adversarial pass by
+the same external panel (confirming the 6 round-2 fixes hold and open no new defect, re-verifying D-21,
+and re-running `shasum -a 256` against the round-3-input hashes) may set Decision: APPROVED / Gate
+status: UNBLOCKED. Per D-11 and the recorded v1.2 revert-when-self-reviewed precedent, this session
+cannot self-approve. This is a normal fix→re-review iteration (v1.2 iterated too).
 
 ---
 
@@ -400,9 +533,12 @@ self-approve.
 Available resolutions: [ UNBLOCKED / BLOCKED ]
 
 No executor/TCB code for CONTENT-01, SMTP-05, or CONFIRM-03 exists in the repo as of this record
-(round-1 fixes applied, 2026-07-07; commits `5dc1e67`, `92c6487`) — consistent with this phase's
-documentation-only scope. Gate status stays BLOCKED through the round-1 fix→re-review loop; it is set
-to UNBLOCKED ONLY after caprun-opus-77's round-2 fresh-context review resolves with no unresolved
-blocker/major and Decision is set to APPROVED. Round 1 finding a BLOCKER (finding #1, the taint-
-laundering provenance defect) and being fixed is the expected, successful "gate earns its cost"
-outcome — as v1.2's B1 was — not a process failure.
+(round-2 fixes applied, 2026-07-07; commits `30addc6`, `d0ec29a`, atop round-1's `5dc1e67`, `92c6487`) —
+consistent with this phase's documentation-only scope. No `crates/` file and no
+`scripts/check-invariants.sh` change were made in the round-2 fix cycle (the finding-#6 grep gate is a
+DESIGN-level spec for a future phase, not built now). Gate status stays BLOCKED through the round-2
+fix→re-review loop; it is set to UNBLOCKED ONLY after caprun-opus-77's round-3 fresh-context review
+resolves with no unresolved blocker/major and Decision is set to APPROVED. Round 2 finding a BLOCKER
+(finding #1, the unbuildable broker-daemon mandate that round 1 string-grepped rather than
+substrate-checked) and being fixed is the expected, successful "gate earns its cost" outcome — as
+v1.2's B1 and round-1's provenance BLOCKER were — not a process failure.

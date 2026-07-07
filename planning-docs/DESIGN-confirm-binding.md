@@ -83,19 +83,39 @@ let literal_sha256 = {
 ```
 
 The combined-set variant of this same pattern MUST NOT introduce a new hash primitive — no HMAC, no
-keyed hash, no non-SHA-256 digest. The only change from the existing single-arg pattern is the input:
-instead of hashing one `record.literal`, the combined digest hashes a deterministic concatenation of
-**every BLOCKED arg's resolved literal — the ordered blocked-arg subset only, NOT the full
-`resolved_args`** — in a MUST-fixed, canonical order (the order the collected `Vec<BlockedArg>` was
-produced in by the per-arg loop, itself the stable `plan_node.args` iteration order). The digest
-input set is exactly the collected `Vec<BlockedArg>` (the tainted-sensitive args), full stop; a
-digest that also folds in trusted, untainted args (e.g., an untainted `to`) is a DIFFERENT set and
-MUST NOT be produced.
+keyed hash, no non-SHA-256 digest. The change from the existing single-arg pattern is the input, and it
+MUST NOT be a plain literal concatenation. **The combined digest is SHA-256 over each blocked arg's
+FIXED-WIDTH `literal_sha256` (the 64-hex-char per-element digest already computed per blocked arg — see
+the single-arg `literal_sha256` pattern above and the per-element `Vec<BlockedArg>` anchor from
+round-1's plural-anchor work), taken in blocked-arg order** — the ordered blocked-arg subset ONLY, NOT
+the full `resolved_args`. The order is MUST-fixed and canonical (the order the collected
+`Vec<BlockedArg>` was produced in by the per-arg loop, itself the stable `plan_node.args` iteration
+order).
+
+**Why fixed-width per-element digests, not plain concatenation (closes the partition-blindness bypass,
+finding #4, MUST):** Plain literal concatenation is PARTITION-BLIND: `H("a" ‖ "bc") == H("ab" ‖ "c")`,
+so the digest cannot tell where one arg ends and the next begins. Concretely, a side-table write actor
+that shifts the to/body boundary — `to="mallory@evil.co"` + `body="m sent…"` becoming
+`to="mallory@evil.com"` + `body=" sent…"` — produces a BYTE-IDENTICAL concatenation, so a
+recompute-and-compare over plain concatenation PASSES and mail goes to a recipient the human never
+confirmed. This falsifies the "catches tampered `resolved_args`" claim. Hashing each arg's FIXED-WIDTH
+(64-hex) `literal_sha256` in order removes it: every element occupies exactly 64 hex chars, so the
+partition between args is fixed and any boundary shift changes at least one per-element digest and
+therefore the combined digest. (Length-prefixing each element — `len(name) ‖ name ‖ len(literal) ‖
+literal` — is an equivalent, also-acceptable partition-binding encoding; either is still plain SHA-256,
+no new primitive.) This ALSO fixes the inversion round 2 noted — that a plain-concatenation combined
+digest was WEAKER than the per-arg digests it summarizes: binding the partition makes the combined
+digest genuinely attest to the exact per-arg boundaries, which plain concatenation did not.
+
+The digest input set is exactly the collected `Vec<BlockedArg>` (the tainted-sensitive args), full
+stop; a digest that also folds in trusted, untainted args (e.g., an untainted `to`) is a DIFFERENT set
+and MUST NOT be produced.
 
 **MUST (verifier reproducibility over the subset, not the full arg set):** The digest is exactly
-reproducible by an independent verifier re-hashing the **blocked-arg subset filtered from
-`PendingConfirmation.resolved_args`** — selected by the recorded blocked arg-names in the recorded
-order — NOT by re-hashing raw `resolved_args`. `PendingConfirmation` MUST therefore persist enough to
+reproducible by an independent verifier recomputing each blocked arg's fixed-width `literal_sha256` over
+the **blocked-arg subset filtered from `PendingConfirmation.resolved_args`** — selected by the recorded
+blocked arg-names in the recorded order, then hashed in that order per the fixed-width per-element scheme
+above — NOT by re-hashing raw `resolved_args` and NOT by plain-concatenating the literals. `PendingConfirmation` MUST therefore persist enough to
 identify that subset deterministically (the ordered blocked arg-names, alongside the frozen
 `resolved_args`), so producer and verifier hash the identical byte sequence. A producer hashing
 `H(body)` while a verifier hashes `H(to‖body)` — the exact set-mismatch bug this finding closes —
@@ -142,14 +162,25 @@ detects if the persisted row was altered. To make it load-bearing:
   audit-persistence decision — so the DAG's own hash chain covers the digest and any post-hoc edit to
   it (or to the anchor's frozen literals) breaks the chain. It is mirrored into `PendingConfirmation`
   for the confirm process to read, but the DAG anchor copy is the tamper-evident source of truth.
-- **Confirm AND send MUST recompute-and-compare before releasing.** Before `caprun confirm`'s handoff
-  and before the broker performs the send, the code MUST recompute the digest **from the frozen
-  blocked-subset literals in the persisted snapshot** (NOT from any live `ValueId` re-resolution) and
-  compare it, byte-for-byte, to the `combined_digest` frozen in the `sink_blocked` anchor. On ANY
-  mismatch it MUST fail closed — refuse the confirm/send, `logger.error()` with context, and append a
-  durable failure Event — NEVER proceed. This is what turns the digest from a write-only field into an
-  actual integrity check: it catches a tampered `resolved_args` (literals changed without the digest)
-  or a tampered digest (digest changed without the literals) before any irreversible send.
+- **The send runs in the confirm-path process; recompute-and-compare MUST precede it.** Since the
+  confirmed send now runs in the SAME confirm-path process as the confirm decision (per
+  `DESIGN-content-adapter-mediation.md`'s finding-#1 reversal — no daemon handoff), the code MUST,
+  before performing the send, recompute the digest **from the frozen blocked-subset literals in the
+  persisted snapshot** (NOT from any live `ValueId` re-resolution), per the fixed-width per-element
+  scheme above, and compare it, byte-for-byte, to the `combined_digest` frozen in the `sink_blocked`
+  anchor. On ANY mismatch it MUST fail closed — refuse the send, `logger.error()` with context, and
+  append a durable failure Event — NEVER proceed. This is what turns the digest from a write-only field
+  into an actual integrity check: it catches a tampered `resolved_args` (literals changed without the
+  digest) or a tampered digest (digest changed without the literals) before any irreversible send.
+- **Same-snapshot MUST — no re-read between compare and send (closes a TOCTOU window, finding #5).**
+  The frozen blocked-subset literals fed to the recompute-and-compare MUST be the SAME single in-memory
+  read of the persisted snapshot that is then handed to the `lettre` message builder for the send. The
+  code MUST NOT re-read the `pending_confirmations` / `resolved_args` row (or re-query the DB for the
+  literals) between the compare and the send: read the frozen snapshot ONCE, compare against it, and
+  build+send the `lettre` message from that same in-memory value. Re-reading the row after the compare
+  would reopen a narrow window in which the persisted literals could differ between "what was compared"
+  and "what is sent" — however unlikely given the CAS — so the compared bytes and the sent bytes MUST
+  provably be one and the same in-memory snapshot.
 
 The recompute-and-compare is over the FROZEN persisted literals, so it does NOT reintroduce the
 live-`ValueStore` dependency the paragraph above rules out — "recompute from the frozen snapshot" and
@@ -223,6 +254,20 @@ transform-local root; (3) a durable transform/derivation Event is appended with 
 input's read Event, so the audit DAG carries the derivation as a real, hash-chained edge. A single-arg
 signature that cannot receive the inputs' provenance (and would therefore be forced to fabricate a
 fresh root) MUST NOT be the constructor used for a derived value.
+
+**SHOULD (mechanical backstop — a future `check-invariants.sh` grep gate for the provenance root,
+finding #6):** The "do not fabricate a fresh provenance root" rule above is currently doc-level
+discipline. To give it a mechanical backstop mirroring this project's existing `EffectRequest`
+token-ban gate (`check-invariants.sh` Gate 1), a future `scripts/check-invariants.sh` addition SHOULD
+restrict the call sites of `mint_from_read` (and its Phase-15 transform/derive successor) to the
+raw-read extraction module ONLY — the single module that legitimately roots a provenance chain at an
+originating read Event — so any OTHER module attempting to mint a fresh-rooted `ValueRecord` fails the
+build. The intended gate is a grep of the shape "the token `mint_from_read` (and its successor's name)
+MUST NOT appear under `crates/` outside the raw-read extraction module," with the extraction module's
+own definition/call site annotated as the sole allowed locus (the same allow-list-annotation pattern the
+`EffectRequest` gate uses). **This is a DESIGN-level specification of a FUTURE gate ONLY; this
+documentation-only phase MUST NOT modify `scripts/check-invariants.sh` — adding the gate is a later
+phase's action item.**
 
 **MUST (Phase-15 fixture — twin to D-22's CRLF fixture):** Phase 15 MUST include a fixture that, for a
 **transformed** tainted value (base64-decoded and/or concatenated), asserts the bytes shown at confirm
@@ -322,12 +367,15 @@ recomputed-for-comparison.
 
 This document's design is satisfied when the following conditions ALL hold simultaneously:
 
-1. **Combined digest over the blocked-arg subset is specified.** `caprun confirm` binds to ONE
-   combined SHA-256 digest covering every BLOCKED arg's resolved literal (recipient AND body together)
-   — the ordered blocked-arg subset ONLY, never per-arg digests and never the full `resolved_args`
-   (which also carries trusted args). The verifier re-hashes that subset filtered from `resolved_args`
-   by recorded arg-name+order, matching the set `DESIGN-content-adapter-mediation.md`'s
-   collect-then-Block section defines (D-08, D-19).
+1. **Combined digest over the blocked-arg subset is specified, and it is PARTITION-BINDING.** `caprun
+   confirm` binds to ONE combined SHA-256 digest covering every BLOCKED arg's resolved literal
+   (recipient AND body together) — the ordered blocked-arg subset ONLY, never per-arg digests and never
+   the full `resolved_args` (which also carries trusted args). The digest is SHA-256 over each blocked
+   arg's FIXED-WIDTH (64-hex) `literal_sha256` in blocked-arg order (or equivalent length-prefixed
+   encoding) — NOT plain literal concatenation, which is partition-blind and admits the to/body
+   boundary-shift bypass (finding #4). The verifier reproduces it by recomputing each blocked arg's
+   `literal_sha256` over that subset filtered from `resolved_args` by recorded arg-name+order, matching
+   the set `DESIGN-content-adapter-mediation.md`'s collect-then-Block section defines (D-08, D-19).
 2. **Post-transform mint rule AND provenance-threading are stated as MUSTs.** The extractor mints
    `ValueRecord`s only AFTER any transformation, with no transform permitted between mint and Block or
    between Block and send; AND a transform-derived mint's `provenance_chain` MUST THREAD its inputs'
@@ -335,10 +383,17 @@ This document's design is satisfied when the following conditions ALL hold simul
    input's read), with a fresh single-element re-anchored chain on a derived value a fail-closed mint
    error — closing D-12(b) and the taint-laundering BLOCKER by construction rather than by a runtime
    check (CONFIRM-03, Pitfall 2, D-16).
-2a. **Digest is tamper-evident.** `combined_digest` is persisted inside the hashed `sink_blocked`
-   anchor payload (covered by the audit DAG hash chain) and is recompute-and-compared — from the
-   frozen blocked-subset literals, never a live `ValueId` re-resolution — at confirm AND send time,
-   fail-closed on any mismatch (CONFIRM-03, D-08).
+2a. **Digest is tamper-evident, and compare + send read the same snapshot.** `combined_digest` is
+   persisted inside the hashed `sink_blocked` anchor payload (covered by the audit DAG hash chain) and
+   is recompute-and-compared — from the frozen blocked-subset literals, never a live `ValueId`
+   re-resolution — before the send, fail-closed on any mismatch. The send now runs in the confirm-path
+   process (finding-#1 reversal, no daemon handoff), and the frozen literals fed to the compare MUST be
+   the SAME single in-memory snapshot read handed to the `lettre` builder — no DB re-read between
+   compare and send (finding #5) (CONFIRM-03, D-08).
+2b. **The provenance-root rule has a specified future grep-gate backstop.** A future
+   `check-invariants.sh` addition restricting `mint_from_read` (and its Phase-15 successor) call sites
+   to the raw-read extraction module is specified as a DESIGN-level requirement (finding #6) — NOT
+   implemented in this documentation-only phase (`scripts/check-invariants.sh` is untouched).
 3. **No-truncation display is stated as a MUST.** Every blocked arg's literal is shown verbatim, in
    full, for every arg in the set — no summary, no elision (CONFIRM-03, D-09).
 4. **Every-arg block narration is stated as a MUST, including the Draft posture.** The Block moment
