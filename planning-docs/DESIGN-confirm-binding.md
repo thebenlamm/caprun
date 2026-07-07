@@ -101,9 +101,17 @@ recompute-and-compare over plain concatenation PASSES and mail goes to a recipie
 confirmed. This falsifies the "catches tampered `resolved_args`" claim. Hashing each arg's FIXED-WIDTH
 (64-hex) `literal_sha256` in order removes it: every element occupies exactly 64 hex chars, so the
 partition between args is fixed and any boundary shift changes at least one per-element digest and
-therefore the combined digest. (Length-prefixing each element — `len(name) ‖ name ‖ len(literal) ‖
-literal` — is an equivalent, also-acceptable partition-binding encoding; either is still plain SHA-256,
-no new primitive.) This ALSO fixes the inversion round 2 noted — that a plain-concatenation combined
+therefore the combined digest.
+
+**Non-normative aside (round-3 tightening — do NOT implement this):** an earlier draft of this section
+offered length-prefixing (`len(name) ‖ name ‖ len(literal) ‖ literal`) as an "equivalent" alternative.
+It is NOT equivalent to the mandated per-arg-`literal_sha256` scheme — it folds in argument NAMES and
+RAW literals rather than fixed-width per-element digests, and a producer/verifier pair that picked
+different encodings would silently diverge. The per-arg `literal_sha256`-in-order scheme above is the
+ONLY normative encoding; this paragraph exists solely to flag the prior wording as retracted, not to
+offer a second valid option.
+
+This ALSO fixes the inversion round 2 noted — that a plain-concatenation combined
 digest was WEAKER than the per-arg digests it summarizes: binding the partition makes the combined
 digest genuinely attest to the exact per-arg boundaries, which plain concatenation did not.
 
@@ -371,8 +379,8 @@ This document's design is satisfied when the following conditions ALL hold simul
    confirm` binds to ONE combined SHA-256 digest covering every BLOCKED arg's resolved literal
    (recipient AND body together) — the ordered blocked-arg subset ONLY, never per-arg digests and never
    the full `resolved_args` (which also carries trusted args). The digest is SHA-256 over each blocked
-   arg's FIXED-WIDTH (64-hex) `literal_sha256` in blocked-arg order (or equivalent length-prefixed
-   encoding) — NOT plain literal concatenation, which is partition-blind and admits the to/body
+   arg's FIXED-WIDTH (64-hex) `literal_sha256` in blocked-arg order — NOT plain literal concatenation,
+   which is partition-blind and admits the to/body
    boundary-shift bypass (finding #4). The verifier reproduces it by recomputing each blocked arg's
    `literal_sha256` over that subset filtered from `resolved_args` by recorded arg-name+order, matching
    the set `DESIGN-content-adapter-mediation.md`'s collect-then-Block section defines (D-08, D-19).

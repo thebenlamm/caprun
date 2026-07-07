@@ -9,11 +9,14 @@ opus. Authorized under `DEC-ai-review-satisfies-human-gate` (Ben Lamm, same prec
 authoring session), independently verified by opus. Same `DEC-ai-review-satisfies-human-gate`
 authorization. Found **1 BLOCKER (unbuildable broker-daemon mandate), 3 MAJOR, 1 MINOR, 1 SHOULD**
 (6 findings, all fixes applied); round 3 pending.
-**Reviewer (round 3):** TBD — a fresh round-3 pass by the same external panel, still pending.
+**Reviewer (round 3):** Fresh-context adversarial panel arranged by caprun-opus-77 (D-11; NOT the
+authoring session), independently verified by opus. Same `DEC-ai-review-satisfies-human-gate`
+authorization. CLEAN — no blocker, no major; 3 minor tightenings required before sign-off, all applied.
 **Phase:** 12-content-adapter-confirm-binding-design-gate — Plan 03
-**Review round:** 2 COMPLETE — Decision: NEEDS REVISION (6 findings, all fixes applied); round 3 pending.
+**Review round:** 3 COMPLETE — CLEAN, conditional approve; 3 tightenings applied, confirmed with opus.
 Round 1's provenance-threading fix, digest-set definition, and `attachment` descope were CONFIRMED
-CLOSED by round 2.
+CLOSED by round 2. Round 2's daemon reversal, partition-safe digest, CAS at-most-once, and
+literal-leak-on-failure fixes were CONFIRMED CLOSED by round 3.
 
 ## Revision History
 
@@ -158,33 +161,82 @@ CLOSED by round 2.
      this documentation-only phase; adding the gate is a later phase's action item.
      (`DESIGN-confirm-binding.md` Provenance-Threading section. Commit `d0ec29a`.)
 
-- **Round 3 — pending.** The round-2-revised docs (re-hashed below) await a fresh round-3 adversarial
-  pass by caprun-opus-77's external panel. Decision remains **NEEDS REVISION** and Gate status remains
-  **BLOCKED** until that round-3 review signs off — this authoring session MUST NOT self-approve (D-11).
+- **Round 3 — CLEAN, CONDITIONAL APPROVE** (fresh-context adversarial panel arranged by caprun-opus-77
+  under `DEC-ai-review-satisfies-human-gate`; NOT the authoring session, per D-11). Both reviewers
+  independently reached approve-ready. **No blocker, no major.** Confirmed CLOSED: provenance-threading,
+  the partition-safe digest (fixed-width per-arg `literal_sha256` — verified collision-free), the
+  same-snapshot TOCTOU fix, the at-most-once CAS (verified one-winner under SQLite locking, no
+  double-send window), the literal-leak-on-failure fix, and the whole round-2 daemon reversal. Holistic
+  sweep found no dangling daemon references, Done-When matches the document bodies, and the two docs
+  agree with each other. The panel required 3 one-sentence tightenings before sign-off (applied below,
+  confirmed with opus before flipping Decision):
+
+  1. **MINOR (security — closes a redirect vector).** Neither doc said where `email_smtp.rs` obtains the
+     SMTP endpoint (host:port). *Resolution:* the endpoint MUST come from trusted local broker config or
+     a hardcoded default — NEVER from the audit DB, a plan node, a `ValueNode`, or any block-time-writable
+     field; `combined_digest` binds only the blocked-arg literals, not the endpoint, so sourcing it from
+     writable state would let a tamperer redirect a confirmed send to a destination the digest doesn't
+     cover. (`DESIGN-content-adapter-mediation.md`, Adapter Mediation Boundary + Done-When 5.)
+  2. **MINOR→real (security — same class as the round-2 literal-leak fix).** The opaque-payload MUST was
+     stated only for `email_send_failed`. *Resolution:* extended to ALL three send Events —
+     `email_send_attempted`, `email_send_succeeded`, AND `email_send_failed` hashed payloads carry ONLY
+     `effect_id`/opaque metadata, never a resolved literal or raw SMTP response, on the success path as
+     much as the failure path (a Phase-14 impl writing `{"to": "…"}` into `email_send_succeeded` "for
+     legibility" would have re-opened exactly the leak the failure-path fix closed).
+     (`DESIGN-content-adapter-mediation.md`, At-Most-Once Send + Done-When 6.)
+  3. **Doc-clarity (prevents implementer divergence).** (a) `DESIGN-content-adapter-mediation.md`'s D-16
+     provenance-threading cross-reference cited the wrong section name ("Post-Transformation Bytes"
+     instead of "Provenance-Threading for Transform-Derived Mints") — fixed. (b)
+     `DESIGN-confirm-binding.md`'s combined-digest section offered length-prefixing
+     (`len(name)‖name‖len(literal)‖literal`) as an "equivalent" alternative to the mandated per-arg
+     `literal_sha256` scheme — it is NOT equivalent (folds in names + raw literals, risking
+     producer/verifier divergence); the parenthetical is retracted and marked explicitly non-normative in
+     both the section body and the Done-When list.
+
+  **Known, pre-existing items — recorded so they are not silently dropped, explicitly NOT fixed in
+  v1.3:**
+  - (i) `crates/brokerd/src/confirmation.rs`'s existing `file.create` path keeps the
+    `Err(_) => Ok(ConfirmedButSinkFailed)` swallow-shape that this document's `email.send` design now
+    forbids. This is grandfathered pre-existing v1.2 code, out of scope for v1.3's documentation-only
+    phase — a candidate future cleanup, not a v1.3 blocker.
+  - (ii) `confirm_granted` is appended before the `transition_state` CAS, so a losing racer in a
+    concurrent double-confirm leaves a stray `confirm_granted` Event with no corresponding send. This is
+    a pre-existing audit-legibility wart (already acknowledged in the existing code's comments), not a
+    security issue — no double-send results, since the CAS is still the sole authorization gate.
+
+  Once these 3 tightenings were sent to caprun-opus-77 with the new post-tightening hashes and confirmed
+  (lightweight confirm, no full re-review required — one-sentence spec pins, not a redesign), this
+  gate record is set to **Decision: APPROVED, Gate status: UNBLOCKED** with caprun-opus-77's sign-off,
+  per `DEC-ai-review-satisfies-human-gate` (Ben Lamm's authorization). Three fresh-context adversarial
+  rounds ran in total: round 1 caught the provenance-laundering BLOCKER; round 2 caught the
+  unbuildable-broker-daemon BLOCKER that the coordinator's own round-1 mandate had introduced (traced
+  in round 2 as "string-grepped, not substrate-checked" — the process lesson: a resolution mandate that
+  sounds architecturally sound must still be checked against the actual codebase before being issued);
+  round 3 was clean modulo the 3 pins above.
 
 ## Documents Under Review
 
-These are the **post-round-2-fix (round-3 input)** hashes. Both docs were revised per the 6 round-2
-findings above; the stale round-1-input and round-2-input hashes no longer match and are retained below
-for provenance (full hash history is kept, prior rounds' hashes are NOT overwritten/deleted).
+These are the **post-round-3-tightening (final, pre-approval)** hashes — the exact bytes caprun-opus-77
+confirmed before Decision: APPROVED was set. Prior rounds' hashes are retained below for provenance
+(full hash history is kept, never overwritten/deleted).
 
-| Document | sha256 (round-3 input, post-round-2-fix) |
+| Document | sha256 (final, post-round-3-tightening) |
 |----------|--------|
-| `planning-docs/DESIGN-content-adapter-mediation.md` | `ba365cd082b648b104177caedd4922d790f24e77b8019fedf31a0a654c23e792` |
-| `planning-docs/DESIGN-confirm-binding.md` | `f4b6e1c1099a5758dfd054ca79beb9a197ffaeba4218e693bbfefc9ddf2b6d49` |
+| `planning-docs/DESIGN-content-adapter-mediation.md` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` |
+| `planning-docs/DESIGN-confirm-binding.md` | `fab14ec90db3a8fc5c41864fa045b1db5bf9644615c74bd33530408f35c08c17` |
 
 **Hash history (provenance — do not delete prior rounds):**
 
-| Document | round-1 input | round-2 input (post-round-1-fix) | round-3 input (post-round-2-fix) |
-|----------|---------------|----------------------------------|----------------------------------|
-| `DESIGN-content-adapter-mediation.md` | `c2506396852d4bd619d7985cf2973cdd3b140177cff3c5d82f53038b3fa6724c` | `bec703fef52a6342a38d2924ef4f56b0b18c6873c09388bd8a2928fa630ec07e` | `ba365cd082b648b104177caedd4922d790f24e77b8019fedf31a0a654c23e792` |
-| `DESIGN-confirm-binding.md` | `c7a614233324f8a3d012a27836e4b891f27f2aff4197bcbd8d85e3db65b3f1f2` | `68dfd9d9e8c6c4e538234c5b0130914fbf77be9a0c65f6c9509292a8c54eb470` | `f4b6e1c1099a5758dfd054ca79beb9a197ffaeba4218e693bbfefc9ddf2b6d49` |
+| Document | round-1 input | round-2 input (post-round-1-fix) | round-3 input (post-round-2-fix) | final (post-round-3-tightening) |
+|----------|---------------|----------------------------------|----------------------------------|----------------------------------|
+| `DESIGN-content-adapter-mediation.md` | `c2506396852d4bd619d7985cf2973cdd3b140177cff3c5d82f53038b3fa6724c` | `bec703fef52a6342a38d2924ef4f56b0b18c6873c09388bd8a2928fa630ec07e` | `ba365cd082b648b104177caedd4922d790f24e77b8019fedf31a0a654c23e792` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` |
+| `DESIGN-confirm-binding.md` | `c7a614233324f8a3d012a27836e4b891f27f2aff4197bcbd8d85e3db65b3f1f2` | `68dfd9d9e8c6c4e538234c5b0130914fbf77be9a0c65f6c9509292a8c54eb470` | `f4b6e1c1099a5758dfd054ca79beb9a197ffaeba4218e693bbfefc9ddf2b6d49` | `fab14ec90db3a8fc5c41864fa045b1db5bf9644615c74bd33530408f35c08c17` |
 
-Hashes were re-computed with `shasum -a 256` after the round-2 fixes. The round-3 reviewer MUST
-re-run `shasum -a 256 planning-docs/DESIGN-content-adapter-mediation.md planning-docs/DESIGN-confirm-binding.md`
-and confirm the values match the round-3-input row before setting Decision: APPROVED. If the DESIGN docs
-are amended again during a further fix→re-review loop, re-hash them here and note the round (append a new
-column; do not overwrite prior rounds).
+Hashes were re-computed with `shasum -a 256` after the round-3 tightenings (endpoint-sourcing MUST,
+all-three-events opaque payload, citation/parenthetical fixes). These are the FINAL hashes — no further
+content changes are expected before APPROVED. Anyone re-verifying this record should confirm
+`shasum -a 256 planning-docs/DESIGN-content-adapter-mediation.md planning-docs/DESIGN-confirm-binding.md`
+matches the final row above.
 
 <!-- shasum -->
 ```

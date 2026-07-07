@@ -216,7 +216,8 @@ executor mints nothing) MUST be preserved per-element in the new plural shape.
   in the audit DAG is a PARTIAL pass, not a pass — Phase 15's verification MUST assert the unbroken
   edge for each blocked arg individually, not merely for the decision as a whole.
   **Provenance-threading MUST (the anti-laundering half of D-16, specified in full in
-  `DESIGN-confirm-binding.md`'s "Post-Transformation Bytes" section):** for a *transform-derived*
+  `DESIGN-confirm-binding.md`'s "Provenance-Threading for Transform-Derived Mints" section):** for a
+  *transform-derived*
   blocked arg (an EXTRACT-03 concat/base64-decode value), the unbroken edge D-16 asserts MUST be the
   edge from the transform to EVERY input's originating untrusted-doc read Event — i.e., the derived
   value's `provenance_chain` root MUST remain the originating read, threaded from its inputs, NOT a
@@ -278,6 +279,13 @@ obligation (see the D-03 refinement's future-work note below).
 (broker-resident, NOT confined-worker-resident), replacing the existing `invoke_email_send_stub`
 (per the RESEARCH Architectural Responsibility Map). This module is the ONLY code path that performs
 the SMTP call.
+
+**SMTP endpoint sourcing (MUST, round-3 tightening — closes a redirect vector):** The SMTP endpoint
+(host:port) MUST come from trusted local broker config or a hardcoded default — NEVER from the audit
+DB, a plan node, a `ValueNode`, or `PendingConfirmation` (any block-time-writable field).
+`combined_digest` binds only the blocked-arg literals, NOT the endpoint; sourcing the endpoint from
+writable state would let a tamperer redirect a confirmed send to a destination the digest doesn't
+cover, even though the digest check on the recipient/body still passes.
 
 **The confirmed send runs in the confirm-path process — the SAME locus as `file.create` today (MUST,
 D-03 refinement; this REVERSES round-1's broker-daemon mandate):** Round 1 mandated that the confirmed
@@ -366,19 +374,23 @@ refuses. There is no interleaving in which two callers both flip the CAS or both
 3. on success, append `email_send_succeeded`; on error, append `email_send_failed` (OPAQUE payload —
    see the literal-leak rule immediately below).
 
-**`email_send_failed`'s hashed payload carries ONLY an opaque error code/digest — NEVER a confirmed
-literal or raw SMTP response (MUST NOT — closes the literal-leak into the immutable chain):** SMTP
-rejections routinely echo the recipient or body (e.g. `550 <attacker@evil.com> rejected`). Appending
-that raw error text into the `email_send_failed` Event would STAPLE the confirmed literal into the
-immutable, hash-chained audit DAG — violating this codebase's standing invariant that raw literals NEVER
-enter a hashed Event payload (they go ONLY to the redactable `blocked_literals` side table
-(`crates/brokerd/src/server.rs`), so `confirm()`'s redaction gate (`crates/brokerd/src/confirmation.rs`)
-can purge them). Therefore the hashed `email_send_failed` payload MUST carry ONLY an OPAQUE error code
-and/or digest — never the recipient/body literal, never the raw SMTP response bytes. Raw error detail
-(the SMTP response text, for operator diagnosis) MUST be routed to `logger.error()` and/or the redactable
-side table ONLY, never the hash chain. This is "never swallow" done RIGHT: the failure is fully audited
-(opaque code in the chain + raw detail in the redactable/log channel) WITHOUT laundering a confirmed
-literal into an immutable, unredactable record.
+**ALL THREE send Events' hashed payloads carry ONLY `effect_id`/opaque metadata — NEVER a confirmed
+literal or raw SMTP response (MUST NOT — round-3 tightening, extends the literal-leak rule beyond just
+the failure path):** `email_send_attempted`, `email_send_succeeded`, AND `email_send_failed` hashed
+payloads MUST carry ONLY `effect_id` and/or opaque metadata — NEVER a resolved literal (recipient/body)
+or raw SMTP response text. SMTP rejections routinely echo the recipient or body (e.g. `550
+<attacker@evil.com> rejected`), so `email_send_failed` was the obvious risk — but a Phase-14
+implementation "for legibility" writing `{"to": "…"}` into `email_send_succeeded` would staple the
+confirmed literal into the immutable chain just as badly, on the success path this design doc had not
+constrained. Appending any of these three Events' raw literal/response text into the hash chain would
+STAPLE the confirmed literal into the immutable, hash-chained audit DAG — violating this codebase's
+standing invariant that raw literals NEVER enter a hashed Event payload (they go ONLY to the redactable
+`blocked_literals` side table (`crates/brokerd/src/server.rs`), so `confirm()`'s redaction gate
+(`crates/brokerd/src/confirmation.rs`) can purge them). Raw error detail (the SMTP response text, for
+operator diagnosis) MUST be routed to `logger.error()` and/or the redactable side table ONLY, never the
+hash chain. This is "never swallow" done RIGHT: the failure is fully audited (opaque code in the chain +
+raw detail in the redactable/log channel) WITHOUT laundering a confirmed literal into an immutable,
+unredactable record.
 
 **No auto-retry of an irreversible send (MUST, SEND-02):** A confirmed-but-unsent state (a crash or
 error between the step-1 transaction and a terminal step) MUST NOT be auto-retried. Recovery is an
@@ -524,15 +536,18 @@ This document's design is satisfied when the following conditions ALL hold simul
    is ephemeral/session-scoped, with no daemon binary and no confirm/send control channel). D-04 is
    satisfied because the Mailpit gate is unauthenticated (no secret to custody); the live-SES path is
    deferred with its own daemon+control-socket+secret-custody future-work obligation (D-03 refinement).
+   The SMTP endpoint (host:port) MUST come from trusted local broker config or a hardcoded default —
+   NEVER from the audit DB, a plan node, or any block-time-writable field (round-3 tightening — closes a
+   redirect vector the digest doesn't cover).
 6. **At-most-once send + durable attempt ledger + no swallowed errors + no literal-leak are stated as
    MUSTs.** The EXISTING `transition_state` CAS (`pending → confirmed`) is the SOLE at-most-once gate,
    committed in ONE atomic DB transaction with the durable `email_send_attempted` append before any wire
    action (round-1's cross-process idempotency-token language dropped, per finding #1's single-process
-   reversal); `email_send_succeeded`/`email_send_failed` terminal Events, with `email_send_failed`'s
-   HASHED payload carrying ONLY an opaque error code/digest — never the confirmed literal or raw SMTP
-   response (raw detail to `logger.error()`/the redactable side table only); no auto-retry of a
-   confirmed-but-unsent irreversible send; and a never-swallow/never-`unwrap` error path (SEND-01/SEND-02,
-   D-24).
+   reversal); `email_send_attempted`/`email_send_succeeded`/`email_send_failed` terminal Events ALL have
+   HASHED payloads carrying ONLY `effect_id`/opaque metadata — never a confirmed literal or raw SMTP
+   response, on the success path as much as the failure path (round-3 tightening — raw detail to
+   `logger.error()`/the redactable side table only); no auto-retry of a confirmed-but-unsent irreversible
+   send; and a never-swallow/never-`unwrap` error path (SEND-01/SEND-02, D-24).
 7. **The negative net assertion points at the existing seccomp mechanism**, not a new confinement
    primitive, and specifies Phase 13's reuse of the `confine-probe`/`negative_net` test pattern (D-05).
 8. **The gate test target is Mailpit, local-only, with live SES explicitly out of scope** (D-06).
