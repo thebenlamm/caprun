@@ -16,7 +16,7 @@ Requirements for milestone v1.2. Each maps to roadmap phases.
 
 ### Session Creation (I0)
 
-- [ ] **ORIGIN-01**: Session creation records a seed-provenance field (trusted-arg vs file-derived); the `caprun` CLI decides which at creation time
+- [x] **ORIGIN-01**: Session creation records a seed-provenance field (trusted-arg vs file-derived); the `caprun` CLI decides which at creation time
 - [x] **ORIGIN-02**: A session whose intent/seed derives from external content starts draft-only and cannot auto-authorize Tier 3+ effects
 
 ### Confirmation Loop

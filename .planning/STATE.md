@@ -4,17 +4,17 @@ milestone: v1.2
 milestone_name: — Tainted Session, Human Gate
 current_phase: 9
 current_phase_name: Session Trust State (I1 + I0
-status: executing
-stopped_at: "Completed 09-03-PLAN.md (broker session demotion: mint_from_read atomic Draft demotion, session_status threaded through server dispatch)"
-last_updated: "2026-07-07T02:37:30.576Z"
+status: verifying
+stopped_at: Completed 09-04-PLAN.md (CLI --seed-from-file on-ramp; cargo test --workspace green for the first time this phase). Phase 9 complete (4/4 plans).
+last_updated: "2026-07-07T02:46:30.585Z"
 last_activity: 2026-07-07
-last_activity_desc: 09-01-PLAN.md executed
+last_activity_desc: 09-04-PLAN.md executed (Phase 9 complete)
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 7
-  completed_plans: 6
-  percent: 25
+  completed_plans: 7
+  percent: 50
 ---
 
 # Project State
@@ -28,12 +28,12 @@ See: .planning/PROJECT.md (updated 2026-07-01)
 
 ## Current Position
 
-Phase: 9 (Session Trust State (I1 + I0)) — EXECUTING
+Phase: 9 (Session Trust State (I1 + I0)) — COMPLETE, ready for verification
 Plan: 4 of 4
-Status: Executing — 09-01 complete (domain types), 09-02/03/04 remaining
-Last activity: 2026-07-07 — 09-01-PLAN.md executed
+Status: Phase 9 complete — all 4 plans executed (09-01 through 09-04); ready for verification
+Last activity: 2026-07-07 — 09-04-PLAN.md executed (Phase 9 complete)
 
-Progress: [██░░░░░░░░] 25% (1/4 phases complete)
+Progress: [█████░░░░░] 50% (2/4 phases complete)
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [██░░░░░░░░] 25% (1/4 phases complete)
 | Phase 09 P01 | 8min | 2 tasks | 3 files |
 | Phase 09 P02 | 35min | 3 tasks | 5 files |
 | Phase 09 P03 | 25min | 3 tasks | 9 files |
+| Phase 09 P04 | 10min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,8 @@ Load-bearing decisions/mappings for v1.2:
 - [Phase ?]: Discovered mid-Task-3: bare #[cfg(test)] items are invisible to integration tests in tests/ (crate linked without --cfg test); fixed via a test-fixtures Cargo feature + self dev-dependency so test.observe is visible to both unit and integration tests while absent from production builds.
 - [Phase ?]: mint_from_read's return tuple widened (read_event_id, read_hash, value_id, demoted_event_id, demoted_hash) — the new session_demoted event is the actual causal-chain head; original two fields keep file_read identity semantics to preserve the held-out §9 anti-stapling backstop
 - [Phase ?]: SeedProvenance recorded in the session_created Event's actor field (no Event/schema change) — Event has no free-form metadata field and this avoids a DB migration
+- [Phase ?]: cli/caprun's --seed-from-file file content replaces the positional <intent-param> slot entirely (not kept-but-ignored) when the flag is present
+- [Phase ?]: Integration test drives the real caprun binary rather than adding a cli/caprun lib.rs -- create_session/persist_session/session_created complete before the Linux-only broker bind + worker spawn, so sessions.status is macOS-assertable
 
 ### Pending Todos
 
@@ -101,8 +104,8 @@ Items acknowledged and deferred at v1.1 milestone close on 2026-07-01:
 
 ## Session Continuity
 
-Last session: 2026-07-07T02:37:30.570Z
-Stopped at: Completed 09-03-PLAN.md (broker session demotion: mint_from_read atomic Draft demotion, session_status threaded through server dispatch)
+Last session: 2026-07-07T02:45:38.542Z
+Stopped at: Completed 09-04-PLAN.md (CLI --seed-from-file on-ramp; cargo test --workspace green for the first time this phase). Phase 9 complete (4/4 plans).
 Resume file: None
 
 ## Operator Next Steps

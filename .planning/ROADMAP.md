@@ -42,7 +42,7 @@ Full detail archived in [`milestones/v1.1-ROADMAP.md`](milestones/v1.1-ROADMAP.m
 **Milestone goal:** A session that touches untrusted content is mechanically demoted to draft-only (I1 dynamic-taint default + I0 creation rule), and a blocked sink arg can be released only by literal-value human confirmation — all deterministic, all in the audit DAG.
 
 - [x] **Phase 8: Session-Trust & Confirmation Design Gate** - DESIGN doc for session-trust-state (I1 demotion + I0 creation rule) and confirmation-release semantics exists and is reviewed before any executor code for this milestone is written — Decision: APPROVED / Gate status: UNBLOCKED under `DEC-ai-review-satisfies-human-gate` (see `planning-docs/DESIGN-GATE-RECORD-v1.2.md` and `.planning/PROJECT.md`'s Key Decisions table) (completed 2026-07-06)
-- [ ] **Phase 9: Session Trust State (I1 + I0)** - reading untrusted content or being seeded from external content demotes/starts a session as draft-only; draft-only sessions deny CommitIrreversible plan nodes via one executor TCB function
+- [x] **Phase 9: Session Trust State (I1 + I0)** - reading untrusted content or being seeded from external content demotes/starts a session as draft-only; draft-only sessions deny CommitIrreversible plan nodes via one executor TCB function (completed 2026-07-07)
 - [ ] **Phase 10: Single-Shot Confirmation Loop** - `caprun confirm <effect_id>` shows the human the blocked literal + provenance and releases exactly one (sink, arg, literal-digest) triple; deny is durable
 - [ ] **Phase 11: Live Acceptance — Tainted Session, Human Gate** - live §9-style run on real Linux: hostile read → session demotion → sink block → human deny (nothing sent) / human confirm (exactly once), one unbroken audit chain
 
@@ -82,7 +82,7 @@ Plans:
   3. Submitting a `CommitIrreversible`-class plan node against a draft-only session is Denied with a new `DenyReason` variant, decided in the executor (one TCB function, one taxonomy).
   4. Submitting a `MutateReversible` or `Observe`-class plan node against a draft-only session still succeeds.
 
-**Plans**: 3/4 plans executed
+**Plans**: 4/4 plans complete
 **Wave 1**
 
 - [x] 09-01-PLAN.md — runtime-core domain types: `SessionStatus::Draft`, `SeedProvenance`, `DenyReason::DraftOnlySessionDeniesCommitIrreversible`
@@ -97,7 +97,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 09-04-PLAN.md — caprun CLI `--seed-from-file` on-ramp + provenance→status integration test (ORIGIN-01/02)
+- [x] 09-04-PLAN.md — caprun CLI `--seed-from-file` on-ramp + provenance→status integration test (ORIGIN-01/02)
 
 ### Phase 10: Single-Shot Confirmation Loop
 
@@ -138,6 +138,6 @@ Plans:
 | 6. Deterministic Planner & Intent Input | v1.1 | 5/5 | Complete | 2026-07-01 |
 | 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 6/6 | Complete | 2026-07-01 |
 | 8. Session-Trust & Confirmation Design Gate | v1.2 | 3/3 | Complete    | 2026-07-06 |
-| 9. Session Trust State (I1 + I0) | v1.2 | 3/4 | In Progress|  |
+| 9. Session Trust State (I1 + I0) | v1.2 | 4/4 | Complete   | 2026-07-07 |
 | 10. Single-Shot Confirmation Loop | v1.2 | 0/? | Not started | - |
 | 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 0/? | Not started | - |
