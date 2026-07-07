@@ -38,12 +38,12 @@ created: 2026-07-06
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| TBD | TBD | TBD | TAINT-01 | — | Session demoted to Draft on mint_from_read | unit | `cargo test -p brokerd` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | TAINT-02 | — | CommitIrreversible denied against Draft session (after I2 loop) | unit | `cargo test -p executor` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | TAINT-03 | — | MutateReversible/Observe still succeeds against Draft session | unit | `cargo test -p executor` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | TAINT-04 | — | Demotion recorded as audit event with causal edge to triggering read | unit | `cargo test -p brokerd audit` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | ORIGIN-01 | — | caprun CLI decides seed-provenance for externally-derived intent | unit/e2e | `cargo test -p caprun` | ❌ W0 | ⬜ pending |
-| TBD | TBD | TBD | ORIGIN-02 | — | Session created with externally-derived seed starts Draft | unit | `cargo test -p brokerd` | ❌ W0 | ⬜ pending |
+| 03-T2 | 09-03 | 3 | TAINT-01 | T-09-07 | Session demoted to Draft on mint_from_read | unit | `cargo test -p brokerd --lib quarantine` | ⬜ new | ⬜ pending |
+| 02-T3 | 09-02 | 2 | TAINT-02 | T-09-02/03 | CommitIrreversible denied against Draft session (after I2 loop) | unit | `cargo test -p executor --test executor_decision` | ⬜ new | ⬜ pending |
+| 02-T3 | 09-02 | 2 | TAINT-03 | — | MutateReversible/Observe still succeeds against Draft session (via `#[cfg(test)] test.observe` fixture) | unit | `cargo test -p executor --test executor_decision` | ⬜ new | ⬜ pending |
+| 03-T2 | 09-03 | 3 | TAINT-04 | T-09-08 | Demotion recorded as audit event with causal edge (parent_id == file_read id) | unit | `cargo test -p brokerd --lib quarantine` | ⬜ new | ⬜ pending |
+| 04-T2 | 09-04 | 4 | ORIGIN-01 | T-09-10 | caprun CLI decides seed-provenance for externally-derived intent | integration | `cargo test -p caprun` | ⬜ new | ⬜ pending |
+| 03-T1 / 04-T2 | 09-03, 09-04 | 3, 4 | ORIGIN-02 | T-09-11 | Session created with externally-derived seed starts Draft | unit + integration | `cargo test -p brokerd --lib session` / `cargo test -p caprun` | ⬜ new | ⬜ pending |
 
 *Populated with placeholder rows per phase requirement; the planner fills in exact Task ID / Plan / Wave / File Exists columns once PLAN.md exists.*
 

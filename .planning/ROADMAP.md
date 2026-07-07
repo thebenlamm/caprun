@@ -82,7 +82,11 @@ Plans:
   3. Submitting a `CommitIrreversible`-class plan node against a draft-only session is Denied with a new `DenyReason` variant, decided in the executor (one TCB function, one taxonomy).
   4. Submitting a `MutateReversible` or `Observe`-class plan node against a draft-only session still succeeds.
 
-**Plans**: TBD
+**Plans**: 4 plans (sequential — the `submit_plan_node` signature change ripples down the crate dependency chain runtime-core → executor → brokerd → cli)
+- [ ] 09-01-PLAN.md — runtime-core domain types: `SessionStatus::Draft`, `SeedProvenance`, `DenyReason::DraftOnlySessionDeniesCommitIrreversible`
+- [ ] 09-02-PLAN.md — executor draft-only deny: `EffectClass`/`sink_effect_class`, `#[cfg(test)]` fixture sink, `session_status` param, post-loop Step 0.5 (TAINT-02/03)
+- [ ] 09-03-PLAN.md — brokerd wiring: `update_session_status`, `create_session` Draft-on-file-derived, `mint_from_read` atomic demotion, per-connection `session_status` threading, all call-site reconciliation (TAINT-01/04, ORIGIN-02)
+- [ ] 09-04-PLAN.md — caprun CLI `--seed-from-file` on-ramp + provenance→status integration test (ORIGIN-01/02)
 
 ### Phase 10: Single-Shot Confirmation Loop
 
