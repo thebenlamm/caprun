@@ -90,12 +90,13 @@ traceability archived in `.planning/milestones/v1.1-REQUIREMENTS.md`.
 
 **v1.2 — Tainted Session, Human Gate** (scoped 2026-07-01):
 
-- [ ] Session taint state: `mint_from_read` demotes the session to draft-only;
+- [x] Session taint state: `mint_from_read` demotes the session to draft-only;
       draft-only denies `CommitIrreversible` plan nodes in the executor (new
       `DenyReason` variant); demotion is an audited event with a causal edge to
-      the read.
-- [ ] I0 creation rule: externally-seeded sessions start draft-only
-      (seed-provenance field at session creation).
+      the read. — validated in Phase 9 (2026-07-07)
+- [x] I0 creation rule: externally-seeded sessions start draft-only
+      (seed-provenance field at session creation). — validated in Phase 9
+      (2026-07-07)
 - [ ] Confirmation loop: `caprun confirm <effect_id>` releases exactly one
       (sink, arg, literal-digest) triple, single-shot; confirm/deny audited and
       anchored to `SinkBlockedAnchor.effect_id`; deny durable.
@@ -298,7 +299,8 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-01 after starting milestone v1.2 (Tainted Session, Human
-Gate): I1 dynamic session demotion + I0 creation rule + single-shot literal-value
-confirmation loop, seeded from `planning-docs/MILESTONE-v1.2-SEED.md`. v1.0 shipped
-the mechanism proof; v1.1 shipped the live runtime.*
+*Last updated: 2026-07-07 after Phase 9 (Session Trust State — I1 + I0) completed
+and verified: `mint_from_read` atomic session demotion + I0 creation-rule seed
+provenance both landed and validated (`cargo test --workspace` green). Next:
+Phase 10 (single-shot confirmation loop), then Phase 11 (live acceptance). v1.0
+shipped the mechanism proof; v1.1 shipped the live runtime.*
