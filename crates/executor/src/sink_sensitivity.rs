@@ -41,11 +41,16 @@ pub fn sink_effect_class(sink: &SinkId) -> EffectClass {
     match sink.0.as_str() {
         "email.send" => EffectClass::CommitIrreversible,
         "file.create" => EffectClass::CommitIrreversible,
-        // #[cfg(test)] fixture (DESIGN §9 Pitfall m2 / RESEARCH Pitfall 3): the
+        // Test-fixture-only arm (DESIGN §9 Pitfall m2 / RESEARCH Pitfall 3): the
         // ONLY vehicle that makes TAINT-03 (Draft + Observe still Allowed)
         // testable end-to-end, since both live sinks are CommitIrreversible.
-        // Never present in a production (non-test) build.
-        #[cfg(test)]
+        // Gated on `any(test, feature = "test-fixtures")` (not bare
+        // `#[cfg(test)]`) so it is also visible to integration tests in
+        // `tests/`, which link this crate via the `test-fixtures` self
+        // dev-dependency rather than with `--cfg test` — see sink_schema.rs's
+        // `TEST_KNOWN_SINKS` doc comment for the full rationale. Never
+        // present in a production build either way.
+        #[cfg(any(test, feature = "test-fixtures"))]
         "test.observe" => EffectClass::Observe,
         _ => EffectClass::CommitIrreversible,
     }

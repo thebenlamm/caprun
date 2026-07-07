@@ -19,7 +19,21 @@ anyhow       = { workspace = true }
 sha2         = { workspace = true }
 hex          = { workspace = true }
 
+[features]
+# Gates the #[cfg(test)]-equivalent `test.observe` fixture sink so it is also
+# visible to integration tests in `tests/` (which link the crate as a normal,
+# non-`--cfg test` dependency — plain `#[cfg(test)]` items are invisible to
+# them). Enabled only via the self dev-dependency below; NEVER a default
+# feature, so it is absent from any production build.
+test-fixtures = []
+
 [dev-dependencies]
+# Self dev-dependency with `test-fixtures` enabled: Cargo unifies this with the
+# `executor` lib target when building this package's test targets (unit +
+# integration), making the `#[cfg(any(test, feature = "test-fixtures"))]`
+# fixture sink visible to `tests/executor_decision.rs` without ever appearing
+# in a production build.
+executor     = { path = ".", features = ["test-fixtures"] }
 runtime-core = { path = "../runtime-core" }
 uuid         = { workspace = true }
 sha2         = { workspace = true }

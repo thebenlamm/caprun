@@ -16,7 +16,7 @@ use executor::{submit_plan_node, value_store::ValueStore};
 use sha2::{Digest, Sha256};
 use runtime_core::{
     plan_node::{PlanArg, PlanNode, SinkId, TaintLabel, ValueId},
-    ExecutorDecision,
+    DenyReason, ExecutorDecision, SessionStatus,
 };
 use uuid::Uuid;
 
@@ -69,7 +69,7 @@ fn tainted_to_arg_blocks_with_verbatim_record_payload() {
 
     let plan = email_send_with_to(id);
     let effect_id = Uuid::new_v4();
-    let decision = submit_plan_node(Uuid::new_v4(), effect_id, &plan, &store);
+    let decision = submit_plan_node(Uuid::new_v4(), effect_id, &plan, &store, &SessionStatus::Active);
 
     match decision {
         ExecutorDecision::BlockedPendingConfirmation { anchor, literal: block_literal } => {
@@ -130,7 +130,7 @@ fn untainted_to_arg_returns_allowed() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
 
     assert_eq!(
         decision,
@@ -152,7 +152,7 @@ fn unknown_handle_returns_denied() {
     let forged_id = ValueId::new(); // never minted
 
     let plan = email_send_with_to(forged_id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
 
     assert!(
         matches!(decision, ExecutorDecision::Denied { .. }),
@@ -181,7 +181,7 @@ fn tainted_content_sensitive_arg_allows_in_v0() {
 
     // "subject" is content-sensitive → must NOT Block in v0
     let plan = email_send_with_arg("subject", id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
 
     assert_eq!(
         decision,
@@ -216,7 +216,7 @@ fn tainted_cc_and_bcc_also_block() {
 
     for (arg_name, id) in [("cc", cc_id), ("bcc", bcc_id)] {
         let plan = email_send_with_arg(arg_name, id);
-        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
+        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
         assert!(
             matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }),
             "tainted '{arg_name}' must Block; got {decision:?}"
@@ -237,7 +237,7 @@ fn tainted_body_and_attachment_allow_in_v0() {
             )
             .expect("valid mint");
         let plan = email_send_with_arg(arg_name, id);
-        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
+        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
         assert_eq!(
             decision,
             ExecutorDecision::Allowed,
@@ -270,7 +270,7 @@ fn hard02_usertrusted_only_allows() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
 
     assert_eq!(
         decision,
@@ -294,10 +294,112 @@ fn hard02_externaltainted_still_blocks() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
 
     assert!(
         matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }),
         "ExternalUntrusted/EmailRaw taint in 'to' must still Block after HARD-02 predicate fix; got {decision:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// TAINT-02/TAINT-03: draft-only Step 0.5 class deny (DESIGN-session-trust-state.md §8)
+// ---------------------------------------------------------------------------
+
+/// TAINT-02: a `Draft` session submitting a clean (untainted, no routing-sensitive
+/// arg) `CommitIrreversible` plan node — whose per-arg loop produces no Block — is
+/// `Denied { DraftOnlySessionDeniesCommitIrreversible { sink } }` at Step 0.5.
+#[test]
+fn draft_session_denies_commit_irreversible() {
+    let mut store = ValueStore::default();
+    let event_id = Uuid::new_v4();
+    // Clean, all-trusted args — the per-arg loop must complete with NO Block so
+    // Step 0.5 is actually reached (not short-circuited earlier).
+    let path_id = store
+        .mint(
+            "/workspace/out.txt".to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![event_id],
+        )
+        .expect("valid mint");
+    let contents_id = store
+        .mint(
+            "hello".to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![event_id],
+        )
+        .expect("valid mint");
+
+    let plan = PlanNode {
+        sink: SinkId("file.create".to_string()),
+        args: vec![
+            PlanArg {
+                name: "path".to_string(),
+                value_id: path_id,
+            },
+            PlanArg {
+                name: "contents".to_string(),
+                value_id: contents_id,
+            },
+        ],
+    };
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Draft);
+
+    match decision {
+        ExecutorDecision::Denied {
+            reason: DenyReason::DraftOnlySessionDeniesCommitIrreversible { sink },
+        } => {
+            assert_eq!(sink.0, "file.create");
+        }
+        other => panic!(
+            "expected Denied {{ DraftOnlySessionDeniesCommitIrreversible }}, got {other:?}"
+        ),
+    }
+}
+
+/// TAINT-03: a `Draft` session submitting an `Observe`-class plan node (the
+/// `#[cfg(test)] test.observe` fixture) is NOT denied by Step 0.5 and passes
+/// through unchanged — proven end-to-end through the FULL `submit_plan_node`
+/// path (Step 0 schema gate -> per-arg loop -> Step 0.5), not by unit-testing
+/// `sink_effect_class` in isolation.
+#[test]
+fn draft_session_allows_observe() {
+    let store = ValueStore::default();
+    let plan = PlanNode {
+        sink: SinkId("test.observe".to_string()),
+        args: vec![],
+    };
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Draft);
+
+    assert_eq!(
+        decision,
+        ExecutorDecision::Allowed,
+        "Draft + Observe-class sink must NOT be denied by Step 0.5 (TAINT-03)"
+    );
+}
+
+/// I2-Block-precedence regression (DESIGN §8/§9/§11 condition 4, round-1 blocker
+/// B1): a `Draft` session submitting a `CommitIrreversible` plan node with a
+/// tainted routing-sensitive arg MUST return `BlockedPendingConfirmation` from
+/// the per-arg loop — Step 0.5 must NEVER be reached (and therefore must NOT
+/// pre-empt the Block) even though the session is `Draft` and the sink is
+/// `CommitIrreversible`.
+#[test]
+fn draft_session_tainted_routing_arg_still_blocks_not_denied() {
+    let mut store = ValueStore::default();
+    let event_id = Uuid::new_v4();
+    let literal = "attacker@ev1l.com".to_string();
+    let taint = vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw];
+    let id = store
+        .mint(literal, taint, vec![event_id])
+        .expect("valid mint");
+
+    let plan = email_send_with_to(id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Draft);
+
+    assert!(
+        matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }),
+        "a Draft session's tainted routing-sensitive arg must Block (I2), \
+         never be pre-empted by the Step 0.5 draft-only class deny (I1/I0); got {decision:?}"
     );
 }

@@ -53,7 +53,7 @@ pub const KNOWN_SINKS: &[SinkSchema] = &[
     },
 ];
 
-/// `#[cfg(test)]`-only sink registry (RESEARCH.md Pitfall 3 / DESIGN §9 Pitfall
+/// Test-fixture-only sink registry (RESEARCH.md Pitfall 3 / DESIGN §9 Pitfall
 /// m2): a fixture sink with a minimal/empty arg schema, existing solely so
 /// TAINT-03 (`Draft` + `Observe` still Allowed) can be driven through the FULL
 /// `submit_plan_node` path — Step 0 schema gate -> per-arg loop -> Step 0.5 —
@@ -61,7 +61,14 @@ pub const KNOWN_SINKS: &[SinkSchema] = &[
 /// entries in `KNOWN_SINKS` are `CommitIrreversible`, so without this fixture
 /// TAINT-03 has no real sink to exercise. This NEVER appears in the production
 /// `KNOWN_SINKS` surface.
-#[cfg(test)]
+///
+/// Gated on `any(test, feature = "test-fixtures")` rather than plain
+/// `#[cfg(test)]`: bare `#[cfg(test)]` items are invisible to integration
+/// tests in `tests/` (they link the crate as a normal, non-`--cfg test`
+/// dependency) — the `test-fixtures` feature, enabled only via this crate's
+/// self dev-dependency in Cargo.toml, makes the fixture visible there too
+/// while still being absent from any production build.
+#[cfg(any(test, feature = "test-fixtures"))]
 pub const TEST_KNOWN_SINKS: &[SinkSchema] = &[SinkSchema {
     sink: "test.observe",
     allowed: &[],
@@ -76,15 +83,15 @@ pub fn schema_for(sink: &str) -> Option<&'static SinkSchema> {
         .or_else(|| test_schema_for(sink))
 }
 
-/// `#[cfg(test)]`-only lookup into `TEST_KNOWN_SINKS`. Under a non-test build
+/// Test-fixture-only lookup into `TEST_KNOWN_SINKS`. Under a production build
 /// this always returns `None` (`test.observe` is not a callable sink in
 /// production).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-fixtures"))]
 fn test_schema_for(sink: &str) -> Option<&'static SinkSchema> {
     TEST_KNOWN_SINKS.iter().find(|s| s.sink == sink)
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-fixtures")))]
 fn test_schema_for(_sink: &str) -> Option<&'static SinkSchema> {
     None
 }
