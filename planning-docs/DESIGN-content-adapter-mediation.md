@@ -338,30 +338,61 @@ process rather than split across two; but two hazards remain and MUST be closed 
 redelivered or double `caprun confirm <effect_id>` could re-drive an irreversible send, and the
 inherited v1.2 confirm path's `Err(_) => Ok(ConfirmedButSinkFailed)` shape SWALLOWS the send error.
 
-**Durable idempotency token (MUST, SEND-01):** Each confirmed send MUST carry a durable idempotency
-token keyed by `effect_id`. Before ANY wire action, the broker MUST append a durable
-`email_send_attempted` Event (anchored to the same `effect_id`, in the SHA-256 audit DAG). A send
-whose `effect_id` already has a terminal `email_send_succeeded` OR `email_send_attempted`-without-retry
-record MUST NOT be re-attempted — at-most-once for the irreversible external send.
+**At-most-once via the EXISTING CAS as the sole gate (MUST, SEND-01 — reuses the current mechanism, does
+NOT invent a cross-process token):** Because the send now runs in the single confirm-path process,
+at-most-once reuses the atomic guard already in the codebase:
+`crates/brokerd/src/confirmation.rs::transition_state`'s
+`UPDATE pending_confirmations SET state=? WHERE effect_id=? AND state='pending'` CAS. That CAS — a row
+already `confirmed`/`denied` matches ZERO rows — is the SOLE gate that authorizes the irreversible wire
+action: only the single caller that observes the CAS flip `pending → confirmed` (affected-rows = 1) may
+perform the send; any redelivered or double `caprun confirm <effect_id>` observes affected-rows = 0 and
+MUST NOT send. **Round 1's cross-process / UDS-handoff durable-idempotency-token language is DROPPED** —
+it was solving the two-process daemon split that finding #1 removed; there is no process boundary to make
+idempotent across, and the in-DB CAS already provides exactly-one-winner semantics.
+
+**The CAS and the durable `email_send_attempted` append MUST be ONE atomic DB transaction (MUST,
+SEND-01):** the state-transition CAS (`pending → confirmed`) and the durable `email_send_attempted` Event
+append (anchored to the same `effect_id`, hash-chained into the SHA-256 audit DAG) MUST commit in a
+SINGLE atomic SQLite transaction, BEFORE any SMTP connection is opened. This closes the double-fire
+window: a redelivered/double `caprun confirm` cannot BOTH pass the "already attempted?" check AND send,
+because the winning transaction atomically flips the state and records the attempt together — a second
+invocation sees `state != 'pending'` (affected-rows = 0), reads the durable `email_send_attempted`, and
+refuses. There is no interleaving in which two callers both flip the CAS or both append the attempt.
 
 **Order of operations (MUST):**
-1. append durable `email_send_attempted` (before opening the SMTP connection);
-2. perform the `email_smtp.rs` send;
-3. on success, append `email_send_succeeded`; on error, append `email_send_failed` with the error
-   context.
+1. In ONE atomic transaction: CAS `pending → confirmed` AND append the durable `email_send_attempted`
+   Event (before opening the SMTP connection). If the CAS affects ZERO rows, abort — do NOT send.
+2. perform the `email_smtp.rs` send from the frozen snapshot;
+3. on success, append `email_send_succeeded`; on error, append `email_send_failed` (OPAQUE payload —
+   see the literal-leak rule immediately below).
 
-**No auto-retry of an irreversible send (MUST, SEND-02):** A confirmed-but-unsent state (crash or
-error between step 1 and a terminal step) MUST NOT be auto-retried by the broker. Recovery is an
+**`email_send_failed`'s hashed payload carries ONLY an opaque error code/digest — NEVER a confirmed
+literal or raw SMTP response (MUST NOT — closes the literal-leak into the immutable chain):** SMTP
+rejections routinely echo the recipient or body (e.g. `550 <attacker@evil.com> rejected`). Appending
+that raw error text into the `email_send_failed` Event would STAPLE the confirmed literal into the
+immutable, hash-chained audit DAG — violating this codebase's standing invariant that raw literals NEVER
+enter a hashed Event payload (they go ONLY to the redactable `blocked_literals` side table
+(`crates/brokerd/src/server.rs`), so `confirm()`'s redaction gate (`crates/brokerd/src/confirmation.rs`)
+can purge them). Therefore the hashed `email_send_failed` payload MUST carry ONLY an OPAQUE error code
+and/or digest — never the recipient/body literal, never the raw SMTP response bytes. Raw error detail
+(the SMTP response text, for operator diagnosis) MUST be routed to `logger.error()` and/or the redactable
+side table ONLY, never the hash chain. This is "never swallow" done RIGHT: the failure is fully audited
+(opaque code in the chain + raw detail in the redactable/log channel) WITHOUT laundering a confirmed
+literal into an immutable, unredactable record.
+
+**No auto-retry of an irreversible send (MUST, SEND-02):** A confirmed-but-unsent state (a crash or
+error between the step-1 transaction and a terminal step) MUST NOT be auto-retried. Recovery is an
 explicit, human-visible operation — the DAG shows `email_send_attempted` with no `email_send_succeeded`,
 and the operator decides. Silent re-drive of a possibly-already-delivered message is forbidden
 (at-most-once beats at-least-once for an irreversible send).
 
-**Never swallow the send error (MUST NOT):** The adapter/broker error path MUST NOT return a bare
-`Ok(...)` that hides the failure, MUST NOT `.unwrap()`/panic on a send error, and MUST NOT drop the
-error silently. It MUST `logger.error()` with context AND append the durable `email_send_failed`
-Event. The caller receives a distinct non-zero result that a scripted operator can tell apart from
-"denied" or "unknown effect_id" (mirrors v1.2's M3 `sink_invocation_failed` exit-code discipline,
-`DESIGN-confirmation-release.md`).
+**Never swallow the send error (MUST NOT):** The error path MUST NOT return a bare `Ok(...)` that hides
+the failure (the inherited v1.2 `Err(_) => Ok(ConfirmedButSinkFailed)` shape is explicitly rejected),
+MUST NOT `.unwrap()`/panic on a send error, and MUST NOT drop the error silently. It MUST
+`logger.error()` with the raw context AND append the durable, OPAQUE-payload `email_send_failed` Event
+(per the literal-leak rule above). The caller receives a distinct non-zero result that a scripted
+operator can tell apart from "denied" or "unknown effect_id" (mirrors v1.2's M3 `sink_invocation_failed`
+exit-code discipline, `DESIGN-confirmation-release.md`).
 
 ---
 
@@ -441,10 +472,13 @@ header at construction time. The adapter MUST define what it does with that `Err
 "proceed anyway" and NOT "panic." Any `lettre` construction `Err` (`Address::new`, `Message::builder()`
 setters, `.to()`/`.cc()`/`.bcc()`/`.subject()`/`.body()`) on a literal the human already confirmed
 MUST become a **fail-closed, AUDITED abort**: append a durable `email_send_failed` Event (same
-`effect_id`, per SEND-01/SEND-02 above) with the construction error context, `logger.error()` it, and
-return the distinct non-zero send-failed result — NEVER `.unwrap()`/panic, NEVER a silent drop, NEVER
-a fallback to a raw/`format!`-built message. A confirmed literal that `lettre` refuses to encode
-safely is a blocked-and-audited failure, not a best-effort send.
+`effect_id`, per SEND-01/SEND-02 above) whose HASHED payload carries ONLY an opaque error code/digest —
+NEVER the confirmed literal (e.g., the CRLF-bearing address) and NEVER the raw `lettre` error text (per
+the literal-leak rule in the At-Most-Once section above) — route the raw construction-error detail to
+`logger.error()` and/or the redactable side table, and return the distinct non-zero send-failed result —
+NEVER `.unwrap()`/panic, NEVER a silent drop, NEVER a fallback to a raw/`format!`-built message. A
+confirmed literal that `lettre` refuses to encode safely is a blocked-and-audited failure, not a
+best-effort send.
 
 **Forbid `boring-tls` (MUST NOT):** The adapter MUST NOT enable `lettre`'s `boring-tls` Cargo feature
 (RUSTSEC-2026-0141: silently disables TLS hostname verification for `0.10.1..=0.11.21`). The local
@@ -490,10 +524,15 @@ This document's design is satisfied when the following conditions ALL hold simul
    is ephemeral/session-scoped, with no daemon binary and no confirm/send control channel). D-04 is
    satisfied because the Mailpit gate is unauthenticated (no secret to custody); the live-SES path is
    deferred with its own daemon+control-socket+secret-custody future-work obligation (D-03 refinement).
-6. **At-most-once send + durable attempt ledger + no swallowed errors are stated as MUSTs.** A durable
-   idempotency token per `effect_id`, an `email_send_attempted` Event appended before any wire action,
-   `email_send_succeeded`/`email_send_failed` terminal Events, no auto-retry of a confirmed-but-unsent
-   irreversible send, and a never-swallow/never-`unwrap` error path (SEND-01/SEND-02, D-24).
+6. **At-most-once send + durable attempt ledger + no swallowed errors + no literal-leak are stated as
+   MUSTs.** The EXISTING `transition_state` CAS (`pending → confirmed`) is the SOLE at-most-once gate,
+   committed in ONE atomic DB transaction with the durable `email_send_attempted` append before any wire
+   action (round-1's cross-process idempotency-token language dropped, per finding #1's single-process
+   reversal); `email_send_succeeded`/`email_send_failed` terminal Events, with `email_send_failed`'s
+   HASHED payload carrying ONLY an opaque error code/digest — never the confirmed literal or raw SMTP
+   response (raw detail to `logger.error()`/the redactable side table only); no auto-retry of a
+   confirmed-but-unsent irreversible send; and a never-swallow/never-`unwrap` error path (SEND-01/SEND-02,
+   D-24).
 7. **The negative net assertion points at the existing seccomp mechanism**, not a new confinement
    primitive, and specifies Phase 13's reuse of the `confine-probe`/`negative_net` test pattern (D-05).
 8. **The gate test target is Mailpit, local-only, with live SES explicitly out of scope** (D-06).
