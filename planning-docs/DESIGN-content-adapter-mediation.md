@@ -257,42 +257,86 @@ broker/adapter MUST perform the SMTP call ONLY after (a) the executor has author
 adapters are the only paths to effects — the confined worker holds no send capability by construction
 (reinforced kernel-side, see Kernel-Enforced Negative Net Assertion below).
 
-**Secrets broker-only (MUST, D-04):** SMTP secrets/credentials (host, port, auth) MUST live ONLY in
-the broker process. They MUST NOT appear in the worker's environment, in the worker's process
-arguments, or in any plan-node payload that could reach the tainted/confined context. A `PlanNode`
-carries only `{ sink, args: Vec<ValueNode> }` (locked, see above) — SMTP credentials are never a
-`ValueNode` and never travel through the plan-node path.
+**Secrets never reach the confined worker or any tainted context (MUST, D-04 — restated to its real
+threat intent):** The real invariant D-04 protects is NOT "secrets live in one specific process" — it
+is that **SMTP secrets/credentials (host, port, auth) MUST NEVER reach the confined worker or any
+tainted/plan-node/confined context.** They MUST NOT appear in the worker's environment, in the worker's
+process arguments, or in any plan-node payload. A `PlanNode` carries only `{ sink, args: Vec<ValueNode> }`
+(locked, see above) — SMTP credentials are never a `ValueNode` and never travel through the plan-node
+path. The confirmed send runs in the trusted, human-invoked confirm process (see the D-03 refinement
+below) — which is NOT the worker and NOT a tainted context — so holding no-secret (Mailpit) there, or a
+properly custodied secret there in a future SES path, does not violate D-04.
+
+**For the v1.3 Mailpit gate there is NO secret to custody (custody trivially satisfied):** Mailpit
+(`localhost:1025`) is UNAUTHENTICATED — no host credential, no username, no password — so D-04's custody
+obligation is trivially satisfied because the secret set is empty. D-04's non-trivial custody problem (a
+real credential held in a long-lived process) exists ONLY for the live-SES path, which is
+out-of-scope/post-milestone (SMTP-04) and is explicitly DEFERRED with its own future-work design
+obligation (see the D-03 refinement's future-work note below).
 
 **New adapter location (MUST):** The real adapter lives at `crates/brokerd/src/sinks/email_smtp.rs`
 (broker-resident, NOT confined-worker-resident), replacing the existing `invoke_email_send_stub`
 (per the RESEARCH Architectural Responsibility Map). This module is the ONLY code path that performs
 the SMTP call.
 
-**The confirmed send runs in the BROKER DAEMON, not the `caprun confirm` CLI (MUST, D-03 refinement):**
-v1.2's `file.create` confirmation pattern (`cli/caprun/main.rs` + `crates/brokerd/src/confirmation.rs`)
-has the standalone `caprun confirm` CLI process invoke the sink LOCALLY after recording the confirm.
-For a filesystem write that pattern is inside the trust boundary, but for `email.send` it would put
-the SMTP call — and therefore the SMTP secrets (D-04) — in the short-lived confirm CLI process,
-directly violating "secrets ONLY in the broker process." **Phase 13 MUST NOT follow the file.create
-local-invoke pattern for `email.send`.** Instead:
+**The confirmed send runs in the confirm-path process — the SAME locus as `file.create` today (MUST,
+D-03 refinement; this REVERSES round-1's broker-daemon mandate):** Round 1 mandated that the confirmed
+SMTP send run in a long-lived "broker daemon" reached over UDS, on the theory that keeping the SMTP call
+out of the short-lived confirm process was required by D-04. **Round 2 traced that mandate against the
+actual codebase and found it UNBUILDABLE; it is reversed here.** The caprun broker is EPHEMERAL and
+session-scoped, NOT a daemon (independently re-verified against source at round-2 authoring time):
 
-- `caprun confirm <effect_id>` MUST NOT open an SMTP connection or load SMTP secrets. It records the
-  human's confirmation and hands the confirmed `effect_id` to the ALREADY-RUNNING broker daemon over
-  the existing UDS IPC channel.
-- The **broker daemon** (the long-lived reference-monitor process that already holds the audit DB and
-  the SMTP secrets per D-04) performs the `email_smtp.rs` send, in-process, on receipt of that
-  confirmed `effect_id`. The confirm CLI never touches the wire and never holds a credential.
+- `crates/brokerd/src/server.rs:95-96` binds a per-session abstract socket
+  `\0/agentos/{session_id}` — one socket per session, not a stable control endpoint.
+- `cli/caprun/src/main.rs:270` calls `broker_task.abort()` the instant the worker exits — the broker
+  does not outlive the run.
+- There is NO daemon binary: `crates/brokerd/src/bin/` does not exist.
+- `BrokerRequest` (`crates/brokerd/src/proto.rs`) is a worker→broker SUBMISSION channel
+  (`CreateSession`/`ProvideIntent`/`RequestFd`/`ReportRead`/`ReportClaims`/`SubmitPlanNode`) with NO
+  confirm-or-perform-send control variant — it is not a control channel a later confirm process could
+  reconnect to.
 
-This keeps D-04 (secrets broker-only) true across the CLI/daemon split that the confirm→send flow
-introduces, and is the precondition for the at-most-once + durable-attempt discipline below.
+A "hand the confirmed `effect_id` to the already-running broker daemon over the existing UDS channel"
+handoff therefore has nothing to hand to. An implementer told to build it would either invent a whole
+persistent-daemon + control-socket architecture (a scope explosion this demo MUST NOT take on) or
+silently fall back to the local-invoke pattern round 1 was trying to forbid.
+
+**For v1.3, the confirmed send runs in the confirm-path process, invoking
+`crates/brokerd/src/sinks/email_smtp.rs` from the frozen snapshot — the SAME locus where
+`crates/brokerd/src/confirmation.rs::confirm()` invokes `file.create`'s
+`invoke_file_create_from_resolved` today** (`confirmation.rs:400-418`, after the state-transition CAS).
+`caprun confirm <effect_id>` records the human's confirmation and performs the send in-process. There is
+no second process and no daemon handoff.
+
+**Why this is secure for v1.3 — D-03 (worker-never-sends) STILL HOLDS, unchanged:** the confined worker
+(default-deny-net, cannot `socket()` — see Kernel-Enforced Negative Net Assertion below) NEVER performs
+the send. The send runs in the SEPARATE, trusted, human-invoked confirm process — never in the worker,
+never in any tainted/plan-node context. Worker-never-sends is a statement about the CONFINED WORKER, not
+about which trusted process holds the SMTP call; moving the send from a hypothetical daemon to the
+confirm process puts no capability back in the worker and does not weaken D-03.
+
+**Why D-04 is satisfied for the v1.3 gate:** per the restated D-04 above, the Mailpit gate target is
+unauthenticated (`localhost:1025`, no credentials), so there is NO SMTP secret to reach any context —
+D-04's custody concern is trivially satisfied because the secret set is empty. Real secret-custody in a
+persistent process is a genuine problem ONLY for the live-SES path, which is deferred.
+
+**Future-work note (MUST NOT build now — SES carries its own daemon+custody design):** if/when the
+live-SES path (SMTP-04) is taken on in a later milestone, it MUST carry its OWN DESIGN for (a) a
+persistent send process (daemon + control-socket) and (b) a secret-custody model that keeps real SMTP
+credentials out of every short-lived process AND every tainted/confined context. That
+daemon + control-socket + secret-custody design is FUTURE WORK; it is NOT designed here and MUST NOT be
+built as part of v1.3. v1.3's confirm-path-process send is correct precisely because the Mailpit target
+has no secret to protect.
 
 ---
 
 ## At-Most-Once Send + Durable Attempt Ledger — No Swallowed Errors (SEND-01/SEND-02, D-24)
 
-The finding #2 split (confirm in the CLI, send in the broker daemon) reopens the double-fire /
-silent-loss risk across two processes, and the inherited v1.2 confirm path's
-`Err(_) => Ok(ConfirmedButSinkFailed)` shape SWALLOWS the send error. Both MUST be closed explicitly.
+Because the confirmed send now runs in the SINGLE confirm-path process (per the D-03 refinement above —
+round-1's two-process daemon split is reversed), the double-fire / silent-loss risk is confined to one
+process rather than split across two; but two hazards remain and MUST be closed explicitly: a
+redelivered or double `caprun confirm <effect_id>` could re-drive an irreversible send, and the
+inherited v1.2 confirm path's `Err(_) => Ok(ConfirmedButSinkFailed)` shape SWALLOWS the send error.
 
 **Durable idempotency token (MUST, SEND-01):** Each confirmed send MUST carry a durable idempotency
 token keyed by `effect_id`. Before ANY wire action, the broker MUST append a durable
@@ -439,10 +483,13 @@ This document's design is satisfied when the following conditions ALL hold simul
    per blocked arg (D-16), and single-shot confirm/deny covers the whole set (D-17).
 4. **The plan-node API is confirmed untouched.** `PlanNode { sink, args: Vec<ValueNode> }` is
    unchanged; only internal decision/anchor types become plural (D-18).
-5. **Worker-never-sends and secrets-broker-only are both stated as MUSTs**, with the adapter located
-   at `crates/brokerd/src/sinks/email_smtp.rs` (D-03, D-04), AND the confirmed send runs in the
-   long-lived broker daemon (not the `caprun confirm` CLI) — `caprun confirm` hands the confirmed
-   `effect_id` to the broker over UDS and never holds an SMTP secret (D-03 refinement).
+5. **Worker-never-sends and secrets-never-reach-worker/tainted-context are both stated as MUSTs**, with
+   the adapter located at `crates/brokerd/src/sinks/email_smtp.rs` (D-03, D-04), AND the confirmed send
+   runs in the confirm-path process from the frozen snapshot — the SAME locus as `file.create` today
+   (`confirmation.rs::confirm()`), NOT a broker daemon (round-1's daemon mandate is reversed: the broker
+   is ephemeral/session-scoped, with no daemon binary and no confirm/send control channel). D-04 is
+   satisfied because the Mailpit gate is unauthenticated (no secret to custody); the live-SES path is
+   deferred with its own daemon+control-socket+secret-custody future-work obligation (D-03 refinement).
 6. **At-most-once send + durable attempt ledger + no swallowed errors are stated as MUSTs.** A durable
    idempotency token per `effect_id`, an `email_send_attempted` Event appended before any wire action,
    `email_send_succeeded`/`email_send_failed` terminal Events, no auto-retry of a confirmed-but-unsent
