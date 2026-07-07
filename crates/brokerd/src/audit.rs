@@ -53,6 +53,29 @@ CREATE TABLE IF NOT EXISTS blocked_literals (
     event_id TEXT PRIMARY KEY,
     literal  TEXT NOT NULL
 ) STRICT;
+
+-- Redactable/mutable side table for the durable confirm/deny checkpoint, keyed by
+-- `effect_id` (the same identity as `SinkBlockedAnchor.effect_id`) — playing the
+-- same role `blocked_literals` plays for the raw literal: state that must survive
+-- past the blocking process's exit, kept OUT of the hashed `events.payload` column
+-- so it stays mutable/redactable without breaking `verify_chain`. `caprun confirm`/
+-- `caprun deny` are ALWAYS separate, later OS processes from the one that created
+-- the block (DESIGN-confirmation-release.md, section: The Problem Being Solved); this
+-- table is the ONLY thing that survives to resume from. `blocked_event_id` is the id
+-- of the anchoring `sink_blocked` event (never an `events`-table column) — used later
+-- to chain the confirm/deny event's `parent_id` and to gate on blocked_literals
+-- redaction. `resolved_args` is a JSON-serialized `Vec<ResolvedArg>` blob, mirroring
+-- the `events.payload` convention of serializing the whole struct to one TEXT column —
+-- never a normalized child table (RESEARCH Open Question 2).
+CREATE TABLE IF NOT EXISTS pending_confirmations (
+    effect_id           TEXT PRIMARY KEY,
+    session_id          TEXT NOT NULL,
+    blocked_event_id    TEXT NOT NULL,
+    sink                TEXT NOT NULL,
+    resolved_args       TEXT NOT NULL,
+    workspace_root_path TEXT NOT NULL,
+    state               TEXT NOT NULL
+) STRICT;
 ";
 
 /// Open (or create) the audit database at `path` and run schema DDL.
@@ -115,6 +138,21 @@ pub fn redact_blocked_literal(conn: &rusqlite::Connection, event_id: &str) -> Re
         rusqlite::params![event_id],
     )?;
     Ok(removed)
+}
+
+/// Fetch the stored `hash` for a known event id, or `None` if no event with that
+/// id exists.
+///
+/// Lets a later confirm/deny process fetch the anchoring `sink_blocked` event's
+/// hash so it can append its confirm/deny event with the correct `parent_hash`
+/// (keeping `verify_chain` linear), without needing the full deserialized `Event`.
+pub fn event_hash_by_id(conn: &rusqlite::Connection, event_id: &str) -> Result<Option<String>> {
+    let mut stmt = conn.prepare("SELECT hash FROM events WHERE id = ?1")?;
+    let mut rows = stmt.query(rusqlite::params![event_id])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row.get(0)?)),
+        None => Ok(None),
+    }
 }
 
 /// Compute the SHA-256 hash for an audit event row.
@@ -391,6 +429,74 @@ mod tests {
             .expect("find_event_by_type");
 
         assert!(found.is_none(), "no email_send_stub event should be found");
+    }
+
+    #[test]
+    fn event_hash_by_id_returns_hash_for_known_event() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+        let event = make_file_read_event(session_id);
+        let event_id = event.id.to_string();
+
+        let hash = append_event(&conn, &event, None).expect("append_event");
+
+        let found = event_hash_by_id(&conn, &event_id).expect("event_hash_by_id");
+        assert_eq!(found, Some(hash));
+    }
+
+    #[test]
+    fn event_hash_by_id_returns_none_for_unknown_id() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+
+        let found = event_hash_by_id(&conn, &Uuid::new_v4().to_string())
+            .expect("event_hash_by_id");
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn pending_confirmations_insert_and_duplicate_effect_id_fails() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let effect_id = Uuid::new_v4().to_string();
+        let session_id = Uuid::new_v4().to_string();
+        let blocked_event_id = Uuid::new_v4().to_string();
+
+        conn.execute(
+            "INSERT INTO pending_confirmations \
+             (effect_id, session_id, blocked_event_id, sink, resolved_args, \
+              workspace_root_path, state) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                effect_id,
+                session_id,
+                blocked_event_id,
+                "file.create",
+                "[]",
+                "/workspace",
+                "pending",
+            ],
+        )
+        .expect("first insert should succeed");
+
+        let duplicate = conn.execute(
+            "INSERT INTO pending_confirmations \
+             (effect_id, session_id, blocked_event_id, sink, resolved_args, \
+              workspace_root_path, state) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                effect_id,
+                session_id,
+                blocked_event_id,
+                "file.create",
+                "[]",
+                "/workspace",
+                "pending",
+            ],
+        );
+
+        assert!(
+            duplicate.is_err(),
+            "duplicate effect_id insert must fail the PRIMARY KEY constraint"
+        );
     }
 
     #[test]
