@@ -77,7 +77,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   1. A DESIGN doc exists under `planning-docs/` defining content-sensitivity classification for the email sink's body arg (CONTENT-01/02) as a single hardcoded match arm, not a general taxonomy.
   2. The same (or a paired) DESIGN doc defines the real SMTP adapter's mediation boundary — confined worker never performs the SMTP call, secrets live only in the broker, and the wire message is constructed so tainted literals cannot smuggle envelope/header changes (SMTP-01/02/03/05).
   3. The doc defines confirm-binding: `caprun confirm` binds to a hash of the exact resolved recipient+body literals, with no drift between confirm and send and no truncated display (CONFIRM-03).
-  4. The doc has been adversarially reviewed and issues raised were resolved before sign-off.
+  4. **HARD GATE — genuinely adversarial review, not self-review.** A dedicated adversarial pass (fresh-context reviewer, arranged via caprun-opus-77 per `DEC-ai-review-satisfies-human-gate` — flag opus at this checkpoint rather than self-reviewing) must actively attack at least: (a) whether CONTENT-01's body-block and the existing routing-block can compose into an unconfirmable dead end (the v1.2 I1/I2-precedence failure mode, reincarnated for the body arg); (b) whether CONFIRM-03's literal-binding hash could be computed over pre-transformation bytes instead of the post-EXTRACT-03-transformation bytes actually sent; (c) whether any path in SMTP-05's message construction lets a tainted literal reach a header. Issues raised must be resolved before sign-off.
   5. No executor/TCB code implementing CONTENT-01, SMTP-05, or CONFIRM-03 exists in the repo until this phase is marked complete.
 
 **Plans**: TBD
@@ -118,7 +118,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 
   1. A realistic hostile-doc fixture exists (an embedded injection attempting to redirect/alter the send) for reuse across extraction tests, confirm tests, and the live demo.
   2. The extractor that derives the recipient+body plan node from doc bytes runs entirely inside the confined worker, over hostile bytes, and only emits plan nodes — never in the broker control plane.
-  3. A programmatic audit-DAG query proves an unbroken edge path (raw-read Event → extractor-derived ValueNodes → blocked sink args) and FAILS if any edge is missing, distinguishing a genuine chain from a value stapled fresh at the sink.
+  3. **HARD GATE — phase FAILS if not met (the project's single non-negotiable invariant, per CLAUDE.md: "taint stapled at the sink proves nothing").** A programmatic audit-DAG query proves an unbroken edge path (raw-read Event → extractor-derived ValueNodes → blocked sink args) and FAILS if any edge is missing; a paired anti-staple check rejects/distinguishes a value minted fresh at the sink from one with genuine provenance. This is not a soft criterion — it is the phase's acceptance bar, and it composes into ACCEPT-01/Phase 17 as a milestone-failing gate too.
   4. At least one fixture shows the extractor transforming the tainted value before the sink (concatenating two doc fields, or base64-decoding a body) with taint still propagating and the block still firing — proving survival of manipulation, not just copying.
 
 **Plans**: TBD
@@ -147,7 +147,8 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 
   1. A live Colima+Docker run shows: hostile doc read → I1 demotion → deterministic extraction → tainted recipient+body block (I2+CONTENT-01) → confirm sends exactly once via the real adapter to a local capture SMTP → deny sends nothing.
   2. The same run composes the clean-send negative control (CONTROL-01) alongside the hostile block, and the whole scenario is one unbroken audit-DAG causal chain.
-  3. PROJECT.md explicitly states that v1.3 proves taint ENFORCEMENT through a deterministic extractor with genuine propagation, and does NOT claim taint survives a real LLM planner's regeneration ("laundering") — no external claim contradicts this.
+  3. **HARD GATE — milestone-failing, not a soft criterion.** Phase 15's unbroken-edge audit-DAG proof + anti-staple check (raw-read Event → extractor-derived ValueNodes → blocked sink args, genuine not stapled) holds in this live run too — this milestone is not DONE if the live acceptance's taint chain can be satisfied by a value stapled fresh at the sink.
+  4. PROJECT.md explicitly states that v1.3 proves taint ENFORCEMENT through a deterministic extractor with genuine propagation, and does NOT claim taint survives a real LLM planner's regeneration ("laundering") — no external claim contradicts this.
 
 **Plans**: TBD
 
