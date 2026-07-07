@@ -136,7 +136,11 @@ Plans:
   2. Confirm path: the same scenario, but a human confirm via `caprun confirm` results in the effect proceeding exactly once.
   3. For both runs, the audit DAG shows one unbroken causal chain: read → demotion → block → human decision.
 
-**Plans**: TBD
+**Plans**: 1 plan
+
+**Wave 1**
+
+- [ ] 11-01-PLAN.md — Live Linux acceptance: new `live_acceptance_tainted_session.rs` (deny + confirm tests, ACC-01/02/03), fix stale `s9_live_block.rs` block-edge assertion (Pitfall 1), and capture the Colima+Docker acceptance record (D-06)
 
 ## Progress
 
