@@ -80,10 +80,10 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   4. **HARD GATE — genuinely adversarial review, not self-review.** A dedicated adversarial pass (fresh-context reviewer, arranged via caprun-opus-77 per `DEC-ai-review-satisfies-human-gate` — flag opus at this checkpoint rather than self-reviewing) must actively attack at least: (a) whether CONTENT-01's body-block and the existing routing-block can compose into an unconfirmable dead end (the v1.2 I1/I2-precedence failure mode, reincarnated for the body arg); (b) whether CONFIRM-03's literal-binding hash could be computed over pre-transformation bytes instead of the post-EXTRACT-03-transformation bytes actually sent; (c) whether any path in SMTP-05's message construction lets a tainted literal reach a header. Issues raised must be resolved before sign-off.
   5. No executor/TCB code implementing CONTENT-01, SMTP-05, or CONFIRM-03 exists in the repo until this phase is marked complete.
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 
 - [x] 12-01-PLAN.md — Author DESIGN-content-adapter-mediation.md (content-sensitivity + collect-then-Block + SMTP adapter mediation & CRLF defense) [Wave 1]
-- [ ] 12-02-PLAN.md — Author DESIGN-confirm-binding.md (combined-digest binding over the full blocked-arg set, post-transform, no truncation) [Wave 2]
+- [x] 12-02-PLAN.md — Author DESIGN-confirm-binding.md (combined-digest binding over the full blocked-arg set, post-transform, no truncation) [Wave 2]
 - [ ] 12-03-PLAN.md — Author DESIGN-GATE-RECORD-v1.3.md + non-autonomous adversarial-review checkpoint (arranged by caprun-opus-77) iterating to APPROVED/UNBLOCKED [Wave 3]
 
 ### Phase 13: Real Broker-Mediated SMTP Adapter
@@ -171,7 +171,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 | 9. Session Trust State (I1 + I0) | v1.2 | 4/4 | Complete | 2026-07-07 |
 | 10. Single-Shot Confirmation Loop | v1.2 | 3/3 | Complete | 2026-07-07 |
 | 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 1/1 | Complete | 2026-07-07 |
-| 12. Content, Adapter & Confirm-Binding Design Gate | v1.3 | 1/3 | In Progress|  |
+| 12. Content, Adapter & Confirm-Binding Design Gate | v1.3 | 2/3 | In Progress|  |
 | 13. Real Broker-Mediated SMTP Adapter | v1.3 | 0/0 | Not started | - |
 | 14. Content-Sensitive Sink-Arg Blocking | v1.3 | 0/0 | Not started | - |
 | 15. Deterministic Doc→Action Extraction | v1.3 | 0/0 | Not started | - |
