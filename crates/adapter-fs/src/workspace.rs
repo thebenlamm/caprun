@@ -31,8 +31,10 @@ pub struct WorkspaceRoot {
     /// held (and thus kept open) on all platforms.
     #[allow(dead_code)]
     dirfd: OwnedFd,
-    /// Root path — used ONLY by the non-Linux stub to reconstruct the join.
-    #[allow(dead_code)]
+    /// Root path — used by the non-Linux stub to reconstruct the join, and
+    /// exposed via `root_path()` so a `BlockedPendingConfirmation` snapshot can
+    /// persist the workspace root a later `caprun confirm` process must reopen
+    /// (RESEARCH Assumption A2).
     root_path: PathBuf,
 }
 
@@ -57,6 +59,17 @@ impl WorkspaceRoot {
             dirfd,
             root_path: root.to_path_buf(),
         })
+    }
+
+    /// The workspace-root directory path the broker opened.
+    ///
+    /// Platform-independent: `root_path` is populated unconditionally in
+    /// `open` on both Linux and non-Linux paths. Persisted at Block time into
+    /// `PendingConfirmation.workspace_root_path` so a later, separate
+    /// `caprun confirm` process can re-`open` the same root and re-invoke the
+    /// sink (RESEARCH Assumption A2).
+    pub fn root_path(&self) -> &Path {
+        &self.root_path
     }
 
     /// Read a file resolved BENEATH the workspace-root anchor (Linux).
@@ -158,6 +171,21 @@ impl WorkspaceRoot {
 mod tests {
     #[cfg(target_os = "linux")]
     use super::*;
+
+    /// `root_path()` returns the exact path passed to `open` — platform-
+    /// independent (runs on macOS too), since `root_path` is populated
+    /// unconditionally on both the Linux and non-Linux paths.
+    #[test]
+    fn root_path_returns_the_opened_root() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_ws_root_path_{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create tmp root");
+
+        let ws = super::WorkspaceRoot::open(&root).expect("open workspace root");
+        assert_eq!(ws.root_path(), root.as_path());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     /// Create a uniquely-named temp subdir (no `tempfile` dev-dep in this crate).
     #[cfg(target_os = "linux")]
