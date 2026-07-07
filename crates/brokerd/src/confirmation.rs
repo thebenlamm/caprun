@@ -235,6 +235,14 @@ pub enum ConfirmOutcome {
     /// The `blocked_literals` row for this `effect_id` was redacted — refuse to
     /// release (T-10-09, Pitfall 4 fail-closed).
     BlockedLiteralRedacted,
+    /// The `email.send` CAS + `email_send_attempted` transaction committed
+    /// (state is durably `Confirmed`), but the real SMTP send itself failed.
+    /// Distinct from `ConfirmedButSinkFailed` (SEND-02): the v1.2
+    /// `Err(_) => Ok(ConfirmedButSinkFailed)` swallow-shape is explicitly
+    /// rejected for `email.send` — this variant, plus a durable
+    /// `email_send_failed` event already appended by the adapter, is how the
+    /// failure is surfaced without being swallowed. No auto-retry.
+    EmailSendFailed,
 }
 
 /// Stable, dotted-lowercase rendering of a `TaintLabel` for the CLI display
@@ -392,9 +400,19 @@ pub fn confirm(
     // is invoked (DESIGN Step 4a.5). A `0` return means a raced re-transition
     // between Step 2 and here — refuse (CONFIRM-03), even though a confirm_granted
     // event was already appended per the DESIGN's specified ordering.
-    let affected = transition_state(conn, effect_id, PendingConfirmationState::Confirmed)?;
-    if affected == 0 {
-        return Ok(ConfirmOutcome::AlreadyTerminal);
+    //
+    // `email.send` is special-cased below (Task 2, SEND-01): it owns its OWN
+    // CAS inside an atomic transaction wrapping BOTH the CAS and the durable
+    // `email_send_attempted` append, committed BEFORE any SMTP connection
+    // opens. This generic, unconditional transition MUST be skipped for
+    // `email.send` — otherwise the CAS would already be consumed here,
+    // permanently breaking the "one atomic transaction" requirement below
+    // (two separate autocommit statements, not one atomic unit).
+    if pc.sink.0.as_str() != "email.send" {
+        let affected = transition_state(conn, effect_id, PendingConfirmationState::Confirmed)?;
+        if affected == 0 {
+            return Ok(ConfirmOutcome::AlreadyTerminal);
+        }
     }
 
     // Step 7: dispatch to the frozen-snapshot sink re-invocation — NEVER
@@ -415,19 +433,49 @@ pub fn confirm(
             Err(_) => Ok(ConfirmOutcome::ConfirmedButSinkFailed),
         },
         "email.send" => {
-            // Mirror invoke_email_send_stub's no-op append — email.send has no
-            // live effect in v1.2, so there is nothing that can fail here.
-            let plan_node = runtime_core::PlanNode {
-                sink: pc.sink.clone(),
-                args: vec![],
-            };
-            crate::sinks::email_send::invoke_email_send_stub(
+            // SEND-01: the CAS (`pending -> confirmed`) and the durable
+            // `email_send_attempted` append MUST commit in ONE atomic SQLite
+            // transaction, BEFORE any SMTP connection is opened (Pattern 2,
+            // DESIGN "At-Most-Once Send + Durable Attempt Ledger"). A zero-row
+            // CAS rolls back automatically when `tx` drops without `.commit()`
+            // — no attempt event is appended, and the send is never attempted.
+            let tx = conn.transaction()?;
+            let affected = transition_state(&tx, effect_id, PendingConfirmationState::Confirmed)?;
+            if affected == 0 {
+                return Ok(ConfirmOutcome::AlreadyTerminal);
+            }
+            let attempted_event = runtime_core::Event::new(
+                Uuid::new_v4(),
+                Some(granted_event_id),
+                pc.session_id,
+                format!("sink:email.send:{effect_id}"),
+                "email_send_attempted".into(),
+                Utc::now(),
+                vec![],
+            );
+            let attempted_event_id = attempted_event.id;
+            let attempted_hash =
+                crate::audit::append_event(&tx, &attempted_event, Some(&granted_hash))?;
+            tx.commit()?;
+
+            // AFTER commit — the CAS + attempt are now durable together, or
+            // neither is; only now does an SMTP connection ever open.
+            match crate::sinks::email_smtp::invoke_email_smtp_from_resolved(
                 conn,
                 pc.session_id,
-                &plan_node,
-                Some(&granted_hash),
-            )?;
-            Ok(ConfirmOutcome::Released)
+                pc.effect_id,
+                &pc.resolved_args,
+                attempted_event_id,
+                &attempted_hash,
+            ) {
+                Ok(_) => Ok(ConfirmOutcome::Released),
+                // The adapter already appended a durable, opaque-payload
+                // email_send_failed event and routed raw error context to
+                // this codebase's eprintln! logging convention — never
+                // swallow (unlike file.create's ConfirmedButSinkFailed
+                // shape), never auto-retry (SEND-02).
+                Err(_) => Ok(ConfirmOutcome::EmailSendFailed),
+            }
         }
         other => Err(anyhow::anyhow!(
             "confirm: unreachable sink `{other}` — not a registered v1.2 sink"

@@ -336,6 +336,9 @@ fn run_confirm_or_deny(verb: &str, effect_id: &str, audit_path: &str) -> anyhow:
         ConfirmOutcome::BlockedLiteralRedacted => {
             (6, Some("blocked literal was redacted; refusing to release"))
         }
+        ConfirmOutcome::EmailSendFailed => {
+            (7, Some("email send failed after confirm; recorded, not retried"))
+        }
     };
     if let Some(msg) = message {
         eprintln!("caprun {verb}: {msg}");
