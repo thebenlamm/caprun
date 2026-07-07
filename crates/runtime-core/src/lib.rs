@@ -19,5 +19,5 @@ pub use event::Event;
 pub use executor_decision::{DenyReason, ExecutorDecision, SinkBlockedAnchor};
 pub use intent::{CaprunIntent, Intent, IntentStatus};
 pub use plan_node::{PlanArg, PlanNode, Provenance, SinkId, TaintLabel, ValueId, ValueNode};
-pub use session::{Session, SessionStatus};
+pub use session::{SeedProvenance, Session, SessionStatus};
 pub use value_record::ValueRecord;
