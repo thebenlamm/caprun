@@ -32,9 +32,9 @@ Requirements for milestone v1.2. Each maps to roadmap phases.
 
 ### Acceptance
 
-- [ ] **ACC-01**: Live acceptance (deny path): hostile workspace file → worker reads it → session demoted (I1) → tainted routing arg Blocked (I2) → human denies → no effect proceeds
-- [ ] **ACC-02**: Live acceptance (confirm path): same scenario, human confirms via `caprun confirm` → effect proceeds exactly once
-- [ ] **ACC-03**: The audit DAG shows one unbroken causal chain: read → demotion → block → human decision, for both the deny and confirm runs
+- [x] **ACC-01**: Live acceptance (deny path): hostile workspace file → worker reads it → session demoted (I1) → tainted routing arg Blocked (I2) → human denies → no effect proceeds
+- [x] **ACC-02**: Live acceptance (confirm path): same scenario, human confirms via `caprun confirm` → effect proceeds exactly once
+- [x] **ACC-03**: The audit DAG shows one unbroken causal chain: read → demotion → block → human decision, for both the deny and confirm runs
 
 ## v2 Requirements
 
@@ -79,9 +79,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONFIRM-03 | Phase 10 | Complete |
 | CONFIRM-04 | Phase 10 | Complete |
 | PROC-01 | Phase 8 | Complete |
-| ACC-01 | Phase 11 | Pending |
-| ACC-02 | Phase 11 | Pending |
-| ACC-03 | Phase 11 | Pending |
+| ACC-01 | Phase 11 | Complete |
+| ACC-02 | Phase 11 | Complete |
+| ACC-03 | Phase 11 | Complete |
 
 **Coverage:**
 
