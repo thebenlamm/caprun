@@ -118,7 +118,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 
   1. A realistic hostile-doc fixture exists (an embedded injection attempting to redirect/alter the send) for reuse across extraction tests, confirm tests, and the live demo.
   2. The extractor that derives the recipient+body plan node from doc bytes runs entirely inside the confined worker, over hostile bytes, and only emits plan nodes — never in the broker control plane.
-  3. **HARD GATE — phase FAILS if not met (the project's single non-negotiable invariant, per CLAUDE.md: "taint stapled at the sink proves nothing").** A programmatic audit-DAG query proves an unbroken edge path (raw-read Event → extractor-derived ValueNodes → blocked sink args) and FAILS if any edge is missing; a paired anti-staple check rejects/distinguishes a value minted fresh at the sink from one with genuine provenance. This is not a soft criterion — it is the phase's acceptance bar, and it composes into ACCEPT-01/Phase 17 as a milestone-failing gate too.
+  3. **HARD GATE — phase FAILS if not met (the project's single non-negotiable invariant, per CLAUDE.md: "taint stapled at the sink proves nothing").** A programmatic audit-DAG query proves an unbroken edge path (raw-read Event → extractor-derived ValueNodes → blocked sink args) and FAILS if any edge is missing; a paired anti-staple check rejects/distinguishes a value minted fresh at the sink from one with genuine provenance. Since Phase 12 mandates collect-then-Block (a plan node with both a tainted recipient and a tainted body produces ONE combined Block carrying BOTH), this unbroken-edge + anti-staple proof must hold for EVERY blocked arg in the set, not just one — a plan node blocking on two tainted args with only one edge proven is a partial pass, not a pass. This is not a soft criterion — it is the phase's acceptance bar, and it composes into ACCEPT-01/Phase 17 as a milestone-failing gate too.
   4. At least one fixture shows the extractor transforming the tainted value before the sink (concatenating two doc fields, or base64-decoding a body) with taint still propagating and the block still firing — proving survival of manipulation, not just copying.
 
 **Plans**: TBD
@@ -130,9 +130,9 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 **Requirements**: CONFIRM-01, CONFIRM-03, CONFIRM-04, CONTROL-01, CONTROL-02
 **Success Criteria** (what must be TRUE):
 
-  1. `caprun confirm`/`deny` on a doc-derived send displays the verbatim recipient AND body (never truncated, even for long bodies), plus provenance, for an effect blocked at I2+CONTENT-01.
-  2. The block moment narrates provenance — recipient/body → untrusted doc → these bytes → this sink arg — rather than a bare "Error: blocked."
-  3. Confirm binds to a hash of the exact resolved recipient+body literals; the plan node cannot drift between confirm time and send time.
+  1. `caprun confirm`/`deny` on a doc-derived send displays the verbatim recipient AND body (never truncated, even for long bodies), plus provenance, for an effect blocked at I2+CONTENT-01. Per Phase 12's collect-then-Block mandate, this is ONE combined confirm/deny decision covering the FULL SET of blocked args — never a partial confirm of a subset.
+  2. The block moment narrates provenance for EVERY blocked arg in the set — recipient/body → untrusted doc → these bytes → this sink arg, for each — rather than a bare "Error: blocked" or a narration of only the first-matched arg.
+  3. Confirm binds to a single combined hash covering the exact resolved recipient+body literals TOGETHER as one set; the plan node cannot drift between confirm time and send time, and there is no partial-set confirm.
   4. A fully-trusted send (recipient+body from a trusted, non-doc source) proceeds with NO block and NO confirm gate, in the same acceptance run as the hostile block — proving the gate is taint-driven.
   5. A send with a tainted body but a trusted recipient still blocks — proving the body dimension isn't dead code redundant with the routing block.
 

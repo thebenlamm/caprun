@@ -22,15 +22,15 @@ Scoped with caprun-opus-77 (coordinator, delegated by Ben Lamm) plus an advisor 
 ### EXTRACT (deterministic doc→action)
 
 - [ ] **EXTRACT-01**: The deterministic (non-LLM) extractor runs CONFINED (worker-side, over hostile bytes), emitting only plan nodes — not in the broker control plane (a parser over hostile bytes is attack surface).
-- [ ] **EXTRACT-02**: A programmatic audit-DAG query proves an unbroken edge path: raw-read Event → extractor-derived ValueNodes → blocked sink args. Test FAILS if any edge is missing; an anti-staple check distinguishes/rejects a value minted fresh at the sink.
+- [ ] **EXTRACT-02**: A programmatic audit-DAG query proves an unbroken edge path: raw-read Event → extractor-derived ValueNodes → blocked sink args. Test FAILS if any edge is missing; an anti-staple check distinguishes/rejects a value minted fresh at the sink. Per Phase 12's collect-then-Block mandate, this must hold for EVERY blocked arg in a multi-arg Block (e.g. tainted recipient + tainted body on the same plan node), not just one.
 - [ ] **EXTRACT-03**: ≥1 fixture where the extractor TRANSFORMS the tainted value before the sink (e.g. concatenates two doc fields into the recipient, or base64-decodes a body) and taint STILL propagates + STILL blocks — proves taint survives a manipulation, not just a copy. Scope is honest: no universality claim.
 
 ### CONFIRM (UX + fixture)
 
 - [ ] **CONFIRM-01**: `caprun confirm`/`deny` displays the verbatim recipient AND body (not just recipient) plus provenance, for a doc-derived send blocked at I2+CONTENT-01.
 - [ ] **CONFIRM-02**: A realistic doc fixture exists (embedded injection attempting to redirect/alter the send) for gate-test and live-demo use.
-- [ ] **CONFIRM-03**: `caprun confirm` binds to the exact resolved literal(s) — a hash of resolved recipient+body — so the bytes the human read are provably the bytes the adapter sends; the plan node cannot drift between confirm and send; no truncated display of long bodies. Builds on the existing `PendingConfirmation` resolved_args store.
-- [ ] **CONFIRM-04**: The BLOCK moment narrates provenance, not "Error: blocked" — renders recipient/body → untrusted doc → these bytes → this sink arg. The block is the demo's climax.
+- [ ] **CONFIRM-03**: `caprun confirm` binds to ONE combined hash covering the FULL SET of blocked args' exact resolved literals (recipient AND body together) — so the bytes the human read are provably the bytes the adapter sends; the plan node cannot drift between confirm and send; no truncated display of long bodies; no partial-set confirm. Builds on the existing `PendingConfirmation` resolved_args store.
+- [ ] **CONFIRM-04**: The BLOCK moment narrates provenance for EVERY blocked arg in the set, not "Error: blocked" and not just the first-matched arg — renders recipient/body → untrusted doc → these bytes → this sink arg, for each. The block is the demo's climax.
 
 ### CONTROL (negative controls)
 
