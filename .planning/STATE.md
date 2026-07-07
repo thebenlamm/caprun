@@ -21,10 +21,10 @@ current_phase_name: Live Acceptance — Tainted Session, Human Gate
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-01)
+See: .planning/PROJECT.md (updated 2026-07-07)
 
-**Core value:** A session that touches untrusted content is mechanically demoted to draft-only (I1 dynamic-taint default + I0 creation rule), and a blocked sink arg can be released only by literal-value human confirmation — all deterministic, all in the audit DAG.
-**Current focus:** Phase 11 — Live Acceptance — Tainted Session, Human Gate
+**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — now extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, both proven live on real Linux.
+**Current focus:** Planning next milestone — run `/gsd-new-milestone`
 
 ## Current Position
 
@@ -37,9 +37,8 @@ Last activity: 2026-07-07 — Milestone v1.2 completed and archived
 
 **Velocity:**
 
-- Total plans completed: 26 (v1.0 + v1.1)
+- Total plans completed: 41 (v1.0: 15 + v1.1: 15 + v1.2: 11)
 - Average duration: — min
-- Total execution time: 0 hours (v1.2)
 
 **By Phase (v1.1):**
 
@@ -69,31 +68,24 @@ Last activity: 2026-07-07 — Milestone v1.2 completed and archived
 
 ### Decisions
 
-Decisions are logged in PROJECT.MD (Locked Decisions + Key Decisions table).
-Load-bearing decisions/mappings for v1.2:
-
-- Roadmap combines I1 (session taint state) and I0 (creation rule) into one Phase 9 — both flip the same per-session trust-state field and share one executor deny function/DenyReason taxonomy; splitting them would produce two thin phases around the same mechanism.
-- Phase 8 is a dedicated design-gate phase (mirrors v1.0 Phase 2): PROC-01 requires the DESIGN doc to exist and be reviewed before Phase 9 or Phase 10 write any executor code. Phase 9 and Phase 10 both depend on Phase 8; neither depends on the other (I1/I0 demotion and the confirmation-release path are independent mechanisms).
-- Phase 11 (live acceptance) depends on both Phase 9 and Phase 10 — the deny/confirm scenarios require the session-demotion path and the confirmation-release path both landed.
-- Draft-only deny decision must live in the executor (one TCB deny function, one DenyReason taxonomy), never a broker pre-check — carried forward from the seed doc's recommendation.
-- Confirmation UX is `caprun confirm <effect_id>` (second command), not an interactive TTY prompt; confirm is single-shot (one triple), never a standing/session-wide policy.
-- Prior milestones: DEC-architectural-lock-plan-nodes, DEC-security-invariants, CON-s9-taint-genuineness (all still load-bearing; see PROJECT.md).
-- [Phase 9]: SeedProvenance added as standalone enum with no struct field wired yet; Plans 03/04 decide threading/persistence — Plan 09-01 scoped only to pure type additions, per DESIGN-session-trust-state.md §3
-- [Phase ?]: Discovered mid-Task-3: bare #[cfg(test)] items are invisible to integration tests in tests/ (crate linked without --cfg test); fixed via a test-fixtures Cargo feature + self dev-dependency so test.observe is visible to both unit and integration tests while absent from production builds.
-- [Phase ?]: mint_from_read's return tuple widened (read_event_id, read_hash, value_id, demoted_event_id, demoted_hash) — the new session_demoted event is the actual causal-chain head; original two fields keep file_read identity semantics to preserve the held-out §9 anti-stapling backstop
-- [Phase ?]: SeedProvenance recorded in the session_created Event's actor field (no Event/schema change) — Event has no free-form metadata field and this avoids a DB migration
-- [Phase ?]: cli/caprun's --seed-from-file file content replaces the positional <intent-param> slot entirely (not kept-but-ignored) when the flag is present
-- [Phase ?]: Integration test drives the real caprun binary rather than adding a cli/caprun lib.rs -- create_session/persist_session/session_created complete before the Linux-only broker bind + worker spawn, so sessions.status is macOS-assertable
+Decisions are logged in PROJECT.md (Locked Decisions + Key Decisions table).
+v1.2's decisions (draft-only deny lives in the executor; confirmation UX is
+`caprun confirm <effect_id>`; single-shot release; DEC-ai-review-satisfies-human-gate;
+programmatic confirm/deny satisfies "human decision" for acceptance) are all
+recorded there and in `.planning/milestones/v1.2-ROADMAP.md`. Cleared here at
+v1.2 milestone close (2026-07-07) — this section starts fresh for the next
+milestone.
 
 ### Pending Todos
 
-None yet.
+None.
 
 ### Blockers/Concerns
 
-- Phase 8's design gate is UNBLOCKED (`planning-docs/DESIGN-GATE-RECORD-v1.2.md`: Decision APPROVED, Gate status UNBLOCKED). Note the review provenance: both round 1 and round 2's adversarial reviews were performed by an AI model (Claude "Fable 5") on Ben's instruction, not Ben's own read — Ben was asked directly, confirmed this, and explicitly chose to redefine the gate's requirement rather than personally read it. This is logged as `DEC-ai-review-satisfies-human-gate` in `.planning/PROJECT.md`'s Key Decisions table and applies to future design-gate checkpoints in this project unless revisited.
-- Phase 11 is the v1.2 DONE gate: ACC-01/02/03 must all pass live on real Linux (Colima+Docker), showing one unbroken causal chain for both the deny and confirm runs.
-- I2's existing sensitivity map and mint invariants (non-empty taint + provenance) are unchanged in v1.2 — Phase 9/10 must not regress the v1.1 live §9 acceptance.
+None open. v1.2's blockers all resolved at milestone close: Phase 8's design
+gate UNBLOCKED (see `DEC-ai-review-satisfies-human-gate` in PROJECT.md); Phase
+11's DONE gate (ACC-01/02/03) passed live on real Linux, independently
+re-verified by the orchestrator; no regression to the v1.1 live §9 acceptance.
 
 ## Deferred Items
 
@@ -107,9 +99,9 @@ Re-acknowledged unchanged at v1.2 milestone close on 2026-07-07 (same pre-existi
 
 ## Session Continuity
 
-Last session: 2026-07-07T14:55:41.403Z
-Stopped at: Phase 11 context gathered
-Resume file: .planning/phases/11-live-acceptance-tainted-session-human-gate/11-CONTEXT.md
+Last session: 2026-07-07T15:48:29.813Z
+Stopped at: Milestone v1.2 completed and archived
+Resume file: None — nothing to resume; next step is scoping a new milestone
 
 ## Operator Next Steps
 
