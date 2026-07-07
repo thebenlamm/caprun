@@ -93,29 +93,70 @@ fn resolved_literal<'a>(resolved_args: &'a [ResolvedArg], name: &str) -> Option<
         .map(|a| a.literal.as_str())
 }
 
-/// Build the outgoing wire message.
+/// Parse a recipient literal into a `Mailbox` via lettre's typed `Address`
+/// parser FIRST — the fail-closed CRLF boundary (SMTP-05/D-07). A CR or LF
+/// byte anywhere in `literal` makes this return `Err`, never reaching any
+/// `Message::builder()` setter (`Address`'s allow-list grammar rejects bytes
+/// 10/13 in any branch — see `planning-docs/DESIGN-content-adapter-mediation.md`
+/// "Wire-Message Construction").
+fn parse_recipient(literal: &str) -> Result<Mailbox> {
+    let address: Address = literal
+        .parse()
+        .with_context(|| "email_smtp: recipient literal failed Address parse (fail-closed)")?;
+    Ok(Mailbox::from(address))
+}
+
+/// Build the outgoing wire message EXCLUSIVELY through lettre's typed
+/// `Message::builder()` setters (SMTP-05, D-07/D-22).
 ///
-/// RED-phase stub (Task 1, TDD): does NOT yet parse the `to` literal through
-/// `lettre::Address` — hardcodes a stub recipient instead, so the CRLF
-/// fail-closed test below fails, proving the test actually exercises the
-/// eventual real behavior before it is implemented.
+/// Every recipient literal is parsed via `Address` FIRST (fail-closed on
+/// CR/LF, `parse_recipient` above); only AFTER every recipient parses
+/// successfully are the already-valid `Mailbox` values fed to
+/// `.to()/.cc()/.bcc()` (infallible chaining). `.subject()` is also
+/// infallible. `.body()` is the second and only other fallible call — its
+/// `Err` propagates as a fail-closed abort, same as a recipient parse `Err`.
+/// Never `.unwrap()`, never a `format!()`-built header, never lettre's raw
+/// pre-encoded-header constructor.
+///
+/// `to`/`subject`/`body` are required (schema-mandatory); `cc`/`bcc` are
+/// schema-optional and simply omitted from the builder chain if absent.
 fn build_message(resolved_args: &[ResolvedArg]) -> Result<Message> {
+    let to_literal = resolved_literal(resolved_args, "to")
+        .ok_or_else(|| anyhow::anyhow!("email_smtp: build_message missing required `to` arg"))?;
     let subject = resolved_literal(resolved_args, "subject")
         .ok_or_else(|| anyhow::anyhow!("email_smtp: build_message missing required `subject` arg"))?;
     let body = resolved_literal(resolved_args, "body")
         .ok_or_else(|| anyhow::anyhow!("email_smtp: build_message missing required `body` arg"))?;
 
+    // Parse every recipient literal FIRST — fail-closed at Address parse
+    // time, before any builder call (SMTP-05). cc/bcc are schema-optional;
+    // absence is fine (None), a present-but-invalid literal still fails
+    // closed via `?`.
+    let to_mbox = parse_recipient(to_literal)?;
+    let cc_mbox = resolved_literal(resolved_args, "cc")
+        .map(parse_recipient)
+        .transpose()?;
+    let bcc_mbox = resolved_literal(resolved_args, "bcc")
+        .map(parse_recipient)
+        .transpose()?;
+
+    // The sender address is broker-owned trusted config (D-04 endpoint
+    // sourcing, see module doc comment) — never a resolved literal. lettre
+    // requires a From header on every Message (MissingFrom otherwise).
     let from: Address = smtp_from()
         .parse()
         .context("email_smtp: smtp_from() config value failed Address parse")?;
-    // TODO(RED, Task 1 GREEN phase): parse the real `to` literal via
-    // lettre::Address FIRST — this stub ignores it entirely.
-    let to = Mailbox::new(None, Address::new_dangerous("stub", "localhost"));
 
-    Message::builder()
-        .from(Mailbox::new(None, from))
-        .to(to)
-        .subject(subject)
+    let mut builder = Message::builder().from(Mailbox::from(from)).to(to_mbox);
+    if let Some(cc) = cc_mbox {
+        builder = builder.cc(cc);
+    }
+    if let Some(bcc) = bcc_mbox {
+        builder = builder.bcc(bcc);
+    }
+    builder = builder.subject(subject);
+
+    builder
         .body(Body::new(body.to_string()))
         .context("email_smtp: build_message body construction failed (fail-closed)")
 }
