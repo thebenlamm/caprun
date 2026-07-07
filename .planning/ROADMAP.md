@@ -111,7 +111,19 @@ Plans:
   3. Denying is durable: the effect never proceeds, and the same `effect_id` cannot later be confirmed.
   4. Every confirm/deny decision is recorded as an audit event anchored to `SinkBlockedAnchor.effect_id`, and the release path executes in the TCB (not a policy file).
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+**Wave 1**
+
+- [ ] 10-01-PLAN.md — PendingConfirmation types + pending_confirmations side table + accessors (durable checkpoint substrate)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 10-02-PLAN.md — block-time PendingConfirmation persistence (atomic with sink_blocked) + invoke_file_create_from_resolved frozen-snapshot re-invocation
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 10-03-PLAN.md — confirm/deny TCB decision logic + caprun confirm/deny CLI verbs + cross-process integration test
 
 ### Phase 11: Live Acceptance — Tainted Session, Human Gate
 
