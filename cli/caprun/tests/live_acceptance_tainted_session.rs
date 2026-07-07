@@ -59,6 +59,13 @@ const HOSTILE_FC_PATH: &str = "reports/pwned.txt";
 fn run_caprun_block(tmp: &std::path::Path, audit_db: &std::path::Path) -> bool {
     let workspace_file = tmp.join("workspace.txt");
     std::fs::write(&workspace_file, HOSTILE_FC_CONTENT).expect("write workspace file");
+    // `create_exclusive_within`'s single-syscall `openat2` (RESOLVE_BENEATH,
+    // TOCTOU-safe by design) does NOT create intermediate directories — only
+    // the final path component. HOSTILE_FC_PATH's `reports/` segment must
+    // already exist under the workspace root before the confirm path's live
+    // sink invocation, mirroring a workspace that already has a reports/
+    // folder. Harmless (unused) on the deny path, which never invokes the sink.
+    std::fs::create_dir_all(tmp.join("reports")).expect("pre-create reports/ dir under workspace root");
 
     let caprun_bin = env!("CARGO_BIN_EXE_caprun");
     let output = std::process::Command::new(caprun_bin)
