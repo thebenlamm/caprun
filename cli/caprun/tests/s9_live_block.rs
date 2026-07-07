@@ -306,10 +306,19 @@ fn s9_live_file_create_hostile_block() {
         Some(fd_granted.id),
         "file_read must be causally parented onto fd_granted (fd_granted → file_read)"
     );
+    let demoted = find_event_by_type(&conn, &session_id, "session_demoted")
+        .expect("query session_demoted")
+        .expect("session_demoted event must exist (I1 demotion on hostile read)");
+    assert_eq!(
+        demoted.parent_id,
+        Some(file_read.id),
+        "session_demoted must be causally parented onto file_read (TAINT-04 edge)"
+    );
     assert_eq!(
         blocked.parent_id,
-        Some(file_read.id),
-        "sink_blocked must be causally parented onto file_read (file_read → sink_blocked)"
+        Some(demoted.id),
+        "sink_blocked must be causally parented onto session_demoted, not file_read \
+         (mint_from_read's chain-head advances past file_read — see quarantine.rs)"
     );
     // Genuine taint: the anchor's value-lineage root IS that same real file_read event.
     assert_eq!(
