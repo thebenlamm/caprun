@@ -21,10 +21,11 @@
 use anyhow::Result;
 use chrono::Utc;
 use executor::value_store::ValueStore;
-use runtime_core::{plan_node::TaintLabel, Event};
+use runtime_core::{plan_node::TaintLabel, Event, SessionStatus};
 use uuid::Uuid;
 
 use crate::audit::append_event;
+use crate::session::update_session_status;
 
 /// A typed, lossy claim extracted from untrusted external content.
 ///
@@ -162,6 +163,17 @@ fn looks_like_email(s: &str) -> bool {
 /// The §9 held-out test asserts `result.provenance_chain[0] == returned read_event_id`
 /// and then queries the audit DAG to confirm that id exists as a `file_read` event.
 ///
+/// # SOLE I1 TRUST-FLIP SITE (TAINT-01/TAINT-04, DESIGN-session-trust-state.md §2)
+///
+/// This is ALSO the only call site in brokerd that demotes a session to
+/// `SessionStatus::Draft` for the I1 reason. Same atomicity discipline as
+/// above: the `sessions` status UPDATE and the causally-linked
+/// `session_demoted` Event append happen under the SAME connection/lock this
+/// function already holds — never a second, separately-locked step. No other
+/// function may set `Draft` for the I1 reason; `mint_from_intent` (the
+/// sibling `UserTrusted`-only mint site below) MUST NOT and does NOT trigger
+/// a demotion.
+///
 /// # Arguments
 /// * `conn`         — open rusqlite connection for the audit DAG.
 /// * `store`        — mutable ref to the broker-owned ValueStore.
@@ -170,10 +182,25 @@ fn looks_like_email(s: &str) -> bool {
 /// * `parent_hash`  — hash of the preceding DAG event row (`None` for session-root reads).
 ///
 /// # Returns
-/// `(read_event_id, read_hash, value_id)` where:
-/// * `read_event_id` — UUID of the appended `file_read` Event.
-/// * `read_hash`     — SHA-256 hash of that event row (for chaining subsequent events).
-/// * `value_id`      — opaque handle to the minted `ValueRecord`.
+/// `(read_event_id, read_hash, value_id, chain_head_id, chain_head_hash)` where:
+/// * `read_event_id`    — UUID of the appended `file_read` Event. This is the
+///   genuine-taint anchor identity — UNCHANGED meaning from before this plan;
+///   `provenance_chain[0] == read_event_id` and DAG lookups by `"file_read"`
+///   both still resolve to this id.
+/// * `read_hash`        — SHA-256 hash of the `file_read` event row.
+/// * `value_id`         — opaque handle to the minted `ValueRecord`.
+/// * `chain_head_id`    — UUID of the LAST event this call appended to the
+///   audit DAG (the `session_demoted` event minted by Step 4 below). Callers
+///   that continue the connection's causal chain (threading `last_event_id`/
+///   `last_event_hash` onward to the next appended event) MUST use THIS id —
+///   not `read_event_id` — as the next event's `parent_id`. Using
+///   `read_event_id` instead would make the next event a SIBLING of
+///   `session_demoted` (both children of `file_read`), forking the DAG and
+///   breaking `audit::verify_chain`'s single-linear-chain walk (discovered
+///   empirically this plan: `durable_anchor.rs`'s after-exit verify_chain
+///   assertions failed until this fix).
+/// * `chain_head_hash`  — SHA-256 hash of that `session_demoted` event row —
+///   the `parent_hash` callers must forward to the next append.
 pub fn mint_from_read(
     conn: &rusqlite::Connection,
     store: &mut ValueStore,
@@ -181,7 +208,13 @@ pub fn mint_from_read(
     claim: &Claim,
     parent_id: Option<Uuid>,
     parent_hash: Option<&str>,
-) -> Result<(Uuid, String, runtime_core::plan_node::ValueId)> {
+) -> Result<(
+    Uuid,
+    String,
+    runtime_core::plan_node::ValueId,
+    Uuid,
+    String,
+)> {
     // Step 1: Build the file_read audit Event.
     //
     // Taint is set HERE — at read time — never at sink evaluation time.
@@ -234,7 +267,32 @@ pub fn mint_from_read(
         .mint(claim.value.clone(), taint, vec![event_id])
         .map_err(|e| anyhow::anyhow!("mint invariant: {e:?}"))?;
 
-    Ok((event_id, read_hash, value_id))
+    // Step 4 (TAINT-01/TAINT-04, DESIGN-session-trust-state.md §2/§5): atomic
+    // I1 demotion, performed under the SAME `conn` already passed in and
+    // already locked by the caller — NEVER a second lock acquisition
+    // (RESEARCH Pitfall 5). This makes `mint_from_read` the SOLE I1 trust-flip
+    // site, exactly as it is already the sole broker taint-mint site (T-04-03).
+    //
+    // 4a. Mutable read-model update: UPDATE sessions SET status = 'Draft'.
+    update_session_status(conn, session_id, &SessionStatus::Draft)?;
+    // 4b. Append-only ledger entry: a session_demoted Event whose parent_id
+    // equals the file_read Event just appended above (the TAINT-04 causal
+    // edge). NOTE: this parent_id causal edge is a SEPARATE graph from the
+    // value-lineage `provenance_chain[0]` anchor set in Step 3 above — the two
+    // are never conflated (see this function's existing doc warning).
+    let demoted_event_id = Uuid::new_v4();
+    let demoted_event = Event::new(
+        demoted_event_id,
+        Some(event_id),
+        session_id,
+        "broker".into(),
+        "session_demoted".into(),
+        Utc::now(),
+        vec![],
+    );
+    let demoted_hash = append_event(conn, &demoted_event, Some(&read_hash))?;
+
+    Ok((event_id, read_hash, value_id, demoted_event_id, demoted_hash))
 }
 
 /// Append an `intent_received` Event and mint a `UserTrusted` ValueRecord.
@@ -389,7 +447,7 @@ mod tests {
             value: "accounts@ev1l.com".into(),
         };
 
-        let (read_event_id, _read_hash, value_id) =
+        let (read_event_id, _read_hash, value_id, _demoted_id, _demoted_hash) =
             mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
 
         // provenance_chain[0] must equal the returned read_event_id
@@ -421,7 +479,7 @@ mod tests {
             value: "accounts@ev1l.com".into(),
         };
 
-        let (_read_event_id, _read_hash, value_id) =
+        let (_read_event_id, _read_hash, value_id, _demoted_id, _demoted_hash) =
             mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
 
         let record = store.resolve(&value_id).expect("value_id must resolve");
@@ -450,7 +508,7 @@ mod tests {
             value: "accounts@ev1l.com".into(),
         };
 
-        let (_read_event_id, _read_hash, value_id) =
+        let (_read_event_id, _read_hash, value_id, _demoted_id, _demoted_hash) =
             mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
 
         let record = store.resolve(&value_id).expect("value_id must resolve");
@@ -472,7 +530,7 @@ mod tests {
             value: "accounts@ev1l.com".into(),
         };
 
-        let (_read_event_id, _read_hash, _value_id) =
+        let (_read_event_id, _read_hash, _value_id, _demoted_id, _demoted_hash) =
             mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
 
         let evt = find_event_by_type(&conn, &session_id.to_string(), "file_read")
@@ -631,7 +689,7 @@ mod tests {
             value: "reports/pwned.txt".into(),
         };
 
-        let (read_event_id, _read_hash, value_id) =
+        let (read_event_id, _read_hash, value_id, _demoted_id, _demoted_hash) =
             mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
 
         let record = store.resolve(&value_id).expect("value_id must resolve");
@@ -666,6 +724,118 @@ mod tests {
         assert!(
             result.is_err(),
             "an unknown claim_type must fail closed, never default-tag"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // mint_from_read session-demotion tests (TAINT-01, TAINT-04)
+    // -----------------------------------------------------------------------
+
+    /// TAINT-01: after `mint_from_read` returns, the session's persisted row
+    /// status is `Draft` — the atomic I1 demotion pair's read-model half.
+    #[test]
+    fn mint_from_read_demotes_session_to_draft() {
+        use crate::session::{create_session, persist_session};
+        use runtime_core::{SeedProvenance, SessionStatus};
+
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session = create_session(Uuid::new_v4(), SeedProvenance::TrustedArg);
+        persist_session(&conn, &session).unwrap();
+        assert_eq!(
+            session.status,
+            SessionStatus::Active,
+            "sanity: session starts Active before any read"
+        );
+
+        let claim = Claim {
+            claim_type: "email_address".into(),
+            value: "accounts@ev1l.com".into(),
+        };
+        mint_from_read(&conn, &mut store, session.id, &claim, None, None).unwrap();
+
+        let status_json: String = conn
+            .query_row(
+                "SELECT status FROM sessions WHERE id = ?1",
+                rusqlite::params![session.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let status: SessionStatus = serde_json::from_str(&status_json).unwrap();
+        assert_eq!(
+            status,
+            SessionStatus::Draft,
+            "session must be demoted to Draft after mint_from_read"
+        );
+    }
+
+    /// TAINT-04: the `session_demoted` Event's `parent_id` equals the
+    /// `file_read` Event id that `mint_from_read` just appended — the causal
+    /// edge that makes the demotion audited and unbroken.
+    #[test]
+    fn mint_from_read_demotion_causal_edge() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+        let claim = Claim {
+            claim_type: "email_address".into(),
+            value: "accounts@ev1l.com".into(),
+        };
+
+        let (read_event_id, _read_hash, _value_id, _demoted_id, _demoted_hash) =
+            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
+
+        let demoted = find_event_by_type(&conn, &session_id.to_string(), "session_demoted")
+            .unwrap()
+            .expect("session_demoted event must exist");
+        assert_eq!(
+            demoted.parent_id,
+            Some(read_event_id),
+            "session_demoted.parent_id must equal the triggering file_read event id"
+        );
+    }
+
+    /// `mint_from_intent` (the sibling UserTrusted mint site) MUST NOT trigger
+    /// a demotion: no status write, no `session_demoted` event.
+    #[test]
+    fn mint_from_intent_does_not_demote_session() {
+        use crate::session::{create_session, persist_session};
+        use runtime_core::{SeedProvenance, SessionStatus};
+
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session = create_session(Uuid::new_v4(), SeedProvenance::TrustedArg);
+        persist_session(&conn, &session).unwrap();
+
+        mint_from_intent(
+            &conn,
+            &mut store,
+            session.id,
+            "boss@company.com".into(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let status_json: String = conn
+            .query_row(
+                "SELECT status FROM sessions WHERE id = ?1",
+                rusqlite::params![session.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let status: SessionStatus = serde_json::from_str(&status_json).unwrap();
+        assert_eq!(
+            status,
+            SessionStatus::Active,
+            "mint_from_intent must not demote the session"
+        );
+
+        let demoted = find_event_by_type(&conn, &session.id.to_string(), "session_demoted")
+            .unwrap();
+        assert!(
+            demoted.is_none(),
+            "mint_from_intent must not append a session_demoted event"
         );
     }
 }
