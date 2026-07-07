@@ -111,11 +111,11 @@ Plans:
   3. Denying is durable: the effect never proceeds, and the same `effect_id` cannot later be confirmed.
   4. Every confirm/deny decision is recorded as an audit event anchored to `SinkBlockedAnchor.effect_id`, and the release path executes in the TCB (not a policy file).
 
-**Plans**: 3 plans
+**Plans**: 1/3 plans executed
 
 **Wave 1**
 
-- [ ] 10-01-PLAN.md — PendingConfirmation types + pending_confirmations side table + accessors (durable checkpoint substrate)
+- [x] 10-01-PLAN.md — PendingConfirmation types + pending_confirmations side table + accessors (durable checkpoint substrate)
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -151,5 +151,5 @@ Plans:
 | 7. file.create Sink, Enforcement Hardening & Full Acceptance | v1.1 | 6/6 | Complete | 2026-07-01 |
 | 8. Session-Trust & Confirmation Design Gate | v1.2 | 3/3 | Complete    | 2026-07-06 |
 | 9. Session Trust State (I1 + I0) | v1.2 | 4/4 | Complete    | 2026-07-07 |
-| 10. Single-Shot Confirmation Loop | v1.2 | 0/? | Not started | - |
+| 10. Single-Shot Confirmation Loop | v1.2 | 1/3 | In Progress|  |
 | 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 0/? | Not started | - |
