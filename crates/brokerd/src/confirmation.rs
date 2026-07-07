@@ -341,7 +341,7 @@ pub fn render_block_display(pc: &PendingConfirmation) -> String {
 /// `ValueStore`, or reads/writes any allowlist/standing-policy structure
 /// (CONFIRM-02, T-10-05, "Confirm MUST NOT Re-Invoke submit_plan_node").
 pub fn confirm(
-    conn: &rusqlite::Connection,
+    conn: &mut rusqlite::Connection,
     effect_id: &str,
     workspace_root: &adapter_fs::workspace::WorkspaceRoot,
 ) -> Result<ConfirmOutcome> {
@@ -710,11 +710,11 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let ws = WorkspaceRoot::open(&root).unwrap();
 
-        let conn = open_audit_db(":memory:").unwrap();
+        let mut conn = open_audit_db(":memory:").unwrap();
         let (effect_id, session_id, blocked_event_id) =
             seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
 
-        let outcome = confirm(&conn, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm");
         assert_eq!(outcome, ConfirmOutcome::Released);
 
         let on_disk = std::fs::read_to_string(root.join("out.txt")).unwrap();
@@ -743,14 +743,14 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let ws = WorkspaceRoot::open(&root).unwrap();
 
-        let conn = open_audit_db(":memory:").unwrap();
+        let mut conn = open_audit_db(":memory:").unwrap();
         let (effect_id, _session_id, _blocked_event_id) =
             seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
 
-        let first = confirm(&conn, &effect_id.to_string(), &ws).expect("first confirm");
+        let first = confirm(&mut conn, &effect_id.to_string(), &ws).expect("first confirm");
         assert_eq!(first, ConfirmOutcome::Released);
 
-        let second = confirm(&conn, &effect_id.to_string(), &ws).expect("second confirm");
+        let second = confirm(&mut conn, &effect_id.to_string(), &ws).expect("second confirm");
         assert_eq!(second, ConfirmOutcome::AlreadyTerminal);
 
         let entries: Vec<_> = std::fs::read_dir(&root).unwrap().collect();
@@ -773,7 +773,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let ws = WorkspaceRoot::open(&root).unwrap();
 
-        let conn = open_audit_db(":memory:").unwrap();
+        let mut conn = open_audit_db(":memory:").unwrap();
         let (effect_id, session_id, blocked_event_id) =
             seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
 
@@ -791,7 +791,7 @@ mod tests {
             .unwrap();
         assert_eq!(pc.state, PendingConfirmationState::Denied);
 
-        let later = confirm(&conn, &effect_id.to_string(), &ws).expect("confirm after deny");
+        let later = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm after deny");
         assert_eq!(later, ConfirmOutcome::AlreadyTerminal);
         assert!(
             !root.join("out.txt").exists(),
@@ -810,13 +810,13 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let ws = WorkspaceRoot::open(&root).unwrap();
 
-        let conn = open_audit_db(":memory:").unwrap();
+        let mut conn = open_audit_db(":memory:").unwrap();
         let (effect_id, _session_id, blocked_event_id) =
             seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
 
         redact_blocked_literal(&conn, &blocked_event_id.to_string()).unwrap();
 
-        let outcome = confirm(&conn, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm");
         assert_eq!(outcome, ConfirmOutcome::BlockedLiteralRedacted);
         assert!(
             !root.join("out.txt").exists(),
@@ -834,11 +834,11 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let ws = WorkspaceRoot::open(&root).unwrap();
 
-        let conn = open_audit_db(":memory:").unwrap();
+        let mut conn = open_audit_db(":memory:").unwrap();
         let unknown = Uuid::new_v4().to_string();
 
         assert_eq!(
-            confirm(&conn, &unknown, &ws).expect("confirm"),
+            confirm(&mut conn, &unknown, &ws).expect("confirm"),
             ConfirmOutcome::UnknownEffect
         );
         assert_eq!(
