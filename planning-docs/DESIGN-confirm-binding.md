@@ -273,9 +273,12 @@ originating read Event — so any OTHER module attempting to mint a fresh-rooted
 build. The intended gate is a grep of the shape "the token `mint_from_read` (and its successor's name)
 MUST NOT appear under `crates/` outside the raw-read extraction module," with the extraction module's
 own definition/call site annotated as the sole allowed locus (the same allow-list-annotation pattern the
-`EffectRequest` gate uses). **This is a DESIGN-level specification of a FUTURE gate ONLY; this
-documentation-only phase MUST NOT modify `scripts/check-invariants.sh` — adding the gate is a later
-phase's action item.**
+`EffectRequest` gate uses). **Phase 15 MUST implement this gate.** This was originally specified as a future, unscheduled
+hardening item deferred past this documentation-only phase — but Phase 15 is the phase that
+introduces derived/transform mints, making the laundering path this gate defends against load-bearing
+for the first time. Deferring it further was correct only under the assumption that Phase 15 would
+not widen the mint surface; that assumption is now false, so the gate lands in the same phase as the
+surface it guards.
 
 **MUST (Phase-15 fixture — twin to D-22's CRLF fixture):** Phase 15 MUST include a fixture that, for a
 **transformed** tainted value (base64-decoded and/or concatenated), asserts the bytes shown at confirm

@@ -214,39 +214,70 @@ literal-leak-on-failure fixes were CONFIRMED CLOSED by round 3.
   sounds architecturally sound must still be checked against the actual codebase before being issued);
   round 3 was clean modulo the 3 pins above.
 
+- **Round 4 — PHASE-ASSIGNMENT AMENDMENT (post-approval, during Phase 15 execution planning).** Not a
+  reopening of the design gate — a strict phase-assignment move with zero change to the gate's
+  content, requested by caprun-opus-77 during Phase 15's plan review and applied under the same
+  `DEC-ai-review-satisfies-human-gate` authorization (no new adversarial round required for a
+  phase-assignment move that strictly strengthens). `DESIGN-confirm-binding.md`'s
+  "Provenance-Threading for Transform-Derived Mints" section previously said the `check-invariants.sh`
+  grep-gate backstop (finding #6, round 2) was a FUTURE, unscheduled item and that "this
+  documentation-only phase MUST NOT modify `scripts/check-invariants.sh` — adding the gate is a later
+  phase's action item." Phase 15 is the phase that introduces derived/transform mints — the exact
+  surface this gate defends against — making the backstop load-bearing for the first time; deferring
+  it further was correct only while Phase 15 was assumed not to widen the mint surface, and that
+  assumption is now false.
+
+  **Prior text (round-3-final, hash `fab14ec9...`):**
+  > This is a DESIGN-level specification of a FUTURE gate ONLY; this documentation-only phase MUST NOT
+  > modify `scripts/check-invariants.sh` — adding the gate is a later phase's action item.
+
+  **New text (Round 4, hash `e8927778...`):**
+  > Phase 15 MUST implement this gate. This was originally specified as a future, unscheduled hardening
+  > item deferred past this documentation-only phase — but Phase 15 is the phase that introduces
+  > derived/transform mints, making the laundering path this gate defends against load-bearing for the
+  > first time. Deferring it further was correct only under the assumption that Phase 15 would not
+  > widen the mint surface; that assumption is now false, so the gate lands in the same phase as the
+  > surface it guards.
+
+  No other sentence in either document was touched. `DESIGN-content-adapter-mediation.md` is
+  byte-identical to its round-3-final state (hash unchanged: `ca6294c3...`).
+
+  **Sign-off:** caprun-opus-77 (coordinator, delegated milestone-level decision authority by Ben Lamm),
+  per `DEC-ai-review-satisfies-human-gate`. Gate status remains **UNBLOCKED** — this amendment does not
+  reopen or re-block Phases 13-16.
+
 ## Documents Under Review
 
-These are the **post-round-3-tightening (final, pre-approval)** hashes — the exact bytes caprun-opus-77
-confirmed before Decision: APPROVED was set. Prior rounds' hashes are retained below for provenance
-(full hash history is kept, never overwritten/deleted).
+These are the **post-round-4-amendment (current)** hashes. Prior rounds' hashes are retained below for
+provenance (full hash history is kept, never overwritten/deleted).
 
-| Document | sha256 (final, post-round-3-tightening) |
+| Document | sha256 (current, post-round-4-amendment) |
 |----------|--------|
-| `planning-docs/DESIGN-content-adapter-mediation.md` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` |
-| `planning-docs/DESIGN-confirm-binding.md` | `fab14ec90db3a8fc5c41864fa045b1db5bf9644615c74bd33530408f35c08c17` |
+| `planning-docs/DESIGN-content-adapter-mediation.md` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged since round 3) |
+| `planning-docs/DESIGN-confirm-binding.md` | `e89277785cd62378e562d04341d607a6cb7e64e1e9624f766fadbca361feb7bd` |
 
 **Hash history (provenance — do not delete prior rounds):**
 
-| Document | round-1 input | round-2 input (post-round-1-fix) | round-3 input (post-round-2-fix) | final (post-round-3-tightening) |
-|----------|---------------|----------------------------------|----------------------------------|----------------------------------|
-| `DESIGN-content-adapter-mediation.md` | `c2506396852d4bd619d7985cf2973cdd3b140177cff3c5d82f53038b3fa6724c` | `bec703fef52a6342a38d2924ef4f56b0b18c6873c09388bd8a2928fa630ec07e` | `ba365cd082b648b104177caedd4922d790f24e77b8019fedf31a0a654c23e792` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` |
-| `DESIGN-confirm-binding.md` | `c7a614233324f8a3d012a27836e4b891f27f2aff4197bcbd8d85e3db65b3f1f2` | `68dfd9d9e8c6c4e538234c5b0130914fbf77be9a0c65f6c9509292a8c54eb470` | `f4b6e1c1099a5758dfd054ca79beb9a197ffaeba4218e693bbfefc9ddf2b6d49` | `fab14ec90db3a8fc5c41864fa045b1db5bf9644615c74bd33530408f35c08c17` |
+| Document | round-1 input | round-2 input (post-round-1-fix) | round-3 input (post-round-2-fix) | round-3-final (post-tightening, APPROVED) | round-4 (post-phase-assignment-amendment) |
+|----------|---------------|----------------------------------|----------------------------------|----------------------------------|----------------------------------|
+| `DESIGN-content-adapter-mediation.md` | `c2506396852d4bd619d7985cf2973cdd3b140177cff3c5d82f53038b3fa6724c` | `bec703fef52a6342a38d2924ef4f56b0b18c6873c09388bd8a2928fa630ec07e` | `ba365cd082b648b104177caedd4922d790f24e77b8019fedf31a0a654c23e792` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged) |
+| `DESIGN-confirm-binding.md` | `c7a614233324f8a3d012a27836e4b891f27f2aff4197bcbd8d85e3db65b3f1f2` | `68dfd9d9e8c6c4e538234c5b0130914fbf77be9a0c65f6c9509292a8c54eb470` | `f4b6e1c1099a5758dfd054ca79beb9a197ffaeba4218e693bbfefc9ddf2b6d49` | `fab14ec90db3a8fc5c41864fa045b1db5bf9644615c74bd33530408f35c08c17` | `e89277785cd62378e562d04341d607a6cb7e64e1e9624f766fadbca361feb7bd` |
 
-Hashes were re-computed with `shasum -a 256` after the round-3 tightenings (endpoint-sourcing MUST,
-all-three-events opaque payload, citation/parenthetical fixes). These are the FINAL hashes — no further
-content changes are expected before APPROVED. Anyone re-verifying this record should confirm
+Hashes were re-computed with `shasum -a 256` after the Round-4 phase-assignment amendment (Phase 15
+in-progress, 2026-07-08). `DESIGN-content-adapter-mediation.md` is untouched (hash identical to the
+round-3-final/APPROVED value). Anyone re-verifying this record should confirm
 `shasum -a 256 planning-docs/DESIGN-content-adapter-mediation.md planning-docs/DESIGN-confirm-binding.md`
-matches the final row above.
+matches the current row above.
 
 <!-- shasum -->
 ```
 $ shasum -a 256 planning-docs/DESIGN-content-adapter-mediation.md planning-docs/DESIGN-confirm-binding.md
-ba365cd082b648b104177caedd4922d790f24e77b8019fedf31a0a654c23e792  planning-docs/DESIGN-content-adapter-mediation.md
-f4b6e1c1099a5758dfd054ca79beb9a197ffaeba4218e693bbfefc9ddf2b6d49  planning-docs/DESIGN-confirm-binding.md
+ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9  planning-docs/DESIGN-content-adapter-mediation.md
+e89277785cd62378e562d04341d607a6cb7e64e1e9624f766fadbca361feb7bd  planning-docs/DESIGN-confirm-binding.md
 ```
-(Re-run after round-2 fixes, 2026-07-07; commits `30addc6` + `d0ec29a`. Full hash history — round-1
-input, round-2 input, round-3 input — is preserved in the provenance table above; prior rounds' hashes
-are retained, not overwritten.)
+(Re-run after the Round-4 phase-assignment amendment, 2026-07-08. Full hash history — round-1 input
+through round-3-final/APPROVED — is preserved in the provenance table above; prior rounds' hashes are
+retained, not overwritten.)
 
 ---
 
@@ -591,11 +622,22 @@ a benign `confirm_granted`-appended-before-CAS audit-legibility wart on a losing
 already acknowledged in the existing code's comments, non-security (the CAS remains the sole
 authorization gate, so no double-send results).
 
-**Final hashes (post-round-3-tightening, as APPROVED):**
+**Final hashes as APPROVED (post-round-3-tightening):**
 - `planning-docs/DESIGN-content-adapter-mediation.md`:
   `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9`
 - `planning-docs/DESIGN-confirm-binding.md`:
   `fab14ec90db3a8fc5c41864fa045b1db5bf9644615c74bd33530408f35c08c17`
+
+**Round 4 (post-approval phase-assignment amendment, 2026-07-08):** during Phase 15 planning,
+`DESIGN-confirm-binding.md`'s check-invariants.sh grep-gate backstop was reassigned from an
+unscheduled future item to an explicit Phase-15 obligation — a strict phase-assignment move, zero
+change to gate content, applied under the same `DEC-ai-review-satisfies-human-gate` authorization
+(no new adversarial round required). Decision remains **APPROVED**; Gate status remains **UNBLOCKED**.
+Current hashes:
+- `planning-docs/DESIGN-content-adapter-mediation.md`:
+  `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged)
+- `planning-docs/DESIGN-confirm-binding.md`:
+  `e89277785cd62378e562d04341d607a6cb7e64e1e9624f766fadbca361feb7bd`
 
 **Authorization and sign-off:** Ben Lamm authorized AI-panel-only adversarial review (no personal
 human read) under `DEC-ai-review-satisfies-human-gate` (`.planning/PROJECT.md` Key Decisions table),
