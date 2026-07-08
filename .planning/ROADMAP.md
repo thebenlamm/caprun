@@ -172,16 +172,20 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   4. A fully-trusted send (recipient+body from a trusted, non-doc source) proceeds with NO block and NO confirm gate, in the same acceptance run as the hostile block — proving the gate is taint-driven.
   5. A send with a tainted body but a trusted recipient still blocks — proving the body dimension isn't dead code redundant with the routing block.
 
-**Plans**: 3 plans
+**Plans**: 4 plans
 
 **Wave 1**
 
-- [ ] 16-01-PLAN.md — Combined-digest producer: Event.combined_digest/blocked_arg_names + shared combined_digest() primitive + Block-time binding into Event & PendingConfirmation (CONFIRM-03)
+- [ ] 16-01-PLAN.md — Combined-digest producer (BLOCKER-2 widened to FULL resolved_args set): Event.combined_digest/blocked_arg_names + shared combined_digest() primitive + Block-time binding into Event & PendingConfirmation + open-time schema migration (CONFIRM-03)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 16-02-PLAN.md — Confirm-side binding: per-arg verbatim narration + Draft posture + T-14-08 test-then-replace + recompute-and-compare fail-closed gate (CONFIRM-01, CONFIRM-03, CONFIRM-04)
-- [ ] 16-03-PLAN.md — Live negative controls: taint-driven A/B (trusted-intent Allowed vs doc-derived Blocked) + body-tainted-only single-anchor block (CONTROL-01, CONTROL-02)
+- [ ] 16-02-PLAN.md — Confirm-side binding: ALL-args verbatim narration + `caprun review` pre-decision surface + Draft posture + T-14-08 test-then-replace + chain-verify + FULL-set recompute-and-compare fail-closed gate + no-fork mismatch (CONFIRM-01, CONFIRM-03, CONFIRM-04)
+- [ ] 16-03-PLAN.md — Live negative control CONTROL-02: body-tainted-only, recipient-trusted single-anchor block (CONTROL-02)
+
+**Wave 3** *(blocked on Wave 1 + Wave 2; reviewed as a distinct security-surface unit)*
+
+- [ ] 16-04-PLAN.md — email.send Allowed-decision dispatch + BLOCKER-1 guards (ProvideIntent once/before-RequestFd, executor non-live Deny, disabled CreateSession IPC arm) + MAJOR-4 durable attempt ledger + MAJOR-5 caller-comment + BLOCKER-3 behavioral test surface + CONTROL-01 live A/B (CONTROL-01)
 
 ### Phase 17: Live Acceptance & Framing Honesty
 
