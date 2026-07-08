@@ -123,7 +123,15 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   1. Submitting a plan node with a tainted value occupying the email sink's body arg is Blocked by the executor, with the same literal-value human-confirm UX as the existing routing/recipient block.
   2. The content-sensitivity classification is implemented as one hardcoded match arm in the executor TCB, scoped to the email sink's args only — not a reusable content-classification framework.
 
-**Plans**: TBD
+**Plans**: 2 plans
+
+**Wave 1**
+
+- [ ] 14-01-PLAN.md — Plural block decision (BlockedArg / Vec-shaped BlockedPendingConfirmation) + collect-then-Block loop + attachment descope (D-14/D-23) + executor proof tests (CONTENT-01, CONTENT-02)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 14-02-PLAN.md — Plural audit Event (Event.anchors) + brokerd/cli consumer migration + golden-byte re-verify, restoring a green workspace (CONTENT-01)
 
 ### Phase 15: Deterministic Doc→Action Extraction
 
