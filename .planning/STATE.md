@@ -5,8 +5,8 @@ milestone_name: — Doc → Action Assistant
 current_phase: 15
 current_phase_name: Deterministic Doc→Action Extraction
 status: executing
-stopped_at: Completed 15-02-PLAN.md
-last_updated: "2026-07-08T14:05:20.781Z"
+stopped_at: Completed 15-02-PLAN.md and 15-03-PLAN.md (Wave 2, parallel)
+last_updated: "2026-07-08T14:08:14.624Z"
 last_activity: 2026-07-08
 last_activity_desc: Phase 15 execution started
 progress:
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 15 (Deterministic Doc→Action Extraction) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4 (15-04, Wave 3, remaining)
 Status: Ready to execute
 Last activity: 2026-07-08 — Phase 15 execution started
 
@@ -55,6 +55,7 @@ Last activity: 2026-07-08 — Phase 15 execution started
 | Phase 14 P02 | 50min | 3 tasks | 10 files |
 | Phase 15-deterministic-doc-action-extraction P01 | 75min | 3 tasks | 3 files |
 | Phase 15-deterministic-doc-action-extraction P02 | 11min | 3 tasks | 3 files |
+| Phase 15-deterministic-doc-action-extraction P03 | 55min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -72,6 +73,8 @@ completes and is adversarially reviewed (mirrors v1.0 Phase 2 / v1.2 Phase 8).
 - [Phase ?]: 15-01: mint_from_derivation mints the ValueRecord before constructing the derivation Event (reverse of mint_from_read's order), since the event's hashed payload embeds derived_value_id == the minted value_id
 - [Phase ?]: 15-01: check-invariants.sh Gate 3 exempts files under tests/ and #[cfg(test)] modules (in addition to the 3 named allowed loci) to avoid false-flagging pre-existing legitimate test infrastructure that already calls mint_from_read/ValueStore::mint directly
 - [Phase ?]: 15-02: assert_unbroken_edge/genuine_derivation_binds implemented as reusable Result-returning routines shared by the positive per-anchor walk and both anti-staple negative controls (finding #2/#10/#12 identity-bound predicate, no-LIMIT derivation scan)
+- [Phase ?]: 15-03: mint_from_read Err surfaced as BrokerResponse::Error on the wire (not connection-killing ?) for the whole ReportClaims arm, not just DocFragment — Fail-closed for attacker-controlled input; no behavior change for EmailAddress/RelativePath (never actually fail today)
+- [Phase ?]: 15-03: ReportDerivedClaim resolves input handles to owned ValueRecord clones before calling mint_from_derivation — Avoids simultaneous mutable+immutable ValueStore borrow, per mint_from_derivation's own documented calling convention
 
 ### Pending Todos
 
@@ -95,8 +98,8 @@ pre-existing item, still benign). No new deferrals from roadmap creation.
 
 ## Session Continuity
 
-Last session: 2026-07-08T14:05:20.773Z
-Stopped at: Completed 15-02-PLAN.md
+Last session: 2026-07-08T14:08:14.617Z
+Stopped at: Completed 15-02-PLAN.md and 15-03-PLAN.md (Wave 2, parallel)
 Resume file: None
 
 ## Operator Next Steps

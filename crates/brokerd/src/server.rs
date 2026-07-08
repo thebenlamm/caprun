@@ -40,7 +40,7 @@
 
 use crate::audit::append_event;
 use crate::proto::{BrokerRequest, BrokerResponse, WorkerClaim};
-use crate::quarantine::{mint_from_intent, mint_from_read, Claim};
+use crate::quarantine::{mint_from_derivation, mint_from_intent, mint_from_read, Claim};
 use runtime_core::intent::CaprunIntent;
 use crate::session::{create_session, persist_session};
 use adapter_fs::pass_fd;
@@ -353,8 +353,17 @@ pub async fn dispatch_request(
                         claim_type: "relative_path".into(),
                         value: path,
                     },
+                    // Phase 15 (15-03): a raw doc fragment (one half of a
+                    // Reply-To:/Domain: pair) — mint_from_read enforces
+                    // looks_like_doc_fragment below, so an assembled ('@'-
+                    // containing) recipient is rejected, not silently
+                    // accepted as a fresh single-element chain (finding #1a).
+                    WorkerClaim::DocFragment(fragment) => Claim {
+                        claim_type: "doc_fragment".into(),
+                        value: fragment,
+                    },
                 };
-                let (_read_event_id, _read_hash, value_id, demoted_event_id, demoted_hash) = {
+                let mint_result = {
                     let locked = conn
                         .lock()
                         .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
@@ -368,8 +377,30 @@ pub async fn dispatch_request(
                         // audit DAG is ONE unbroken parent_id chain (ACC-05 / verify_chain).
                         Some(*last_event_id),
                         Some(last_event_hash),
-                    )?
+                    )
                 };
+                // finding #1c: mint_from_read now enforces looks_like_doc_fragment
+                // for the doc_fragment claim_type, so it CAN return Err on a live,
+                // attacker-controlled message (an assembled recipient sent as a
+                // fresh DocFragment). Surface that Err as a Denied/error response
+                // on the wire — NEVER unwrap/propagate it as a connection-killing
+                // internal error. Mints nothing for this claim; no ClaimsReceived
+                // is sent for this batch (fail-closed, no partial success report).
+                let (_read_event_id, _read_hash, value_id, demoted_event_id, demoted_hash) =
+                    match mint_result {
+                        Ok(tuple) => tuple,
+                        Err(e) => {
+                            eprintln!("[brokerd] ReportClaims mint_from_read error: {e}");
+                            send_response(
+                                stream,
+                                &BrokerResponse::Error {
+                                    message: "ReportClaims rejected (fail-closed)".into(),
+                                },
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    };
                 // Advance the chain head to `session_demoted` — the LAST event
                 // mint_from_read appended — NOT to the file_read event. Using
                 // file_read's own id/hash here would make the NEXT appended
@@ -566,6 +597,105 @@ pub async fn dispatch_request(
             // Only send the decision AFTER the durable append (and any sink
             // invocation) succeeded.
             send_response(stream, &BrokerResponse::PlanNodeDecision { decision }).await?;
+        }
+
+        BrokerRequest::ReportDerivedClaim {
+            transformed_literal,
+            transform,
+            input_value_ids,
+        } => {
+            // Resolve every input handle against THIS connection's
+            // broker-owned ValueStore, failing closed (Pitfall 1) if ANY is
+            // missing (dangling/forged/cross-connection handle) — mint
+            // NOTHING rather than mint from a partially-resolved set.
+            //
+            // Clone each resolved &ValueRecord into an OWNED ValueRecord
+            // immediately: mint_from_derivation's `inputs: &[&ValueRecord]`
+            // param and its `store: &mut ValueStore` param would otherwise
+            // borrow-conflict if `inputs` referenced `value_store` directly
+            // (mint_from_derivation's own doc comment: "the caller resolves
+            // ValueIds to records ... before calling; the broker never
+            // re-resolves them from store here").
+            let mut resolved: Vec<runtime_core::value_record::ValueRecord> =
+                Vec::with_capacity(input_value_ids.len());
+            let mut unresolved = false;
+            for input_id in &input_value_ids {
+                match value_store.resolve(input_id) {
+                    Some(record) => resolved.push(record.clone()),
+                    None => {
+                        unresolved = true;
+                        break;
+                    }
+                }
+            }
+            if unresolved {
+                send_response(
+                    stream,
+                    &BrokerResponse::Error {
+                        message: "ReportDerivedClaim rejected: an input_value_id did not \
+                                  resolve in this connection's ValueStore (fail-closed)"
+                            .into(),
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
+            let input_refs: Vec<&runtime_core::value_record::ValueRecord> =
+                resolved.iter().collect();
+
+            // mint_from_derivation is the SOLE new mint call this arm makes
+            // (never ValueStore::mint directly, sole-taint-mint-site
+            // discipline). It performs its own byte-verify + every-element
+            // file_read-root guards internally; this arm does NOT parse,
+            // extract, or re-apply the transform itself — the worker already
+            // applied it (EXTRACT-01: extraction/transform stays worker-side).
+            let mint_result = {
+                let locked = conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                mint_from_derivation(
+                    &locked,
+                    value_store,
+                    session_id,
+                    transformed_literal,
+                    &input_refs,
+                    transform.as_mint_tag(),
+                    // Causal parent = the connection chain head (DESIGN §0),
+                    // mirroring ReportClaims/SubmitPlanNode's threading.
+                    Some(*last_event_id),
+                    Some(last_event_hash),
+                )
+            };
+
+            match mint_result {
+                Ok((derivation_event_id, derivation_hash, value_id)) => {
+                    // Advance the causal chain ONLY on the Ok path — mirrors
+                    // the ReportClaims arm's chain-head-advance discipline
+                    // exactly. session_status is NOT touched here (this arm
+                    // is not an I1 trust-flip site — mint_from_read already
+                    // demoted the session when the raw fragments were read).
+                    *last_event_id = derivation_event_id;
+                    *last_event_hash = derivation_hash;
+                    send_response(stream, &BrokerResponse::DerivedClaimReceived { value_id })
+                        .await?;
+                }
+                Err(e) => {
+                    // Surface ALL of mint_from_derivation's fail-closed
+                    // guards (zero inputs; ANY-element non-file_read-rooted
+                    // untrusted union, finding #3 + MEDIUM R1/R2; concat
+                    // byte-verify mismatch, MAJOR-1) as Denied — mint
+                    // nothing, advance NO chain head (the broker never
+                    // partially commits a derivation).
+                    eprintln!("[brokerd] ReportDerivedClaim mint_from_derivation error: {e}");
+                    send_response(
+                        stream,
+                        &BrokerResponse::Error {
+                            message: "ReportDerivedClaim rejected (fail-closed)".into(),
+                        },
+                    )
+                    .await?;
+                }
+            }
         }
 
         BrokerRequest::ProvideIntent { intent } => {
