@@ -59,7 +59,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 **Milestone goal:** caprun ingests an untrusted document containing an embedded injection, deterministically extracts a "send to X" action (recipient + body derived from the doc's content, no LLM planner), and attempts a real email send. The read demotes the session (I1, existing); the tainted recipient AND body both block at the sink (I2 + new CONTENT-01); `caprun confirm`/`deny` shows verbatim recipient+body+provenance; confirm sends exactly once via a real broker-mediated SMTP adapter, deny sends nothing — one unbroken audit DAG for both outcomes, plus a clean-send negative control in the same run, proven live on real Linux via Colima+Docker.
 
 - [x] **Phase 12: Content, Adapter & Confirm-Binding Design Gate** - A reviewed, adversarially-reviewed DESIGN doc covering content-sensitivity semantics, real-adapter mediation, and confirm-binding exists before any executor/TCB code for this milestone is written (completed 2026-07-07)
-- [ ] **Phase 13: Real Broker-Mediated SMTP Adapter** - caprun can send a real email through a broker-mediated adapter — worker never touches the network, secrets never leave the broker, and the send is idempotent/failure-safe
+- [x] **Phase 13: Real Broker-Mediated SMTP Adapter** - caprun can send a real email through a broker-mediated adapter — worker never touches the network, secrets never leave the broker, and the send is idempotent/failure-safe (completed 2026-07-08)
 - [ ] **Phase 14: Content-Sensitive Sink-Arg Blocking** - The executor blocks a tainted email body the same way it already blocks a tainted recipient
 - [ ] **Phase 15: Deterministic Doc→Action Extraction** - A confined, deterministic extractor turns a hostile document's bytes into a plan node, with a proven unbroken audit-DAG edge from read to block, including through a transformation
 - [ ] **Phase 16: Confirm UX, Literal Binding & Negative Controls** - A human sees the verbatim, provenance-narrated recipient and body before deciding; confirm is bound to the exact resolved literals; the gate is proven taint-driven, not a blanket email block
@@ -99,7 +99,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   4. A re-issued confirm, a broker restart mid-send, or a duplicate plan-node submission cannot double-fire — the audit DAG records exactly ONE send.
   5. An adapter failure after confirm (connection refused / 5xx) surfaces the error (never swallowed), is recorded in the DAG, and cannot silently retry into a double-send.
 
-**Plans**: 3/4 plans executed
+**Plans**: 4/4 plans complete
 **Wave 1**
 
 - [x] 13-01-PLAN.md — SMTP adapter module (email_smtp.rs) + lettre dep + structural CRLF gate (SMTP-05)
@@ -111,7 +111,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 13-04-PLAN.md — Mailpit acceptance + CRLF fixture + reusable verification recipe (SMTP-03, SMTP-05)
+- [x] 13-04-PLAN.md — Mailpit acceptance + CRLF fixture + reusable verification recipe (SMTP-03, SMTP-05)
 
 ### Phase 14: Content-Sensitive Sink-Arg Blocking
 
@@ -192,7 +192,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 | 10. Single-Shot Confirmation Loop | v1.2 | 3/3 | Complete | 2026-07-07 |
 | 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 1/1 | Complete | 2026-07-07 |
 | 12. Content, Adapter & Confirm-Binding Design Gate | v1.3 | 3/3 | Complete   | 2026-07-07 |
-| 13. Real Broker-Mediated SMTP Adapter | v1.3 | 3/4 | In Progress|  |
+| 13. Real Broker-Mediated SMTP Adapter | v1.3 | 4/4 | Complete   | 2026-07-08 |
 | 14. Content-Sensitive Sink-Arg Blocking | v1.3 | 0/0 | Not started | - |
 | 15. Deterministic Doc→Action Extraction | v1.3 | 0/0 | Not started | - |
 | 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 0/0 | Not started | - |
