@@ -183,6 +183,18 @@ A Phase-15 field-token extractor (e.g. for a concat-recipient's two halves, or a
 **Example (illustrative — this is new code, not existing code to cite verbatim):**
 ```rust
 // Illustrative shape for a NEW crates/brokerd/src/quarantine.rs function,
+// ⚠ SUPERSEDED SKETCH — read 15-01-PLAN.md Task 2 for the authoritative shape.
+// This illustrative sketch predates plan-review findings #2/#3/#10 and is now
+// INCOMPLETE. The executable spec (15-01 Task 2) additionally requires:
+//   • the derivation Event is built via Event::derivation (NOT Event::new), carrying
+//     the hashed payload derived_value_id/input_value_ids/input_provenance_chains/
+//     transform_kind (finding #2) — the sketch's Event::new omits these;
+//   • the taint union DROPS UserTrusted when any untrusted label is present (finding #3);
+//   • a file_read-root guard: when the union is_untrusted, provenance_chain[0] MUST
+//     resolve (session-scoped) to a file_read event, else fail closed (finding #3);
+//   • a transform_kind parameter.
+// The sketch below is retained only to show the atomicity/dedup shape.
+//
 // modeled directly on mint_from_read's existing atomicity discipline
 // (append event + mint record in ONE call, quarantine.rs:204-296).
 pub fn mint_from_derivation(
@@ -288,7 +300,7 @@ Not applicable — this is a greenfield feature-addition phase (new extraction/m
 ### Pitfall 4: Building the anti-staple check as "chain is non-empty" instead of "chain root is genuine"
 **What goes wrong:** The EXISTING guard (`crates/executor/src/value_store.rs:70-72`, `EmptyProvenance`) already rejects an EMPTY `provenance_chain`. It is tempting to declare EXTRACT-02's "anti-staple check" satisfied by this existing guard alone. It is NOT — a FABRICATED, non-empty, single-element chain rooted at a random fresh `Uuid::new_v4()` (never appended to the DAG as any event) or at a genuine-looking but UNRELATED event (e.g., an `intent_received` event, which carries no untrusted taint) would pass the non-empty check while still being "taint stapled on at the sink" in every meaningful sense.
 **Why it happens:** The existing invariant (non-empty chain) is necessary but not sufficient, and it's easy to conflate "an invariant exists" with "the invariant we need exists."
-**How to avoid:** The EXTRACT-02 test must POSITIVELY resolve every chain element to a REAL row in the `events` table (via the new `find_event_by_id`) and assert that row's `event_type` is `"file_read"` (a genuine root) or, transitively, that a `"derivation"` event's chain resolves further back to a `"file_read"` — and must include a NEGATIVE control: a hand-constructed anchor whose `provenance_chain` contains a `Uuid::new_v4()` that was NEVER appended to the DAG must FAIL the check (this is the actual "anti-staple" assertion — a passing check on genuine data proves nothing without a paired failing check on fabricated data, mirroring this project's own `tamper_evidence_mutating_payload_breaks_verify_chain` pattern in `durable_anchor.rs:323-369`, which asserts BOTH a passing baseline AND a failing tampered case).
+**How to avoid:** The EXTRACT-02 test must POSITIVELY resolve every chain element to a REAL row in the `events` table (via the new `find_event_by_id`) and assert that row's `event_type` is `"file_read"` — EVERY `provenance_chain` element MUST be `event_type == "file_read"`; a `"derivation"` event appearing as a `provenance_chain` element is a fail-closed error (REVISED per plan-review finding #10 — the earlier "or, transitively, a derivation event's chain resolves further back" phrasing is STRUCK: it invited walking a derivation event as a chain element, violating the locked two-graphs decision). The genuine-derivation edge is a SEPARATE predicate over the derivation Event's HASHED PAYLOAD (finding #2): ∃ a `"derivation"` event whose payload `derived_value_id == anchor.value_id` AND `∪input_provenance_chains == anchor.provenance_chain` — checked DB-alone, never by chain-element recursion. The test must ALSO identity-pin each anchor's root vector to the specific minted `file_read` ids (finding #12), and include NEGATIVE controls: (A) a hand-constructed anchor whose `provenance_chain` contains a `Uuid::new_v4()` never appended to the DAG must FAIL; (B) a SAME-SESSION naive re-mint of the concatenated literal must FAIL on the payload-binding predicate, never on a session-wide existence query (finding #11) — a passing check on genuine data proves nothing without a paired failing check on fabricated data, mirroring this project's own `tamper_evidence_mutating_payload_breaks_verify_chain` pattern in `durable_anchor.rs:323-369`, which asserts BOTH a passing baseline AND a failing tampered case.
 **Warning signs:** An EXTRACT-02 test file with no test that constructs a deliberately-fabricated/re-anchored chain and asserts REJECTION.
 
 ### Pitfall 5: Forgetting `sink_schema.rs`'s `required: &[]` for `email.send`
