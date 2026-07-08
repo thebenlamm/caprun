@@ -24,20 +24,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — now extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, and (v1.3, in progress) with content-sensitive body blocking plus a real broker-mediated SMTP send, both proven live on real Linux.
-**Current focus:** Phase 13 — Real Broker-Mediated SMTP Adapter
+**Current focus:** Phase 13 COMPLETE (real SMTP adapter, verified live on Linux). Phase 14 (Content-Sensitive Sink-Arg Blocking) has been planned (2 plans) by a concurrent session — ready to execute.
 
 ## Current Position
 
-Phase: 14 — Content-Sensitive Sink-Arg Blocking
-Plan: Not started
+Phase: 14 — Content-Sensitive Sink-Arg Blocking (planned, not yet executed)
+Plan: 2 plans (14-01, 14-02) — none executed yet
 Status: Ready to execute
-Last activity: 2026-07-08 — Phase 13 complete, transitioned to Phase 14
+Last activity: 2026-07-08 — Phase 13 verified complete; Phase 14 planned by a concurrent session
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 15 (v1.0: 15 + v1.1: 15 + v1.2: 11)
+- Total plans completed: 48 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 7 [Phase 12: 3, Phase 13: 4])
 - Average duration: — min
 
 **By Phase (v1.2):**
@@ -65,7 +65,7 @@ completes and is adversarially reviewed (mirrors v1.0 Phase 2 / v1.2 Phase 8).
 
 ### Pending Todos
 
-- Run `/gsd-execute-phase 13` to build the real SMTP adapter (4 plans, 3 waves — 13-01/13-03 parallel, 13-02 depends on 13-01, 13-04 depends on both).
+- Run `/gsd-execute-phase 14` to build content-sensitive sink-arg blocking (2 plans, already planned by a concurrent session).
 - `.planning/todos/pending/2026-07-07-gsd-phases-clear-deletes-all-milestones.md` — GSD tooling bug: `gsd_run query phases.clear --confirm` deletes ALL milestones' phase dirs, not just the previous one's leftovers. Caught and reverted unstaged during this milestone's init; not yet fixed upstream.
 
 ### Blockers/Concerns
@@ -85,11 +85,11 @@ pre-existing item, still benign). No new deferrals from roadmap creation.
 
 ## Session Continuity
 
-Last session: 2026-07-07T22:28:24.000Z
-Stopped at: Phase 13 planned (13-CONTEXT.md synthesized from the approved DESIGN-01 gate, 13-RESEARCH.md, 4 PLAN.md files, plan-checker VERIFICATION PASSED); ready for execution
-Resume file: None — next step is `/gsd-execute-phase 13`
+Last session: 2026-07-08T00:39:03.000Z
+Stopped at: Phase 13 executed (4 plans, 3 waves), verified (5/5 success criteria, 6/6 requirements), and marked complete. Phase 14 was planned concurrently by a separate session and is ready to execute.
+Resume file: None — next step is `/gsd-execute-phase 14`
 
 ## Operator Next Steps
 
-- Run `/gsd-execute-phase 13` to build the real broker-mediated SMTP adapter.
-- After Phase 13, Phase 14 (Content-Sensitive Sink-Arg Blocking) also depends only on Phase 12 and can be planned/run independently.
+- Run `/gsd-execute-phase 14` to build content-sensitive sink-arg blocking (already planned).
+- Phase 15 (Deterministic Doc→Action Extraction) depends on Phase 12 + Phase 14 and carries the milestone's hard genuine-taint gate.
