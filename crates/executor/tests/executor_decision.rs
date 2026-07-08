@@ -1,12 +1,17 @@
 /// executor_decision.rs — Integration tests for `submit_plan_node`.
 ///
-/// Tests the four held behaviors from DESIGN-plan-executor §Executor Decision Logic:
+/// Tests the held behaviors from DESIGN-plan-executor §Executor Decision Logic,
+/// as extended by Phase 14 (`planning-docs/DESIGN-content-adapter-mediation.md`):
 ///   1. Tainted routing-sensitive arg ("to") → BlockedPendingConfirmation carrying
 ///      literal/taint/provenance_chain verbatim from the ValueRecord.
 ///   2. Untainted routing-sensitive arg ("to") → Allowed.
 ///   3. Unknown/dangling handle → Denied (never Allowed — T-04-02).
-///   4. Tainted content-sensitive arg ("subject") → Allowed in v0 (no Block;
-///      verbatim Tier-4 review is deferred to the approval-hook plan).
+///   4. Tainted content-sensitive arg ("subject"/"body") → BlockedPendingConfirmation,
+///      same decision class as routing-sensitive (Phase 14, CONTENT-01 — this is a
+///      REVERSAL of the pre-Phase-14 "Allowed in v0" behavior).
+///   5. A plan node with BOTH a tainted routing-sensitive arg AND a tainted
+///      content-sensitive arg surfaces BOTH in ONE decision's `anchors` (D-14
+///      Collect-then-Block, no first-match-wins).
 ///
 /// Block payload fidelity requirement (plan §acceptance_criteria): the Block-case
 /// assertion confirms literal_value, taint, and provenance_chain equal the values
@@ -72,13 +77,16 @@ fn tainted_to_arg_blocks_with_verbatim_record_payload() {
     let decision = submit_plan_node(Uuid::new_v4(), effect_id, &plan, &store, &SessionStatus::Active);
 
     match decision {
-        ExecutorDecision::BlockedPendingConfirmation { anchor, literal: block_literal } => {
+        ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+            assert_eq!(anchors.len(), 1, "exactly one blocked arg expected");
+            let block_literal = &anchors[0].literal;
+            let anchor = &anchors[0].anchor;
             // Block payload fidelity (plan acceptance criteria) — every field is a
             // verbatim clone of the ValueRecord; nothing synthesized (T-04-03).
             // The LIVE literal rides on the decision (verbatim); the anchor carries
             // only its SHA-256 digest (redactable-at-rest, tamper-evident).
             assert_eq!(
-                block_literal, literal,
+                *block_literal, literal,
                 "decision.literal must be verbatim from ValueRecord, not synthesized"
             );
             let expected_digest = {
@@ -161,15 +169,16 @@ fn unknown_handle_returns_denied() {
 }
 
 // ---------------------------------------------------------------------------
-// Case 4: tainted content-sensitive arg → Allowed in v0
+// Case 4: tainted content-sensitive arg → Blocks (Phase 14, CONTENT-01)
 // ---------------------------------------------------------------------------
 
-/// "subject" is content-sensitive, NOT routing-sensitive. A tainted subject does
-/// NOT Block in v0 — Tier-4 verbatim review is the post-v0 approval mechanism.
-/// This test guards against accidentally routing content-sensitive args through the
-/// routing-sensitive Block path.
+/// "subject" is content-sensitive, NOT routing-sensitive. Phase 14 (CONTENT-01)
+/// makes a tainted content-sensitive arg Block exactly like a tainted
+/// routing-sensitive arg — this REVERSES the pre-Phase-14 "Allowed in v0"
+/// behavior (renamed from `tainted_content_sensitive_arg_allows_in_v0` so git
+/// history is legible about the reversal).
 #[test]
-fn tainted_content_sensitive_arg_allows_in_v0() {
+fn tainted_content_sensitive_arg_blocks() {
     let mut store = ValueStore::default();
     let id = store
         .mint(
@@ -179,16 +188,19 @@ fn tainted_content_sensitive_arg_allows_in_v0() {
         )
         .expect("valid mint");
 
-    // "subject" is content-sensitive → must NOT Block in v0
+    // "subject" is content-sensitive → must Block (Phase 14 CONTENT-01)
     let plan = email_send_with_arg("subject", id);
     let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
 
-    assert_eq!(
-        decision,
-        ExecutorDecision::Allowed,
-        "tainted 'subject' (content-sensitive) must produce Allowed in v0; \
-         Tier-4 verbatim review is deferred to the approval-hook plan"
-    );
+    match decision {
+        ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+            assert_eq!(anchors.len(), 1, "exactly one blocked arg expected");
+            assert_eq!(anchors[0].anchor.arg, "subject");
+        }
+        other => panic!(
+            "tainted 'subject' (content-sensitive) must Block (Phase 14 CONTENT-01); got {other:?}"
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -224,25 +236,34 @@ fn tainted_cc_and_bcc_also_block() {
     }
 }
 
-/// "body" and "attachment" are content-sensitive — tainted values must NOT Block.
+/// "body" is content-sensitive and now Blocks (Phase 14, CONTENT-01). Attachment
+/// support is DESCOPED for v1.3 (D-23) — it is no longer a valid `email.send` arg
+/// at all, so a plan node carrying it is `Denied(UnknownArg)` at the Step 0 schema
+/// gate, never reaching sensitivity evaluation. This test replaces the old
+/// combined body+attachment "allow in v0" test (renamed) so git history is
+/// legible about this behavior reversal (the pre-Phase-14 "must Allow" premise
+/// for both args no longer holds for either, for two different reasons).
 #[test]
-fn tainted_body_and_attachment_allow_in_v0() {
+fn tainted_body_blocks() {
     let mut store = ValueStore::default();
-    for arg_name in ["body", "attachment"] {
-        let id = store
-            .mint(
-                format!("hostile {arg_name} content"),
-                vec![TaintLabel::ExternalUntrusted],
-                vec![Uuid::new_v4()],
-            )
-            .expect("valid mint");
-        let plan = email_send_with_arg(arg_name, id);
-        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
-        assert_eq!(
-            decision,
-            ExecutorDecision::Allowed,
-            "tainted '{arg_name}' (content-sensitive) must Allowed in v0; got {decision:?}"
-        );
+    let id = store
+        .mint(
+            "hostile body content".to_string(),
+            vec![TaintLabel::ExternalUntrusted],
+            vec![Uuid::new_v4()],
+        )
+        .expect("valid mint");
+    let plan = email_send_with_arg("body", id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+
+    match decision {
+        ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+            assert_eq!(anchors.len(), 1, "exactly one blocked arg expected");
+            assert_eq!(anchors[0].anchor.arg, "body");
+        }
+        other => panic!(
+            "tainted 'body' (content-sensitive) must Block (Phase 14 CONTENT-01); got {other:?}"
+        ),
     }
 }
 
@@ -402,4 +423,139 @@ fn draft_session_tainted_routing_arg_still_blocks_not_denied() {
         "a Draft session's tainted routing-sensitive arg must Block (I2), \
          never be pre-empted by the Step 0.5 draft-only class deny (I1/I0); got {decision:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 14 (CONTENT-01/D-14/D-23): Collect-then-Block, CONTROL-02, attachment
+// ---------------------------------------------------------------------------
+
+/// The single most important test in Phase 14: a plan node carrying BOTH a
+/// tainted routing-sensitive arg (`to`) AND a tainted content-sensitive arg
+/// (`body`) MUST surface BOTH in ONE decision's `anchors` — proving the
+/// per-arg loop does not return on the first match (D-14 Collect-then-Block,
+/// closes the B1-reincarnation risk).
+#[test]
+fn collect_then_block_both_to_and_body() {
+    let mut store = ValueStore::default();
+    let to_id = store
+        .mint(
+            "attacker@ev1l.com".to_string(),
+            vec![TaintLabel::ExternalUntrusted],
+            vec![Uuid::new_v4()],
+        )
+        .expect("valid mint");
+    let body_id = store
+        .mint(
+            "hostile body content".to_string(),
+            vec![TaintLabel::ExternalUntrusted],
+            vec![Uuid::new_v4()],
+        )
+        .expect("valid mint");
+
+    let plan = PlanNode {
+        sink: SinkId("email.send".to_string()),
+        args: vec![
+            PlanArg {
+                name: "to".to_string(),
+                value_id: to_id,
+            },
+            PlanArg {
+                name: "body".to_string(),
+                value_id: body_id,
+            },
+        ],
+    };
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+
+    match decision {
+        ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+            assert_eq!(
+                anchors.len(),
+                2,
+                "both the tainted 'to' and the tainted 'body' must be collected; got {anchors:?}"
+            );
+            let names: Vec<&str> = anchors.iter().map(|b| b.anchor.arg.as_str()).collect();
+            assert!(names.contains(&"to"), "anchors must include 'to'; got {names:?}");
+            assert!(names.contains(&"body"), "anchors must include 'body'; got {names:?}");
+            // plan_node.args iteration order is stable ("to" pushed before "body").
+            assert_eq!(names, vec!["to", "body"]);
+        }
+        other => panic!("expected BlockedPendingConfirmation with 2 anchors, got {other:?}"),
+    }
+}
+
+/// CONTROL-02 precursor: a plan node with a TRUSTED `to` and a tainted `body`
+/// still Blocks — proving the body dimension is not dead code redundant with
+/// the routing-sensitive Block path.
+#[test]
+fn body_tainted_recipient_trusted_blocks() {
+    let mut store = ValueStore::default();
+    let to_id = store
+        .mint(
+            "boss@company.com".to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![Uuid::new_v4()],
+        )
+        .expect("valid mint");
+    let body_id = store
+        .mint(
+            "hostile body content".to_string(),
+            vec![TaintLabel::ExternalUntrusted],
+            vec![Uuid::new_v4()],
+        )
+        .expect("valid mint");
+
+    let plan = PlanNode {
+        sink: SinkId("email.send".to_string()),
+        args: vec![
+            PlanArg {
+                name: "to".to_string(),
+                value_id: to_id,
+            },
+            PlanArg {
+                name: "body".to_string(),
+                value_id: body_id,
+            },
+        ],
+    };
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+
+    match decision {
+        ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+            assert_eq!(
+                anchors.len(),
+                1,
+                "only the tainted 'body' should be collected (trusted 'to' does not block); got {anchors:?}"
+            );
+            assert_eq!(anchors[0].anchor.arg, "body");
+        }
+        other => panic!(
+            "a tainted 'body' with a trusted 'to' must still Block (CONTROL-02 precursor); got {other:?}"
+        ),
+    }
+}
+
+/// D-23: a plan node carrying an unsupported attachment arg on email.send is
+/// Denied(UnknownArg) at the Step 0 schema gate, before any sensitivity
+/// evaluation — proving the descope, not a new DenyReason variant.
+#[test]
+fn attachment_denied_unknown_arg() {
+    let store = ValueStore::default();
+    let plan = PlanNode {
+        sink: SinkId("email.send".to_string()),
+        args: vec![PlanArg {
+            name: "attachment".to_string(),
+            value_id: ValueId::new(),
+        }],
+    };
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+
+    match decision {
+        ExecutorDecision::Denied {
+            reason: DenyReason::UnknownArg(arg),
+        } => {
+            assert_eq!(arg, "attachment");
+        }
+        other => panic!("expected Denied(UnknownArg(\"attachment\")), got {other:?}"),
+    }
 }

@@ -16,7 +16,7 @@ pub mod value_record;
 pub use artifact::{Artifact, ArtifactRef};
 pub use effect::{Effect, IrreversibleEffect, ObserveEffect, ReversibleEffect};
 pub use event::Event;
-pub use executor_decision::{DenyReason, ExecutorDecision, SinkBlockedAnchor};
+pub use executor_decision::{BlockedArg, DenyReason, ExecutorDecision, SinkBlockedAnchor};
 pub use intent::{CaprunIntent, Intent, IntentStatus};
 pub use plan_node::{PlanArg, PlanNode, Provenance, SinkId, TaintLabel, ValueId, ValueNode};
 pub use session::{SeedProvenance, Session, SessionStatus};
