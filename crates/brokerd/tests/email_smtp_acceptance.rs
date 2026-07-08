@@ -65,33 +65,59 @@ fn mailpit_host() -> String {
 #[cfg(target_os = "linux")]
 const MAILPIT_HTTP_PORT: u16 = 8025;
 
-/// Minimal dependency-light raw HTTP/1.1 GET client (no new HTTP crate
+/// Serializes the two Mailpit-backed acceptance tests in this file against
+/// each other. Both tests share ONE external Mailpit inbox (a real SMTP
+/// server, not an in-process fixture) — `cargo test`'s default
+/// multi-threaded runner would otherwise let them race on the same inbox
+/// (one test's `wait_for_message_count` could observe the OTHER test's
+/// message). Each test acquires this lock for its entire body, mirroring
+/// `email_smtp.rs::SMTP_ENV_LOCK`'s rationale for a different shared
+/// process-global resource.
+#[cfg(target_os = "linux")]
+static MAILPIT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Minimal dependency-light raw HTTP/1.1 client (no new HTTP crate
 /// dependency introduced — matches this phase's "keep it dependency-light"
 /// instruction). Sends `Connection: close` so Mailpit closes the socket
 /// after replying, letting a simple read-to-EOF loop work without needing to
 /// parse `Content-Length` or chunked-encoding framing (empirically verified
 /// against a live Mailpit instance during Task 1: it honors `Connection: close`).
 #[cfg(target_os = "linux")]
-fn http_get_json(host: &str, port: u16, path: &str) -> serde_json::Value {
+fn http_request(method: &str, host: &str, port: u16, path: &str) -> String {
     let mut stream = TcpStream::connect((host, port))
         .unwrap_or_else(|e| panic!("failed to connect to Mailpit HTTP API at {host}:{port}: {e}"));
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
     let request =
-        format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
+        format!("{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).unwrap();
     let mut raw = Vec::new();
     stream
         .read_to_end(&mut raw)
         .unwrap_or_else(|e| panic!("failed reading Mailpit HTTP API response: {e}"));
-    let text = String::from_utf8_lossy(&raw);
-    let body = text
-        .split_once("\r\n\r\n")
-        .map(|(_, b)| b)
-        .unwrap_or_else(|| panic!("malformed HTTP response from Mailpit (no header/body separator): {text}"));
-    serde_json::from_str(body)
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    text.split_once("\r\n\r\n")
+        .map(|(_, b)| b.to_string())
+        .unwrap_or_else(|| panic!("malformed HTTP response from Mailpit (no header/body separator): {text}"))
+}
+
+/// GET a path from Mailpit's HTTP API, parsed as JSON.
+#[cfg(target_os = "linux")]
+fn http_get_json(host: &str, port: u16, path: &str) -> serde_json::Value {
+    let body = http_request("GET", host, port, path);
+    serde_json::from_str(&body)
         .unwrap_or_else(|e| panic!("failed to parse Mailpit JSON response: {e}\nbody: {body}"))
+}
+
+/// Delete ALL messages from Mailpit's inbox (`DELETE /api/v1/messages`) —
+/// called at the start of each test (under `MAILPIT_TEST_LOCK`) so each test
+/// starts from a known-empty inbox regardless of what a prior test run left
+/// behind (Mailpit's inbox otherwise persists across test runs against the
+/// same sidecar container).
+#[cfg(target_os = "linux")]
+fn clear_mailpit_inbox(host: &str) {
+    let _ = http_request("DELETE", host, MAILPIT_HTTP_PORT, "/api/v1/messages");
 }
 
 /// Poll Mailpit's LIST endpoint until at least `expected_count` messages have
@@ -238,7 +264,9 @@ fn seed_and_confirm_email_send(
 #[cfg(target_os = "linux")]
 #[test]
 fn smtp_03_confirmed_send_captured_by_mailpit() {
+    let _guard = MAILPIT_TEST_LOCK.lock().unwrap();
     let host = mailpit_host();
+    clear_mailpit_inbox(&host);
     let mut conn = open_audit_db(":memory:").expect("open_audit_db");
 
     let outcome =
@@ -262,5 +290,58 @@ fn smtp_03_confirmed_send_captured_by_mailpit() {
         to,
         vec!["recipient@example.com".to_string()],
         "captured message must be addressed to the intended recipient"
+    );
+}
+
+/// (SMTP-05) A tainted `body` literal carrying a CR/LF-then-`Bcc:` injection
+/// sequence does NOT smuggle a recipient into the captured envelope —
+/// Mailpit's parsed `To`/`Cc`/`Bcc` show ONLY the intended recipient, no
+/// attacker address (D-22 — "defends by construction" must be VERIFIED, not
+/// assumed from lettre's reputation). The attack fails because the body is
+/// written into the message strictly AFTER the RFC 5322 header/body
+/// separator — the `to` recipient, in contrast, IS parsed via `Address` and
+/// would fail closed if itself CRLF-bearing (see `email_smtp.rs`'s own
+/// `build_message_rejects_crlf_in_to_fail_closed` unit test for that
+/// boundary) — this fixture targets the OTHER half of D-22: a clean
+/// recipient with a CRLF-injected BODY.
+#[cfg(target_os = "linux")]
+#[test]
+fn smtp_05_crlf_body_cannot_smuggle_recipient() {
+    let _guard = MAILPIT_TEST_LOCK.lock().unwrap();
+    let host = mailpit_host();
+    clear_mailpit_inbox(&host);
+    let mut conn = open_audit_db(":memory:").expect("open_audit_db");
+
+    let malicious_body = "hi there\r\nBcc: attacker@evil.com";
+    let outcome =
+        seed_and_confirm_email_send(&mut conn, "victim@example.com", "hello", malicious_body);
+    assert_eq!(
+        outcome,
+        ConfirmOutcome::Released,
+        "a clean recipient with a CRLF-bearing BODY must still Release — only \
+         the recipient literal is parsed via Address, never the body"
+    );
+
+    let ids = wait_for_message_count(&host, 1);
+    assert_eq!(ids.len(), 1, "expected exactly one captured message");
+
+    let detail = fetch_message_detail(&host, &ids[0]);
+    let to = addresses(&detail, "To");
+    let cc = addresses(&detail, "Cc");
+    let bcc = addresses(&detail, "Bcc");
+
+    assert_eq!(
+        to,
+        vec!["victim@example.com".to_string()],
+        "To must contain ONLY the intended recipient"
+    );
+    assert!(cc.is_empty(), "Cc must be empty — no smuggled recipient");
+    // RED (deliberate, Task 3 TDD): assert the attacker address IS present,
+    // to prove this fixture is actually reading Mailpit's real parsed Bcc
+    // field rather than trivially passing on an always-empty check —
+    // corrected to the real (negative) assertion in the GREEN commit.
+    assert!(
+        bcc.contains(&"attacker@evil.com".to_string()),
+        "RED placeholder: expected the smuggled attacker address to be present in Bcc: {bcc:?}"
     );
 }
