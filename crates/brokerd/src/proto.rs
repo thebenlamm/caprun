@@ -105,3 +105,66 @@ pub enum BrokerResponse {
     /// delivers it to the human via FAMP before proceeding.
     PlanNodeDecision { decision: runtime_core::ExecutorDecision },
 }
+
+// -----------------------------------------------------------------------
+// Phase 15 (15-03) RED: failing serde round-trip tests for the additive
+// DocFragment/TransformKind/ReportDerivedClaim/DerivedClaimReceived wire
+// types. These types do not exist yet — this module fails to compile until
+// the GREEN commit adds them.
+// -----------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runtime_core::plan_node::ValueId;
+
+    /// `WorkerClaim::DocFragment` round-trips through serde_json to an equal
+    /// value (additive variant — the existing `EmailAddress`/`RelativePath`
+    /// tests already prove the pre-existing variants are untouched).
+    #[test]
+    fn doc_fragment_claim_round_trips() {
+        let claim = WorkerClaim::DocFragment("accounts".to_string());
+        let json = serde_json::to_value(&claim).expect("serialize DocFragment claim");
+        let recovered: WorkerClaim =
+            serde_json::from_value(json).expect("deserialize DocFragment claim");
+        assert_eq!(claim, recovered);
+    }
+
+    /// `TransformKind::Concat` round-trips through serde_json to an equal value.
+    #[test]
+    fn transform_kind_concat_round_trips() {
+        let kind = TransformKind::Concat;
+        let json = serde_json::to_value(&kind).expect("serialize TransformKind");
+        let recovered: TransformKind =
+            serde_json::from_value(json).expect("deserialize TransformKind");
+        assert_eq!(kind, recovered);
+        assert_eq!(kind.as_mint_tag(), "concat");
+    }
+
+    /// `BrokerRequest::ReportDerivedClaim` round-trips through serde_json to
+    /// an equal value.
+    #[test]
+    fn report_derived_claim_request_round_trips() {
+        let req = BrokerRequest::ReportDerivedClaim {
+            transformed_literal: "accounts@ev1l.com".to_string(),
+            transform: TransformKind::Concat,
+            input_value_ids: vec![ValueId::new(), ValueId::new()],
+        };
+        let json = serde_json::to_value(&req).expect("serialize ReportDerivedClaim request");
+        let recovered: BrokerRequest =
+            serde_json::from_value(json).expect("deserialize ReportDerivedClaim request");
+        assert_eq!(req, recovered);
+    }
+
+    /// `BrokerResponse::DerivedClaimReceived` round-trips through serde_json
+    /// to an equal value.
+    #[test]
+    fn derived_claim_received_response_round_trips() {
+        let resp = BrokerResponse::DerivedClaimReceived {
+            value_id: ValueId::new(),
+        };
+        let json = serde_json::to_value(&resp).expect("serialize DerivedClaimReceived response");
+        let recovered: BrokerResponse =
+            serde_json::from_value(json).expect("deserialize DerivedClaimReceived response");
+        assert_eq!(resp, recovered);
+    }
+}
