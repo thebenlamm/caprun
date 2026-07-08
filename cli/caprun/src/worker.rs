@@ -11,7 +11,11 @@
 ///      self-confinement (ordering invariant: connect → set_nonblocking →
 ///      apply_confinement → ProvideIntent → RequestFd). The broker mints a
 ///      UserTrusted ValueRecord for the intent literal and returns an opaque handle.
-///   5. Receive `BrokerResponse::IntentAccepted { value_id }` → `intent_value_id`.
+///   5. Receive `BrokerResponse::IntentAccepted { value_id, subject_value_id,
+///      body_value_id }` → `intent_value_id` (the recipient/path handle) plus the
+///      trusted subject/body handles (Phase 15 finding #6 — `SendEmailSummary`
+///      mints THREE distinct UserTrusted handles; `CreateFileFromReport` mints
+///      only `value_id` and returns `None` for the other two).
 ///   6. Send `BrokerRequest::RequestFd { path }` (4-byte LE prefix + JSON).
 ///   7. Call `adapter_fs::recv_fd` to receive the file fd via SCM_RIGHTS out-of-band.
 ///      The broker sends the fd's 1-byte sendmsg payload BEFORE the JSON response,
@@ -19,15 +23,24 @@
 ///   8. Read the `BrokerResponse::FdGranted` JSON response.
 ///   9. Read the workspace file via the received fd (NOT via open() — Landlock
 ///      deny-all blocks open on Linux; the passed fd is the only legal path).
-///  10. Extract typed email claims LOCALLY (lossy guarantee — the raw sentence is
-///      discarded here; only the address crosses the IPC boundary). Send
-///      `BrokerRequest::ReportClaims { claims }`.
-///  11. Receive `BrokerResponse::ClaimsReceived { value_ids }` (opaque handles).
-///      If no claims were extracted (benign content), exit 0 WITHOUT submitting a
-///      plan node.
-///  12. Call `planner::plan_from_intent(&intent, intent_value_id, &value_ids)` — the
-///      planner holds ONLY opaque ValueId handles, never literals or taint (PLAN-03).
-///      Send `BrokerRequest::SubmitPlanNode { plan_node }` (no session_id — HARD-03).
+///  10. Extract typed claims LOCALLY (lossy guarantee — the raw sentence is
+///      discarded here; only the extracted typed value crosses the IPC boundary).
+///      For `SendEmailSummary`: extract the recipient-half doc fragments
+///      (`Reply-To:`/`Domain:` markers, EXTRACT-01/Phase 15) AND the tainted
+///      `Body:` fragment, report them via `ReportClaims { claims }`, and — ONLY
+///      when BOTH recipient-half fragments were found (finding #8's resolved
+///      fork) — apply the concat transform to the worker's OWN already-
+///      extracted fragment values (never a resolved broker literal) and report
+///      the result via `ReportDerivedClaim` to obtain a FRESH derived handle.
+///      For `CreateFileFromReport`: extract root-relative paths, unchanged.
+///  11. Receive the opaque `ValueId` handles for each report.
+///  12. Call `planner::plan_from_intent(&intent, intent_value_id,
+///      derived_recipient, body, trusted_subject_handle, trusted_body_handle)`
+///      — the planner holds ONLY opaque ValueId handles, never literals or
+///      taint (PLAN-03). Send `BrokerRequest::SubmitPlanNode { plan_node }`
+///      (no session_id — HARD-03). A benign (fragment-free) `SendEmailSummary`
+///      STILL submits an all-UserTrusted plan node (finding #4 — CONTROL-01's
+///      clean half survives; there is no early-exit here anymore).
 ///  13. Receive `BrokerResponse::PlanNodeDecision { decision }`. If it is
 ///      `BlockedPendingConfirmation`, exit 1 (non-success BEFORE any effect runs).
 ///  14. Otherwise exit 0.
@@ -37,13 +50,26 @@
 /// The tokio `connect` call with the `\0` prefix compiles on macOS but fails at
 /// runtime (abstract sockets are Linux-only). The e2e test is `#[cfg(target_os =
 /// "linux")]` so this binary is never invoked on macOS; it only needs to COMPILE.
+///
+/// # EXTRACT-01 confined half (Phase 15, 15-04)
+///
+/// Multi-fragment extraction + the concat transform run ENTIRELY inside this
+/// confined worker, over the hostile bytes it already read via the passed fd —
+/// never re-read, never resolved from a broker `ValueId` back to a literal.
+/// The worker transforms its OWN extracted fragment strings BEFORE any mint
+/// (DESIGN-confirm-binding.md "Post-Transformation Bytes", D-08), then obtains
+/// a FRESH derived handle from the broker (`ReportDerivedClaim` →
+/// `DerivedClaimReceived`) before ever using it as a plan-node arg. Only typed
+/// fragment tokens and the transformed literal cross the IPC boundary — the
+/// raw hostile sentence is discarded worker-side (lossy guarantee, T-15-15).
 
 mod planner;
 
 use anyhow::Context;
-use brokerd::proto::{BrokerRequest, BrokerResponse, WorkerClaim};
-use brokerd::quarantine::{extract_email_claims, extract_relative_path_claims};
+use brokerd::proto::{BrokerRequest, BrokerResponse, TransformKind, WorkerClaim};
+use brokerd::quarantine::{concat_doc_fragments, extract_doc_fragments, extract_relative_path_claims};
 use runtime_core::intent::CaprunIntent;
+use runtime_core::plan_node::ValueId;
 use runtime_core::ExecutorDecision;
 use std::io::{Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd};
@@ -120,11 +146,23 @@ async fn main() -> anyhow::Result<()> {
         },
     )?;
 
-    // ── Receive opaque UserTrusted ValueId handle for the intent ─────────────
-    let intent_value_id = match recv_framed::<BrokerResponse>(&std_stream)? {
-        BrokerResponse::IntentAccepted { value_id } => value_id,
-        other => anyhow::bail!("unexpected response to ProvideIntent: {other:?}"),
-    };
+    // ── Receive opaque UserTrusted ValueId handles for the intent ────────────
+    // `subject_value_id`/`body_value_id` are additive (Phase 15 finding #6):
+    // `SendEmailSummary` mints three DISTINCT UserTrusted handles; other
+    // intents return `None` for both. Fall back to `intent_value_id` when
+    // absent so a caller that doesn't need distinct subject/body handles
+    // (e.g. `CreateFileFromReport`) never has to synthesize a placeholder.
+    let (intent_value_id, subject_value_id, body_value_id) =
+        match recv_framed::<BrokerResponse>(&std_stream)? {
+            BrokerResponse::IntentAccepted {
+                value_id,
+                subject_value_id,
+                body_value_id,
+            } => (value_id, subject_value_id, body_value_id),
+            other => anyhow::bail!("unexpected response to ProvideIntent: {other:?}"),
+        };
+    let trusted_subject_handle = subject_value_id.unwrap_or_else(|| intent_value_id.clone());
+    let trusted_body_handle = body_value_id.unwrap_or_else(|| intent_value_id.clone());
 
     // ── Send BrokerRequest::RequestFd ────────────────────────────────────────
     send_framed(&std_stream, &BrokerRequest::RequestFd { path: workspace_file })?;
@@ -146,50 +184,117 @@ async fn main() -> anyhow::Result<()> {
     };
     let raw_str = String::from_utf8_lossy(&raw_bytes);
 
-    // ── Extract typed claims LOCALLY (lossy guarantee) ───────────────────────
-    // The raw hostile sentence is discarded here — only the extracted typed value
-    // crosses the IPC boundary (ASM-03 / T-05-08). The extractor is chosen by
-    // INTENT KIND: an email-summary intent extracts email addresses; a
-    // file-create intent extracts root-relative paths. The broker independently
-    // taints whatever the worker emits (mint_from_read) — the worker cannot
+    // ── Extract typed claims + (for email) derive the recipient LOCALLY ──────
+    // The raw hostile sentence is discarded here — only the extracted typed
+    // value (and, for email, the worker-side-transformed derived literal)
+    // crosses the IPC boundary (ASM-03 / T-05-08 / EXTRACT-01). The extractor
+    // is chosen by INTENT KIND; the broker independently taints whatever the
+    // worker emits (mint_from_read / mint_from_derivation) — the worker cannot
     // launder trust by choosing a variant.
-    let claims: Vec<WorkerClaim> = match &intent {
-        CaprunIntent::SendEmailSummary { .. } => extract_email_claims(&raw_str)
-            .into_iter()
-            .map(|c| WorkerClaim::EmailAddress(c.value))
-            .collect(),
-        CaprunIntent::CreateFileFromReport { .. } => extract_relative_path_claims(&raw_str)
-            .into_iter()
-            .map(|c| WorkerClaim::RelativePath(c.value))
-            .collect(),
+    let (derived_recipient, body): (Option<ValueId>, Option<ValueId>) = match &intent {
+        CaprunIntent::SendEmailSummary { .. } => {
+            // Marker-anchored recipient-half fragments (Reply-To:/Domain:) —
+            // extracted worker-side, never re-read, never resolved-then-
+            // reused. `extract_body_fragment` (below) mirrors the same
+            // marker-anchored, lossy-extraction shape for the `Body:` marker.
+            let doc_fragments = extract_doc_fragments(&raw_str);
+            let body_fragment = extract_body_fragment(&raw_str);
+
+            // Report ALL raw fragments (recipient-halves + body, if present)
+            // in one ReportClaims batch — the broker mints one genuinely-
+            // tainted ValueRecord per claim via mint_from_read, in the same
+            // order submitted.
+            let mut fragment_claims: Vec<WorkerClaim> = doc_fragments
+                .iter()
+                .map(|c| WorkerClaim::DocFragment(c.value.clone()))
+                .collect();
+            if let Some(b) = &body_fragment {
+                fragment_claims.push(WorkerClaim::DocFragment(b.clone()));
+            }
+            send_framed(&std_stream, &BrokerRequest::ReportClaims { claims: fragment_claims })?;
+            let fragment_value_ids = match recv_framed::<BrokerResponse>(&std_stream)? {
+                BrokerResponse::ClaimsReceived { value_ids } => value_ids,
+                other => anyhow::bail!("unexpected response to ReportClaims: {other:?}"),
+            };
+
+            // RESOLVED FORK (finding #8): a derived recipient exists ONLY when
+            // BOTH recipient-half fragments (Reply-To local-part + Domain
+            // domain-half) were extracted — a lone fragment (or none) never
+            // taints `to`; a benign doc that merely mentions an address is
+            // NOT routed here (extract_doc_fragments only ever yields
+            // marker-anchored halves, never a whole address).
+            let derived_recipient = if doc_fragments.len() == 2 {
+                // Apply the transform to the worker's OWN already-extracted
+                // fragment VALUES — never resolve a broker ValueId back to a
+                // literal and reuse it (DESIGN-confirm-binding.md
+                // "Post-Transformation Bytes"). The transform runs BEFORE any
+                // mint; the broker never re-applies it (it only byte-verifies).
+                let transformed_literal =
+                    concat_doc_fragments(&doc_fragments[0].value, &doc_fragments[1].value);
+                send_framed(
+                    &std_stream,
+                    &BrokerRequest::ReportDerivedClaim {
+                        transformed_literal,
+                        transform: TransformKind::Concat,
+                        input_value_ids: vec![
+                            fragment_value_ids[0].clone(),
+                            fragment_value_ids[1].clone(),
+                        ],
+                    },
+                )?;
+                match recv_framed::<BrokerResponse>(&std_stream)? {
+                    BrokerResponse::DerivedClaimReceived { value_id } => Some(value_id),
+                    other => anyhow::bail!("unexpected response to ReportDerivedClaim: {other:?}"),
+                }
+            } else {
+                None
+            };
+
+            // The body handle (if a `Body:` fragment was found) is the LAST
+            // element reported — `doc_fragments.len()` fragments precede it
+            // in `fragment_value_ids`, in every case (0, 1, or 2 recipient
+            // halves).
+            let body = if body_fragment.is_some() {
+                Some(fragment_value_ids[doc_fragments.len()].clone())
+            } else {
+                None
+            };
+
+            (derived_recipient, body)
+        }
+        CaprunIntent::CreateFileFromReport { .. } => {
+            let claims: Vec<WorkerClaim> = extract_relative_path_claims(&raw_str)
+                .into_iter()
+                .map(|c| WorkerClaim::RelativePath(c.value))
+                .collect();
+            send_framed(&std_stream, &BrokerRequest::ReportClaims { claims })?;
+            let value_ids = match recv_framed::<BrokerResponse>(&std_stream)? {
+                BrokerResponse::ClaimsReceived { value_ids } => value_ids,
+                other => anyhow::bail!("unexpected response to ReportClaims: {other:?}"),
+            };
+            // Route the FIRST tainted path handle (if any) — mirrors the
+            // pre-Phase-15 `file_value_ids.first()` behavior exactly, just
+            // now threaded through the shared `derived_recipient` slot
+            // (call-site convention, finding #7 — the planner never sees
+            // provenance; it just places whichever handle the caller hands it).
+            (value_ids.into_iter().next(), None)
+        }
     };
-
-    // ── Send BrokerRequest::ReportClaims (typed; no raw bytes) ───────────────
-    send_framed(&std_stream, &BrokerRequest::ReportClaims { claims })?;
-
-    // ── Receive opaque ValueId handles ───────────────────────────────────────
-    let value_ids = match recv_framed::<BrokerResponse>(&std_stream)? {
-        BrokerResponse::ClaimsReceived { value_ids } => value_ids,
-        other => anyhow::bail!("unexpected response to ReportClaims: {other:?}"),
-    };
-
-    // ── Early-exit is intent-kind-specific ───────────────────────────────────
-    // email: benign content (no extracted address) means nothing to send → exit 0
-    // without submitting a plan. file-create: the effect is driven by the trusted
-    // intent path, so it proceeds even with no file-extracted claims (the clean
-    // allow-path); a hostile workspace instead supplies a tainted path handle that
-    // the planner routes into file.create/path → Block.
-    if matches!(intent, CaprunIntent::SendEmailSummary { .. }) && value_ids.is_empty() {
-        eprintln!("[worker] no claims extracted — benign content, exiting 0");
-        return Ok(());
-    }
 
     // ── Deterministic planner: map intent + handles → PlanNode (PLAN-02) ─────
-    // `plan_from_intent` receives only opaque ValueId handles — never the literal,
-    // never taint, never a ValueRecord (PLAN-03, type-enforced by the signature).
-    // For file.create it routes a tainted file handle (if any) into `path` →
-    // Block, else the UserTrusted intent handle → Allow.
-    let plan_node = crate::planner::plan_from_intent(&intent, intent_value_id, &value_ids);
+    // `plan_from_intent` receives only opaque ValueId handles — never the
+    // literal, never taint, never a ValueRecord (PLAN-03, type-enforced by the
+    // signature). There is NO early-exit here anymore (finding #4): a benign
+    // (fragment-free) SendEmailSummary still submits an all-UserTrusted node
+    // → Allowed, preserving CONTROL-01's live clean-send-allowed path.
+    let plan_node = crate::planner::plan_from_intent(
+        &intent,
+        intent_value_id,
+        derived_recipient,
+        body,
+        trusted_subject_handle,
+        trusted_body_handle,
+    );
 
     // ── Submit for I2 evaluation (no session_id field — HARD-03) ─────────────
     send_framed(&std_stream, &BrokerRequest::SubmitPlanNode { plan_node })?;
@@ -207,6 +312,27 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Extract the `Body:` marker-anchored line's content from raw untrusted bytes.
+///
+/// Hand-rolled, dependency-free (mirrors `extract_doc_fragments`'s marker-
+/// anchored, lossy-extraction shape) — runs CONFINED worker-side, over the
+/// bytes already read via the passed fd; never broker-side (EXTRACT-01).
+/// Returns everything after the `Body:` marker up to end-of-line, trimmed;
+/// `None` if the marker is absent or the remainder is empty. Only this
+/// extracted token (never the surrounding sentence) is reported to the broker.
+fn extract_body_fragment(raw: &str) -> Option<String> {
+    let marker = "Body:";
+    let idx = raw.find(marker)?;
+    let after = &raw[idx + marker.len()..];
+    let line_end = after.find('\n').unwrap_or(after.len());
+    let value = after[..line_end].trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 /// Write a framed message (4-byte LE length prefix + JSON body) to `stream`.
