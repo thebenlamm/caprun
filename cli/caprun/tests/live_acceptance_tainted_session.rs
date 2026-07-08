@@ -143,7 +143,11 @@ fn live_acceptance_deny_path() {
         let blocked = find_event_by_type(&conn, &session_id, "sink_blocked")
             .expect("query sink_blocked")
             .expect("sink_blocked event must exist");
-        blocked.anchor.as_ref().expect("anchor must be Some").effect_id
+        blocked
+            .anchors
+            .first()
+            .expect("anchor must be present")
+            .effect_id
         // conn drops here — released before process 2 opens its own connection
     };
 
@@ -212,9 +216,9 @@ fn live_acceptance_deny_path() {
 
     // Genuine taint: the anchor's value-lineage root IS the real file_read event.
     let anchor = blocked
-        .anchor
-        .as_ref()
-        .expect("the persisted sink_blocked event MUST carry Some(anchor)");
+        .anchors
+        .first()
+        .expect("the persisted sink_blocked event MUST carry at least one anchor");
     assert_eq!(
         anchor.read_event_id, file_read.id,
         "the anchor value-lineage root must be the real file_read event (genuine taint)"
@@ -251,7 +255,11 @@ fn live_acceptance_confirm_path() {
         let blocked = find_event_by_type(&conn, &session_id, "sink_blocked")
             .expect("query sink_blocked")
             .expect("sink_blocked event must exist");
-        blocked.anchor.as_ref().expect("anchor must be Some").effect_id
+        blocked
+            .anchors
+            .first()
+            .expect("anchor must be present")
+            .effect_id
         // conn drops here — released before process 2 opens its own connection
     };
 
@@ -318,9 +326,9 @@ fn live_acceptance_confirm_path() {
 
     // Genuine taint: the anchor's value-lineage root IS the real file_read event.
     let anchor = blocked
-        .anchor
-        .as_ref()
-        .expect("the persisted sink_blocked event MUST carry Some(anchor)");
+        .anchors
+        .first()
+        .expect("the persisted sink_blocked event MUST carry at least one anchor");
     assert_eq!(
         anchor.read_event_id, file_read.id,
         "the anchor value-lineage root must be the real file_read event (genuine taint)"

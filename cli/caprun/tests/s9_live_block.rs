@@ -244,9 +244,9 @@ fn s9_live_file_create_hostile_block() {
         .expect("query sink_blocked")
         .expect("a durable sink_blocked event must exist on the hostile block");
     let anchor = blocked
-        .anchor
-        .as_ref()
-        .expect("the persisted sink_blocked event MUST carry Some(anchor)");
+        .anchors
+        .first()
+        .expect("the persisted sink_blocked event MUST carry at least one anchor");
     assert_eq!(anchor.sink.0, "file.create", "anchor.sink must be file.create");
     assert_eq!(anchor.arg, "path", "anchor.arg must be the routing-sensitive path");
     // The hashed anchor carries only the digest; the byte-exact literal is in the
