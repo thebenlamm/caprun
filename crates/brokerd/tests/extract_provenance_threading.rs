@@ -1,0 +1,326 @@
+//! extract_provenance_threading -- the phase's HARD-GATE proof (EXTRACT-02/03).
+//!
+//! A programmatic, DB-alone audit-DAG query verifying genuine taint
+//! propagation -- including through a concatenation transform -- for EVERY
+//! blocked arg in a multi-anchor Block (Phase 12/14 collect-then-Block),
+//! paired with an anti-staple negative control that rejects a
+//! fabricated/re-anchored chain. "Taint stapled at the sink proves nothing"
+//! (CLAUDE.md #1) -- a passing proof on genuine data is worthless without a
+//! paired FAILING proof on fabricated data.
+//!
+//! Modeled directly on `durable_anchor.rs`'s after-exit, DB-alone pattern: a
+//! FILE-BACKED audit DB is built end-to-end through the real
+//! `dispatch_request` `SubmitPlanNode` arm, the write connection is DROPPED
+//! (simulating process exit), then REOPENED so every assertion below is
+//! reconstructed from the persisted DB alone -- never from in-memory state.
+//!
+//! Two graphs, never equated (DESIGN §0): the causal DAG (`parent_id`/
+//! `parent_hash`) and the value-lineage graph (`provenance_chain` /
+//! `derivation` event payloads) share node ids but have distinct edge
+//! semantics. EVERY `provenance_chain` element MUST resolve to a real
+//! `file_read` event -- a `derivation` event appearing as a chain element is
+//! a fail-closed error, never walked recursively as a chain element (finding
+//! #10). The genuine-derivation edge is a SEPARATE predicate over the
+//! `derivation` event's HASHED PAYLOAD (finding #2).
+
+use brokerd::audit::{find_event_by_type, open_audit_db, verify_chain};
+use brokerd::proto::BrokerRequest;
+use brokerd::quarantine::{concat_doc_fragments, extract_doc_fragments, mint_from_derivation, mint_from_read, Claim};
+use brokerd::server::dispatch_request;
+use executor::value_store::ValueStore;
+use runtime_core::{
+    plan_node::{PlanArg, PlanNode, SinkId},
+    SessionStatus, ValueRecord,
+};
+use std::sync::{Arc, Mutex};
+use uuid::Uuid;
+
+/// The CONFIRM-02 hostile-doc fixture: a realistic vendor-reconciliation
+/// template that embeds (a) a send-redirection injection attempt the
+/// deterministic extractor does NOT obey (there is no LLM in the loop -- the
+/// extractor only ever looks for its own marker-anchored fields, never
+/// free-form instructions), and (b) the multi-fragment recipient structure
+/// on INDEPENDENTLY PLAUSIBLE lines (finding #9): a `Reply-To:` line (the
+/// local-part half) and a separate `Domain:` line (the domain half) inside
+/// an "Email Routing Configuration" block -- not two adjacent
+/// whitespace-delimited tokens that would look extractor-rigged. The concat
+/// transform joins them with a literal `@` into the attacker recipient
+/// (`accounts@ev1l.com`). A `Body:` marker line carries the tainted email
+/// body content.
+const HOSTILE_DOC: &str = include_str!("fixtures/hostile_doc.txt");
+
+/// Extract the `Body:` marker-anchored line's content (test-harness-only
+/// helper -- NOT part of the confined worker's production extractor set,
+/// which this plan does not modify; mirrors `extract_doc_fragments`' marker-
+/// anchored, lossy-extraction shape). Returns everything after the `Body:`
+/// marker up to end-of-line, trimmed.
+fn extract_body_fragment(raw: &str) -> Option<String> {
+    let marker = "Body:";
+    let idx = raw.find(marker)?;
+    let after = &raw[idx + marker.len()..];
+    let line_end = after.find('\n').unwrap_or(after.len());
+    let value = after[..line_end].trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+/// A unique file-backed audit-DB path (brokerd has no tempfile dev-dep) --
+/// mirrors `durable_anchor.rs::temp_db_path`.
+fn temp_db_path(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("caprun_extract_{tag}_{}.db", Uuid::new_v4()))
+}
+
+/// Remove a file-backed audit DB and its WAL/SHM sidecars -- mirrors
+/// `durable_anchor.rs::cleanup_db`.
+fn cleanup_db(db_path: &std::path::Path) {
+    let _ = std::fs::remove_file(db_path);
+    let _ = std::fs::remove_file(format!("{}-wal", db_path.display()));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path.display()));
+}
+
+/// A workspace-root anchor for the dispatch call. The BLOCK path never
+/// invokes the sink, so any valid directory suffices (mirrors
+/// `durable_anchor.rs::ws_root`).
+fn ws_root() -> Arc<adapter_fs::workspace::WorkspaceRoot> {
+    Arc::new(
+        adapter_fs::workspace::WorkspaceRoot::open(std::env::temp_dir().as_path())
+            .expect("open ws root"),
+    )
+}
+
+/// Everything Task 3's EXTRACT-02/03 walk needs, reconstructed from the
+/// reopened, after-exit, DB-alone connection.
+struct TwoAnchorFixture {
+    /// The REOPENED connection -- the only source of truth from this point on.
+    conn: rusqlite::Connection,
+    session_id: Uuid,
+    db_path: std::path::PathBuf,
+    /// The file_read event id the `Reply-To:` half (local-part) minted.
+    reply_to_read_id: Uuid,
+    /// The file_read event id the `Domain:` half minted.
+    domain_read_id: Uuid,
+    /// The file_read event id the tainted body fragment minted.
+    body_read_id: Uuid,
+}
+
+/// Build a FILE-BACKED audit DB containing a genuine TWO-anchor
+/// `email.send` block -- a concatenation-derived tainted `to` (threaded via
+/// `mint_from_derivation` over the two recipient-half reads) AND a tainted
+/// `body` (via a plain `mint_from_read` doc_fragment mint) -- driven END TO
+/// END through the real `dispatch_request` `SubmitPlanNode` arm, then DROP
+/// the write connection (simulating process exit) and REOPEN from the path
+/// alone.
+///
+/// Threads `last_event_id`/`last_event_hash` across every mint so the causal
+/// DAG stays ONE linear chain (`mint_from_read` returns its
+/// `session_demoted` chain head -- never the `file_read` id -- as the next
+/// append's `parent_id`, per its own doc warning; `mint_from_derivation`
+/// returns its own `derivation` event as the new chain head).
+///
+/// NOTE for the SUMMARY (finding #13): the two recipient-half `file_read`
+/// events are SYNTHETIC (one physical read of the fixture produced both,
+/// plus the body read) -- each `mint_from_read` also appends its own
+/// `session_demoted` event, so this 3-fragment doc yields 3 redundant
+/// demotion events in the persisted DAG in addition to the 3 `file_read` +
+/// 1 `derivation` + 1 `sink_blocked` events.
+async fn build_two_anchor_block_db(tag: &str) -> TwoAnchorFixture {
+    let db_path = temp_db_path(tag);
+    let session_id = Uuid::new_v4();
+
+    // FILE-BACKED DB (NOT ":memory:") -- the after-exit proof requires
+    // durability across a connection drop + reopen.
+    let conn = Arc::new(Mutex::new(
+        open_audit_db(db_path.to_str().unwrap()).expect("open_audit_db"),
+    ));
+    let mut store = ValueStore::default();
+
+    // Extract the two recipient-half fragments (Reply-To:/Domain:) and the
+    // tainted body fragment from the hostile doc -- simulating what the
+    // CONFINED worker already did over the hostile bytes (extraction never
+    // happens broker-side; the broker only mints what the worker already
+    // extracted).
+    let doc_fragments = extract_doc_fragments(HOSTILE_DOC);
+    assert_eq!(
+        doc_fragments.len(),
+        2,
+        "expected exactly two doc_fragment claims (Reply-To: local-part, Domain: domain-half)"
+    );
+    let reply_to_claim = doc_fragments[0].clone();
+    let domain_claim = doc_fragments[1].clone();
+    assert_eq!(reply_to_claim.value, "accounts");
+    assert_eq!(domain_claim.value, "ev1l.com");
+
+    let body_value = extract_body_fragment(HOSTILE_DOC).expect("Body: marker must be present in fixture");
+    let body_claim = Claim {
+        claim_type: "doc_fragment".into(),
+        value: body_value,
+    };
+
+    // Mint the Reply-To: half -- the causal chain ROOT (parent_hash = None).
+    let (reply_to_read_id, _reply_to_hash, reply_to_value_id, demoted1_id, demoted1_hash) = {
+        let locked = conn.lock().unwrap();
+        mint_from_read(&locked, &mut store, session_id, &reply_to_claim, None, None)
+            .expect("mint_from_read reply_to")
+    };
+
+    // Mint the Domain: half, chained onto the Reply-To: session_demoted head
+    // (NOT the file_read id -- forking the DAG breaks verify_chain, per
+    // mint_from_read's own doc warning).
+    let (domain_read_id, _domain_hash, domain_value_id, demoted2_id, demoted2_hash) = {
+        let locked = conn.lock().unwrap();
+        mint_from_read(
+            &locked,
+            &mut store,
+            session_id,
+            &domain_claim,
+            Some(demoted1_id),
+            Some(&demoted1_hash),
+        )
+        .expect("mint_from_read domain")
+    };
+
+    // Mint the tainted body fragment, chained onto the Domain: session_demoted head.
+    let (body_read_id, _body_hash, body_value_id, demoted3_id, demoted3_hash) = {
+        let locked = conn.lock().unwrap();
+        mint_from_read(&locked, &mut store, session_id, &body_claim, Some(demoted2_id), Some(&demoted2_hash))
+            .expect("mint_from_read body")
+    };
+
+    // Resolve OWNED clones of the two recipient-half records BEFORE calling
+    // mint_from_derivation -- the caller resolves ValueIds to records itself;
+    // mint_from_derivation never re-resolves from `store` (avoids a
+    // simultaneous mutable+immutable borrow, per its own doc note).
+    let reply_to_record: ValueRecord = store
+        .resolve(&reply_to_value_id)
+        .expect("reply_to_value_id resolves")
+        .clone();
+    let domain_record: ValueRecord = store
+        .resolve(&domain_value_id)
+        .expect("domain_value_id resolves")
+        .clone();
+
+    // join(input_literals, '@') -- inputs[0] (reply_to) first, inputs[1]
+    // (domain) second -- must byte-match mint_from_derivation's own
+    // byte-verify guard (MAJOR-1).
+    let transformed_literal = concat_doc_fragments(&reply_to_record.literal, &domain_record.literal);
+    assert_eq!(transformed_literal, "accounts@ev1l.com");
+
+    // Mint the concatenation-derived recipient, chained onto the body
+    // mint's session_demoted head. This becomes the new chain head.
+    let (derivation_event_id, derivation_hash, to_value_id) = {
+        let locked = conn.lock().unwrap();
+        mint_from_derivation(
+            &locked,
+            &mut store,
+            session_id,
+            transformed_literal,
+            &[&reply_to_record, &domain_record],
+            "concat",
+            Some(demoted3_id),
+            Some(&demoted3_hash),
+        )
+        .expect("mint_from_derivation")
+    };
+
+    let mut last_event_id = derivation_event_id;
+    let mut last_event_hash = derivation_hash;
+    // Mirrors durable_anchor.rs: this harness thread starts from an Active
+    // seed (a block on I2 fires regardless of session_status); the mints
+    // above already demoted the session's DB row to Draft via TAINT-01.
+    let mut session_status = SessionStatus::Active;
+
+    // Both `to` (routing-sensitive, derived-recipient) and `body`
+    // (content-sensitive) are present -- present so the collect-then-Block
+    // loop (Phase 12/14) surfaces BOTH in one Block, not just one.
+    let plan_node = PlanNode {
+        sink: SinkId("email.send".into()),
+        args: vec![
+            PlanArg {
+                name: "to".into(),
+                value_id: to_value_id,
+            },
+            PlanArg {
+                name: "body".into(),
+                value_id: body_value_id,
+            },
+        ],
+    };
+
+    let (mut server_end, _client_end) = tokio::net::UnixStream::pair().expect("UnixStream::pair");
+    dispatch_request(
+        BrokerRequest::SubmitPlanNode { plan_node },
+        &mut server_end,
+        &conn,
+        session_id,
+        &mut last_event_id,
+        &mut last_event_hash,
+        &mut store,
+        &ws_root(),
+        &mut session_status,
+    )
+    .await
+    .expect("dispatch_request must succeed once the block append is durable");
+
+    // Simulate process exit: DROP the only connection handle so SQLite
+    // closes it (WAL checkpointed) before anything reopens from the path
+    // alone.
+    drop(conn);
+
+    // REOPEN from the path alone -- the persisted DB is now the ONLY source
+    // of truth for every assertion from here on.
+    let reopened = open_audit_db(db_path.to_str().unwrap()).expect("reopen audit DB");
+
+    TwoAnchorFixture {
+        conn: reopened,
+        session_id,
+        db_path,
+        reply_to_read_id,
+        domain_read_id,
+        body_read_id,
+    }
+}
+
+/// Sanity check consumed by Task 3: the fixture builder produces a
+/// persisted, reopenable, DB-alone TWO-anchor block whose anchors carry
+/// DISTINCT arg names -- the collect-then-Block multi-arg Block Phase
+/// 12/14 mandate. `len == 2` alone would be satisfied by the same
+/// `BlockedArg` pushed twice (finding #13 nit); asserting distinct arg
+/// names `{"to", "body"}` catches a Phase-14 regression that would slip
+/// past a bare length check.
+#[tokio::test]
+async fn builds_two_anchor_block() {
+    let fixture = build_two_anchor_block_db("two_anchor").await;
+    let sid = fixture.session_id.to_string();
+
+    assert!(
+        verify_chain(&fixture.conn, &sid),
+        "verify_chain must pass on the REOPENED DB before anything else is trusted \
+         (the causal hash chain must survive process exit)"
+    );
+
+    let blocked = find_event_by_type(&fixture.conn, &sid, "sink_blocked")
+        .expect("query sink_blocked")
+        .expect("a durable sink_blocked event must exist in the reopened DAG");
+
+    assert_eq!(
+        blocked.anchors.len(),
+        2,
+        "collect-then-Block must surface BOTH the tainted derived recipient AND the tainted body \
+         in ONE Block (Phase 12/14, D-14) -- not just one"
+    );
+
+    let mut arg_names: Vec<&str> = blocked.anchors.iter().map(|a| a.arg.as_str()).collect();
+    arg_names.sort();
+    assert_eq!(
+        arg_names,
+        vec!["body", "to"],
+        "the two anchors must carry DISTINCT arg names {{\"to\", \"body\"}} (finding #13) -- \
+         len == 2 alone is satisfied by the same BlockedArg pushed twice, which would slip a \
+         Phase-14 regression"
+    );
+
+    cleanup_db(&fixture.db_path);
+}
