@@ -17,6 +17,8 @@
 /// Phase 5 shipped `EmailAddress`; Phase 7 (07-04b) adds `RelativePath` so a
 /// workspace-derived path can cross the IPC boundary and be minted
 /// `[ExternalUntrusted, PathRaw]` by the broker (never `LocalWorkspace`).
+///
+/// Phase 15 (15-03) adds `DocFragment`, additively — no existing variant changes.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", content = "value")]
 pub enum WorkerClaim {
@@ -28,6 +30,46 @@ pub enum WorkerClaim {
     /// broker mints it `[ExternalUntrusted, PathRaw]` (routing-sensitive on
     /// `file.create/path` → Block); the worker cannot launder it to a trusted label.
     RelativePath(String),
+    /// A raw doc fragment extracted by the quarantine extractor — e.g. one half
+    /// of a `Reply-To:`/`Domain:` pair the worker will concat-transform into a
+    /// recipient BEFORE reporting the result via `ReportDerivedClaim`. Carries
+    /// ONLY the fragment token — never the raw surrounding sentence. The broker
+    /// mints it `[ExternalUntrusted]` via `mint_from_read`'s `doc_fragment` arm,
+    /// which fails closed (`quarantine::looks_like_doc_fragment`) if the value
+    /// already contains `'@'` — the concat transform's OWN OUTPUT can never
+    /// re-enter here (finding #1a/#1c); the worker cannot launder an assembled
+    /// recipient as a fresh raw fragment.
+    DocFragment(String),
+}
+
+/// A tag identifying the deterministic transform the confined worker applied
+/// worker-side to produce a `ReportDerivedClaim`'s `transformed_literal`.
+///
+/// Additive; Phase 15 defines only `Concat` (a fixed `'@'`-join over doc
+/// fragments — see `quarantine::concat_doc_fragments`). A future phase adding
+/// a different transform (e.g. a differently-delimited join, or a base64
+/// decode) MUST introduce its own distinct variant — never reuse `Concat` for
+/// a different separator: `mint_from_derivation`'s byte-verify guard is
+/// separator-specific (`join(input_literals, '@')`), and reusing the tag for a
+/// different join would either false-reject a legitimate derivation or,
+/// worse, false-accept a mismatched one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TransformKind {
+    /// Two doc-fragment claims concatenated with a literal `'@'` separator
+    /// (`quarantine::concat_doc_fragments`) — the only transform Phase 15 ships.
+    Concat,
+}
+
+impl TransformKind {
+    /// The `&str` tag `quarantine::mint_from_derivation`'s `transform_kind`
+    /// argument matches on. Kept as a single explicit, exhaustively-matched
+    /// method (not a `From`/`Display` impl) so the wire-tag ↔ mint-tag mapping
+    /// has exactly one call site.
+    pub fn as_mint_tag(&self) -> &'static str {
+        match self {
+            TransformKind::Concat => "concat",
+        }
+    }
 }
 
 /// Request from a worker to the broker.
@@ -72,6 +114,38 @@ pub enum BrokerRequest {
     SubmitPlanNode {
         plan_node: runtime_core::PlanNode,
     },
+    /// Worker reports a transform-derived claim: the already-transformed
+    /// literal plus the handles of the raw inputs it was derived from
+    /// (RESEARCH.md Open Question 2, option (a) — a separate message
+    /// referencing `ReportClaims`'s returned `value_ids`, rather than
+    /// inlining raw inputs in one message).
+    ///
+    /// The broker resolves each `input_value_ids` handle to its broker-owned
+    /// `ValueRecord` and mints the derived value via `mint_from_derivation`
+    /// (Plan 01) — provenance-threading from the inputs' OWN read-rooted
+    /// chains, NEVER a fresh transform-local root. The broker NEVER
+    /// re-applies the transform itself; `mint_from_derivation`'s own
+    /// byte-verify guard checks `transformed_literal` against the resolved
+    /// inputs' literals (MAJOR-1).
+    ///
+    /// SECURITY CONTRACT (HARD-03): this message carries NO `session_id` —
+    /// same contract as `SubmitPlanNode`/`ReportClaims`; the broker evaluates
+    /// against the connection-established session identity, never a
+    /// message-supplied one (spoofing defense T-05-03).
+    ReportDerivedClaim {
+        /// The worker's claimed already-transformed literal (e.g. the
+        /// concatenated recipient). Byte-verified broker-side against
+        /// `join(input_literals, '@')` for the `Concat` transform — never
+        /// trusted at face value (MAJOR-1).
+        transformed_literal: String,
+        /// The transform tag applied worker-side to produce `transformed_literal`.
+        transform: TransformKind,
+        /// The handles of the inputs `transformed_literal` was derived from,
+        /// in the order the worker applied the transform. Each MUST resolve
+        /// within THIS connection's `ValueStore`; any unresolved handle fails
+        /// closed (`Error`, mints nothing — Pitfall 1).
+        input_value_ids: Vec<runtime_core::plan_node::ValueId>,
+    },
 }
 
 /// Response from the broker to a worker.
@@ -104,13 +178,19 @@ pub enum BrokerResponse {
     /// the broker constructs a `ConfirmationPrompt` from the Block payload and
     /// delivers it to the human via FAMP before proceeding.
     PlanNodeDecision { decision: runtime_core::ExecutorDecision },
+    /// Acknowledgement for `ReportDerivedClaim`: the opaque handle to the
+    /// minted derived `ValueRecord`. Resolves ONLY within the per-connection
+    /// `ValueStore` (same HARD-03 / Pitfall 1 contract as `ClaimsReceived`/
+    /// `IntentAccepted`).
+    DerivedClaimReceived {
+        value_id: runtime_core::plan_node::ValueId,
+    },
 }
 
 // -----------------------------------------------------------------------
-// Phase 15 (15-03) RED: failing serde round-trip tests for the additive
+// Phase 15 (15-03) GREEN: serde round-trip tests for the additive
 // DocFragment/TransformKind/ReportDerivedClaim/DerivedClaimReceived wire
-// types. These types do not exist yet — this module fails to compile until
-// the GREEN commit adds them.
+// types added above.
 // -----------------------------------------------------------------------
 #[cfg(test)]
 mod tests {
