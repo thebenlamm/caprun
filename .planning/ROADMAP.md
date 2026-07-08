@@ -146,9 +146,17 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   4. At least one fixture shows the extractor transforming the tainted value before the sink (concatenating two doc fields, or base64-decoding a body) with taint still propagating and the block still firing — proving survival of manipulation, not just copying.
 
 **Plans**: 4 plans
+**Wave 1**
+
 - [ ] 15-01-PLAN.md — mint_from_derivation provenance-threading primitive + doc_fragment claim type + confined extraction/concat helpers (Wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 15-02-PLAN.md — find_event_by_id + EXTRACT-02 per-anchor unbroken-edge & anti-staple proof + CONFIRM-02 hostile-doc fixture + EXTRACT-03 block-survival (Wave 2)
 - [ ] 15-03-PLAN.md — IPC derived-claim types + broker dispatch minting via mint_from_derivation (Wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 15-04-PLAN.md — confined-worker multi-fragment extraction + worker-side transform + planner to+subject+body wiring (Wave 3)
 
 ### Phase 16: Confirm UX, Literal Binding & Negative Controls
