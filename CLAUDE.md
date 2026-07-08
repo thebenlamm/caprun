@@ -37,6 +37,15 @@ docker run --rm \
 
 No `--privileged` — the confinement stack is fully unprivileged. Landlock needs kernel ≥5.13.
 
+**Phases needing a local capture SMTP (Mailpit) — e.g. Phase 13, 17:** use
+`scripts/mailpit-verify.sh` instead of the bare `docker run rust:1` recipe
+above. It starts an `axllent/mailpit` sidecar on a user-defined Docker
+network, runs the same unprivileged `rust:1` verification container on that
+network (`CAPRUN_SMTP_HOST=mailpit`/`CAPRUN_SMTP_PORT=1025`), additionally
+installs `libssl-dev`/`pkg-config` before `cargo test` (required once
+`lettre`'s default `native-tls` feature is a build dependency), and tears
+down the sidecar afterward. Run: `bash scripts/mailpit-verify.sh`.
+
 ## Architecture
 
 Layers, by security role (see PLAN.md "Layer roles"):
