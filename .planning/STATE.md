@@ -5,16 +5,16 @@ milestone_name: — Doc → Action Assistant
 current_phase: 14
 current_phase_name: Content-Sensitive Sink-Arg Blocking
 status: executing
-stopped_at: Phase 13 planned (13-CONTEXT.md synthesized from the approved DESIGN-01 gate, 13-RESEARCH.md, 4 PLAN.md files, plan-checker VERIFICATION PASSED); ready for execution
-last_updated: "2026-07-08T03:35:59.775Z"
+stopped_at: Completed 14-02-PLAN.md — cargo test --workspace fully green, check-invariants.sh passes
+last_updated: "2026-07-08T04:18:22.903Z"
 last_activity: 2026-07-08
 last_activity_desc: Phase 14 execution started
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 9
-  completed_plans: 7
-  percent: 33
+  completed_plans: 9
+  percent: 50
 ---
 
 # Project State
@@ -29,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 14 (Content-Sensitive Sink-Arg Blocking) — EXECUTING
-Plan: 1 of 2
-Status: Executing Phase 14
+Plan: 2 of 2
+Status: Ready to execute
 Last activity: 2026-07-08 — Phase 14 execution started
 
 ## Performance Metrics
@@ -51,6 +51,7 @@ Last activity: 2026-07-08 — Phase 14 execution started
 | 13 | 4 | - | - |
 
 *Updated after each plan completion. v1.3 phases (12-17) have no plans yet — table rows added once `/gsd-plan-phase` runs.*
+| Phase 14 P02 | 50min | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -62,6 +63,9 @@ recorded in `.planning/PROJECT.md`'s Key Decisions table and
 `.planning/REQUIREMENTS.md`. Phase 12 is a hard design gate — CONTENT-01,
 SMTP-05, and CONFIRM-03 executor/TCB code may not be written before it
 completes and is adversarially reviewed (mirrors v1.0 Phase 2 / v1.2 Phase 8).
+
+- [Phase 14]: blocked_literals gained an arg column and composite (event_id, arg) PRIMARY KEY so a plural sink_blocked event can persist every blocked arg's literal, not just the first. — The plan required iterating all anchors and writing every literal; the prior single-column event_id PK would PK-collide on a 2nd insert for a genuinely-plural block.
+- [Phase 14]: render_block_display's plural-block fail-closed guard re-derives the executor's is_routing_sensitive||is_content_sensitive && tainted predicate over PendingConfirmation.resolved_args instead of threading a new field through PendingConfirmation. — Avoids a schema/struct ripple across every PendingConfirmation-constructing test fixture while giving a precise (no false-positive) plurality check, since brokerd already depends on the executor crate.
 
 ### Pending Todos
 
@@ -85,9 +89,9 @@ pre-existing item, still benign). No new deferrals from roadmap creation.
 
 ## Session Continuity
 
-Last session: 2026-07-08T00:39:03.000Z
-Stopped at: Phase 13 executed (4 plans, 3 waves), verified (5/5 success criteria, 6/6 requirements), and marked complete. Phase 14 was planned concurrently by a separate session and is ready to execute.
-Resume file: None — next step is `/gsd-execute-phase 14`
+Last session: 2026-07-08T04:18:22.897Z
+Stopped at: Completed 14-02-PLAN.md — cargo test --workspace fully green, check-invariants.sh passes
+Resume file: None
 
 ## Operator Next Steps
 

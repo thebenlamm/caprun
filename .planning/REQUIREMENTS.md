@@ -16,7 +16,7 @@ Scoped with caprun-opus-77 (coordinator, delegated by Ben Lamm) plus an advisor 
 
 ### CONTENT (reopens v1.2's deferred CONTENT-01)
 
-- [ ] **CONTENT-01**: Executor blocks a tainted value occupying a content-sensitive sink arg (email body), not just routing/recipient — same literal-value confirm UX as existing I2 routing blocks.
+- [x] **CONTENT-01**: Executor blocks a tainted value occupying a content-sensitive sink arg (email body), not just routing/recipient — same literal-value confirm UX as existing I2 routing blocks.
 - [ ] **CONTENT-02**: Content-sensitivity classification is hardcoded in the executor TCB for the email sink's args ONLY (one match arm) — not a general content-classification taxonomy/abstraction.
 
 ### EXTRACT (deterministic doc→action)
@@ -83,7 +83,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SMTP-02 | Phase 13 | Complete |
 | SMTP-03 | Phase 13 | Complete |
 | SMTP-05 | Phase 13 | Complete |
-| CONTENT-01 | Phase 14 | Pending |
+| CONTENT-01 | Phase 14 | Complete |
 | CONTENT-02 | Phase 14 | Pending |
 | EXTRACT-01 | Phase 15 | Pending |
 | EXTRACT-02 | Phase 15 | Pending |
