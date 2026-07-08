@@ -11,8 +11,8 @@ Scoped with caprun-opus-77 (coordinator, delegated by Ben Lamm) plus an advisor 
 
 - [ ] **SMTP-01**: Broker-mediated adapter sends email only after executor-authorize + human-confirm; the confined worker never performs the SMTP call. Proven with a Linux NEGATIVE assertion: the confined worker attempting a direct SMTP connection FAILS (default-deny net) — a kernel-enforced claim, not just code structure.
 - [ ] **SMTP-02**: SMTP secrets/credentials live only in the broker process. Asserted absent from worker env/args AND from any plan-node payload.
-- [ ] **SMTP-03**: Acceptance-gate test targets a local capture SMTP (MailHog/Mailpit) — Linux-verifiable, repeatable, no live infra dependency.
-- [ ] **SMTP-05**: Adapter constructs the wire message so tainted literals CANNOT alter envelope/headers (CRLF/header injection) — a tainted body containing `\r\nBcc: attacker@...` must not smuggle recipients past the human's body confirm. Tested with a CRLF injection fixture.
+- [x] **SMTP-03**: Acceptance-gate test targets a local capture SMTP (MailHog/Mailpit) — Linux-verifiable, repeatable, no live infra dependency.
+- [x] **SMTP-05**: Adapter constructs the wire message so tainted literals CANNOT alter envelope/headers (CRLF/header injection) — a tainted body containing `\r\nBcc: attacker@...` must not smuggle recipients past the human's body confirm. Tested with a CRLF injection fixture.
 
 ### CONTENT (reopens v1.2's deferred CONTENT-01)
 
@@ -81,8 +81,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DESIGN-01 | Phase 12 | Pending |
 | SMTP-01 | Phase 13 | Pending |
 | SMTP-02 | Phase 13 | Pending |
-| SMTP-03 | Phase 13 | Pending |
-| SMTP-05 | Phase 13 | Pending |
+| SMTP-03 | Phase 13 | Complete |
+| SMTP-05 | Phase 13 | Complete |
 | CONTENT-01 | Phase 14 | Pending |
 | CONTENT-02 | Phase 14 | Pending |
 | EXTRACT-01 | Phase 15 | Pending |
