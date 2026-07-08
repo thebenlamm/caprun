@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: — Doc → Action Assistant
-current_phase: 15
-current_phase_name: Deterministic Doc→Action Extraction
+current_phase: 16
+current_phase_name: Confirm UX, Literal Binding & Negative Controls
 status: verifying
 stopped_at: Completed 15-04-PLAN.md (Wave 3, final plan of Phase 15)
-last_updated: "2026-07-08T14:50:38.494Z"
+last_updated: "2026-07-08T15:00:14.798Z"
 last_activity: 2026-07-08
-last_activity_desc: Phase 15 execution started
+last_activity_desc: Phase 15 complete, transitioned to Phase 16
 progress:
   total_phases: 6
   completed_phases: 4
@@ -28,16 +28,16 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 
 ## Current Position
 
-Phase: 15 (Deterministic Doc→Action Extraction) — EXECUTING
-Plan: 4 of 4 (15-04, Wave 3, remaining)
+Phase: 16 — Confirm UX, Literal Binding & Negative Controls
+Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-08 — Phase 15 execution started
+Last activity: 2026-07-08 — Phase 15 complete, transitioned to Phase 16
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 17 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 7 [Phase 12: 3, Phase 13: 4])
+- Total plans completed: 21 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 7 [Phase 12: 3, Phase 13: 4])
 - Average duration: — min
 
 **By Phase (v1.2):**
@@ -50,6 +50,7 @@ Last activity: 2026-07-08 — Phase 15 execution started
 | 11 | 1 | - | - |
 | 13 | 4 | - | - |
 | 14 | 2 | - | - |
+| 15 | 4 | - | - |
 
 *Updated after each plan completion. v1.3 phases (12-17) have no plans yet — table rows added once `/gsd-plan-phase` runs.*
 | Phase 14 P02 | 50min | 3 tasks | 10 files |
