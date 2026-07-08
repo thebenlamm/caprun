@@ -165,18 +165,25 @@ Problem Being Solved" already ruled out for `resolved_args` itself.
 A digest that is written once and only ever read back verbatim adds no tamper-evidence — nothing ever
 detects if the persisted row was altered. To make it load-bearing:
 
-- **Persist `combined_digest` INSIDE the hashed `sink_blocked` anchor payload** (the `SinkBlockedAnchor`
-  bytes that are hash-chained into the SHA-256 audit DAG), consistent with the project's existing
-  audit-persistence decision — so the DAG's own hash chain covers the digest and any post-hoc edit to
-  it (or to the anchor's frozen literals) breaks the chain. It is mirrored into `PendingConfirmation`
-  for the confirm process to read, but the DAG anchor copy is the tamper-evident source of truth.
+- **Persist `combined_digest` INSIDE the hashed `sink_blocked` EVENT payload** (the `Event` bytes that
+  are hash-chained into the SHA-256 audit DAG) — not inside any individual `SinkBlockedAnchor` element.
+  **(Round 5 reconciliation, phase-assignment-neutral):** this section originally said "inside the
+  `SinkBlockedAnchor` payload," written before Phase 14 made `SinkBlockedAnchor` plural (one Event now
+  carries a `Vec<SinkBlockedAnchor>`). The single digest that binds the WHOLE blocked-arg subset belongs
+  at the Event level — one digest per Event, exactly where the whole subset already lives — mirroring
+  how Phase 15 added `derived_value_id`/`input_value_ids`/etc. to the derivation Event's hashed payload.
+  This changes only the physical Rust field's location within the same hash-chained structure; the
+  security property is identical: consistent with the project's existing audit-persistence decision, the
+  DAG's own hash chain covers the digest, and any post-hoc edit to it (or to any anchor's frozen literal)
+  breaks the chain. It is mirrored into `PendingConfirmation` for the confirm process to read, but the
+  DAG Event copy is the tamper-evident source of truth.
 - **The send runs in the confirm-path process; recompute-and-compare MUST precede it.** Since the
   confirmed send now runs in the SAME confirm-path process as the confirm decision (per
   `DESIGN-content-adapter-mediation.md`'s finding-#1 reversal — no daemon handoff), the code MUST,
   before performing the send, recompute the digest **from the frozen blocked-subset literals in the
   persisted snapshot** (NOT from any live `ValueId` re-resolution), per the fixed-width per-element
   scheme above, and compare it, byte-for-byte, to the `combined_digest` frozen in the `sink_blocked`
-  anchor. On ANY mismatch it MUST fail closed — refuse the send, `logger.error()` with context, and
+  Event. On ANY mismatch it MUST fail closed — refuse the send, `logger.error()` with context, and
   append a durable failure Event — NEVER proceed. This is what turns the digest from a write-only field
   into an actual integrity check: it catches a tampered `resolved_args` (literals changed without the
   digest) or a tampered digest (digest changed without the literals) before any irreversible send.
@@ -366,7 +373,7 @@ frozen `resolved_args` (and frozen `combined_digest`) snapshot persisted at Bloc
 re-invoke `submit_plan_node`, and MUST NOT re-resolve any `ValueId` against a live `ValueStore` (which
 does not exist in the confirm process per "The Problem Being Solved" above). It MUST, however,
 recompute the digest **from the frozen blocked-subset literals in that snapshot** and compare it to
-the `combined_digest` frozen in the hashed `sink_blocked` anchor, failing closed on any mismatch (see
+the `combined_digest` frozen in the hashed `sink_blocked` Event, failing closed on any mismatch (see
 "tamper-evidence" under Combined-Digest Binding above). The distinction is exact: recomputing from the
 FROZEN snapshot literals is REQUIRED (it is the integrity check); recomputing from a LIVE `ValueId`
 re-resolution is FORBIDDEN (the `ValueStore` is gone). The stored digest is never overwritten — only
@@ -395,7 +402,7 @@ This document's design is satisfied when the following conditions ALL hold simul
    error — closing D-12(b) and the taint-laundering BLOCKER by construction rather than by a runtime
    check (CONFIRM-03, Pitfall 2, D-16).
 2a. **Digest is tamper-evident, and compare + send read the same snapshot.** `combined_digest` is
-   persisted inside the hashed `sink_blocked` anchor payload (covered by the audit DAG hash chain) and
+   persisted inside the hashed `sink_blocked` Event payload (covered by the audit DAG hash chain) and
    is recompute-and-compared — from the frozen blocked-subset literals, never a live `ValueId`
    re-resolution — before the send, fail-closed on any mismatch. The send now runs in the confirm-path
    process (finding-#1 reversal, no daemon handoff), and the frozen literals fed to the compare MUST be

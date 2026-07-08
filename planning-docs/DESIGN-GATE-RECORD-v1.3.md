@@ -248,23 +248,23 @@ literal-leak-on-failure fixes were CONFIRMED CLOSED by round 3.
 
 ## Documents Under Review
 
-These are the **post-round-4-amendment (current)** hashes. Prior rounds' hashes are retained below for
+These are the **post-round-5-amendment (current)** hashes. Prior rounds' hashes are retained below for
 provenance (full hash history is kept, never overwritten/deleted).
 
-| Document | sha256 (current, post-round-4-amendment) |
+| Document | sha256 (current, post-round-5-amendment) |
 |----------|--------|
 | `planning-docs/DESIGN-content-adapter-mediation.md` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged since round 3) |
-| `planning-docs/DESIGN-confirm-binding.md` | `e89277785cd62378e562d04341d607a6cb7e64e1e9624f766fadbca361feb7bd` |
+| `planning-docs/DESIGN-confirm-binding.md` | `284ec3b3809f71596c90ec36bd352e9ab3bd3e0fa90ce7ffd3325101609e3f3c` |
 
 **Hash history (provenance — do not delete prior rounds):**
 
-| Document | round-1 input | round-2 input (post-round-1-fix) | round-3 input (post-round-2-fix) | round-3-final (post-tightening, APPROVED) | round-4 (post-phase-assignment-amendment) |
-|----------|---------------|----------------------------------|----------------------------------|----------------------------------|----------------------------------|
-| `DESIGN-content-adapter-mediation.md` | `c2506396852d4bd619d7985cf2973cdd3b140177cff3c5d82f53038b3fa6724c` | `bec703fef52a6342a38d2924ef4f56b0b18c6873c09388bd8a2928fa630ec07e` | `ba365cd082b648b104177caedd4922d790f24e77b8019fedf31a0a654c23e792` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged) |
-| `DESIGN-confirm-binding.md` | `c7a614233324f8a3d012a27836e4b891f27f2aff4197bcbd8d85e3db65b3f1f2` | `68dfd9d9e8c6c4e538234c5b0130914fbf77be9a0c65f6c9509292a8c54eb470` | `f4b6e1c1099a5758dfd054ca79beb9a197ffaeba4218e693bbfefc9ddf2b6d49` | `fab14ec90db3a8fc5c41864fa045b1db5bf9644615c74bd33530408f35c08c17` | `e89277785cd62378e562d04341d607a6cb7e64e1e9624f766fadbca361feb7bd` |
+| Document | round-1 input | round-2 input (post-round-1-fix) | round-3 input (post-round-2-fix) | round-3-final (post-tightening, APPROVED) | round-4 (post-phase-assignment-amendment) | round-5 (post-reconciliation-amendment) |
+|----------|---------------|----------------------------------|----------------------------------|----------------------------------|----------------------------------|----------------------------------|
+| `DESIGN-content-adapter-mediation.md` | `c2506396852d4bd619d7985cf2973cdd3b140177cff3c5d82f53038b3fa6724c` | `bec703fef52a6342a38d2924ef4f56b0b18c6873c09388bd8a2928fa630ec07e` | `ba365cd082b648b104177caedd4922d790f24e77b8019fedf31a0a654c23e792` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged) | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged) |
+| `DESIGN-confirm-binding.md` | `c7a614233324f8a3d012a27836e4b891f27f2aff4197bcbd8d85e3db65b3f1f2` | `68dfd9d9e8c6c4e538234c5b0130914fbf77be9a0c65f6c9509292a8c54eb470` | `f4b6e1c1099a5758dfd054ca79beb9a197ffaeba4218e693bbfefc9ddf2b6d49` | `fab14ec90db3a8fc5c41864fa045b1db5bf9644615c74bd33530408f35c08c17` | `e89277785cd62378e562d04341d607a6cb7e64e1e9624f766fadbca361feb7bd` | `284ec3b3809f71596c90ec36bd352e9ab3bd3e0fa90ce7ffd3325101609e3f3c` |
 
-Hashes were re-computed with `shasum -a 256` after the Round-4 phase-assignment amendment (Phase 15
-in-progress, 2026-07-08). `DESIGN-content-adapter-mediation.md` is untouched (hash identical to the
+Hashes were re-computed with `shasum -a 256` after the Round-5 reconciliation amendment (Phase 16
+planning, 2026-07-08). `DESIGN-content-adapter-mediation.md` is untouched (hash identical to the
 round-3-final/APPROVED value). Anyone re-verifying this record should confirm
 `shasum -a 256 planning-docs/DESIGN-content-adapter-mediation.md planning-docs/DESIGN-confirm-binding.md`
 matches the current row above.
@@ -273,7 +273,7 @@ matches the current row above.
 ```
 $ shasum -a 256 planning-docs/DESIGN-content-adapter-mediation.md planning-docs/DESIGN-confirm-binding.md
 ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9  planning-docs/DESIGN-content-adapter-mediation.md
-e89277785cd62378e562d04341d607a6cb7e64e1e9624f766fadbca361feb7bd  planning-docs/DESIGN-confirm-binding.md
+284ec3b3809f71596c90ec36bd352e9ab3bd3e0fa90ce7ffd3325101609e3f3c  planning-docs/DESIGN-confirm-binding.md
 ```
 (Re-run after the Round-4 phase-assignment amendment, 2026-07-08. Full hash history — round-1 input
 through round-3-final/APPROVED — is preserved in the provenance table above; prior rounds' hashes are
@@ -638,6 +638,30 @@ Current hashes:
   `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged)
 - `planning-docs/DESIGN-confirm-binding.md`:
   `e89277785cd62378e562d04341d607a6cb7e64e1e9624f766fadbca361feb7bd`
+
+**Round 5 (post-approval reconciliation amendment, during Phase 16 planning, 2026-07-08):**
+`DESIGN-confirm-binding.md`'s "Combined-Digest Binding" section originally said `combined_digest` is
+persisted "inside the hashed `sink_blocked` ANCHOR payload" (the `SinkBlockedAnchor` bytes) — written
+before Phase 14 made `SinkBlockedAnchor` plural (one Event now carries a `Vec<SinkBlockedAnchor>`).
+Phase 16's plan places `combined_digest` on the `Event` instead (mirroring how Phase 15 added
+`derived_value_id`/`input_value_ids`/etc. to the derivation Event's hashed payload), which contradicted
+this pinned MUST without a recorded amendment. A fresh-context panel arranged by caprun-opus-77
+independently verified the Event-level placement is semantically sound and NOT a weakening: one plan
+node produces one `sink_blocked` Event; all anchors in that Event's `Vec<SinkBlockedAnchor>` share the
+same `effect_id`; the Event-level field retains every binding property (tamper-evidence via the DAG
+hash chain, recompute-and-compare, same-snapshot TOCTOU closure) the anchor-level field would have had.
+This is a phase-assignment/location-neutral reconciliation, not a semantic change — pre-blessed by
+caprun-opus-77 under the same `DEC-ai-review-satisfies-human-gate` authorization, no new adversarial
+round required. Four passages amended in `DESIGN-confirm-binding.md` (the Combined-Digest Binding MUST
+bullet, the recompute-and-compare byte-for-byte comparison target, the confirm/deny single-shot
+snapshot section, and Done-When item 2a) — every occurrence of "hashed `sink_blocked` anchor" replaced
+with "hashed `sink_blocked` Event." No other sentence touched; `DESIGN-content-adapter-mediation.md` is
+untouched (hash unchanged). Decision remains **APPROVED**; Gate status remains **UNBLOCKED**.
+Current hashes:
+- `planning-docs/DESIGN-content-adapter-mediation.md`:
+  `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged)
+- `planning-docs/DESIGN-confirm-binding.md`:
+  `284ec3b3809f71596c90ec36bd352e9ab3bd3e0fa90ce7ffd3325101609e3f3c`
 
 **Authorization and sign-off:** Ben Lamm authorized AI-panel-only adversarial review (no personal
 human read) under `DEC-ai-review-satisfies-human-gate` (`.planning/PROJECT.md` Key Decisions table),

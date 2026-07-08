@@ -143,7 +143,10 @@ pub struct SinkBlockedAnchor {
 /// Phase 16 (`planning-docs/DESIGN-confirm-binding.md`, CONFIRM-03/D-19) layers a
 /// `combined_digest` SHA-256-over-fixed-width-per-element-digests binding on top
 /// of this collection — that field does NOT live here; `BlockedArg` stays exactly
-/// this shape and the combined digest rides on `PendingConfirmation` instead.
+/// this shape. The combined digest's tamper-evident source of truth is the hashed
+/// `sink_blocked` Event payload (Round 5 reconciliation amendment,
+/// `DESIGN-GATE-RECORD-v1.3.md`) — it is only MIRRORED onto `PendingConfirmation`
+/// for the confirm process to read; that mirror copy is not itself hash-chained.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BlockedArg {
     /// The durable, tamper-evident per-element anchor (unchanged shape/semantics
