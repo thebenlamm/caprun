@@ -1010,4 +1010,421 @@ mod tests {
             "mint_from_intent must not append a session_demoted event"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // mint_from_derivation tests (Task 2, finding #1/#2/#3/#10, MAJOR-1,
+    // MEDIUM R1/R2) — the provenance-threading, fail-closed derived-value mint.
+    // -----------------------------------------------------------------------
+
+    use crate::audit::query_events_by_session;
+    use runtime_core::value_record::ValueRecord;
+
+    /// Threading: two file_read-rooted inputs' chains concatenate in order;
+    /// union taint contains ExternalUntrusted + WorkerExtracted; a
+    /// "derivation" event exists in the DAG.
+    #[test]
+    fn mint_from_derivation_threads_provenance_and_taint() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (read_a, _, value_id_a, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
+            None, None,
+        ).unwrap();
+        let (read_b, _, value_id_b, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
+            None, None,
+        ).unwrap();
+
+        let record_a = store.resolve(&value_id_a).unwrap().clone();
+        let record_b = store.resolve(&value_id_b).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+
+        let (derivation_event_id, _hash, value_id) = mint_from_derivation(
+            &conn, &mut store, session_id, "accounts@ev1l.com".into(),
+            &inputs, "concat", None, None,
+        ).unwrap();
+
+        let derived = store.resolve(&value_id).unwrap();
+        assert_eq!(derived.provenance_chain, vec![read_a, read_b]);
+        assert!(derived.taint.contains(&TaintLabel::ExternalUntrusted));
+        assert!(derived.taint.contains(&TaintLabel::WorkerExtracted));
+        assert_eq!(derived.literal, "accounts@ev1l.com");
+
+        let derivation_evt = find_event_by_type(&conn, &session_id.to_string(), "derivation")
+            .unwrap()
+            .expect("a derivation event must exist in the DAG");
+        assert_eq!(derivation_evt.id, derivation_event_id);
+    }
+
+    /// No re-anchor (D-16): the derived record's provenance_chain[0] is NOT
+    /// the derivation event's own id — lineage is threaded, never re-rooted
+    /// at the transform.
+    #[test]
+    fn mint_from_derivation_no_re_anchor() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (read_a, _, value_id_a, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
+            None, None,
+        ).unwrap();
+        let (_read_b, _, value_id_b, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
+            None, None,
+        ).unwrap();
+
+        let record_a = store.resolve(&value_id_a).unwrap().clone();
+        let record_b = store.resolve(&value_id_b).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+
+        let (derivation_event_id, _hash, value_id) = mint_from_derivation(
+            &conn, &mut store, session_id, "accounts@ev1l.com".into(),
+            &inputs, "concat", None, None,
+        ).unwrap();
+
+        let derived = store.resolve(&value_id).unwrap();
+        assert_eq!(
+            derived.provenance_chain[0], read_a,
+            "provenance_chain[0] must be the originating input read, not the derivation event"
+        );
+        assert_ne!(
+            derived.provenance_chain[0], derivation_event_id,
+            "the derived record must never be re-anchored at its own derivation event"
+        );
+    }
+
+    /// Drop-UserTrusted (finding #3): when the union taint is untrusted (it
+    /// always is — WorkerExtracted is appended unconditionally), UserTrusted
+    /// is dropped from the union. Isolates the union/drop computation from
+    /// the file_read-root guard (separately tested below) by re-tagging one
+    /// already-minted, genuinely file_read-rooted record's taint to
+    /// UserTrusted locally — its provenance_chain stays a real file_read id,
+    /// so the guard passes and only the drop logic is exercised.
+    #[test]
+    fn mint_from_derivation_drops_user_trusted_when_union_untrusted() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (_, _, value_id_a, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
+            None, None,
+        ).unwrap();
+        let (_, _, value_id_b, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
+            None, None,
+        ).unwrap();
+
+        // record_a stays genuinely ExternalUntrusted; its read is at index 0.
+        let record_a = store.resolve(&value_id_a).unwrap().clone();
+        // record_b is re-tagged UserTrusted, but keeps its real file_read-rooted chain.
+        let mut record_b = store.resolve(&value_id_b).unwrap().clone();
+        record_b.taint = vec![TaintLabel::UserTrusted];
+
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+        let (_derivation_event_id, _hash, value_id) = mint_from_derivation(
+            &conn, &mut store, session_id, "accounts@ev1l.com".into(),
+            &inputs, "concat", None, None,
+        ).unwrap();
+
+        let derived = store.resolve(&value_id).unwrap();
+        assert!(derived.taint.contains(&TaintLabel::ExternalUntrusted));
+        assert!(derived.taint.contains(&TaintLabel::WorkerExtracted));
+        assert!(
+            !derived.taint.contains(&TaintLabel::UserTrusted),
+            "UserTrusted must be dropped when the union is untrusted (finding #3)"
+        );
+    }
+
+    /// File_read-root guard, index 0 (finding #3): index-0 input is
+    /// intent_received-rooted (UserTrusted), index-1 is file_read-rooted,
+    /// overall untrusted union — REJECTED because provenance_chain[0] does
+    /// not resolve to a file_read event.
+    #[test]
+    fn mint_from_derivation_rejects_non_file_read_root_at_index_0() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (_, _, value_id_trusted) =
+            mint_from_intent(&conn, &mut store, session_id, "boss@company.com".into(), None, None)
+                .unwrap();
+        let (_, _, value_id_untrusted, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
+            None, None,
+        ).unwrap();
+
+        let record_trusted = store.resolve(&value_id_trusted).unwrap().clone();
+        let record_untrusted = store.resolve(&value_id_untrusted).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_trusted, &record_untrusted];
+
+        let result = mint_from_derivation(
+            &conn, &mut store, session_id, "boss@company.com@ev1l.com".into(),
+            &inputs, "concat", None, None,
+        );
+        assert!(
+            result.is_err(),
+            "an intent_received-rooted input at index 0 must be rejected under an untrusted union"
+        );
+    }
+
+    /// File_read-root guard, index>0 (MEDIUM R1/R2 — mirror case): index-0
+    /// input is file_read-rooted (doc_fragment), index-1 is
+    /// intent_received-rooted, overall untrusted union — ALSO REJECTED,
+    /// proving the guard checks EVERY chain element, not just [0].
+    #[test]
+    fn mint_from_derivation_rejects_non_file_read_root_at_index_gt_0() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (_, _, value_id_untrusted, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
+            None, None,
+        ).unwrap();
+        let (_, _, value_id_trusted) =
+            mint_from_intent(&conn, &mut store, session_id, "boss@company.com".into(), None, None)
+                .unwrap();
+
+        let record_untrusted = store.resolve(&value_id_untrusted).unwrap().clone();
+        let record_trusted = store.resolve(&value_id_trusted).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_untrusted, &record_trusted];
+
+        let result = mint_from_derivation(
+            &conn, &mut store, session_id, "accounts@boss@company.com".into(),
+            &inputs, "concat", None, None,
+        );
+        assert!(
+            result.is_err(),
+            "an intent_received-rooted input at index>0 must ALSO be rejected — the guard \
+             checks EVERY element, not just [0]"
+        );
+    }
+
+    /// All-UserTrusted-input property pin (MEDIUM, WorkerExtracted-
+    /// unconditional): a derivation whose inputs are ALL [UserTrusted]
+    /// (necessarily intent_received-rooted) is REJECTED. Pins that
+    /// WorkerExtracted is appended UNCONDITIONALLY — if it were skipped for
+    /// all-trusted inputs, the union would stay [UserTrusted], the
+    /// file_read-root guard would never fire, and the mint would succeed
+    /// with a TRUSTED output (the laundering-to-trusted hole).
+    #[test]
+    fn mint_from_derivation_rejects_all_user_trusted_inputs() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (_, _, value_id_a) =
+            mint_from_intent(&conn, &mut store, session_id, "local-part".into(), None, None)
+                .unwrap();
+        let (_, _, value_id_b) =
+            mint_from_intent(&conn, &mut store, session_id, "domain-part".into(), None, None)
+                .unwrap();
+
+        let record_a = store.resolve(&value_id_a).unwrap().clone();
+        let record_b = store.resolve(&value_id_b).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+
+        let result = mint_from_derivation(
+            &conn, &mut store, session_id, "local-part@domain-part".into(),
+            &inputs, "concat", None, None,
+        );
+        assert!(
+            result.is_err(),
+            "an all-UserTrusted input set must still be rejected — WorkerExtracted is \
+             unconditional, so the union is always untrusted and the file_read-root guard \
+             must fire against the intent_received roots"
+        );
+    }
+
+    /// MAJOR-1 concat byte-verify: transformed_literal must equal
+    /// join(input_literals, '@'); a mismatch is fail-closed rejected, the
+    /// matching case mints successfully.
+    #[test]
+    fn mint_from_derivation_concat_byte_verify_rejects_mismatch() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (_, _, value_id_a, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
+            None, None,
+        ).unwrap();
+        let (_, _, value_id_b, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
+            None, None,
+        ).unwrap();
+
+        let record_a = store.resolve(&value_id_a).unwrap().clone();
+        let record_b = store.resolve(&value_id_b).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+
+        // Mismatch: claimed literal != join(input_literals, '@').
+        let mismatch_result = mint_from_derivation(
+            &conn, &mut store, session_id, "attacker@evil.com".into(),
+            &inputs, "concat", None, None,
+        );
+        assert!(
+            mismatch_result.is_err(),
+            "a transformed_literal that does not match join(input_literals, '@') must be \
+             rejected (MAJOR-1 byte-descent guard)"
+        );
+
+        // Matching case mints successfully.
+        let matching_result = mint_from_derivation(
+            &conn, &mut store, session_id, "accounts@ev1l.com".into(),
+            &inputs, "concat", None, None,
+        );
+        assert!(matching_result.is_ok(), "the byte-verified matching literal must mint Ok");
+    }
+
+    /// Dedup / order: overlapping input provenance chains dedup order-stably.
+    #[test]
+    fn mint_from_derivation_dedups_overlapping_provenance_order_stably() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (read_x, _, value_id_x, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "x-frag".into() },
+            None, None,
+        ).unwrap();
+        let (read_y, _, value_id_y, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "y-frag".into() },
+            None, None,
+        ).unwrap();
+        let (read_z, _, value_id_z, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "z-frag".into() },
+            None, None,
+        ).unwrap();
+        let _ = (value_id_x, value_id_y, value_id_z);
+
+        // Hand-construct two inputs whose provenance_chains OVERLAP on read_y,
+        // to exercise dedup — both roots are genuine file_read events.
+        let record_a = ValueRecord {
+            id: runtime_core::plan_node::ValueId::new(),
+            literal: "a-lit".into(),
+            taint: vec![TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![read_x, read_y],
+        };
+        let record_b = ValueRecord {
+            id: runtime_core::plan_node::ValueId::new(),
+            literal: "b-lit".into(),
+            taint: vec![TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![read_y, read_z],
+        };
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+
+        let (_derivation_event_id, _hash, value_id) = mint_from_derivation(
+            &conn, &mut store, session_id, "a-lit@b-lit".into(),
+            &inputs, "concat", None, None,
+        ).unwrap();
+
+        let derived = store.resolve(&value_id).unwrap();
+        assert_eq!(
+            derived.provenance_chain,
+            vec![read_x, read_y, read_z],
+            "overlapping chains must dedup order-stably, preserving first occurrence"
+        );
+    }
+
+    /// Fail-closed: zero inputs is rejected and no event/record is persisted.
+    #[test]
+    fn mint_from_derivation_zero_inputs_fails_closed() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let before = query_events_by_session(&conn, &session_id.to_string()).unwrap().len();
+
+        let inputs: Vec<&ValueRecord> = vec![];
+        let result = mint_from_derivation(
+            &conn, &mut store, session_id, "whatever".into(), &inputs, "concat", None, None,
+        );
+        assert!(result.is_err(), "zero inputs must fail closed");
+
+        let after = query_events_by_session(&conn, &session_id.to_string()).unwrap().len();
+        assert_eq!(before, after, "no event may be persisted on a zero-input rejection");
+    }
+
+    /// No demotion side effect: calling mint_from_derivation does not change
+    /// session status and does not append an additional session_demoted
+    /// event beyond what the inputs' own mint_from_read calls already caused.
+    #[test]
+    fn mint_from_derivation_does_not_demote_session() {
+        use crate::session::{create_session, persist_session};
+        use runtime_core::{SeedProvenance, SessionStatus};
+
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session = create_session(Uuid::new_v4(), SeedProvenance::TrustedArg);
+        persist_session(&conn, &session).unwrap();
+
+        let (_, _, value_id_a, _, _) = mint_from_read(
+            &conn, &mut store, session.id,
+            &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
+            None, None,
+        ).unwrap();
+        let (_, _, value_id_b, _, _) = mint_from_read(
+            &conn, &mut store, session.id,
+            &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
+            None, None,
+        ).unwrap();
+
+        let demoted_count_before = query_events_by_session(&conn, &session.id.to_string())
+            .unwrap()
+            .iter()
+            .filter(|e| e.event_type == "session_demoted")
+            .count();
+
+        let record_a = store.resolve(&value_id_a).unwrap().clone();
+        let record_b = store.resolve(&value_id_b).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+
+        mint_from_derivation(
+            &conn, &mut store, session.id, "accounts@ev1l.com".into(),
+            &inputs, "concat", None, None,
+        ).unwrap();
+
+        let demoted_count_after = query_events_by_session(&conn, &session.id.to_string())
+            .unwrap()
+            .iter()
+            .filter(|e| e.event_type == "session_demoted")
+            .count();
+        assert_eq!(
+            demoted_count_before, demoted_count_after,
+            "mint_from_derivation must not append an additional session_demoted event"
+        );
+
+        let status_json: String = conn
+            .query_row(
+                "SELECT status FROM sessions WHERE id = ?1",
+                rusqlite::params![session.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let status: SessionStatus = serde_json::from_str(&status_json).unwrap();
+        assert_eq!(
+            status,
+            SessionStatus::Draft,
+            "status stays whatever the input reads already set (Draft) — \
+             mint_from_derivation itself never changes it"
+        );
+    }
 }
