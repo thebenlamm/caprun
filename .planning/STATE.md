@@ -6,13 +6,13 @@ current_phase: 15
 current_phase_name: Deterministic Doc→Action Extraction
 status: executing
 stopped_at: Completed 14-02-PLAN.md — cargo test --workspace fully green, check-invariants.sh passes
-last_updated: "2026-07-08T05:22:48.827Z"
+last_updated: "2026-07-08T13:23:33.863Z"
 last_activity: 2026-07-08
-last_activity_desc: Phase 14 complete, transitioned to Phase 15
+last_activity_desc: Phase 15 execution started
 progress:
   total_phases: 6
   completed_phases: 3
-  total_plans: 9
+  total_plans: 13
   completed_plans: 9
   percent: 50
 ---
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — now extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, and (v1.3, in progress) with content-sensitive body blocking plus a real broker-mediated SMTP send, both proven live on real Linux.
-**Current focus:** Phase 14 — Content-Sensitive Sink-Arg Blocking
+**Current focus:** Phase 15 — Deterministic Doc→Action Extraction
 
 ## Current Position
 
-Phase: 15 — Deterministic Doc→Action Extraction
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-08 — Phase 14 complete, transitioned to Phase 15
+Phase: 15 (Deterministic Doc→Action Extraction) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 15
+Last activity: 2026-07-08 — Phase 15 execution started
 
 ## Performance Metrics
 
