@@ -60,7 +60,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 
 - [x] **Phase 12: Content, Adapter & Confirm-Binding Design Gate** - A reviewed, adversarially-reviewed DESIGN doc covering content-sensitivity semantics, real-adapter mediation, and confirm-binding exists before any executor/TCB code for this milestone is written (completed 2026-07-07)
 - [x] **Phase 13: Real Broker-Mediated SMTP Adapter** - caprun can send a real email through a broker-mediated adapter — worker never touches the network, secrets never leave the broker, and the send is idempotent/failure-safe (completed 2026-07-08)
-- [ ] **Phase 14: Content-Sensitive Sink-Arg Blocking** - The executor blocks a tainted email body the same way it already blocks a tainted recipient
+- [x] **Phase 14: Content-Sensitive Sink-Arg Blocking** - The executor blocks a tainted email body the same way it already blocks a tainted recipient (completed 2026-07-08)
 - [ ] **Phase 15: Deterministic Doc→Action Extraction** - A confined, deterministic extractor turns a hostile document's bytes into a plan node, with a proven unbroken audit-DAG edge from read to block, including through a transformation
 - [ ] **Phase 16: Confirm UX, Literal Binding & Negative Controls** - A human sees the verbatim, provenance-narrated recipient and body before deciding; confirm is bound to the exact resolved literals; the gate is proven taint-driven, not a blanket email block
 - [ ] **Phase 17: Live Acceptance & Framing Honesty** - The full doc→action chain runs live on real Linux as one unbroken audit DAG, composing the hostile block and the clean control in the same run, with honest public framing of what was and wasn't proven
@@ -123,15 +123,15 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   1. Submitting a plan node with a tainted value occupying the email sink's body arg is Blocked by the executor, with the same literal-value human-confirm UX as the existing routing/recipient block.
   2. The content-sensitivity classification is implemented as one hardcoded match arm in the executor TCB, scoped to the email sink's args only — not a reusable content-classification framework.
 
-**Plans**: 2 plans
+**Plans**: 2/2 plans complete
 
 **Wave 1**
 
-- [ ] 14-01-PLAN.md — Plural block decision (BlockedArg / Vec-shaped BlockedPendingConfirmation) + collect-then-Block loop + attachment descope (D-14/D-23) + executor proof tests (CONTENT-01, CONTENT-02)
+- [x] 14-01-PLAN.md — Plural block decision (BlockedArg / Vec-shaped BlockedPendingConfirmation) + collect-then-Block loop + attachment descope (D-14/D-23) + executor proof tests (CONTENT-01, CONTENT-02)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 14-02-PLAN.md — Plural audit Event (Event.anchors) + brokerd/cli consumer migration + golden-byte re-verify, restoring a green workspace (CONTENT-01)
+- [x] 14-02-PLAN.md — Plural audit Event (Event.anchors) + brokerd/cli consumer migration + golden-byte re-verify, restoring a green workspace (CONTENT-01)
 
 ### Phase 15: Deterministic Doc→Action Extraction
 
@@ -193,7 +193,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 | 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 1/1 | Complete | 2026-07-07 |
 | 12. Content, Adapter & Confirm-Binding Design Gate | v1.3 | 3/3 | Complete   | 2026-07-07 |
 | 13. Real Broker-Mediated SMTP Adapter | v1.3 | 4/4 | Complete    | 2026-07-08 |
-| 14. Content-Sensitive Sink-Arg Blocking | v1.3 | 0/0 | Not started | - |
+| 14. Content-Sensitive Sink-Arg Blocking | v1.3 | 2/2 | Complete   | 2026-07-08 |
 | 15. Deterministic Doc→Action Extraction | v1.3 | 0/0 | Not started | - |
 | 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 0/0 | Not started | - |
 | 17. Live Acceptance & Framing Honesty | v1.3 | 0/0 | Not started | - |

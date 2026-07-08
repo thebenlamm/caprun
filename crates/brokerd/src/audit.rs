@@ -43,15 +43,23 @@ CREATE TABLE IF NOT EXISTS events (
 ) STRICT;
 
 -- Redactable side table for blocked-literal data at rest. The raw literal from a
--- `sink_blocked` event lives HERE, keyed by that event's id — NEVER in the hashed
--- `events.payload` (only its SHA-256 digest is in the anchor/chain). Redaction is a
--- single `DELETE FROM blocked_literals WHERE event_id = ?`: the digest remains in
--- the tamper-evident chain as proof content existed, but the literal is gone. This
--- resolves the tamper-evidence-vs-redactability conflict of storing the literal in
--- the chain.
+-- `sink_blocked` event lives HERE, keyed by (event_id, arg) — NEVER in the hashed
+-- `events.payload` (only its SHA-256 digest is in the anchor/chain). A `sink_blocked`
+-- event carries a PLURAL anchors collection (Phase 14, D-14 Collect-then-Block), so
+-- one event can have MULTIPLE blocked-literal rows, one per blocked arg — `arg` is
+-- part of the primary key precisely so every blocked arg's literal is persisted, not
+-- just the first (a plan node cannot have two args of the same name — validate_schema
+-- already guarantees `arg` is unique within one event's blocked set). Redaction is a
+-- single `DELETE FROM blocked_literals WHERE event_id = ?`, which removes ALL rows for
+-- that event at once (the whole block resolves confirm/deny together): the digests
+-- remain in the tamper-evident chain as proof content existed, but the literals are
+-- gone. This resolves the tamper-evidence-vs-redactability conflict of storing the
+-- literal in the chain.
 CREATE TABLE IF NOT EXISTS blocked_literals (
-    event_id TEXT PRIMARY KEY,
-    literal  TEXT NOT NULL
+    event_id TEXT NOT NULL,
+    arg      TEXT NOT NULL,
+    literal  TEXT NOT NULL,
+    PRIMARY KEY (event_id, arg)
 ) STRICT;
 
 -- Redactable/mutable side table for the durable confirm/deny checkpoint, keyed by
@@ -94,29 +102,40 @@ pub fn open_audit_db(path: &str) -> Result<rusqlite::Connection> {
     Ok(conn)
 }
 
-/// Persist the raw blocked literal for a `sink_blocked` event into the redactable
-/// `blocked_literals` side table, keyed by the event id.
+/// Persist the raw blocked literal for ONE blocked arg of a `sink_blocked` event
+/// into the redactable `blocked_literals` side table, keyed by (event id, arg).
 ///
 /// The literal lives ONLY here — never in `events.payload` (the hashed anchor
 /// carries only its SHA-256 digest). This keeps the raw literal (attacker content
 /// / PII) out of the tamper-evident chain so it can later be redacted without
-/// breaking `verify_chain`. Caller should invoke this under the same broker-owned
+/// breaking `verify_chain`. A plural (Phase 14) block calls this ONCE PER anchor
+/// in the event's `anchors` collection — every blocked arg's literal is persisted,
+/// not just the first. Caller should invoke this under the same broker-owned
 /// connection lock as the `append_event` that wrote the `sink_blocked` row.
 pub fn insert_blocked_literal(
     conn: &rusqlite::Connection,
     event_id: &str,
+    arg: &str,
     literal: &str,
 ) -> Result<()> {
     conn.execute(
-        "INSERT INTO blocked_literals (event_id, literal) VALUES (?1, ?2)",
-        rusqlite::params![event_id, literal],
+        "INSERT INTO blocked_literals (event_id, arg, literal) VALUES (?1, ?2, ?3)",
+        rusqlite::params![event_id, arg, literal],
     )?;
     Ok(())
 }
 
-/// Fetch the raw literal for a blocked event, or `None` if it was never stored or
-/// has been redacted. Verify tamper-evidence by comparing `sha256(literal)` to the
-/// event anchor's `literal_sha256`.
+/// Fetch a raw literal for a blocked event, or `None` if none was ever stored or
+/// all have been redacted. Verify tamper-evidence by comparing `sha256(literal)`
+/// to the matching anchor's `literal_sha256`.
+///
+/// This is a presence/redaction-gate check (`confirmation::confirm`'s Step 3):
+/// for a single-blocked-arg event (today's only exercised shape) this returns
+/// THE literal. For a genuinely-plural block it returns an arbitrary one of the
+/// surviving rows — sufficient for the presence check (redaction removes every
+/// row for the event at once, so "any row survives" is a well-defined, atomic
+/// property), but NOT a stable per-arg accessor; a dedicated per-arg query is
+/// Phase 16 scope alongside the rest of multi-arg narration (CONFIRM-04).
 pub fn get_blocked_literal(conn: &rusqlite::Connection, event_id: &str) -> Result<Option<String>> {
     let mut stmt = conn.prepare("SELECT literal FROM blocked_literals WHERE event_id = ?1")?;
     let mut rows = stmt.query(rusqlite::params![event_id])?;
@@ -198,12 +217,13 @@ pub fn append_event(
     event: &Event,
     parent_hash: Option<&str>,
 ) -> Result<String> {
-    // Defect B guard (DESIGN §4 rule 7): a `sink_blocked` event with no anchor is
+    // Defect B guard (DESIGN §4 rule 7): a `sink_blocked` event with no anchors is
     // a security-meaningless bare marker. Reject it here so it is NON-PERSISTABLE
-    // through the TCB — not merely never-triggered.
-    if event.event_type == "sink_blocked" && event.anchor.is_none() {
+    // through the TCB — not merely never-triggered. Plural (Phase 14): the guard
+    // now checks the whole collection is non-empty, not a singular `Option`.
+    if event.event_type == "sink_blocked" && event.anchors.is_empty() {
         return Err(anyhow::anyhow!(
-            "sink_blocked event requires an anchor (Defect B guard)"
+            "sink_blocked event requires at least one anchor (Defect B guard)"
         ));
     }
     let payload = serde_json::to_string(event)?;

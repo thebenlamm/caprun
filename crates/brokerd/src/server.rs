@@ -408,24 +408,29 @@ pub async fn dispatch_request(
             // Fail-closed: an append error propagates with `?`, so the block is
             // NEVER reported to the worker as having succeeded.
             //
-            // A block persists the durable anchor via the broker-owned
-            // Event::sink_blocked constructor (sets Event.taint = anchor.taint,
-            // anchor = Some). The causal parent stays the chain head — NOT
-            // read_event_id (two graphs are never equated, DESIGN §0/§4 rule 3).
-            // On a block, capture the LIVE literal so it can be written to the
+            // A block persists ALL durable anchors via the broker-owned
+            // Event::sink_blocked constructor (sets Event.taint by merging every
+            // anchor's taint, anchors = the full collection). The causal parent
+            // stays the chain head — NOT read_event_id (two graphs are never
+            // equated, DESIGN §0/§4 rule 3). On a block, capture EVERY blocked
+            // arg's LIVE literal (name + literal) so each can be written to the
             // redactable `blocked_literals` side table (keyed by the sink_blocked
-            // event id). The literal is NEVER put in the hashed event payload — the
-            // anchor carries only its digest (`literal_sha256`).
-            let (audit_event, blocked_literal) = match &decision {
-                runtime_core::ExecutorDecision::BlockedPendingConfirmation { anchor, literal } => (
+            // event id AND arg name — Phase 14 plural). The literal is NEVER put
+            // in the hashed event payload — the anchor carries only its digest
+            // (`literal_sha256`).
+            let (audit_event, blocked_literals) = match &decision {
+                runtime_core::ExecutorDecision::BlockedPendingConfirmation { anchors } => (
                     Event::sink_blocked(
                         Uuid::new_v4(),
                         Some(*last_event_id), // causal head — never read_event_id
                         session_id,
                         Utc::now(),
-                        anchor.clone(),
+                        anchors.iter().map(|b| b.anchor.clone()).collect(),
                     ),
-                    Some(literal.clone()),
+                    anchors
+                        .iter()
+                        .map(|b| (b.anchor.arg.clone(), b.literal.clone()))
+                        .collect::<Vec<(String, String)>>(),
                 ),
                 _ => (
                     Event::new(
@@ -437,7 +442,7 @@ pub async fn dispatch_request(
                         Utc::now(),
                         vec![],
                     ),
-                    None,
+                    Vec::new(),
                 ),
             };
             let event_type = audit_event.event_type.clone();
@@ -451,8 +456,7 @@ pub async fn dispatch_request(
             // guaranteed presence) — fail closed, never persist a partial
             // snapshot.
             let pending_confirmation = if let runtime_core::ExecutorDecision::BlockedPendingConfirmation {
-                anchor,
-                ..
+                anchors,
             } = &decision
             {
                 let mut resolved_args = Vec::with_capacity(plan_node.args.len());
@@ -472,7 +476,9 @@ pub async fn dispatch_request(
                     });
                 }
                 Some(crate::confirmation::PendingConfirmation {
-                    effect_id: anchor.effect_id,
+                    // Every element shares one effect_id — one Block, one
+                    // effect_id, N blocked args (Phase 14 plural).
+                    effect_id: anchors[0].anchor.effect_id,
                     session_id,
                     blocked_event_id: audit_event.id,
                     sink: plan_node.sink.clone(),
@@ -492,13 +498,17 @@ pub async fn dispatch_request(
                         eprintln!("[brokerd] {event_type} audit append FAILED (fail-closed): {e}");
                         anyhow::anyhow!("audit append failed: {e}")
                     })?;
-                // Write the raw literal to the redactable side table under the SAME
-                // lock as the event append (fail-closed: a failure here aborts the
-                // block before any response is sent).
-                if let Some(literal) = &blocked_literal {
+                // Write EVERY blocked arg's raw literal to the redactable side
+                // table under the SAME lock as the event append (fail-closed: a
+                // failure here aborts the block before any response is sent).
+                // Iterates the full blocked_literals collection — Phase 14 plural
+                // — so no blocked value is dropped before the human confirm/deny
+                // decision (T-14-06).
+                for (arg, literal) in &blocked_literals {
                     crate::audit::insert_blocked_literal(
                         &locked,
                         &audit_event.id.to_string(),
+                        arg,
                         literal,
                     )
                     .map_err(|e| {

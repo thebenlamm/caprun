@@ -90,11 +90,11 @@ fn seed_pending_file_create_block(
         Some(root.id),
         session_id,
         Utc::now(),
-        anchor,
+        vec![anchor],
     );
     let blocked_event_id = blocked_event.id;
     append_event(&conn, &blocked_event, Some(&root_hash)).expect("append sink_blocked");
-    insert_blocked_literal(&conn, &blocked_event_id.to_string(), path)
+    insert_blocked_literal(&conn, &blocked_event_id.to_string(), "path", path)
         .expect("insert_blocked_literal");
 
     let pc = PendingConfirmation {
@@ -361,11 +361,12 @@ fn seed_pending_email_send_block(
         Some(root.id),
         session_id,
         Utc::now(),
-        anchor,
+        vec![anchor],
     );
     let blocked_event_id = blocked_event.id;
     append_event(&conn, &blocked_event, Some(&root_hash)).expect("append sink_blocked");
-    insert_blocked_literal(&conn, &blocked_event_id.to_string(), to).expect("insert_blocked_literal");
+    insert_blocked_literal(&conn, &blocked_event_id.to_string(), "to", to)
+        .expect("insert_blocked_literal");
 
     let pc = PendingConfirmation {
         effect_id,

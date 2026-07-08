@@ -198,9 +198,9 @@ async fn after_exit_db_alone_anti_stapling_sentinel() {
         .expect("query sink_blocked")
         .expect("a durable sink_blocked event must exist in the reopened DAG");
     let anchor = blocked
-        .anchor
-        .as_ref()
-        .expect("persisted sink_blocked event MUST carry Some(anchor) (Defect B guard)");
+        .anchors
+        .first()
+        .expect("persisted sink_blocked event MUST carry at least one anchor (Defect B guard)");
 
     // ── (3) genuine-taint backstops (value-lineage ↔ causal DAG, DESIGN §0). ──
     assert!(
@@ -381,7 +381,10 @@ async fn redacting_side_table_literal_preserves_verify_chain_and_digest() {
     let blocked = find_event_by_type(&reopened, &sid, "sink_blocked")
         .expect("query sink_blocked")
         .expect("a durable sink_blocked event must exist");
-    let anchor = blocked.anchor.as_ref().expect("sink_blocked must carry an anchor");
+    let anchor = blocked
+        .anchors
+        .first()
+        .expect("sink_blocked must carry an anchor");
     let event_id = blocked.id.to_string();
 
     // Pre-redaction: chain verifies, literal present, digest matches.
@@ -418,8 +421,8 @@ async fn redacting_side_table_literal_preserves_verify_chain_and_digest() {
         .expect("sink_blocked still present");
     assert_eq!(
         blocked_after
-            .anchor
-            .as_ref()
+            .anchors
+            .first()
             .expect("anchor still present")
             .literal_sha256,
         digest_before,
@@ -452,7 +455,10 @@ async fn pending_confirmation_persisted_atomically_with_block() {
     let blocked = find_event_by_type(&reopened, &sid, "sink_blocked")
         .expect("query sink_blocked")
         .expect("a durable sink_blocked event must exist");
-    let anchor = blocked.anchor.as_ref().expect("sink_blocked must carry an anchor");
+    let anchor = blocked
+        .anchors
+        .first()
+        .expect("sink_blocked must carry an anchor");
 
     let pc = find_pending_confirmation(&reopened, &anchor.effect_id.to_string())
         .expect("find_pending_confirmation")
