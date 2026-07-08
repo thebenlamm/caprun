@@ -130,27 +130,53 @@ pub struct SinkBlockedAnchor {
     pub read_event_id: uuid::Uuid,
 }
 
+/// One blocked argument in a `BlockedPendingConfirmation` set (Phase 14, D-14).
+///
+/// Every field is an EXACT CLONE of the resolved broker-owned `ValueRecord` (plus
+/// the broker-minted `effect_id`/`sink`/`arg` folded into `anchor`) — the executor
+/// constructs NOTHING itself and NEVER sets a taint field. This is the T-04-03
+/// anti-stapling invariant, preserved PER-ELEMENT in this plural shape: a
+/// collect-then-Block loop that pushes N of these elements must not staple taint
+/// or literal onto any of them — each one is independently a verbatim clone of
+/// its own resolved record.
+///
+/// Phase 16 (`planning-docs/DESIGN-confirm-binding.md`, CONFIRM-03/D-19) layers a
+/// `combined_digest` SHA-256-over-fixed-width-per-element-digests binding on top
+/// of this collection — that field does NOT live here; `BlockedArg` stays exactly
+/// this shape and the combined digest rides on `PendingConfirmation` instead.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BlockedArg {
+    /// The durable, tamper-evident per-element anchor (unchanged shape/semantics
+    /// from the pre-Phase-14 singular `SinkBlockedAnchor` — only its container
+    /// became plural).
+    pub anchor: SinkBlockedAnchor,
+    /// The LIVE byte-exact literal for this blocked arg, carried in-memory for the
+    /// confirmation UX / redactable `blocked_literals` side-table write. NOT part
+    /// of the hashed anchor — only `anchor.literal_sha256` enters the tamper-evident
+    /// chain. DATA, never executed.
+    pub literal: String,
+}
+
 /// The decision the executor returns after evaluating a PlanNode.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ExecutorDecision {
     /// Plan executed and all taint checks passed.
     Allowed,
-    /// Execution blocked — tainted value in sensitive sink argument; confirmation required.
+    /// Execution blocked — one or more sensitive sink arguments carried tainted
+    /// values; confirmation required for the WHOLE set.
     ///
-    /// Carries the durable `SinkBlockedAnchor` (built by cloning the resolved
-    /// ValueRecord verbatim; its `literal_sha256` is the digest of the blocked
-    /// literal). A held-out §9 test asserts the unbroken taint chain DIRECTLY from
-    /// `anchor.provenance_chain[0]` (the file_read Event id) with no second query.
+    /// Plural (Phase 14, D-14 Collect-then-Block): the per-arg loop scans EVERY
+    /// arg on the plan node before returning, collecting every
+    /// routing-sensitive-OR-content-sensitive AND tainted arg into `anchors` —
+    /// never returning on the first match. A plan node with both a tainted `to`
+    /// and a tainted `body` surfaces BOTH in this one collection; neither
+    /// silently pre-empts the other (closes the B1-reincarnation risk,
+    /// `planning-docs/DESIGN-content-adapter-mediation.md` "Precedence").
     ///
-    /// `literal` is the LIVE byte-exact literal, carried in-memory for the
-    /// confirmation UX and as the source the broker writes to the redactable
-    /// `blocked_literals` side table. It is NOT part of the hashed anchor, so it
-    /// never enters the tamper-evident chain — only its digest (`literal_sha256`)
-    /// does. DATA, never executed.
-    BlockedPendingConfirmation {
-        anchor: SinkBlockedAnchor,
-        literal: String,
-    },
+    /// A held-out §9 test asserts the unbroken taint chain DIRECTLY from each
+    /// element's `anchor.provenance_chain[0]` (the file_read Event id) with no
+    /// second query — independently, per blocked arg (D-16).
+    BlockedPendingConfirmation { anchors: Vec<BlockedArg> },
     /// Execution denied — carries a typed `DenyReason` (never a free-form String).
     Denied { reason: DenyReason },
     /// Stub: executor not yet implemented (Phase 1 return value).
