@@ -125,7 +125,11 @@ fn s9_acceptance() {
         executor::submit_plan_node(session_id, effect_id, &plan_node, &store, &SessionStatus::Active);
 
     let (anchor, literal_value) = match decision {
-        ExecutorDecision::BlockedPendingConfirmation { anchor, literal } => (anchor, literal),
+        ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+            assert_eq!(anchors.len(), 1, "this scenario blocks exactly one arg (`to`)");
+            let blocked = anchors.into_iter().next().expect("one anchor");
+            (blocked.anchor, blocked.literal)
+        }
         other => panic!("expected BlockedPendingConfirmation, got {:?}", other),
     };
     let taint = anchor.taint.clone();
@@ -166,14 +170,18 @@ fn s9_acceptance() {
         Some(read_event_id), // any causal head — irrelevant to the taint-consistency check
         session_id,
         chrono::Utc::now(),
-        anchor.clone(),
+        vec![anchor.clone()],
     );
     assert_eq!(
         block_event.taint, anchor.taint,
         "Event.taint must equal anchor.taint (DESIGN §4 rule 6)"
     );
     assert_eq!(
-        block_event.anchor.as_ref().expect("block event carries anchor").provenance_chain[0],
+        block_event
+            .anchors
+            .first()
+            .expect("block event carries an anchor")
+            .provenance_chain[0],
         read_event_id,
         "persisted anchor.provenance_chain[0] must equal the file_read Event id"
     );
@@ -410,10 +418,20 @@ fn s9_acceptance_file_create_path_block() {
     let (read_event_id, _read_hash, path_value_id, _demoted_id, _demoted_hash) =
         mint_from_read(&conn, &mut store, session_id, &claim, None, None).expect("mint_from_read failed");
 
-    // file.create requires {path, contents}. `path` is FIRST and tainted, so the
-    // executor blocks on it before it ever resolves `contents` (a fresh dummy handle
-    // that is never resolved on the block path). validate_schema passes (both args
-    // present); the block is the routing-sensitivity decision on `path`.
+    // file.create requires {path, contents}. `path` is tainted and routing-sensitive
+    // (blocks); `contents` MUST be a genuinely-resolvable handle — the Phase 14
+    // collect-then-Block loop resolves EVERY arg (Steps 1/1a/1b run per-arg, before
+    // any Block decision is returned), so a dummy/never-minted handle on ANY arg
+    // (even a non-blocked one) now fails closed with `Denied(DanglingHandle)` before
+    // the loop can finish scanning and return the Block. `contents` is UserTrusted
+    // (not sensitive for file.create), so it does not itself trigger a block.
+    let contents_value_id = store
+        .mint(
+            "hello world".to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![Uuid::new_v4()],
+        )
+        .expect("mint contents value");
     let plan_node = PlanNode {
         sink: SinkId("file.create".into()),
         args: vec![
@@ -423,7 +441,7 @@ fn s9_acceptance_file_create_path_block() {
             },
             PlanArg {
                 name: "contents".into(),
-                value_id: runtime_core::plan_node::ValueId::new(),
+                value_id: contents_value_id,
             },
         ],
     };
@@ -432,7 +450,11 @@ fn s9_acceptance_file_create_path_block() {
     let decision =
         executor::submit_plan_node(session_id, effect_id, &plan_node, &store, &SessionStatus::Active);
     let (anchor, block_literal) = match decision {
-        ExecutorDecision::BlockedPendingConfirmation { anchor, literal } => (anchor, literal),
+        ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+            assert_eq!(anchors.len(), 1, "this scenario blocks exactly one arg (`path`)");
+            let blocked = anchors.into_iter().next().expect("one anchor");
+            (blocked.anchor, blocked.literal)
+        }
         other => panic!(
             "expected BlockedPendingConfirmation for a tainted file.create path, got {:?}",
             other

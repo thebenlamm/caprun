@@ -279,7 +279,30 @@ fn short_evt(id: &Uuid) -> String {
 /// untrusted taint label (the routing-sensitive blocked arg, e.g. `path`). The
 /// literal is shown byte-exact, in quotes, with NO truncation or
 /// canonicalization (T-10-04 mitigation / DESIGN Accepted Residual Risk 1).
+///
+/// Phase 14 scope guard (T-14-08): this function's single-arg display path is
+/// UNCHANGED for the single-blocked-arg case. A genuinely-plural block (more
+/// than one arg that was BOTH sensitive AND tainted at Block time — the exact
+/// `is_routing_sensitive || is_content_sensitive` predicate the executor's
+/// collect-then-Block loop used) is a FAIL-CLOSED panic here, not silent
+/// truncation to one of N — full multi-arg narration is Phase 16 (CONFIRM-04).
 pub fn render_block_display(pc: &PendingConfirmation) -> String {
+    let blocked_count = pc
+        .resolved_args
+        .iter()
+        .filter(|a| {
+            (executor::sink_sensitivity::is_routing_sensitive(&pc.sink, &a.name)
+                || executor::sink_sensitivity::is_content_sensitive(&pc.sink, &a.name))
+                && a.taint.iter().any(TaintLabel::is_untrusted)
+        })
+        .count();
+    assert!(
+        blocked_count <= 1,
+        "render_block_display: genuinely-plural block ({blocked_count} blocked args) — \
+         multi-arg narration is Phase 16 (CONFIRM-04); fail-closed here rather than \
+         silently showing one of N (T-14-08)"
+    );
+
     let display_arg = pc
         .resolved_args
         .iter()
@@ -714,11 +737,11 @@ mod tests {
             Some(root.id),
             session_id,
             chrono::Utc::now(),
-            anchor,
+            vec![anchor],
         );
         let blocked_event_id = blocked_event.id;
         append_event(conn, &blocked_event, Some(&root_hash)).unwrap();
-        insert_blocked_literal(conn, &blocked_event_id.to_string(), path).unwrap();
+        insert_blocked_literal(conn, &blocked_event_id.to_string(), "path", path).unwrap();
 
         let pc = PendingConfirmation {
             effect_id,
@@ -949,11 +972,11 @@ mod tests {
             Some(root.id),
             session_id,
             chrono::Utc::now(),
-            anchor,
+            vec![anchor],
         );
         let blocked_event_id = blocked_event.id;
         append_event(conn, &blocked_event, Some(&root_hash)).unwrap();
-        insert_blocked_literal(conn, &blocked_event_id.to_string(), to).unwrap();
+        insert_blocked_literal(conn, &blocked_event_id.to_string(), "to", to).unwrap();
 
         let pc = PendingConfirmation {
             effect_id,

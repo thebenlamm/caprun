@@ -209,11 +209,11 @@ fn seed_and_confirm_email_send(
         Some(root.id),
         session_id,
         chrono::Utc::now(),
-        anchor,
+        vec![anchor],
     );
     let blocked_event_id = blocked_event.id;
     append_event(conn, &blocked_event, Some(&root_hash)).unwrap();
-    insert_blocked_literal(conn, &blocked_event_id.to_string(), to).unwrap();
+    insert_blocked_literal(conn, &blocked_event_id.to_string(), "to", to).unwrap();
 
     let pc = PendingConfirmation {
         effect_id,
