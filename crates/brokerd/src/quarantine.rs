@@ -118,6 +118,75 @@ fn looks_like_relative_path(s: &str) -> bool {
     !s.is_empty() && !s.starts_with('/') && !s.contains('@') && s.contains('/')
 }
 
+/// Return `true` if `s` is a non-empty, valid RAW doc-fragment token.
+///
+/// A doc_fragment is a marker-anchored recipient-half token (e.g. the
+/// local-part or the domain-half of a recipient) — NOT a fully-assembled
+/// recipient. This predicate MUST reject any token containing `@`: an
+/// assembled recipient/email is never a valid RAW doc_fragment — it may only
+/// exist as a `mint_from_derivation` OUTPUT (the concat transform's result),
+/// never re-entered here as a raw fragment (finding #1a; the mint-time guard
+/// this predicate backs closes the "worker re-submits the concat OUTPUT as a
+/// fresh single-element doc_fragment chain" laundering path).
+fn looks_like_doc_fragment(s: &str) -> bool {
+    !s.is_empty() && !s.contains('@')
+}
+
+/// Extract marker-anchored doc-fragment claims from raw untrusted content.
+///
+/// Deterministic hand-rolled scanner (no regex crate, no LLM, no external
+/// I/O) — mirrors `extract_email_claims`/`extract_relative_path_claims`'
+/// split_whitespace + trim_matches shape. Finds the value immediately
+/// following a `Reply-To:` marker and the value immediately following a
+/// `Domain:` marker — each of which is on an INDEPENDENTLY PLAUSIBLE line
+/// (finding #9) and satisfies `looks_like_doc_fragment` (neither contains
+/// `@`; they only become a recipient AFTER the concat transform joins them
+/// with a literal `@`). Preserves source order; discards surrounding prose
+/// (lossy guarantee) — only the fragment token itself ever appears in the
+/// returned Claim.
+///
+/// Returns one `Claim { claim_type: "doc_fragment", value: "<fragment>" }`
+/// per marker-anchored fragment found, in source order, or an empty `Vec`
+/// when no marker is present.
+pub fn extract_doc_fragments(raw: &str) -> Vec<Claim> {
+    let mut claims = Vec::new();
+    let words: Vec<&str> = raw.split_whitespace().collect();
+    let mut i = 0;
+    while i < words.len() {
+        if (words[i] == "Reply-To:" || words[i] == "Domain:") && i + 1 < words.len() {
+            // Trim edge punctuation (e.g. a sentence-terminal '.' or wrapping
+            // quotes), mirroring the existing extractors' trim_matches shape.
+            // Internal '.', '-', '_' are preserved as valid interior chars.
+            let trimmed = words[i + 1].trim_matches(|c: char| {
+                !c.is_alphanumeric() && c != '-' && c != '_' && c != '.'
+            });
+            if looks_like_doc_fragment(trimmed) {
+                claims.push(Claim {
+                    claim_type: "doc_fragment".into(),
+                    value: trimmed.to_string(),
+                });
+            }
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    claims
+}
+
+/// Deterministically concatenate two already-extracted doc-fragment values
+/// into a recipient literal with a fixed `@` separator (the "concat"
+/// transform_kind — see `mint_from_derivation`'s byte-verify guard, MAJOR-1).
+///
+/// Plain `String` concatenation — no parsing, no library. Operates ONLY on
+/// already-extracted fragment VALUES; it never re-reads raw bytes. This is
+/// the confined-worker-callable transform helper (EXTRACT-01, D-08): the
+/// worker calls this BEFORE any mint, exactly as it already calls
+/// `extract_email_claims`/`extract_relative_path_claims`.
+pub fn concat_doc_fragments(local: &str, domain: &str) -> String {
+    format!("{local}@{domain}")
+}
+
 /// Return `true` if `s` has the structural shape of an email address.
 ///
 /// Rules (sufficient for v0 deterministic extraction):
@@ -235,6 +304,24 @@ pub fn mint_from_read(
     let taint = match claim.claim_type.as_str() {
         "email_address" => vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw],
         "relative_path" => vec![TaintLabel::ExternalUntrusted, TaintLabel::PathRaw],
+        "doc_fragment" => {
+            // finding #1a mint-time guard: an assembled recipient (a token
+            // containing '@' — the concat transform's OUTPUT) MUST NOT be
+            // accepted as a raw doc_fragment. This closes the laundering path
+            // where a worker re-submits mint_from_derivation's output as a
+            // fresh single-element chain through mint_from_read. A generic
+            // untrusted raw fragment carries no shape label like
+            // EmailRaw/PathRaw — ExternalUntrusted alone is non-empty and
+            // is_untrusted, sufficient to block downstream.
+            if !looks_like_doc_fragment(&claim.value) {
+                return Err(anyhow::anyhow!(
+                    "mint_from_read: doc_fragment value contains '@' — an assembled \
+                     recipient can never re-enter as a raw doc_fragment (fail-closed, \
+                     finding #1a)"
+                ));
+            }
+            vec![TaintLabel::ExternalUntrusted]
+        }
         other => {
             return Err(anyhow::anyhow!(
                 "mint_from_read: unknown claim_type `{other}` (fail-closed, never default-tagged)"
