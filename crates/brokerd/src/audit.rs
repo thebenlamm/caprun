@@ -319,6 +319,45 @@ pub fn find_event_by_type(
     }
 }
 
+/// Locate a SPECIFIC Event by its exact `id` within `session_id`.
+///
+/// Unlike `find_event_by_type` (first-of-type only, `LIMIT 1`), this resolves
+/// exactly ONE event by its unique primary key (`id`), scoped additionally to
+/// `session_id` for defense in depth (a cross-session id must never resolve).
+/// This is the accessor the EXTRACT-02 per-anchor audit walk needs: once a
+/// session has ≥2 events of the same `event_type` (true as soon as multi-field
+/// extraction produces ≥2 `file_read` events), `find_event_by_type` can no
+/// longer disambiguate WHICH one a given `provenance_chain[i]` refers to
+/// (15-RESEARCH.md Pitfall 3).
+///
+/// Returns `None` if no event with that id exists, or if it exists but under a
+/// DIFFERENT session_id (session-scoped, never leaks cross-session events).
+///
+/// # Arguments
+/// * `conn` — open rusqlite connection.
+/// * `session_id` — the UUID of the session to search (as a string).
+/// * `id` — the exact event id to resolve (as a string).
+pub fn find_event_by_id(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    id: &str,
+) -> Result<Option<Event>> {
+    let result: std::result::Result<String, rusqlite::Error> = conn.query_row(
+        "SELECT payload FROM events \
+         WHERE id = ?1 AND session_id = ?2",
+        rusqlite::params![id, session_id],
+        |row| row.get(0),
+    );
+    match result {
+        Ok(payload) => {
+            let event = serde_json::from_str::<Event>(&payload)?;
+            Ok(Some(event))
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(anyhow::Error::from(e)),
+    }
+}
+
 /// Walk the audit chain for `session_id` and verify every hash link.
 ///
 /// Uses a recursive CTE to traverse from the root event (parent_id IS NULL)
@@ -449,6 +488,72 @@ mod tests {
             .expect("find_event_by_type");
 
         assert!(found.is_none(), "no email_send_stub event should be found");
+    }
+
+    /// find_event_by_id disambiguates among TWO events of the SAME event_type
+    /// in one session — resolving EACH to its own distinct event, which
+    /// `find_event_by_type` (LIMIT 1) cannot do (15-RESEARCH.md Pitfall 3).
+    #[test]
+    fn find_event_by_id_disambiguates_two_same_type_events() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+
+        let event_a = make_file_read_event(session_id);
+        let event_b = make_file_read_event(session_id);
+        assert_ne!(event_a.id, event_b.id, "sanity: distinct event ids");
+
+        append_event(&conn, &event_a, None).expect("append event_a");
+        append_event(&conn, &event_b, None).expect("append event_b");
+
+        let found_a = find_event_by_id(&conn, &session_id.to_string(), &event_a.id.to_string())
+            .expect("find_event_by_id a")
+            .expect("event_a must resolve");
+        let found_b = find_event_by_id(&conn, &session_id.to_string(), &event_b.id.to_string())
+            .expect("find_event_by_id b")
+            .expect("event_b must resolve");
+
+        assert_eq!(found_a.id, event_a.id, "must resolve event_a to its OWN id");
+        assert_eq!(found_b.id, event_b.id, "must resolve event_b to its OWN id");
+        assert_ne!(
+            found_a.id, found_b.id,
+            "the two same-type events must resolve to DISTINCT events"
+        );
+    }
+
+    /// A uuid never appended to the DAG resolves to `None` — the anti-staple
+    /// negative-space case (a fabricated root never resolves).
+    #[test]
+    fn find_event_by_id_returns_none_for_never_appended_uuid() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+        let event = make_file_read_event(session_id);
+        append_event(&conn, &event, None).expect("append_event");
+
+        let fabricated_id = Uuid::new_v4();
+        let found = find_event_by_id(&conn, &session_id.to_string(), &fabricated_id.to_string())
+            .expect("find_event_by_id");
+        assert!(
+            found.is_none(),
+            "a uuid never appended to the DAG must resolve to None"
+        );
+    }
+
+    /// A real event id from a DIFFERENT session must resolve to `None`
+    /// (session-scoped lookup — never leaks cross-session events).
+    #[test]
+    fn find_event_by_id_returns_none_for_cross_session_id() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_a = Uuid::new_v4();
+        let session_b = Uuid::new_v4();
+        let event = make_file_read_event(session_a);
+        append_event(&conn, &event, None).expect("append_event");
+
+        let found = find_event_by_id(&conn, &session_b.to_string(), &event.id.to_string())
+            .expect("find_event_by_id");
+        assert!(
+            found.is_none(),
+            "an event id from a DIFFERENT session must resolve to None (session-scoped)"
+        );
     }
 
     #[test]
