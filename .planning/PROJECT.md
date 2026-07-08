@@ -45,6 +45,13 @@ proves taint *enforcement* through a deterministic extractor — it does not
 claim taint survives a real LLM planner's regeneration ("laundering"); that is
 v1.4+ (see `DOC-01`).
 
+**Progress:** Phase 12 (DESIGN-01 design gate) and Phase 13 (real
+broker-mediated SMTP adapter — SMTP-01/02/03/05, SEND-01/02) are both
+complete and verified live on real Linux via Colima+Docker (kernel-enforced
+negative-net denial, real Mailpit-captured send, CRLF/header-injection
+fixture, atomic at-most-once send). Phases 14-17 (content-sensitive
+blocking, doc→action extraction, confirm UX, live acceptance) remain.
+
 Full v1.2 detail archived in
 [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.md) and
 [`milestones/v1.2-REQUIREMENTS.md`](milestones/v1.2-REQUIREMENTS.md).
@@ -374,9 +381,12 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-07 after starting v1.3 "Doc → Action Assistant"
-milestone (`/gsd-new-milestone`). Reopened `CONTENT-01` and the real SMTP
-adapter (see Key Decisions); LLM planner remains out. Prior:
+*Last updated: 2026-07-08 after Phase 13 (real broker-mediated SMTP adapter)
+completed and verified — SMTP-01/02/03/05, SEND-01/02 all confirmed live on
+real Linux via Colima+Docker. Prior: 2026-07-07 after starting v1.3
+"Doc → Action Assistant" milestone (`/gsd-new-milestone`). Reopened
+`CONTENT-01` and the real SMTP adapter (see Key Decisions); LLM planner
+remains out. Prior:
 v1.2's DONE gate (Phase 11):
 a new Linux-gated integration test
 (`cli/caprun/tests/live_acceptance_tainted_session.rs`) proves ACC-01/02/03
