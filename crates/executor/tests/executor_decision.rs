@@ -424,3 +424,138 @@ fn draft_session_tainted_routing_arg_still_blocks_not_denied() {
          never be pre-empted by the Step 0.5 draft-only class deny (I1/I0); got {decision:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 14 (CONTENT-01/D-14/D-23): Collect-then-Block, CONTROL-02, attachment
+// ---------------------------------------------------------------------------
+
+/// The single most important test in Phase 14: a plan node carrying BOTH a
+/// tainted routing-sensitive arg (`to`) AND a tainted content-sensitive arg
+/// (`body`) MUST surface BOTH in ONE decision's `anchors` — proving the
+/// per-arg loop does not return on the first match (D-14 Collect-then-Block,
+/// closes the B1-reincarnation risk).
+#[test]
+fn collect_then_block_both_to_and_body() {
+    let mut store = ValueStore::default();
+    let to_id = store
+        .mint(
+            "attacker@ev1l.com".to_string(),
+            vec![TaintLabel::ExternalUntrusted],
+            vec![Uuid::new_v4()],
+        )
+        .expect("valid mint");
+    let body_id = store
+        .mint(
+            "hostile body content".to_string(),
+            vec![TaintLabel::ExternalUntrusted],
+            vec![Uuid::new_v4()],
+        )
+        .expect("valid mint");
+
+    let plan = PlanNode {
+        sink: SinkId("email.send".to_string()),
+        args: vec![
+            PlanArg {
+                name: "to".to_string(),
+                value_id: to_id,
+            },
+            PlanArg {
+                name: "body".to_string(),
+                value_id: body_id,
+            },
+        ],
+    };
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+
+    match decision {
+        ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+            assert_eq!(
+                anchors.len(),
+                2,
+                "both the tainted 'to' and the tainted 'body' must be collected; got {anchors:?}"
+            );
+            let names: Vec<&str> = anchors.iter().map(|b| b.anchor.arg.as_str()).collect();
+            assert!(names.contains(&"to"), "anchors must include 'to'; got {names:?}");
+            assert!(names.contains(&"body"), "anchors must include 'body'; got {names:?}");
+            // plan_node.args iteration order is stable ("to" pushed before "body").
+            assert_eq!(names, vec!["to", "body"]);
+        }
+        other => panic!("expected BlockedPendingConfirmation with 2 anchors, got {other:?}"),
+    }
+}
+
+/// CONTROL-02 precursor: a plan node with a TRUSTED `to` and a tainted `body`
+/// still Blocks — proving the body dimension is not dead code redundant with
+/// the routing-sensitive Block path.
+#[test]
+fn body_tainted_recipient_trusted_blocks() {
+    let mut store = ValueStore::default();
+    let to_id = store
+        .mint(
+            "boss@company.com".to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![Uuid::new_v4()],
+        )
+        .expect("valid mint");
+    let body_id = store
+        .mint(
+            "hostile body content".to_string(),
+            vec![TaintLabel::ExternalUntrusted],
+            vec![Uuid::new_v4()],
+        )
+        .expect("valid mint");
+
+    let plan = PlanNode {
+        sink: SinkId("email.send".to_string()),
+        args: vec![
+            PlanArg {
+                name: "to".to_string(),
+                value_id: to_id,
+            },
+            PlanArg {
+                name: "body".to_string(),
+                value_id: body_id,
+            },
+        ],
+    };
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+
+    match decision {
+        ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+            assert_eq!(
+                anchors.len(),
+                1,
+                "only the tainted 'body' should be collected (trusted 'to' does not block); got {anchors:?}"
+            );
+            assert_eq!(anchors[0].anchor.arg, "body");
+        }
+        other => panic!(
+            "a tainted 'body' with a trusted 'to' must still Block (CONTROL-02 precursor); got {other:?}"
+        ),
+    }
+}
+
+/// D-23: a plan node carrying an unsupported attachment arg on email.send is
+/// Denied(UnknownArg) at the Step 0 schema gate, before any sensitivity
+/// evaluation — proving the descope, not a new DenyReason variant.
+#[test]
+fn attachment_denied_unknown_arg() {
+    let store = ValueStore::default();
+    let plan = PlanNode {
+        sink: SinkId("email.send".to_string()),
+        args: vec![PlanArg {
+            name: "attachment".to_string(),
+            value_id: ValueId::new(),
+        }],
+    };
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+
+    match decision {
+        ExecutorDecision::Denied {
+            reason: DenyReason::UnknownArg(arg),
+        } => {
+            assert_eq!(arg, "attachment");
+        }
+        other => panic!("expected Denied(UnknownArg(\"attachment\")), got {other:?}"),
+    }
+}

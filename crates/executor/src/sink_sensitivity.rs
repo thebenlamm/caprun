@@ -162,6 +162,15 @@ mod tests {
         assert!(!is_routing_sensitive(&other(), "url"));
     }
 
+    #[test]
+    fn unknown_sink_not_content_sensitive() {
+        // CONTENT-02 scope guard: content-sensitivity classification is scoped
+        // to email.send ONLY — a non-email sink is never content-sensitive,
+        // even for arg names that are content-sensitive on email.send.
+        assert!(!is_content_sensitive(&other(), "body"));
+        assert!(!is_content_sensitive(&other(), "subject"));
+    }
+
     // -----------------------------------------------------------------
     // sink_effect_class (TAINT-02/03 classifier)
     // -----------------------------------------------------------------
