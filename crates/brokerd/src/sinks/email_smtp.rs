@@ -57,6 +57,17 @@ use uuid::Uuid;
 use crate::audit::append_event;
 use crate::confirmation::ResolvedArg;
 
+/// Serializes any test (in THIS module or a sibling module, e.g.
+/// `confirmation::tests`) that mutates the process-global `CAPRUN_SMTP_*` env
+/// vars — `cargo test`'s default multi-threaded runner would otherwise let two
+/// such tests race on the same process-wide environment, since `mod tests` in
+/// `email_smtp.rs` and `mod tests` in `confirmation.rs` are compiled into the
+/// SAME `brokerd` lib test binary. `pub(crate)` so `confirmation::tests` can
+/// take the same lock rather than defining its own (which would not actually
+/// serialize anything).
+#[cfg(test)]
+pub(crate) static SMTP_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Read the trusted local SMTP host config (D-04 endpoint sourcing).
 ///
 /// NEVER reads from the audit DB, a plan node, a `ValueNode`, or
@@ -319,17 +330,12 @@ mod tests {
 
     // ── invoke_email_smtp_from_resolved (Task 2) ──
 
-    /// Serializes tests that mutate process-global CAPRUN_SMTP_* env vars —
-    /// this module has exactly one such test, but the lock protects against
-    /// future additions racing under `cargo test`'s parallel test threads.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     /// A transport failure (closed/unbound port) must propagate Err (never
     /// swallowed) AND durably append an opaque-payload `email_send_failed`
     /// event — never an `email_send_succeeded` event.
     #[test]
     fn invoke_email_smtp_from_resolved_transport_failure_records_email_send_failed() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = SMTP_ENV_LOCK.lock().unwrap();
 
         // Bind an ephemeral port then immediately drop the listener: nothing
         // is listening on it for the rest of this test, so a connect attempt

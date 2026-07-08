@@ -302,7 +302,7 @@ async fn main() -> anyhow::Result<()> {
 fn run_confirm_or_deny(verb: &str, effect_id: &str, audit_path: &str) -> anyhow::Result<i32> {
     use brokerd::confirmation::{confirm, deny, find_pending_confirmation, ConfirmOutcome};
 
-    let conn = open_audit_db(audit_path).context("open_audit_db")?;
+    let mut conn = open_audit_db(audit_path).context("open_audit_db")?;
 
     let outcome = if verb == "confirm" {
         // find_pending_confirmation itself returns None → confirm()'s
@@ -316,7 +316,7 @@ fn run_confirm_or_deny(verb: &str, effect_id: &str, audit_path: &str) -> anyhow:
                     &pc.workspace_root_path,
                 ))
                 .context("open workspace root for confirm")?;
-                confirm(&conn, effect_id, &ws)?
+                confirm(&mut conn, effect_id, &ws)?
             }
         }
     } else {
@@ -335,6 +335,9 @@ fn run_confirm_or_deny(verb: &str, effect_id: &str, audit_path: &str) -> anyhow:
         ConfirmOutcome::AlreadyTerminal => (5, Some("effect_id is already terminal")),
         ConfirmOutcome::BlockedLiteralRedacted => {
             (6, Some("blocked literal was redacted; refusing to release"))
+        }
+        ConfirmOutcome::EmailSendFailed => {
+            (7, Some("email send failed after confirm; recorded, not retried"))
         }
     };
     if let Some(msg) = message {
