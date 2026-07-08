@@ -66,9 +66,16 @@ pub const EMAIL_SEND_ROUTING_SENSITIVE: &[&str] = &["to", "cc", "bcc"];
 pub const FILE_CREATE_ROUTING_SENSITIVE: &[&str] = &["path"];
 
 /// Args of email.send that determine WHAT irreversible payload leaves the trust boundary.
-/// A tainted value here does NOT auto-Block in v0 but MUST be surfaced for Tier-4
-/// verbatim review at approval time (post-v0 approval hook).
-pub const EMAIL_SEND_CONTENT_SENSITIVE: &[&str] = &["subject", "body", "attachment"];
+/// A tainted value here Blocks (Phase 14, CONTENT-01) via the same collect-then-Block
+/// loop as routing-sensitive args (`crates/executor/src/lib.rs`) — content-sensitive
+/// classification is no longer a no-op.
+///
+/// Attachment support is DESCOPED for v1.3 (D-23, `DESIGN-content-adapter-mediation.md`) —
+/// removed here AND from `email.send`'s schema `allowed` set
+/// (`crates/executor/src/sink_schema.rs`) atomically, so a plan node carrying that
+/// arg is `Denied(UnknownArg)` at the Step 0 schema gate, before any sensitivity
+/// evaluation. Missing either edge is a fail-open bug.
+pub const EMAIL_SEND_CONTENT_SENSITIVE: &[&str] = &["subject", "body"];
 
 /// Returns `true` iff `arg_name` is a routing-sensitive argument of `sink`.
 ///
@@ -88,8 +95,10 @@ pub fn is_routing_sensitive(sink: &SinkId, arg_name: &str) -> bool {
 /// Returns `true` iff `arg_name` is a content-sensitive argument of `sink`.
 ///
 /// Content-sensitive means: the attacker who controls this arg cannot redirect the
-/// effect but CAN exfiltrate or plant data through the payload. Does NOT Block in
-/// v0; surfaced for Tier-4 verbatim review at approval.
+/// effect but CAN exfiltrate or plant data through the payload. As of Phase 14
+/// (CONTENT-01), this Blocks via `submit_plan_node`'s collect-then-Block loop
+/// exactly like a routing-sensitive tainted arg — this function's classification
+/// logic is unchanged (D-21); only its CONSEQUENCE in the caller changed.
 pub fn is_content_sensitive(sink: &SinkId, arg_name: &str) -> bool {
     match sink.0.as_str() {
         "email.send" => EMAIL_SEND_CONTENT_SENSITIVE.contains(&arg_name),
@@ -139,9 +148,12 @@ mod tests {
 
     #[test]
     fn email_send_content_args_not_routing_sensitive() {
+        // Phase 14 (D-23): the third pre-v1.3 content-sensitive arg name is
+        // descoped entirely (no longer a valid email.send arg at all — see
+        // sink_schema.rs), so only the two live content-sensitive args are
+        // asserted here.
         assert!(!is_routing_sensitive(&email(), "subject"));
         assert!(!is_routing_sensitive(&email(), "body"));
-        assert!(!is_routing_sensitive(&email(), "attachment"));
     }
 
     #[test]

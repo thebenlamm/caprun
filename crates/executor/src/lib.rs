@@ -14,7 +14,7 @@ pub mod sink_sensitivity;
 pub mod value_store;
 
 use runtime_core::{
-    plan_node::PlanNode, DenyReason, ExecutorDecision, SessionStatus, SinkBlockedAnchor,
+    plan_node::PlanNode, BlockedArg, DenyReason, ExecutorDecision, SessionStatus, SinkBlockedAnchor,
 };
 use sha2::{Digest, Sha256};
 use sink_sensitivity::EffectClass;
@@ -24,18 +24,26 @@ use value_store::ValueStore;
 /// Evaluate a single PlanNode against the broker-owned value store and the
 /// hardcoded sink sensitivity map, returning an `ExecutorDecision`.
 ///
-/// # Decision rule (DESIGN-plan-executor §Executor Decision Logic)
+/// # Decision rule (DESIGN-plan-executor §Executor Decision Logic; Phase 14
+/// `planning-docs/DESIGN-content-adapter-mediation.md` "Collect-then-Block (D-14)")
 ///
 /// For each `PlanArg { name, value_id }` in `plan_node.args`:
 ///   1. Resolve `value_id` from `value_store`. If `None` → `Denied` (dangling handle).
-///   2. If `name` is routing-sensitive for `plan_node.sink` AND `record.taint` carries
-///      any explicitly-untrusted label (`TaintLabel::is_untrusted()`) →
-///      `BlockedPendingConfirmation` populated verbatim from the record.
-///      `UserTrusted`/`LocalWorkspace`-only provenance does NOT block (HARD-02).
-///   3. (Content-sensitive tainted args do not Block in v0 — marked for Tier-4
-///      verbatim review, not yet surfaced.)
+///   1a. Empty-taint guard → `Denied`.
+///   1b. Empty-provenance guard → `Denied`.
+///   2. If `name` is routing-sensitive OR content-sensitive for `plan_node.sink`
+///      AND `record.taint` carries any explicitly-untrusted label
+///      (`TaintLabel::is_untrusted()`) → collect a `BlockedArg` populated
+///      verbatim from the record. `UserTrusted`/`LocalWorkspace`-only
+///      provenance does NOT block (HARD-02).
 ///
-/// After all args pass: `Allowed`.
+/// The loop does NOT return on the first collected `BlockedArg` — it scans
+/// EVERY arg on the plan node first (Collect-then-Block, D-14), so a plan node
+/// carrying both a tainted routing-sensitive arg (e.g. `to`) and a tainted
+/// content-sensitive arg (e.g. `body`) surfaces BOTH in one
+/// `BlockedPendingConfirmation { anchors }` — never first-match-wins. Only
+/// after the loop completes with an EMPTY collection does Step 0.5 run, then
+/// `Allowed`.
 ///
 /// # Anti-stapling (T-04-03)
 ///
@@ -59,6 +67,14 @@ pub fn submit_plan_node(
         return ExecutorDecision::Denied { reason };
     }
 
+    // Collect-then-Block (Phase 14, D-14): accumulate EVERY sensitive+tainted arg
+    // across the whole plan node before returning any Block decision. Never
+    // return from inside this loop on the first match — a plan node with both a
+    // tainted `to` (routing-sensitive) and a tainted `body` (content-sensitive)
+    // MUST surface both, not just the first one scanned (closes the
+    // B1-reincarnation risk, `DESIGN-content-adapter-mediation.md` "Precedence").
+    let mut blocked: Vec<BlockedArg> = Vec::new();
+
     for arg in &plan_node.args {
         // Step 1: Resolve the opaque handle from the trusted broker-owned store.
         // A None resolution is Denied — a dangling/forged handle never becomes Allowed.
@@ -71,12 +87,12 @@ pub fn submit_plan_node(
             }
         };
 
-        // Step 1a: Empty-taint guard. Runs BEFORE the routing-sensitivity check so
+        // Step 1a: Empty-taint guard. Runs BEFORE the sensitivity check so
         // an all-trusted-looking record with empty taint cannot fail open (an empty
         // taint iterator is never untrusted → would slip past the block). Defense in
         // depth: mint already rejects empty taint, but the executor must not depend
         // on that alone (DESIGN §3 ordering: resolve → empty-taint → empty-provenance
-        // → is_routing_sensitive).
+        // → sensitivity check).
         if record.taint.is_empty() {
             return ExecutorDecision::Denied {
                 reason: DenyReason::EmptyTaintInvariantViolation,
@@ -92,13 +108,15 @@ pub fn submit_plan_node(
             };
         }
 
-        // Step 2: Routing-sensitive check. If this arg routes the effect (e.g.,
-        // email.send "to") and the resolved record carries any UNTRUSTED label, Block.
+        // Step 2/3 (unified, Phase 14 D-14): sensitivity check. If this arg either
+        // routes the effect (e.g., email.send "to") OR carries content-sensitive
+        // payload (e.g., email.send "body"/"subject") AND the resolved record
+        // carries any UNTRUSTED label, collect it as a blocked arg.
         // UserTrusted/LocalWorkspace-only provenance does NOT block (HARD-02).
         // The payload is copied verbatim from the broker-owned record — NOT synthesized.
-        if sink_sensitivity::is_routing_sensitive(&plan_node.sink, &arg.name)
-            && record.taint.iter().any(|t| t.is_untrusted())
-        {
+        let sensitive = sink_sensitivity::is_routing_sensitive(&plan_node.sink, &arg.name)
+            || sink_sensitivity::is_content_sensitive(&plan_node.sink, &arg.name);
+        if sensitive && record.taint.iter().any(|t| t.is_untrusted()) {
             // Build the durable anchor by cloning the resolved record VERBATIM.
             // The executor mints NOTHING (effect_id is the broker-supplied param)
             // and sets NO taint — every field is a clone of plan_node/arg/record
@@ -132,22 +150,26 @@ pub fn submit_plan_node(
                 provenance_chain: record.provenance_chain.clone(),
                 read_event_id,
             };
-            return ExecutorDecision::BlockedPendingConfirmation {
+            blocked.push(BlockedArg {
                 anchor,
                 literal: record.literal.clone(),
-            };
+            });
         }
+    }
 
-        // Step 3: Content-sensitive tainted args (subject/body/attachment) do NOT
-        // Block in v0 — Tier-4 verbatim review is deferred to the approval-hook plan.
+    // Only after the per-arg loop has fully scanned every arg: if anything was
+    // collected, return ONE combined Block covering the whole set (D-14/D-17).
+    if !blocked.is_empty() {
+        return ExecutorDecision::BlockedPendingConfirmation { anchors: blocked };
     }
 
     // Step 0.5 (DESIGN-session-trust-state.md §8, TAINT-02/03): the draft-only
     // CommitIrreversible class deny. Runs ONLY here — after the per-arg loop
-    // (Steps 1/1a/1b/2/3) has completed with NO Block — and BEFORE the final
-    // `Allowed` return. This placement is load-bearing (round-1 blocker B1):
-    // the per-arg I2 Block always takes precedence over this I1/I0 class-level
-    // deny. If any arg Blocked above, this point is never reached.
+    // (Steps 1/1a/1b/2) has completed with NO Block collected — and BEFORE the
+    // final `Allowed` return. This placement is load-bearing (round-1 blocker B1,
+    // and its Phase-14 D-15 restatement): the per-arg I2 Block always takes
+    // precedence over this I1/I0 class-level deny. If any arg Blocked above,
+    // this point is never reached.
     //
     // Exhaustive match over all six `SessionStatus` variants, no wildcard arm
     // (§10) — a future variant is a compile error here, not a silent fail-open.

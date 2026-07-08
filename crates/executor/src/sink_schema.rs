@@ -40,10 +40,14 @@ pub struct SinkSchema {
 pub const KNOWN_SINKS: &[SinkSchema] = &[
     SinkSchema {
         // Matches the current live shape: routing args (to/cc/bcc) +
-        // content-sensitive args (subject/body/attachment, per
-        // `sink_sensitivity::EMAIL_SEND_CONTENT_SENSITIVE`).
+        // content-sensitive args (subject/body, per
+        // `sink_sensitivity::EMAIL_SEND_CONTENT_SENSITIVE`). Attachment support
+        // is DESCOPED for v1.3 (D-23) — removed from BOTH this set and
+        // `EMAIL_SEND_CONTENT_SENSITIVE` atomically, so a plan node carrying
+        // that arg is `Denied(UnknownArg)` here at Step 0, before any
+        // sensitivity evaluation ever runs.
         sink: "email.send",
-        allowed: &["to", "cc", "bcc", "subject", "body", "attachment"],
+        allowed: &["to", "cc", "bcc", "subject", "body"],
         required: &[],
     },
     SinkSchema {
