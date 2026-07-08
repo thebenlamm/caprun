@@ -11,6 +11,8 @@ use runtime_core::{CaprunIntent, TaintLabel};
 fn caprun_intent_serde_round_trip() {
     let intent = CaprunIntent::SendEmailSummary {
         recipient: "boss@company.com".into(),
+        subject: "Q3 summary".into(),
+        body: "See attached.".into(),
     };
     let json = serde_json::to_string(&intent).expect("CaprunIntent serializes");
     let back: CaprunIntent = serde_json::from_str(&json).expect("CaprunIntent deserializes");

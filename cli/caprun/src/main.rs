@@ -40,6 +40,13 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
+/// Trusted default `subject`/`body` for a `send-email-summary` intent (Phase
+/// 15 finding #6). Deliberately NOT a new CLI flag (this plan's DEFERRED
+/// note) — always user-trusted by construction (`SeedProvenance::TrustedArg`
+/// path), never doc/file-derived.
+const DEFAULT_EMAIL_SUBJECT: &str = "Workspace Summary";
+const DEFAULT_EMAIL_BODY: &str = "Please see the attached workspace summary.";
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
@@ -140,9 +147,18 @@ async fn main() -> anyhow::Result<()> {
     let audit_path = args.next().unwrap_or_else(|| ":memory:".to_string());
 
     // Map intent kind → typed enum. Fail closed on unknown kinds (V5).
+    //
+    // `subject`/`body` (Phase 15 finding #6) have no CLI surface of their own —
+    // deliberately, per this plan's DEFERRED note (no new CLI flags) — so they
+    // are always these trusted default constants, never file/doc-derived.
+    // They are still minted as their OWN DISTINCT UserTrusted ValueRecords by
+    // the broker's ProvideIntent arm (see server.rs), never degenerately
+    // reusing the recipient's handle.
     let intent = match intent_kind.as_str() {
         "send-email-summary" => CaprunIntent::SendEmailSummary {
             recipient: intent_param,
+            subject: DEFAULT_EMAIL_SUBJECT.to_string(),
+            body: DEFAULT_EMAIL_BODY.to_string(),
         },
         "create-file-from-report" => CaprunIntent::CreateFileFromReport {
             path: intent_param,

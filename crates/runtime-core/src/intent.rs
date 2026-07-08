@@ -22,10 +22,19 @@ use uuid::Uuid;
 pub enum CaprunIntent {
     /// Send an email summary to a known, user-trusted recipient.
     ///
-    /// `recipient` is a user-provided literal that will be minted as `UserTrusted`
-    /// by `mint_from_intent` in the broker — the planner receives only the opaque
-    /// `ValueId` handle, never the literal directly.
-    SendEmailSummary { recipient: String },
+    /// `recipient`/`subject`/`body` are user-provided literals, each minted as
+    /// its OWN DISTINCT `UserTrusted` `ValueRecord` by three sequential
+    /// `mint_from_intent` calls in the broker's `ProvideIntent` arm (Phase 15
+    /// finding #6) — the planner receives only the three opaque `ValueId`
+    /// handles, never the literals directly. This is why a clean send is NOT
+    /// degenerately `to==subject==body==recipient`: `subject`/`body` are
+    /// genuinely distinct trusted handles from the recipient handle, even
+    /// though all three are equally `UserTrusted`.
+    SendEmailSummary {
+        recipient: String,
+        subject: String,
+        body: String,
+    },
     /// Create a file under the workspace root from a report.
     ///
     /// `path` is a user-provided trusted target path, minted `UserTrusted` by

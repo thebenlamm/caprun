@@ -54,6 +54,8 @@ fn provide_intent_request_round_trips() {
     let req = BrokerRequest::ProvideIntent {
         intent: CaprunIntent::SendEmailSummary {
             recipient: "boss@company.com".to_string(),
+            subject: "Q3 summary".to_string(),
+            body: "See attached.".to_string(),
         },
     };
     let json = serde_json::to_value(&req).expect("serialize ProvideIntent request");
@@ -64,6 +66,11 @@ fn provide_intent_request_round_trips() {
 
 /// Test 2c: BrokerResponse::IntentAccepted containing a freshly-minted ValueId
 /// round-trips through serde_json to an equal value.
+///
+/// Phase 15 (15-04, finding #6): IntentAccepted gained additive
+/// `subject_value_id`/`body_value_id` fields — exercises the `Some` case for
+/// both (the `SendEmailSummary` shape) so the additive fields' serde shape is
+/// proven, not just `value_id`.
 #[test]
 fn intent_accepted_response_round_trips() {
     use brokerd::proto::BrokerResponse;
@@ -72,6 +79,8 @@ fn intent_accepted_response_round_trips() {
     let value_id = ValueId::new();
     let resp = BrokerResponse::IntentAccepted {
         value_id: value_id.clone(),
+        subject_value_id: Some(ValueId::new()),
+        body_value_id: Some(ValueId::new()),
     };
     let json = serde_json::to_string(&resp).expect("serialize IntentAccepted response");
     let recovered: BrokerResponse =
@@ -115,6 +124,8 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
         BrokerRequest::ProvideIntent {
             intent: CaprunIntent::SendEmailSummary {
                 recipient: "boss@company.com".to_string(),
+                subject: "Q3 summary".to_string(),
+                body: "See attached.".to_string(),
             },
         },
         &mut server_end,
@@ -140,7 +151,24 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
 
     // Response must be IntentAccepted with a store-resolvable ValueId (Pitfall 1).
     match response {
-        BrokerResponse::IntentAccepted { value_id } => {
+        BrokerResponse::IntentAccepted { value_id, subject_value_id, body_value_id } => {
+            // Phase 15 (15-04, finding #6): SendEmailSummary mints THREE
+            // DISTINCT UserTrusted handles — subject/body must be present and
+            // distinct from the recipient handle (never degenerately equal).
+            let subject_value_id = subject_value_id.expect("subject_value_id must be Some for SendEmailSummary");
+            let body_value_id = body_value_id.expect("body_value_id must be Some for SendEmailSummary");
+            assert_ne!(subject_value_id, value_id, "subject handle must be DISTINCT from the recipient handle");
+            assert_ne!(body_value_id, value_id, "body handle must be DISTINCT from the recipient handle");
+            assert_ne!(subject_value_id, body_value_id, "subject and body handles must be DISTINCT from each other");
+            let subject_record = store
+                .resolve(&subject_value_id)
+                .expect("subject_value_id must resolve in the per-connection store");
+            assert_eq!(subject_record.literal, "Q3 summary");
+            let body_record = store
+                .resolve(&body_value_id)
+                .expect("body_value_id must resolve in the per-connection store");
+            assert_eq!(body_record.literal, "See attached.");
+
             let record = store.resolve(&value_id).expect(
                 "ValueId from IntentAccepted must resolve in the per-connection store (Pitfall 1: \
                  if None here, mint happened in the wrong store scope)",
@@ -167,14 +195,33 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
         ),
     }
 
-    // Causal chain must have advanced.
+    // Causal chain must have advanced. Phase 15 (15-04, finding #6): a
+    // SendEmailSummary ProvideIntent now appends THREE intent_received events
+    // (recipient, subject, body) via three sequential mint_from_intent calls —
+    // `find_event_by_type`'s LIMIT-1 would return only the FIRST (recipient's),
+    // not the causal chain head, so resolve `last_event_id` directly by id
+    // instead and assert it IS an intent_received event.
     let locked = conn.lock().unwrap();
-    let evt = brokerd::audit::find_event_by_type(&locked, &session_id.to_string(), "intent_received")
-        .expect("find_event_by_type")
-        .expect("intent_received event must exist in audit DAG after ProvideIntent dispatch");
+    let evt = brokerd::audit::find_event_by_id(&locked, &session_id.to_string(), &last_event_id.to_string())
+        .expect("find_event_by_id")
+        .expect("last_event_id must resolve to a real event in the audit DAG");
     assert_eq!(
-        evt.id, last_event_id,
-        "causal chain must advance to the intent_received event id"
+        evt.event_type, "intent_received",
+        "causal chain must advance to an intent_received event (the LAST of the three \
+         sequential mints — recipient, subject, body)"
+    );
+
+    // Sanity: exactly three intent_received events exist (recipient, subject, body).
+    let intent_received_count: i64 = locked
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE session_id = ?1 AND event_type = 'intent_received'",
+            [&session_id.to_string()],
+            |row| row.get(0),
+        )
+        .expect("query intent_received count");
+    assert_eq!(
+        intent_received_count, 3,
+        "SendEmailSummary must mint THREE intent_received events (recipient, subject, body)"
     );
 }
 
@@ -439,12 +486,14 @@ async fn report_derived_claim_dispatch_rejects_non_file_read_root_at_index_0() {
         .dispatch(BrokerRequest::ProvideIntent {
             intent: CaprunIntent::SendEmailSummary {
                 recipient: "boss@company.com".to_string(),
+                subject: "Q3 summary".to_string(),
+                body: "See attached.".to_string(),
             },
         })
         .await
         .expect("dispatch ProvideIntent must succeed");
     let intent_value_id = match resp {
-        BrokerResponse::IntentAccepted { value_id } => value_id,
+        BrokerResponse::IntentAccepted { value_id, .. } => value_id,
         other => panic!("expected IntentAccepted, got {:?}", other),
     };
 
