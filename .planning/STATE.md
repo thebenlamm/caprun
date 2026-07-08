@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: — Doc → Action Assistant
-current_phase: 14
-current_phase_name: Content-Sensitive Sink-Arg Blocking
+current_phase: 15
+current_phase_name: Deterministic Doc→Action Extraction
 status: executing
 stopped_at: Completed 14-02-PLAN.md — cargo test --workspace fully green, check-invariants.sh passes
-last_updated: "2026-07-08T04:18:22.903Z"
+last_updated: "2026-07-08T05:22:48.827Z"
 last_activity: 2026-07-08
-last_activity_desc: Phase 14 execution started
+last_activity_desc: Phase 14 complete, transitioned to Phase 15
 progress:
   total_phases: 6
   completed_phases: 3
@@ -28,16 +28,16 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 
 ## Current Position
 
-Phase: 14 (Content-Sensitive Sink-Arg Blocking) — EXECUTING
-Plan: 2 of 2
+Phase: 15 — Deterministic Doc→Action Extraction
+Plan: Not started
 Status: Ready to execute
-Last activity: 2026-07-08 — Phase 14 execution started
+Last activity: 2026-07-08 — Phase 14 complete, transitioned to Phase 15
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 48 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 7 [Phase 12: 3, Phase 13: 4])
+- Total plans completed: 17 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 7 [Phase 12: 3, Phase 13: 4])
 - Average duration: — min
 
 **By Phase (v1.2):**
@@ -49,6 +49,7 @@ Last activity: 2026-07-08 — Phase 14 execution started
 | 10 | 3 | - | - |
 | 11 | 1 | - | - |
 | 13 | 4 | - | - |
+| 14 | 2 | - | - |
 
 *Updated after each plan completion. v1.3 phases (12-17) have no plans yet — table rows added once `/gsd-plan-phase` runs.*
 | Phase 14 P02 | 50min | 3 tasks | 10 files |
