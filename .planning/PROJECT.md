@@ -45,12 +45,18 @@ proves taint *enforcement* through a deterministic extractor — it does not
 claim taint survives a real LLM planner's regeneration ("laundering"); that is
 v1.4+ (see `DOC-01`).
 
-**Progress:** Phase 12 (DESIGN-01 design gate) and Phase 13 (real
-broker-mediated SMTP adapter — SMTP-01/02/03/05, SEND-01/02) are both
-complete and verified live on real Linux via Colima+Docker (kernel-enforced
+**Progress:** Phase 12 (DESIGN-01 design gate), Phase 13 (real
+broker-mediated SMTP adapter — SMTP-01/02/03/05, SEND-01/02), and Phase 14
+(content-sensitive sink-arg blocking — CONTENT-01/02, collect-then-Block
+plural-anchor reshape) are all complete and verified. Phase 13's claims
+were verified live on real Linux via Colima+Docker (kernel-enforced
 negative-net denial, real Mailpit-captured send, CRLF/header-injection
-fixture, atomic at-most-once send). Phases 14-17 (content-sensitive
-blocking, doc→action extraction, confirm UX, live acceptance) remain.
+fixture, atomic at-most-once send). Phase 14's plural reshape was
+independently gsd-verifier-checked: both a tainted `to`+`body` pair block
+together (not first-match-wins) and a body-tainted/recipient-trusted case
+still blocks, with no regression to the existing routing-only block or
+`file.create`'s dispatch arm. Phases 15-17 (doc→action extraction, confirm
+UX, live acceptance) remain.
 
 Full v1.2 detail archived in
 [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.md) and
@@ -381,9 +387,12 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-08 after Phase 13 (real broker-mediated SMTP adapter)
-completed and verified — SMTP-01/02/03/05, SEND-01/02 all confirmed live on
-real Linux via Colima+Docker. Prior: 2026-07-07 after starting v1.3
+*Last updated: 2026-07-08 after Phase 14 (content-sensitive sink-arg
+blocking) completed and verified — CONTENT-01/02 confirmed, collect-then-Block
+plural-anchor reshape independently gsd-verifier-checked. Prior: 2026-07-08
+after Phase 13 (real broker-mediated SMTP adapter) completed and verified —
+SMTP-01/02/03/05, SEND-01/02 all confirmed live on real Linux via
+Colima+Docker. Before that: 2026-07-07 after starting v1.3
 "Doc → Action Assistant" milestone (`/gsd-new-milestone`). Reopened
 `CONTENT-01` and the real SMTP adapter (see Key Decisions); LLM planner
 remains out. Prior:
