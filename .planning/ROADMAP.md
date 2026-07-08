@@ -99,7 +99,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   4. A re-issued confirm, a broker restart mid-send, or a duplicate plan-node submission cannot double-fire — the audit DAG records exactly ONE send.
   5. An adapter failure after confirm (connection refused / 5xx) surfaces the error (never swallowed), is recorded in the DAG, and cannot silently retry into a double-send.
 
-**Plans**: 2/4 plans executed
+**Plans**: 3/4 plans executed
 **Wave 1**
 
 - [x] 13-01-PLAN.md — SMTP adapter module (email_smtp.rs) + lettre dep + structural CRLF gate (SMTP-05)
@@ -107,7 +107,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 13-02-PLAN.md — confirm-path rewire: &mut Connection, atomic CAS+attempt tx, EmailSendFailed variant, stub delete (SEND-01, SEND-02)
+- [x] 13-02-PLAN.md — confirm-path rewire: &mut Connection, atomic CAS+attempt tx, EmailSendFailed variant, stub delete (SEND-01, SEND-02)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -184,7 +184,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 | 10. Single-Shot Confirmation Loop | v1.2 | 3/3 | Complete | 2026-07-07 |
 | 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 1/1 | Complete | 2026-07-07 |
 | 12. Content, Adapter & Confirm-Binding Design Gate | v1.3 | 3/3 | Complete   | 2026-07-07 |
-| 13. Real Broker-Mediated SMTP Adapter | v1.3 | 2/4 | In Progress|  |
+| 13. Real Broker-Mediated SMTP Adapter | v1.3 | 3/4 | In Progress|  |
 | 14. Content-Sensitive Sink-Arg Blocking | v1.3 | 0/0 | Not started | - |
 | 15. Deterministic Doc→Action Extraction | v1.3 | 0/0 | Not started | - |
 | 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 0/0 | Not started | - |
