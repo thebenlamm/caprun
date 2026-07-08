@@ -55,31 +55,47 @@ echo "Starting Mailpit sidecar (${MAILPIT_NAME}) on ${MAILPIT_NET} ..."
 # EXPLORATORY curl from the host (see module doc comment / SUMMARY) can probe
 # the live schema without needing a shell inside the network.
 #
-# --network-alias mailpit (EMPIRICALLY REQUIRED, Assumption A2 resolved):
-# Docker's embedded per-network DNS (127.0.0.11) resolves a hostname to a
-# container's NAME or an explicit --network-alias — NOT to an arbitrary
-# unrelated hostname. Smoke-tested at authoring time: with the container
-# named "${MAILPIT_NAME}" (caprun-mailpit) and NO alias, a sibling container
-# on the same network got NXDOMAIN resolving "mailpit". Adding
-# `--network-alias mailpit` makes `CAPRUN_SMTP_HOST=mailpit` resolve
-# correctly regardless of the container's own --name.
+# --network-alias mailpit (Assumption A2 resolved, kept for convenience/
+# debugging): Docker's embedded per-network DNS (127.0.0.11) resolves a
+# hostname to a container's NAME or an explicit --network-alias — smoke-tested
+# at authoring time (with no alias, a sibling container got NXDOMAIN resolving
+# "mailpit"). The actual verification run below does NOT rely on this DNS
+# name (see the IP-resolution step and its Rule-1 bug-fix note just below) —
+# the alias is kept so a developer can still `curl`/shell into the network by
+# the friendly name "mailpit" for manual debugging.
 docker run -d --rm --name "${MAILPIT_NAME}" --network "${MAILPIT_NET}" \
     --network-alias mailpit \
     -p 8025:8025 -p 1025:1025 \
     axllent/mailpit >/dev/null
 
+# Resolve Mailpit's container IP OUTSIDE any confined process (Rule 1 bug fix
+# discovered at authoring time — see 13-04-SUMMARY.md "Deviations"): the
+# pre-existing Phase 13 Plan 03 `negative_net_smtp_mailpit` test drives
+# `confine-probe smtp <host> <port>` INSIDE a seccomp-confined child process.
+# That process's own default-deny net filter blocks socket() unconditionally
+# — which ALSO blocks the DNS query a hostname lookup would need, before
+# `confine-probe` ever reaches the `connect()` call whose EPERM it checks for.
+# Passing the bare hostname "mailpit" as CAPRUN_SMTP_HOST therefore breaks
+# that test with an unrelated "Temporary failure in name resolution" error
+# instead of the expected EPERM-at-connect() proof. Resolving to a concrete
+# IP here (unconfined, host-side) and passing THAT as CAPRUN_SMTP_HOST avoids
+# a DNS lookup ever needing to happen inside the confined probe process,
+# while leaving Task 2/3's SMTP-03/05 acceptance tests unaffected (they run
+# unconfined and would work with either form).
+MAILPIT_IP=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${MAILPIT_NAME}")
+if [ -z "${MAILPIT_IP}" ]; then
+    echo "FAIL — could not resolve ${MAILPIT_NAME}'s container IP" >&2
+    exit 1
+fi
+echo "Resolved Mailpit sidecar IP: ${MAILPIT_IP}"
+
 echo "Running Linux verification suite (rust:1, network=${MAILPIT_NET}) ..."
-# Container-name DNS via --network-alias mailpit (above) — verified
-# empirically at authoring time via `docker run --rm --network
-# caprun-mailpit-net alpine:3 getent hosts mailpit`, which resolved to the
-# sidecar's container IP. No --network host / explicit port-forward
-# workaround needed under this Colima setup.
 docker run --rm \
     --security-opt seccomp=unconfined \
     --network "${MAILPIT_NET}" \
     -v "$PWD":/work -w /work \
     -e CARGO_TARGET_DIR=/tmp/lt \
-    -e CAPRUN_SMTP_HOST=mailpit \
+    -e CAPRUN_SMTP_HOST="${MAILPIT_IP}" \
     -e CAPRUN_SMTP_PORT=1025 \
     rust:1 \
     bash -c "apt-get update && apt-get install -y libssl-dev pkg-config && cargo test --workspace --no-fail-fast"
