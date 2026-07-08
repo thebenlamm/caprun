@@ -6,9 +6,9 @@ current_phase: 14
 current_phase_name: Content-Sensitive Sink-Arg Blocking
 status: executing
 stopped_at: Phase 13 planned (13-CONTEXT.md synthesized from the approved DESIGN-01 gate, 13-RESEARCH.md, 4 PLAN.md files, plan-checker VERIFICATION PASSED); ready for execution
-last_updated: "2026-07-08T00:39:03.377Z"
+last_updated: "2026-07-08T03:35:59.775Z"
 last_activity: 2026-07-08
-last_activity_desc: Phase 13 complete, transitioned to Phase 14
+last_activity_desc: Phase 14 execution started
 progress:
   total_phases: 6
   completed_phases: 2
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — now extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, and (v1.3, in progress) with content-sensitive body blocking plus a real broker-mediated SMTP send, both proven live on real Linux.
-**Current focus:** Phase 13 COMPLETE (real SMTP adapter, verified live on Linux). Phase 14 (Content-Sensitive Sink-Arg Blocking) has been planned (2 plans) by a concurrent session — ready to execute.
+**Current focus:** Phase 14 — Content-Sensitive Sink-Arg Blocking
 
 ## Current Position
 
-Phase: 14 — Content-Sensitive Sink-Arg Blocking (planned, not yet executed)
-Plan: 2 plans (14-01, 14-02) — none executed yet
-Status: Ready to execute
-Last activity: 2026-07-08 — Phase 13 verified complete; Phase 14 planned by a concurrent session
+Phase: 14 (Content-Sensitive Sink-Arg Blocking) — EXECUTING
+Plan: 1 of 2
+Status: Executing Phase 14
+Last activity: 2026-07-08 — Phase 14 execution started
 
 ## Performance Metrics
 
