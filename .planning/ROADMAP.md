@@ -172,7 +172,16 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   4. A fully-trusted send (recipient+body from a trusted, non-doc source) proceeds with NO block and NO confirm gate, in the same acceptance run as the hostile block — proving the gate is taint-driven.
   5. A send with a tainted body but a trusted recipient still blocks — proving the body dimension isn't dead code redundant with the routing block.
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+**Wave 1**
+
+- [ ] 16-01-PLAN.md — Combined-digest producer: Event.combined_digest/blocked_arg_names + shared combined_digest() primitive + Block-time binding into Event & PendingConfirmation (CONFIRM-03)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 16-02-PLAN.md — Confirm-side binding: per-arg verbatim narration + Draft posture + T-14-08 test-then-replace + recompute-and-compare fail-closed gate (CONFIRM-01, CONFIRM-03, CONFIRM-04)
+- [ ] 16-03-PLAN.md — Live negative controls: taint-driven A/B (trusted-intent Allowed vs doc-derived Blocked) + body-tainted-only single-anchor block (CONTROL-01, CONTROL-02)
 
 ### Phase 17: Live Acceptance & Framing Honesty
 
@@ -207,5 +216,5 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 | 13. Real Broker-Mediated SMTP Adapter | v1.3 | 4/4 | Complete    | 2026-07-08 |
 | 14. Content-Sensitive Sink-Arg Blocking | v1.3 | 2/2 | Complete    | 2026-07-08 |
 | 15. Deterministic Doc→Action Extraction | v1.3 | 4/4 | Complete    | 2026-07-08 |
-| 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 0/0 | Not started | - |
+| 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 0/3 | Not started | - |
 | 17. Live Acceptance & Framing Honesty | v1.3 | 0/0 | Not started | - |
