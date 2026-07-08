@@ -5,15 +5,15 @@ milestone_name: — Doc → Action Assistant
 current_phase: 15
 current_phase_name: Deterministic Doc→Action Extraction
 status: executing
-stopped_at: Completed 14-02-PLAN.md — cargo test --workspace fully green, check-invariants.sh passes
-last_updated: "2026-07-08T13:23:33.863Z"
+stopped_at: Completed 15-01-PLAN.md
+last_updated: "2026-07-08T13:49:18.050Z"
 last_activity: 2026-07-08
 last_activity_desc: Phase 15 execution started
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 13
-  completed_plans: 9
+  completed_plans: 10
   percent: 50
 ---
 
@@ -29,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 15 (Deterministic Doc→Action Extraction) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 15
+Plan: 2 of 4
+Status: Ready to execute
 Last activity: 2026-07-08 — Phase 15 execution started
 
 ## Performance Metrics
@@ -53,6 +53,7 @@ Last activity: 2026-07-08 — Phase 15 execution started
 
 *Updated after each plan completion. v1.3 phases (12-17) have no plans yet — table rows added once `/gsd-plan-phase` runs.*
 | Phase 14 P02 | 50min | 3 tasks | 10 files |
+| Phase 15-deterministic-doc-action-extraction P01 | 75min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,8 @@ completes and is adversarially reviewed (mirrors v1.0 Phase 2 / v1.2 Phase 8).
 
 - [Phase 14]: blocked_literals gained an arg column and composite (event_id, arg) PRIMARY KEY so a plural sink_blocked event can persist every blocked arg's literal, not just the first. — The plan required iterating all anchors and writing every literal; the prior single-column event_id PK would PK-collide on a 2nd insert for a genuinely-plural block.
 - [Phase 14]: render_block_display's plural-block fail-closed guard re-derives the executor's is_routing_sensitive||is_content_sensitive && tainted predicate over PendingConfirmation.resolved_args instead of threading a new field through PendingConfirmation. — Avoids a schema/struct ripple across every PendingConfirmation-constructing test fixture while giving a precise (no false-positive) plurality check, since brokerd already depends on the executor crate.
+- [Phase ?]: 15-01: mint_from_derivation mints the ValueRecord before constructing the derivation Event (reverse of mint_from_read's order), since the event's hashed payload embeds derived_value_id == the minted value_id
+- [Phase ?]: 15-01: check-invariants.sh Gate 3 exempts files under tests/ and #[cfg(test)] modules (in addition to the 3 named allowed loci) to avoid false-flagging pre-existing legitimate test infrastructure that already calls mint_from_read/ValueStore::mint directly
 
 ### Pending Todos
 
@@ -90,8 +93,8 @@ pre-existing item, still benign). No new deferrals from roadmap creation.
 
 ## Session Continuity
 
-Last session: 2026-07-08T04:18:22.897Z
-Stopped at: Completed 14-02-PLAN.md — cargo test --workspace fully green, check-invariants.sh passes
+Last session: 2026-07-08T13:49:18.044Z
+Stopped at: Completed 15-01-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

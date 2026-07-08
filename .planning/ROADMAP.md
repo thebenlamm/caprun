@@ -145,10 +145,10 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   3. **HARD GATE — phase FAILS if not met (the project's single non-negotiable invariant, per CLAUDE.md: "taint stapled at the sink proves nothing").** A programmatic audit-DAG query proves an unbroken edge path (raw-read Event → extractor-derived ValueNodes → blocked sink args) and FAILS if any edge is missing; a paired anti-staple check rejects/distinguishes a value minted fresh at the sink from one with genuine provenance. Since Phase 12 mandates collect-then-Block (a plan node with both a tainted recipient and a tainted body produces ONE combined Block carrying BOTH), this unbroken-edge + anti-staple proof must hold for EVERY blocked arg in the set, not just one — a plan node blocking on two tainted args with only one edge proven is a partial pass, not a pass. This is not a soft criterion — it is the phase's acceptance bar, and it composes into ACCEPT-01/Phase 17 as a milestone-failing gate too.
   4. At least one fixture shows the extractor transforming the tainted value before the sink (concatenating two doc fields, or base64-decoding a body) with taint still propagating and the block still firing — proving survival of manipulation, not just copying.
 
-**Plans**: 4 plans
+**Plans**: 1/4 plans executed
 **Wave 1**
 
-- [ ] 15-01-PLAN.md — mint_from_derivation provenance-threading primitive + doc_fragment claim type + confined extraction/concat helpers (Wave 1)
+- [x] 15-01-PLAN.md — mint_from_derivation provenance-threading primitive + doc_fragment claim type + confined extraction/concat helpers (Wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -206,6 +206,6 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 | 12. Content, Adapter & Confirm-Binding Design Gate | v1.3 | 3/3 | Complete   | 2026-07-07 |
 | 13. Real Broker-Mediated SMTP Adapter | v1.3 | 4/4 | Complete    | 2026-07-08 |
 | 14. Content-Sensitive Sink-Arg Blocking | v1.3 | 2/2 | Complete    | 2026-07-08 |
-| 15. Deterministic Doc→Action Extraction | v1.3 | 0/0 | Not started | - |
+| 15. Deterministic Doc→Action Extraction | v1.3 | 1/4 | In Progress|  |
 | 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 0/0 | Not started | - |
 | 17. Live Acceptance & Framing Honesty | v1.3 | 0/0 | Not started | - |

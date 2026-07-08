@@ -2,9 +2,9 @@
 ///
 /// # CANONICAL MINT SITES
 ///
-/// Two broker functions mint ValueRecords here, each anchored to a real audit event:
+/// Three broker functions mint ValueRecords here, each anchored to a real audit event:
 ///
-/// * `mint_from_read` — the SOLE hostile-taint site.
+/// * `mint_from_read` — the SOLE hostile-taint site for a SINGLE raw claim.
 ///   Mints a `[ExternalUntrusted, EmailRaw]`-tainted ValueRecord anchored to a
 ///   `file_read` event. Taint MUST be set here (at read Event time), never at
 ///   sink evaluation time (anti-stapling, T-04-03).
@@ -15,8 +15,19 @@
 ///   Symmetrical to `mint_from_read`: event appended + record minted in one call
 ///   so `provenance_chain[0] == intent_event_id` (genuine-provenance anchor, T-06-04).
 ///
-/// Anti-stapling invariant: both mint functions append the event AND mint the record
-/// in one call. No other path in brokerd may call `ValueStore::mint`.
+/// * `mint_from_derivation` (Phase 15) — the SOLE transform-derived-value site.
+///   Mints a ValueRecord whose `provenance_chain` THREADS every input's own
+///   read-rooted chain (never a fresh transform-local root — D-16) and whose
+///   `taint` is the inputs' union PLUS `WorkerExtracted`. Fails closed on
+///   zero inputs, a non-file_read root at ANY chain index, or a
+///   transformed_literal that doesn't byte-verify against `join(input_literals,
+///   '@')` (MAJOR-1). Does NOT demote the session (inputs were already
+///   demoted by their own `mint_from_read`).
+///
+/// Anti-stapling invariant: all three mint functions append the event AND mint
+/// the record in one call. No other path in brokerd may call `ValueStore::mint`
+/// (mechanically backstopped by `scripts/check-invariants.sh`'s mint-call-site
+/// gate, Phase 15 Task 3).
 
 use anyhow::Result;
 use chrono::Utc;
@@ -116,6 +127,75 @@ pub fn extract_relative_path_claims(raw: &str) -> Vec<Claim> {
 /// shape — this shape test only decides what counts as an extractable path token.
 fn looks_like_relative_path(s: &str) -> bool {
     !s.is_empty() && !s.starts_with('/') && !s.contains('@') && s.contains('/')
+}
+
+/// Return `true` if `s` is a non-empty, valid RAW doc-fragment token.
+///
+/// A doc_fragment is a marker-anchored recipient-half token (e.g. the
+/// local-part or the domain-half of a recipient) — NOT a fully-assembled
+/// recipient. This predicate MUST reject any token containing `@`: an
+/// assembled recipient/email is never a valid RAW doc_fragment — it may only
+/// exist as a `mint_from_derivation` OUTPUT (the concat transform's result),
+/// never re-entered here as a raw fragment (finding #1a; the mint-time guard
+/// this predicate backs closes the "worker re-submits the concat OUTPUT as a
+/// fresh single-element doc_fragment chain" laundering path).
+fn looks_like_doc_fragment(s: &str) -> bool {
+    !s.is_empty() && !s.contains('@')
+}
+
+/// Extract marker-anchored doc-fragment claims from raw untrusted content.
+///
+/// Deterministic hand-rolled scanner (no regex crate, no LLM, no external
+/// I/O) — mirrors `extract_email_claims`/`extract_relative_path_claims`'
+/// split_whitespace + trim_matches shape. Finds the value immediately
+/// following a `Reply-To:` marker and the value immediately following a
+/// `Domain:` marker — each of which is on an INDEPENDENTLY PLAUSIBLE line
+/// (finding #9) and satisfies `looks_like_doc_fragment` (neither contains
+/// `@`; they only become a recipient AFTER the concat transform joins them
+/// with a literal `@`). Preserves source order; discards surrounding prose
+/// (lossy guarantee) — only the fragment token itself ever appears in the
+/// returned Claim.
+///
+/// Returns one `Claim { claim_type: "doc_fragment", value: "<fragment>" }`
+/// per marker-anchored fragment found, in source order, or an empty `Vec`
+/// when no marker is present.
+pub fn extract_doc_fragments(raw: &str) -> Vec<Claim> {
+    let mut claims = Vec::new();
+    let words: Vec<&str> = raw.split_whitespace().collect();
+    let mut i = 0;
+    while i < words.len() {
+        if (words[i] == "Reply-To:" || words[i] == "Domain:") && i + 1 < words.len() {
+            // Trim edge punctuation (e.g. a sentence-terminal '.' or wrapping
+            // quotes), mirroring the existing extractors' trim_matches shape.
+            // Internal '.', '-', '_' are preserved as valid interior chars.
+            let trimmed = words[i + 1].trim_matches(|c: char| {
+                !c.is_alphanumeric() && c != '-' && c != '_' && c != '.'
+            });
+            if looks_like_doc_fragment(trimmed) {
+                claims.push(Claim {
+                    claim_type: "doc_fragment".into(),
+                    value: trimmed.to_string(),
+                });
+            }
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    claims
+}
+
+/// Deterministically concatenate two already-extracted doc-fragment values
+/// into a recipient literal with a fixed `@` separator (the "concat"
+/// transform_kind — see `mint_from_derivation`'s byte-verify guard, MAJOR-1).
+///
+/// Plain `String` concatenation — no parsing, no library. Operates ONLY on
+/// already-extracted fragment VALUES; it never re-reads raw bytes. This is
+/// the confined-worker-callable transform helper (EXTRACT-01, D-08): the
+/// worker calls this BEFORE any mint, exactly as it already calls
+/// `extract_email_claims`/`extract_relative_path_claims`.
+pub fn concat_doc_fragments(local: &str, domain: &str) -> String {
+    format!("{local}@{domain}")
 }
 
 /// Return `true` if `s` has the structural shape of an email address.
@@ -235,6 +315,24 @@ pub fn mint_from_read(
     let taint = match claim.claim_type.as_str() {
         "email_address" => vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw],
         "relative_path" => vec![TaintLabel::ExternalUntrusted, TaintLabel::PathRaw],
+        "doc_fragment" => {
+            // finding #1a mint-time guard: an assembled recipient (a token
+            // containing '@' — the concat transform's OUTPUT) MUST NOT be
+            // accepted as a raw doc_fragment. This closes the laundering path
+            // where a worker re-submits mint_from_derivation's output as a
+            // fresh single-element chain through mint_from_read. A generic
+            // untrusted raw fragment carries no shape label like
+            // EmailRaw/PathRaw — ExternalUntrusted alone is non-empty and
+            // is_untrusted, sufficient to block downstream.
+            if !looks_like_doc_fragment(&claim.value) {
+                return Err(anyhow::anyhow!(
+                    "mint_from_read: doc_fragment value contains '@' — an assembled \
+                     recipient can never re-enter as a raw doc_fragment (fail-closed, \
+                     finding #1a)"
+                ));
+            }
+            vec![TaintLabel::ExternalUntrusted]
+        }
         other => {
             return Err(anyhow::anyhow!(
                 "mint_from_read: unknown claim_type `{other}` (fail-closed, never default-tagged)"
@@ -373,6 +471,264 @@ pub fn mint_from_intent(
         .map_err(|e| anyhow::anyhow!("mint invariant: {e:?}"))?;
 
     Ok((event_id, intent_hash, value_id))
+}
+
+/// Return the `event_type` of the DAG event `event_id` within `session_id`,
+/// or `None` if no such row exists. Session-scoped inline lookup by exact id
+/// (mirrors `audit::find_event_by_type`'s query shape, but resolves a
+/// SPECIFIC id rather than the first-of-type — Wave 1 does not depend on
+/// Plan 02's `find_event_by_id`, per this plan's own read_first note).
+fn resolve_event_type_by_id(
+    conn: &rusqlite::Connection,
+    session_id: Uuid,
+    event_id: Uuid,
+) -> Result<Option<String>> {
+    let result: std::result::Result<String, rusqlite::Error> = conn.query_row(
+        "SELECT event_type FROM events WHERE id = ?1 AND session_id = ?2",
+        rusqlite::params![event_id.to_string(), session_id.to_string()],
+        |row| row.get(0),
+    );
+    match result {
+        Ok(event_type) => Ok(Some(event_type)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(anyhow::Error::from(e)),
+    }
+}
+
+/// Append a `derivation` Event to the audit DAG and mint a provenance-threaded
+/// `ValueRecord` for a transform-derived value (e.g. two concatenated doc
+/// fragments joined into a recipient), in a single atomic broker code path.
+///
+/// # SOLE BROKER DERIVED-VALUE MINT SITE (finding #1/#2/#3/#10, MAJOR-1)
+///
+/// This is the `mint_from_read` successor for TRANSFORM-DERIVED values
+/// (DESIGN-confirm-binding.md "Provenance-Threading for Transform-Derived
+/// Mints", D-16). It closes the "taint stapled on at the sink proves
+/// nothing" laundering BLOCKER via FIVE mint-time guards — NOT "by
+/// construction":
+///
+///   (a) `provenance_chain` is the deduplicated, order-stable concatenation
+///       of every input's OWN read-rooted `provenance_chain` — never a
+///       fresh transform-local root.
+///   (b) When the union taint is untrusted (it always is — see (e)), EVERY
+///       element of `provenance_chain` (not just `[0]`) must resolve, via a
+///       session-scoped audit lookup, to a genuine `file_read` event. A
+///       worker cannot pick the audited origin by choosing input ORDER, nor
+///       smuggle a non-file_read root at index>0 (finding #3 + MEDIUM R1/R2).
+///   (c) Zero inputs is a fail-closed mint error — a derived value must
+///       thread at least one input's provenance, never fresh-root.
+///   (d) `looks_like_doc_fragment` (Task 1) rejects a '@'-containing token at
+///       `mint_from_read`, so this function's own OUTPUT can never re-enter
+///       as a fresh single-element chain (finding #1a; D-16).
+///   (e) The claimed `transformed_literal` is BYTE-verified against
+///       `join(input_literals, '@')` for the `"concat"` transform (the ONLY
+///       Phase-15 transform in scope) — turning metadata-descent into
+///       byte-descent so the automated EXTRACT-02/ACCEPT-01 gate cannot
+///       certify a derivation the worker fabricated (MAJOR-1). This is a
+///       trivial equality check over already-extracted, already-minted
+///       literals the broker already holds — NOT a parser over raw hostile
+///       bytes (EXTRACT-01 stays intact; field extraction remains
+///       worker-side only).
+///
+/// `taint` = the order-stable, deduplicated union of every input's taint,
+/// PLUS `TaintLabel::WorkerExtracted` appended UNCONDITIONALLY (its first
+/// mint site) — this makes the union ALWAYS untrusted (`WorkerExtracted.
+/// is_untrusted() == true`), so guard (b) ALWAYS applies, regardless of the
+/// inputs' own taint. When the union is untrusted, `TaintLabel::UserTrusted`
+/// is DROPPED from it: a `[UserTrusted, WorkerExtracted]` vector would be
+/// self-contradictory and would make a future `taint.contains(&UserTrusted)`
+/// predicate fail OPEN (finding #3).
+///
+/// A durable `derivation` Event is appended (via `Event::derivation`) whose
+/// `parent_id` is the CAUSAL chain head passed in (`parent_id` argument,
+/// unrelated to `inputs`) — the multi-input VALUE-lineage edge rides
+/// entirely in the event's hashed payload (`derived_value_id`,
+/// `input_value_ids`, `input_provenance_chains`, `transform_kind`), never in
+/// `parent_id` and never as an element of any `provenance_chain`
+/// (two-graphs-never-share-edges, finding #10).
+///
+/// `mint_from_derivation` MUST NOT and does NOT demote the session — it is
+/// NOT an I1 trust-flip site; inputs were already demoted by their own
+/// `mint_from_read` calls. `mint_from_read` remains the sole I1 flip site.
+///
+/// # Arguments
+/// * `conn`                — open rusqlite connection for the audit DAG.
+/// * `store`                — mutable ref to the broker-owned ValueStore.
+/// * `session_id`           — the Session this derivation belongs to.
+/// * `transformed_literal`  — the worker's claimed already-transformed value;
+///   byte-verified against the inputs' literals for the `"concat"` transform.
+/// * `inputs`               — the ALREADY-minted input `ValueRecord`s (the
+///   caller resolves `ValueId`s to records — typically owned clones — before
+///   calling; the broker never re-resolves them from `store` here, avoiding
+///   a simultaneous mutable+immutable borrow of `store`).
+/// * `transform_kind`       — the transform tag (only `"concat"` is
+///   supported in Phase 15; any other value is a fail-closed error).
+/// * `parent_id`/`parent_hash` — the CAUSAL chain head to parent-link the new
+///   `derivation` event onto (unrelated to `inputs`' own provenance).
+///
+/// # Returns
+/// `(derivation_event_id, derivation_hash, value_id)` — mirrors
+/// `mint_from_intent`'s return shape (this function appends exactly one
+/// event, so the derivation event IS the chain head after this call).
+#[allow(clippy::too_many_arguments)]
+pub fn mint_from_derivation(
+    conn: &rusqlite::Connection,
+    store: &mut ValueStore,
+    session_id: Uuid,
+    transformed_literal: String,
+    inputs: &[&runtime_core::value_record::ValueRecord],
+    transform_kind: &str,
+    parent_id: Option<Uuid>,
+    parent_hash: Option<&str>,
+) -> Result<(Uuid, String, runtime_core::plan_node::ValueId)> {
+    // Fail-closed (finding #1/D-16 + guard (c)): a "derivation" with zero
+    // inputs is a contradiction — reject before any mutation (no event
+    // appended, no record minted), mirroring the existing empty-taint/
+    // empty-provenance guards in executor/src/value_store.rs.
+    if inputs.is_empty() {
+        return Err(anyhow::anyhow!(
+            "mint_from_derivation: zero inputs — a derived value must thread \
+             at least one input's provenance (fail-closed, never fresh-root)"
+        ));
+    }
+
+    // taint = union of every input's taint (order-stable, deduplicated, never
+    // narrowed — D-16 point 1 monotonicity), PLUS WorkerExtracted appended
+    // UNCONDITIONALLY (its first mint site). WorkerExtracted.is_untrusted()
+    // == true, so the union is now ALWAYS untrusted regardless of the
+    // inputs — this is intentional (the all-UserTrusted-input test pins it):
+    // making WorkerExtracted conditional would let an all-trusted-input
+    // derivation skip the file_read-root guard below and mint a TRUSTED
+    // output (the laundering-to-trusted hole).
+    let mut taint: Vec<TaintLabel> = Vec::new();
+    for r in inputs {
+        for t in &r.taint {
+            if !taint.contains(t) {
+                taint.push(t.clone());
+            }
+        }
+    }
+    if !taint.contains(&TaintLabel::WorkerExtracted) {
+        taint.push(TaintLabel::WorkerExtracted);
+    }
+
+    // finding #3: a [UserTrusted, WorkerExtracted] vector would be
+    // self-contradictory (a future taint.contains(&UserTrusted) predicate
+    // would fail OPEN) — drop UserTrusted whenever the union is untrusted.
+    // Given WorkerExtracted's unconditional presence above, this condition
+    // is always true; written as an explicit check (not an unconditional
+    // drop) so the invariant it encodes stays self-documenting.
+    let union_is_untrusted = taint.iter().any(|t| t.is_untrusted());
+    if union_is_untrusted {
+        taint.retain(|t| *t != TaintLabel::UserTrusted);
+    }
+
+    // provenance_chain = order-stable, deduplicated concatenation of every
+    // input's provenance_chain. EVERY element MUST be a file_read event id —
+    // a derivation event NEVER appears here (finding #10; the EXTRACT-02
+    // audit walk requires every element be file_read, not merely [0]).
+    let mut provenance_chain: Vec<Uuid> = Vec::new();
+    for r in inputs {
+        for id in &r.provenance_chain {
+            if !provenance_chain.contains(id) {
+                provenance_chain.push(*id);
+            }
+        }
+    }
+
+    // GUARD (finding #3 + MEDIUM R1/R2, asserted AT THE MINT): when the
+    // union is untrusted, EVERY element of provenance_chain must resolve,
+    // via a session-scoped audit lookup, to a "file_read" event. Checking
+    // only [0] would let an index>0 intent_received root slip the mint yet
+    // be rejected later by the EXTRACT-02 walk — so the mint enforces the
+    // same every-element invariant the walk does. This closes the "attacker
+    // picks the audited origin by choosing input ORDER" hole.
+    if union_is_untrusted {
+        for evt_id in &provenance_chain {
+            match resolve_event_type_by_id(conn, session_id, *evt_id)? {
+                Some(ref event_type) if event_type == "file_read" => {}
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "mint_from_derivation: provenance_chain element {evt_id} does not \
+                         resolve to a genuine file_read event in this session (fail-closed \
+                         anti-laundering guard — every element must be file_read, not just \
+                         [0]; finding #3 + MEDIUM R1/R2)"
+                    ));
+                }
+            }
+        }
+    }
+
+    // GUARD (MAJOR-1, byte-descent): verify the worker's claimed
+    // transformed_literal against the input literals the broker already
+    // holds. For the concat transform (the ONLY Phase-15 transform in
+    // scope) this is join(input_literals, '@') — a trivial equality check
+    // over already-extracted, already-minted literals, NOT a parser over
+    // raw hostile bytes (EXTRACT-01 stays intact). Any other transform_kind
+    // is unimplemented and fails closed, mirroring mint_from_read's
+    // unknown-claim_type discipline.
+    match transform_kind {
+        "concat" => {
+            let joined = inputs
+                .iter()
+                .map(|r| r.literal.as_str())
+                .collect::<Vec<_>>()
+                .join("@");
+            if joined != transformed_literal {
+                return Err(anyhow::anyhow!(
+                    "mint_from_derivation: transformed_literal does not match \
+                     join(input_literals, '@') — the derived literal is byte-verified \
+                     against the inputs the broker already holds, not trusted from the \
+                     worker (fail-closed, MAJOR-1)"
+                ));
+            }
+        }
+        other => {
+            return Err(anyhow::anyhow!(
+                "mint_from_derivation: unknown transform_kind `{other}` (fail-closed — \
+                 only \"concat\" is implemented in Phase 15)"
+            ));
+        }
+    }
+
+    // Mint the derived ValueRecord FIRST: the derivation Event's hashed
+    // payload embeds `derived_value_id == this value_id`, so the value must
+    // exist before the event referencing it is constructed (the reverse of
+    // mint_from_read's append-then-mint order, forced by the payload shape).
+    // Propagate ValueStore::mint's EmptyTaint/EmptyProvenance invariant
+    // error rather than masking it (defense in depth — unreachable given the
+    // guards above, since taint always contains WorkerExtracted and
+    // provenance_chain is non-empty whenever inputs is non-empty).
+    let value_id = store
+        .mint(transformed_literal, taint.clone(), provenance_chain.clone())
+        .map_err(|e| anyhow::anyhow!("mint invariant: {e:?}"))?;
+
+    // Append the durable `derivation` Event. Its CAUSAL parent is the
+    // connection chain head (`parent_id`, unrelated to `inputs`); the
+    // multi-input VALUE-lineage edge rides entirely in the hashed payload —
+    // never in `parent_id`, and this event never appears inside any
+    // `provenance_chain` (two-graphs-never-share-edges, finding #10).
+    // mint_from_derivation does NOT demote the session (NOT an I1 trust-flip
+    // site — inputs were already demoted by their own mint_from_read calls).
+    let derivation_event_id = Uuid::new_v4();
+    let input_value_ids: Vec<runtime_core::plan_node::ValueId> =
+        inputs.iter().map(|r| r.id.clone()).collect();
+    let input_provenance_chains: Vec<Vec<Uuid>> =
+        inputs.iter().map(|r| r.provenance_chain.clone()).collect();
+    let derivation_event = Event::derivation(
+        derivation_event_id,
+        parent_id,
+        session_id,
+        Utc::now(),
+        taint,
+        Some(value_id.clone()),
+        input_value_ids,
+        input_provenance_chains,
+        Some(transform_kind.to_string()),
+    );
+    let derivation_hash = append_event(conn, &derivation_event, parent_hash)?;
+
+    Ok((derivation_event_id, derivation_hash, value_id))
 }
 
 #[cfg(test)]
@@ -677,6 +1033,91 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // looks_like_doc_fragment / extract_doc_fragments / concat_doc_fragments
+    // tests (Task 1, finding #1a / #8 / #9)
+    // -----------------------------------------------------------------------
+
+    /// looks_like_doc_fragment: crisp shape predicate mirroring looks_like_email.
+    /// Non-empty AND does not contain '@' — an assembled recipient is never a
+    /// valid raw doc_fragment (finding #1a).
+    #[test]
+    fn looks_like_doc_fragment_accepts_plain_tokens_rejects_assembled_recipient() {
+        assert!(looks_like_doc_fragment("accounts"));
+        assert!(looks_like_doc_fragment("ev1l.com"));
+        assert!(
+            !looks_like_doc_fragment("accounts@ev1l.com"),
+            "an assembled recipient (contains '@') must never be a valid raw doc_fragment"
+        );
+        assert!(!looks_like_doc_fragment(""));
+    }
+
+    /// extract_doc_fragments finds the Reply-To:/Domain:-marker-anchored
+    /// fragments in source order and discards surrounding prose (lossy
+    /// guarantee, finding #9).
+    #[test]
+    fn extract_doc_fragments_finds_marker_anchored_fragments_in_order() {
+        let raw = "Please route all replies here. Reply-To: accounts Domain: ev1l.com \
+                   Thanks for your continued business.";
+        let claims = extract_doc_fragments(raw);
+        assert_eq!(claims.len(), 2, "expected exactly two doc_fragment claims");
+        assert_eq!(claims[0].claim_type, "doc_fragment");
+        assert_eq!(claims[0].value, "accounts");
+        assert_eq!(claims[1].claim_type, "doc_fragment");
+        assert_eq!(claims[1].value, "ev1l.com");
+        assert!(!claims[0].value.contains("route"));
+        assert!(!claims[1].value.contains("Thanks"));
+    }
+
+    /// The concat transform helper joins two already-extracted fragment values
+    /// with a literal '@' separator — plain String concatenation, no parsing.
+    #[test]
+    fn concat_doc_fragments_joins_with_at_separator() {
+        assert_eq!(concat_doc_fragments("accounts", "ev1l.com"), "accounts@ev1l.com");
+    }
+
+    /// mint_from_read's additive doc_fragment arm: a valid fragment (no '@')
+    /// mints a ValueRecord tainted [ExternalUntrusted] with a length-1
+    /// provenance_chain rooted at the file_read event just appended.
+    #[test]
+    fn mint_from_read_doc_fragment_valid_fragment_mints_external_untrusted() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+        let claim = Claim {
+            claim_type: "doc_fragment".into(),
+            value: "accounts".into(),
+        };
+
+        let (read_event_id, _read_hash, value_id, _demoted_id, _demoted_hash) =
+            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
+
+        let record = store.resolve(&value_id).expect("value_id must resolve");
+        assert_eq!(record.taint, vec![TaintLabel::ExternalUntrusted]);
+        assert_eq!(record.provenance_chain, vec![read_event_id]);
+    }
+
+    /// finding #1a mint-time guard: a `doc_fragment` claim whose value already
+    /// contains '@' (i.e. an assembled recipient, the concat OUTPUT) is
+    /// rejected at the mint — it can never re-enter as a fresh single-element
+    /// chain via mint_from_read.
+    #[test]
+    fn mint_from_read_doc_fragment_rejects_assembled_recipient() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+        let claim = Claim {
+            claim_type: "doc_fragment".into(),
+            value: "accounts@ev1l.com".into(),
+        };
+
+        let result = mint_from_read(&conn, &mut store, session_id, &claim, None, None);
+        assert!(
+            result.is_err(),
+            "a '@'-containing doc_fragment value must fail closed at the mint"
+        );
+    }
+
     /// mint_from_read tags a `relative_path` claim `[ExternalUntrusted, PathRaw]`
     /// (never `LocalWorkspace`) on BOTH the record and the DAG event.
     #[test]
@@ -836,6 +1277,423 @@ mod tests {
         assert!(
             demoted.is_none(),
             "mint_from_intent must not append a session_demoted event"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // mint_from_derivation tests (Task 2, finding #1/#2/#3/#10, MAJOR-1,
+    // MEDIUM R1/R2) — the provenance-threading, fail-closed derived-value mint.
+    // -----------------------------------------------------------------------
+
+    use crate::audit::query_events_by_session;
+    use runtime_core::value_record::ValueRecord;
+
+    /// Threading: two file_read-rooted inputs' chains concatenate in order;
+    /// union taint contains ExternalUntrusted + WorkerExtracted; a
+    /// "derivation" event exists in the DAG.
+    #[test]
+    fn mint_from_derivation_threads_provenance_and_taint() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (read_a, _, value_id_a, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
+            None, None,
+        ).unwrap();
+        let (read_b, _, value_id_b, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
+            None, None,
+        ).unwrap();
+
+        let record_a = store.resolve(&value_id_a).unwrap().clone();
+        let record_b = store.resolve(&value_id_b).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+
+        let (derivation_event_id, _hash, value_id) = mint_from_derivation(
+            &conn, &mut store, session_id, "accounts@ev1l.com".into(),
+            &inputs, "concat", None, None,
+        ).unwrap();
+
+        let derived = store.resolve(&value_id).unwrap();
+        assert_eq!(derived.provenance_chain, vec![read_a, read_b]);
+        assert!(derived.taint.contains(&TaintLabel::ExternalUntrusted));
+        assert!(derived.taint.contains(&TaintLabel::WorkerExtracted));
+        assert_eq!(derived.literal, "accounts@ev1l.com");
+
+        let derivation_evt = find_event_by_type(&conn, &session_id.to_string(), "derivation")
+            .unwrap()
+            .expect("a derivation event must exist in the DAG");
+        assert_eq!(derivation_evt.id, derivation_event_id);
+    }
+
+    /// No re-anchor (D-16): the derived record's provenance_chain[0] is NOT
+    /// the derivation event's own id — lineage is threaded, never re-rooted
+    /// at the transform.
+    #[test]
+    fn mint_from_derivation_no_re_anchor() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (read_a, _, value_id_a, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
+            None, None,
+        ).unwrap();
+        let (_read_b, _, value_id_b, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
+            None, None,
+        ).unwrap();
+
+        let record_a = store.resolve(&value_id_a).unwrap().clone();
+        let record_b = store.resolve(&value_id_b).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+
+        let (derivation_event_id, _hash, value_id) = mint_from_derivation(
+            &conn, &mut store, session_id, "accounts@ev1l.com".into(),
+            &inputs, "concat", None, None,
+        ).unwrap();
+
+        let derived = store.resolve(&value_id).unwrap();
+        assert_eq!(
+            derived.provenance_chain[0], read_a,
+            "provenance_chain[0] must be the originating input read, not the derivation event"
+        );
+        assert_ne!(
+            derived.provenance_chain[0], derivation_event_id,
+            "the derived record must never be re-anchored at its own derivation event"
+        );
+    }
+
+    /// Drop-UserTrusted (finding #3): when the union taint is untrusted (it
+    /// always is — WorkerExtracted is appended unconditionally), UserTrusted
+    /// is dropped from the union. Isolates the union/drop computation from
+    /// the file_read-root guard (separately tested below) by re-tagging one
+    /// already-minted, genuinely file_read-rooted record's taint to
+    /// UserTrusted locally — its provenance_chain stays a real file_read id,
+    /// so the guard passes and only the drop logic is exercised.
+    #[test]
+    fn mint_from_derivation_drops_user_trusted_when_union_untrusted() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (_, _, value_id_a, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
+            None, None,
+        ).unwrap();
+        let (_, _, value_id_b, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
+            None, None,
+        ).unwrap();
+
+        // record_a stays genuinely ExternalUntrusted; its read is at index 0.
+        let record_a = store.resolve(&value_id_a).unwrap().clone();
+        // record_b is re-tagged UserTrusted, but keeps its real file_read-rooted chain.
+        let mut record_b = store.resolve(&value_id_b).unwrap().clone();
+        record_b.taint = vec![TaintLabel::UserTrusted];
+
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+        let (_derivation_event_id, _hash, value_id) = mint_from_derivation(
+            &conn, &mut store, session_id, "accounts@ev1l.com".into(),
+            &inputs, "concat", None, None,
+        ).unwrap();
+
+        let derived = store.resolve(&value_id).unwrap();
+        assert!(derived.taint.contains(&TaintLabel::ExternalUntrusted));
+        assert!(derived.taint.contains(&TaintLabel::WorkerExtracted));
+        assert!(
+            !derived.taint.contains(&TaintLabel::UserTrusted),
+            "UserTrusted must be dropped when the union is untrusted (finding #3)"
+        );
+    }
+
+    /// File_read-root guard, index 0 (finding #3): index-0 input is
+    /// intent_received-rooted (UserTrusted), index-1 is file_read-rooted,
+    /// overall untrusted union — REJECTED because provenance_chain[0] does
+    /// not resolve to a file_read event.
+    #[test]
+    fn mint_from_derivation_rejects_non_file_read_root_at_index_0() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (_, _, value_id_trusted) =
+            mint_from_intent(&conn, &mut store, session_id, "boss@company.com".into(), None, None)
+                .unwrap();
+        let (_, _, value_id_untrusted, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
+            None, None,
+        ).unwrap();
+
+        let record_trusted = store.resolve(&value_id_trusted).unwrap().clone();
+        let record_untrusted = store.resolve(&value_id_untrusted).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_trusted, &record_untrusted];
+
+        let result = mint_from_derivation(
+            &conn, &mut store, session_id, "boss@company.com@ev1l.com".into(),
+            &inputs, "concat", None, None,
+        );
+        assert!(
+            result.is_err(),
+            "an intent_received-rooted input at index 0 must be rejected under an untrusted union"
+        );
+    }
+
+    /// File_read-root guard, index>0 (MEDIUM R1/R2 — mirror case): index-0
+    /// input is file_read-rooted (doc_fragment), index-1 is
+    /// intent_received-rooted, overall untrusted union — ALSO REJECTED,
+    /// proving the guard checks EVERY chain element, not just [0].
+    #[test]
+    fn mint_from_derivation_rejects_non_file_read_root_at_index_gt_0() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (_, _, value_id_untrusted, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
+            None, None,
+        ).unwrap();
+        let (_, _, value_id_trusted) =
+            mint_from_intent(&conn, &mut store, session_id, "boss@company.com".into(), None, None)
+                .unwrap();
+
+        let record_untrusted = store.resolve(&value_id_untrusted).unwrap().clone();
+        let record_trusted = store.resolve(&value_id_trusted).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_untrusted, &record_trusted];
+
+        let result = mint_from_derivation(
+            &conn, &mut store, session_id, "accounts@boss@company.com".into(),
+            &inputs, "concat", None, None,
+        );
+        assert!(
+            result.is_err(),
+            "an intent_received-rooted input at index>0 must ALSO be rejected — the guard \
+             checks EVERY element, not just [0]"
+        );
+    }
+
+    /// All-UserTrusted-input property pin (MEDIUM, WorkerExtracted-
+    /// unconditional): a derivation whose inputs are ALL [UserTrusted]
+    /// (necessarily intent_received-rooted) is REJECTED. Pins that
+    /// WorkerExtracted is appended UNCONDITIONALLY — if it were skipped for
+    /// all-trusted inputs, the union would stay [UserTrusted], the
+    /// file_read-root guard would never fire, and the mint would succeed
+    /// with a TRUSTED output (the laundering-to-trusted hole).
+    #[test]
+    fn mint_from_derivation_rejects_all_user_trusted_inputs() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (_, _, value_id_a) =
+            mint_from_intent(&conn, &mut store, session_id, "local-part".into(), None, None)
+                .unwrap();
+        let (_, _, value_id_b) =
+            mint_from_intent(&conn, &mut store, session_id, "domain-part".into(), None, None)
+                .unwrap();
+
+        let record_a = store.resolve(&value_id_a).unwrap().clone();
+        let record_b = store.resolve(&value_id_b).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+
+        let result = mint_from_derivation(
+            &conn, &mut store, session_id, "local-part@domain-part".into(),
+            &inputs, "concat", None, None,
+        );
+        assert!(
+            result.is_err(),
+            "an all-UserTrusted input set must still be rejected — WorkerExtracted is \
+             unconditional, so the union is always untrusted and the file_read-root guard \
+             must fire against the intent_received roots"
+        );
+    }
+
+    /// MAJOR-1 concat byte-verify: transformed_literal must equal
+    /// join(input_literals, '@'); a mismatch is fail-closed rejected, the
+    /// matching case mints successfully.
+    #[test]
+    fn mint_from_derivation_concat_byte_verify_rejects_mismatch() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (_, _, value_id_a, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
+            None, None,
+        ).unwrap();
+        let (_, _, value_id_b, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
+            None, None,
+        ).unwrap();
+
+        let record_a = store.resolve(&value_id_a).unwrap().clone();
+        let record_b = store.resolve(&value_id_b).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+
+        // Mismatch: claimed literal != join(input_literals, '@').
+        let mismatch_result = mint_from_derivation(
+            &conn, &mut store, session_id, "attacker@evil.com".into(),
+            &inputs, "concat", None, None,
+        );
+        assert!(
+            mismatch_result.is_err(),
+            "a transformed_literal that does not match join(input_literals, '@') must be \
+             rejected (MAJOR-1 byte-descent guard)"
+        );
+
+        // Matching case mints successfully.
+        let matching_result = mint_from_derivation(
+            &conn, &mut store, session_id, "accounts@ev1l.com".into(),
+            &inputs, "concat", None, None,
+        );
+        assert!(matching_result.is_ok(), "the byte-verified matching literal must mint Ok");
+    }
+
+    /// Dedup / order: overlapping input provenance chains dedup order-stably.
+    #[test]
+    fn mint_from_derivation_dedups_overlapping_provenance_order_stably() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let (read_x, _, value_id_x, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "x-frag".into() },
+            None, None,
+        ).unwrap();
+        let (read_y, _, value_id_y, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "y-frag".into() },
+            None, None,
+        ).unwrap();
+        let (read_z, _, value_id_z, _, _) = mint_from_read(
+            &conn, &mut store, session_id,
+            &Claim { claim_type: "doc_fragment".into(), value: "z-frag".into() },
+            None, None,
+        ).unwrap();
+        let _ = (value_id_x, value_id_y, value_id_z);
+
+        // Hand-construct two inputs whose provenance_chains OVERLAP on read_y,
+        // to exercise dedup — both roots are genuine file_read events.
+        let record_a = ValueRecord {
+            id: runtime_core::plan_node::ValueId::new(),
+            literal: "a-lit".into(),
+            taint: vec![TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![read_x, read_y],
+        };
+        let record_b = ValueRecord {
+            id: runtime_core::plan_node::ValueId::new(),
+            literal: "b-lit".into(),
+            taint: vec![TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![read_y, read_z],
+        };
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+
+        let (_derivation_event_id, _hash, value_id) = mint_from_derivation(
+            &conn, &mut store, session_id, "a-lit@b-lit".into(),
+            &inputs, "concat", None, None,
+        ).unwrap();
+
+        let derived = store.resolve(&value_id).unwrap();
+        assert_eq!(
+            derived.provenance_chain,
+            vec![read_x, read_y, read_z],
+            "overlapping chains must dedup order-stably, preserving first occurrence"
+        );
+    }
+
+    /// Fail-closed: zero inputs is rejected and no event/record is persisted.
+    #[test]
+    fn mint_from_derivation_zero_inputs_fails_closed() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+
+        let before = query_events_by_session(&conn, &session_id.to_string()).unwrap().len();
+
+        let inputs: Vec<&ValueRecord> = vec![];
+        let result = mint_from_derivation(
+            &conn, &mut store, session_id, "whatever".into(), &inputs, "concat", None, None,
+        );
+        assert!(result.is_err(), "zero inputs must fail closed");
+
+        let after = query_events_by_session(&conn, &session_id.to_string()).unwrap().len();
+        assert_eq!(before, after, "no event may be persisted on a zero-input rejection");
+    }
+
+    /// No demotion side effect: calling mint_from_derivation does not change
+    /// session status and does not append an additional session_demoted
+    /// event beyond what the inputs' own mint_from_read calls already caused.
+    #[test]
+    fn mint_from_derivation_does_not_demote_session() {
+        use crate::session::{create_session, persist_session};
+        use runtime_core::{SeedProvenance, SessionStatus};
+
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        let session = create_session(Uuid::new_v4(), SeedProvenance::TrustedArg);
+        persist_session(&conn, &session).unwrap();
+
+        let (_, _, value_id_a, _, _) = mint_from_read(
+            &conn, &mut store, session.id,
+            &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
+            None, None,
+        ).unwrap();
+        let (_, _, value_id_b, _, _) = mint_from_read(
+            &conn, &mut store, session.id,
+            &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
+            None, None,
+        ).unwrap();
+
+        let demoted_count_before = query_events_by_session(&conn, &session.id.to_string())
+            .unwrap()
+            .iter()
+            .filter(|e| e.event_type == "session_demoted")
+            .count();
+
+        let record_a = store.resolve(&value_id_a).unwrap().clone();
+        let record_b = store.resolve(&value_id_b).unwrap().clone();
+        let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
+
+        mint_from_derivation(
+            &conn, &mut store, session.id, "accounts@ev1l.com".into(),
+            &inputs, "concat", None, None,
+        ).unwrap();
+
+        let demoted_count_after = query_events_by_session(&conn, &session.id.to_string())
+            .unwrap()
+            .iter()
+            .filter(|e| e.event_type == "session_demoted")
+            .count();
+        assert_eq!(
+            demoted_count_before, demoted_count_after,
+            "mint_from_derivation must not append an additional session_demoted event"
+        );
+
+        let status_json: String = conn
+            .query_row(
+                "SELECT status FROM sessions WHERE id = ?1",
+                rusqlite::params![session.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let status: SessionStatus = serde_json::from_str(&status_json).unwrap();
+        assert_eq!(
+            status,
+            SessionStatus::Draft,
+            "status stays whatever the input reads already set (Draft) — \
+             mint_from_derivation itself never changes it"
         );
     }
 }

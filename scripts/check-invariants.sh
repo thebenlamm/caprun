@@ -47,6 +47,100 @@ else
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Gate 3: mint-call-site restriction (Phase 15, finding #1b + MEDIUM R1)
+#
+# DETECTION, not PREVENTION: this is a mechanical backstop (defeatable by
+# aliasing/wrapping/macro-expanding the call), NOT the load-bearing control.
+# The load-bearing PREVENTION is the Result-returning ValueStore::mint
+# invariant (EmptyTaint/EmptyProvenance fail-closed guards, crates/executor/
+# src/value_store.rs) plus mint_from_derivation's every-element
+# file_read-root + concat byte-verify guards (crates/brokerd/src/
+# quarantine.rs). This gate only catches the OBVIOUS mistake of a new module
+# minting a fresh-rooted ValueRecord by calling mint_from_read /
+# mint_from_derivation / ValueStore::mint directly from somewhere other than
+# the sanctioned loci — it is defense-in-depth over those guards, not a
+# substitute for them.
+#
+# Restricts three call-site tokens — `mint_from_read(`, `mint_from_derivation(`,
+# and the ValueStore::mint call site `.mint(` (value_store.rs:61, the ACTUAL
+# pub taint+provenance writer both mint_from_* helpers delegate to) — to:
+#   * crates/brokerd/src/quarantine.rs   (the helpers' definition + unit tests)
+#   * crates/brokerd/src/server.rs       (the sole dispatch call sites)
+#   * crates/executor/src/value_store.rs (`.mint(` ONLY — its own def + tests)
+#
+# Exemptions (mirroring this project's own test-infrastructure conventions —
+# a cargo `tests/*.rs` integration binary, or a `#[cfg(test)] mod tests`
+# block, calling these production functions directly to exercise "the SAME
+# production functions the handler calls" is NOT a new bypass module; it is
+# test-only code that never ships in the production binary):
+#   * any file whose path contains "/tests/" (a Cargo integration-test
+#     binary, compiled ONLY for `cargo test`);
+#   * any line at/after a file's own "#[cfg(test)]" marker (this codebase's
+#     convention: exactly one such unit-test module, placed last in the file).
+# An inline `<!-- planner-discipline-allow: TOKEN -->` annotation is also
+# honored for any other intentional mention (mirrors Gate 1).
+# ──────────────────────────────────────────────────────────────────────────────
+echo "Gate 3: checking mint-call-site restriction (mint_from_read / mint_from_derivation / .mint()) ..."
+
+gate3_fail=0
+
+check_mint_token() {
+    local pattern="$1"
+    shift
+    local allowed_files=("$@")
+
+    local files
+    files=$(grep -rl -- "$pattern" crates/ cli/ 2>/dev/null || true)
+    for file in $files; do
+        # Exemption: any Cargo integration-test binary under a tests/ dir.
+        case "$file" in
+            */tests/*) continue ;;
+        esac
+
+        # Exemption: explicitly allowed production/definition loci.
+        local is_allowed=0
+        for allowed in "${allowed_files[@]}"; do
+            if [ "$file" = "$allowed" ]; then
+                is_allowed=1
+                break
+            fi
+        done
+        if [ "$is_allowed" -eq 1 ]; then
+            continue
+        fi
+
+        # Exemption: this file's own #[cfg(test)] unit-test module (if any).
+        # `|| true` guards against pipefail: grep exits 1 (no match) when a
+        # file has no #[cfg(test)] marker at all, which would otherwise abort
+        # the script under `set -euo pipefail`.
+        local test_mod_line
+        test_mod_line=$(grep -n '#\[cfg(test)\]' "$file" 2>/dev/null | head -1 | cut -d: -f1 || true)
+
+        while IFS=: read -r line content; do
+            [ -z "$line" ] && continue
+            if echo "$content" | grep -q "planner-discipline-allow"; then
+                continue
+            fi
+            if [ -n "$test_mod_line" ] && [ "$line" -ge "$test_mod_line" ]; then
+                continue
+            fi
+            echo "  FAIL — \"$pattern\" found outside sanctioned loci: $file:$line"
+            gate3_fail=1
+        done < <(grep -n -- "$pattern" "$file")
+    done
+}
+
+check_mint_token "mint_from_read(" "crates/brokerd/src/quarantine.rs" "crates/brokerd/src/server.rs"
+check_mint_token "mint_from_derivation(" "crates/brokerd/src/quarantine.rs" "crates/brokerd/src/server.rs"
+check_mint_token ".mint(" "crates/brokerd/src/quarantine.rs" "crates/brokerd/src/server.rs" "crates/executor/src/value_store.rs"
+
+if [ "$gate3_fail" -eq 0 ]; then
+    echo "  PASS — mint_from_read / mint_from_derivation / .mint() restricted to sanctioned loci"
+else
+    overall=$FAIL
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Summary
 # ──────────────────────────────────────────────────────────────────────────────
 echo ""

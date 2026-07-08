@@ -21,9 +21,9 @@ Scoped with caprun-opus-77 (coordinator, delegated by Ben Lamm) plus an advisor 
 
 ### EXTRACT (deterministic doc→action)
 
-- [ ] **EXTRACT-01**: The deterministic (non-LLM) extractor runs CONFINED (worker-side, over hostile bytes), emitting only plan nodes — not in the broker control plane (a parser over hostile bytes is attack surface).
+- [x] **EXTRACT-01**: The deterministic (non-LLM) extractor runs CONFINED (worker-side, over hostile bytes), emitting only plan nodes — not in the broker control plane (a parser over hostile bytes is attack surface).
 - [ ] **EXTRACT-02**: A programmatic audit-DAG query proves an unbroken edge path: raw-read Event → extractor-derived ValueNodes → blocked sink args. Test FAILS if any edge is missing; an anti-staple check distinguishes/rejects a value minted fresh at the sink. Per Phase 12's collect-then-Block mandate, this must hold for EVERY blocked arg in a multi-arg Block (e.g. tainted recipient + tainted body on the same plan node), not just one.
-- [ ] **EXTRACT-03**: ≥1 fixture where the extractor TRANSFORMS the tainted value before the sink (e.g. concatenates two doc fields into the recipient, or base64-decodes a body) and taint STILL propagates + STILL blocks — proves taint survives a manipulation, not just a copy. Scope is honest: no universality claim.
+- [x] **EXTRACT-03**: ≥1 fixture where the extractor TRANSFORMS the tainted value before the sink (e.g. concatenates two doc fields into the recipient, or base64-decodes a body) and taint STILL propagates + STILL blocks — proves taint survives a manipulation, not just a copy. Scope is honest: no universality claim.
 
 ### CONFIRM (UX + fixture)
 
@@ -85,9 +85,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SMTP-05 | Phase 13 | Complete |
 | CONTENT-01 | Phase 14 | Complete |
 | CONTENT-02 | Phase 14 | Complete |
-| EXTRACT-01 | Phase 15 | Pending |
+| EXTRACT-01 | Phase 15 | Complete |
 | EXTRACT-02 | Phase 15 | Pending |
-| EXTRACT-03 | Phase 15 | Pending |
+| EXTRACT-03 | Phase 15 | Complete |
 | CONFIRM-01 | Phase 16 | Pending |
 | CONFIRM-02 | Phase 15 | Pending |
 | CONFIRM-03 | Phase 16 | Pending |
