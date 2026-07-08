@@ -336,12 +336,13 @@ fn smtp_05_crlf_body_cannot_smuggle_recipient() {
         "To must contain ONLY the intended recipient"
     );
     assert!(cc.is_empty(), "Cc must be empty — no smuggled recipient");
-    // RED (deliberate, Task 3 TDD): assert the attacker address IS present,
-    // to prove this fixture is actually reading Mailpit's real parsed Bcc
-    // field rather than trivially passing on an always-empty check —
-    // corrected to the real (negative) assertion in the GREEN commit.
     assert!(
-        bcc.contains(&"attacker@evil.com".to_string()),
-        "RED placeholder: expected the smuggled attacker address to be present in Bcc: {bcc:?}"
+        !bcc.contains(&"attacker@evil.com".to_string()),
+        "Bcc must NOT contain the smuggled attacker address: {bcc:?}"
+    );
+    assert!(
+        bcc.is_empty(),
+        "Bcc must be empty — the CR/LF-then-Bcc: sequence in the body must \
+         NEVER become a real recipient at Mailpit: {bcc:?}"
     );
 }
