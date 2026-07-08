@@ -4,17 +4,17 @@ milestone: v1.3
 milestone_name: — Doc → Action Assistant
 current_phase: 15
 current_phase_name: Deterministic Doc→Action Extraction
-status: executing
-stopped_at: Completed 15-02-PLAN.md and 15-03-PLAN.md (Wave 2, parallel)
-last_updated: "2026-07-08T14:08:14.624Z"
+status: verifying
+stopped_at: Completed 15-04-PLAN.md (Wave 3, final plan of Phase 15)
+last_updated: "2026-07-08T14:50:38.494Z"
 last_activity: 2026-07-08
 last_activity_desc: Phase 15 execution started
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 13
-  completed_plans: 11
-  percent: 50
+  completed_plans: 13
+  percent: 67
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 
 Phase: 15 (Deterministic Doc→Action Extraction) — EXECUTING
 Plan: 4 of 4 (15-04, Wave 3, remaining)
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-08 — Phase 15 execution started
 
 ## Performance Metrics
@@ -56,6 +56,7 @@ Last activity: 2026-07-08 — Phase 15 execution started
 | Phase 15-deterministic-doc-action-extraction P01 | 75min | 3 tasks | 3 files |
 | Phase 15-deterministic-doc-action-extraction P02 | 11min | 3 tasks | 3 files |
 | Phase 15-deterministic-doc-action-extraction P03 | 55min | 2 tasks | 3 files |
+| Phase 15 P04 | ~2h10min | 3 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,9 @@ completes and is adversarially reviewed (mirrors v1.0 Phase 2 / v1.2 Phase 8).
 - [Phase ?]: 15-02: assert_unbroken_edge/genuine_derivation_binds implemented as reusable Result-returning routines shared by the positive per-anchor walk and both anti-staple negative controls (finding #2/#10/#12 identity-bound predicate, no-LIMIT derivation scan)
 - [Phase ?]: 15-03: mint_from_read Err surfaced as BrokerResponse::Error on the wire (not connection-killing ?) for the whole ReportClaims arm, not just DocFragment — Fail-closed for attacker-controlled input; no behavior change for EmailAddress/RelativePath (never actually fail today)
 - [Phase ?]: 15-03: ReportDerivedClaim resolves input handles to owned ValueRecord clones before calling mint_from_derivation — Avoids simultaneous mutable+immutable ValueStore borrow, per mint_from_derivation's own documented calling convention
+- [Phase ?]: 15-04: plan_from_intent gains trusted_subject_handle/trusted_body_handle params (6 total) beyond the must_haves' literally-quoted 4-param signature — resolves an internal plan-text inconsistency; needed for finding #6's genuinely-distinct handles under PLAN-03
+- [Phase ?]: 15-04: dag_chain_integrity corrected to 6 benign events (not the plan-specified 4) after empirical Colima/Docker verification exposed that Task 3's three sequential mint_from_intent calls each append their own intent_received event
+- [Phase ?]: 15-04: s9_live_email_hostile_block added as a new live test to satisfy the plan's own verification line requiring live email-BLOCK coverage, not explicitly named in the task action text
 
 ### Pending Todos
 
@@ -98,8 +102,8 @@ pre-existing item, still benign). No new deferrals from roadmap creation.
 
 ## Session Continuity
 
-Last session: 2026-07-08T14:08:14.617Z
-Stopped at: Completed 15-02-PLAN.md and 15-03-PLAN.md (Wave 2, parallel)
+Last session: 2026-07-08T14:50:38.486Z
+Stopped at: Completed 15-04-PLAN.md (Wave 3, final plan of Phase 15)
 Resume file: None
 
 ## Operator Next Steps

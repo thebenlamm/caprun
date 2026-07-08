@@ -160,12 +160,21 @@ pub enum BrokerResponse {
     /// The broker encountered an error; the worker should log and exit.
     Error { message: String },
     /// Acknowledgement for `ProvideIntent`: opaque handle for the minted `UserTrusted`
-    /// ValueRecord. Mirrors `ClaimsReceived` but singular — one intent value per session.
+    /// ValueRecord. Mirrors `ClaimsReceived` but singular per literal.
     ///
     /// The `value_id` resolves ONLY within the per-connection ValueStore created for
     /// this session; using it in a different connection yields `Denied` (HARD-03 / Pitfall 1).
+    ///
+    /// `subject_value_id`/`body_value_id` are ADDITIVE (Phase 15, 15-04,
+    /// finding #6): for a `SendEmailSummary` intent the broker mints THREE
+    /// DISTINCT `UserTrusted` handles (recipient in `value_id`, subject and
+    /// body here) via three sequential `mint_from_intent` calls — never
+    /// degenerately reusing `value_id` for all three. For `CreateFileFromReport`
+    /// (which has no subject/body fields) both are `None`.
     IntentAccepted {
         value_id: runtime_core::plan_node::ValueId,
+        subject_value_id: Option<runtime_core::plan_node::ValueId>,
+        body_value_id: Option<runtime_core::plan_node::ValueId>,
     },
     /// Acknowledgement for ReportClaims: opaque ValueId handles per minted claim,
     /// in the same order as the claims submitted in the ReportClaims message.

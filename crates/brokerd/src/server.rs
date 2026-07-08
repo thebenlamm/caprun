@@ -699,38 +699,95 @@ pub async fn dispatch_request(
         }
 
         BrokerRequest::ProvideIntent { intent } => {
-            // Extract the user-provided literal from the typed intent.
+            // Extract the user-provided literal(s) from the typed intent.
             // Exhaustive match: adding a new CaprunIntent variant causes a compile error here,
             // forcing the dispatcher to be updated (no silent unhandled variants).
-            let literal = match &intent {
-                CaprunIntent::SendEmailSummary { recipient } => recipient.clone(),
-                CaprunIntent::CreateFileFromReport { path } => path.clone(),
-            };
+            //
+            // Phase 15 (15-04, finding #6): `SendEmailSummary` carries THREE
+            // trusted literals (recipient/subject/body); `CreateFileFromReport`
+            // still carries only `path`. `subject_literal`/`body_literal` are
+            // `None` for the latter (minimal additive shape — it mints only
+            // ONE handle, unchanged from pre-15-04 behavior).
+            let (primary_literal, subject_literal, body_literal): (String, Option<String>, Option<String>) =
+                match &intent {
+                    CaprunIntent::SendEmailSummary { recipient, subject, body } => {
+                        (recipient.clone(), Some(subject.clone()), Some(body.clone()))
+                    }
+                    CaprunIntent::CreateFileFromReport { path } => (path.clone(), None, None),
+                };
 
             // Mint inside the per-connection ValueStore (Pitfall 1: minting outside
             // handle_connection would put the ValueId in an unreachable store → Denied).
             // mint_from_intent is the ONLY caller site of mint_from_intent (T-06-05).
-            let (intent_event_id, intent_hash, value_id) = {
+            //
+            // THREE sequential mint_from_intent calls when subject/body are
+            // present, threading last_event_id/last_event_hash across all of
+            // them so the causal chain stays ONE linear chain (never a fork) —
+            // each call's returned event becomes the next call's parent.
+            let (value_id, subject_value_id, body_value_id) = {
                 let locked = conn
                     .lock()
                     .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+
                 // Causal parent = the connection chain head (DESIGN §0): intent_received
                 // is parent-linked onto session_created, keeping the parent_id chain unbroken.
-                mint_from_intent(
+                let (recipient_event_id, recipient_hash, recipient_value_id) = mint_from_intent(
                     &locked,
                     value_store,
                     session_id,
-                    literal,
+                    primary_literal,
                     Some(*last_event_id),
                     Some(last_event_hash),
-                )?
+                )?;
+                *last_event_id = recipient_event_id;
+                *last_event_hash = recipient_hash;
+
+                let subject_value_id = match subject_literal {
+                    Some(subject) => {
+                        let (event_id, hash, vid) = mint_from_intent(
+                            &locked,
+                            value_store,
+                            session_id,
+                            subject,
+                            Some(*last_event_id),
+                            Some(last_event_hash),
+                        )?;
+                        *last_event_id = event_id;
+                        *last_event_hash = hash;
+                        Some(vid)
+                    }
+                    None => None,
+                };
+
+                let body_value_id = match body_literal {
+                    Some(body) => {
+                        let (event_id, hash, vid) = mint_from_intent(
+                            &locked,
+                            value_store,
+                            session_id,
+                            body,
+                            Some(*last_event_id),
+                            Some(last_event_hash),
+                        )?;
+                        *last_event_id = event_id;
+                        *last_event_hash = hash;
+                        Some(vid)
+                    }
+                    None => None,
+                };
+
+                (recipient_value_id, subject_value_id, body_value_id)
             };
 
-            // Advance the causal chain AFTER successful mint (same pattern as ReportClaims arm).
-            *last_event_id = intent_event_id;
-            *last_event_hash = intent_hash;
-
-            send_response(stream, &BrokerResponse::IntentAccepted { value_id }).await?;
+            send_response(
+                stream,
+                &BrokerResponse::IntentAccepted {
+                    value_id,
+                    subject_value_id,
+                    body_value_id,
+                },
+            )
+            .await?;
         }
 
         BrokerRequest::ReportRead { .. } => {

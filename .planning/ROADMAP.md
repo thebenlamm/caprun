@@ -61,7 +61,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 - [x] **Phase 12: Content, Adapter & Confirm-Binding Design Gate** - A reviewed, adversarially-reviewed DESIGN doc covering content-sensitivity semantics, real-adapter mediation, and confirm-binding exists before any executor/TCB code for this milestone is written (completed 2026-07-07)
 - [x] **Phase 13: Real Broker-Mediated SMTP Adapter** - caprun can send a real email through a broker-mediated adapter — worker never touches the network, secrets never leave the broker, and the send is idempotent/failure-safe (completed 2026-07-08)
 - [x] **Phase 14: Content-Sensitive Sink-Arg Blocking** - The executor blocks a tainted email body the same way it already blocks a tainted recipient (completed 2026-07-08)
-- [ ] **Phase 15: Deterministic Doc→Action Extraction** - A confined, deterministic extractor turns a hostile document's bytes into a plan node, with a proven unbroken audit-DAG edge from read to block, including through a transformation
+- [x] **Phase 15: Deterministic Doc→Action Extraction** - A confined, deterministic extractor turns a hostile document's bytes into a plan node, with a proven unbroken audit-DAG edge from read to block, including through a transformation (completed 2026-07-08)
 - [ ] **Phase 16: Confirm UX, Literal Binding & Negative Controls** - A human sees the verbatim, provenance-narrated recipient and body before deciding; confirm is bound to the exact resolved literals; the gate is proven taint-driven, not a blanket email block
 - [ ] **Phase 17: Live Acceptance & Framing Honesty** - The full doc→action chain runs live on real Linux as one unbroken audit DAG, composing the hostile block and the clean control in the same run, with honest public framing of what was and wasn't proven
 
@@ -145,7 +145,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   3. **HARD GATE — phase FAILS if not met (the project's single non-negotiable invariant, per CLAUDE.md: "taint stapled at the sink proves nothing").** A programmatic audit-DAG query proves an unbroken edge path (raw-read Event → extractor-derived ValueNodes → blocked sink args) and FAILS if any edge is missing; a paired anti-staple check rejects/distinguishes a value minted fresh at the sink from one with genuine provenance. Since Phase 12 mandates collect-then-Block (a plan node with both a tainted recipient and a tainted body produces ONE combined Block carrying BOTH), this unbroken-edge + anti-staple proof must hold for EVERY blocked arg in the set, not just one — a plan node blocking on two tainted args with only one edge proven is a partial pass, not a pass. This is not a soft criterion — it is the phase's acceptance bar, and it composes into ACCEPT-01/Phase 17 as a milestone-failing gate too.
   4. At least one fixture shows the extractor transforming the tainted value before the sink (concatenating two doc fields, or base64-decoding a body) with taint still propagating and the block still firing — proving survival of manipulation, not just copying.
 
-**Plans**: 3/4 plans executed
+**Plans**: 4/4 plans complete
 **Wave 1**
 
 - [x] 15-01-PLAN.md — mint_from_derivation provenance-threading primitive + doc_fragment claim type + confined extraction/concat helpers (Wave 1)
@@ -157,7 +157,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 15-04-PLAN.md — confined-worker multi-fragment extraction + worker-side transform + planner to+subject+body wiring (Wave 3)
+- [x] 15-04-PLAN.md — confined-worker multi-fragment extraction + worker-side transform + planner to+subject+body wiring (Wave 3)
 
 ### Phase 16: Confirm UX, Literal Binding & Negative Controls
 
@@ -206,6 +206,6 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 | 12. Content, Adapter & Confirm-Binding Design Gate | v1.3 | 3/3 | Complete   | 2026-07-07 |
 | 13. Real Broker-Mediated SMTP Adapter | v1.3 | 4/4 | Complete    | 2026-07-08 |
 | 14. Content-Sensitive Sink-Arg Blocking | v1.3 | 2/2 | Complete    | 2026-07-08 |
-| 15. Deterministic Doc→Action Extraction | v1.3 | 2/4 | In Progress|  |
+| 15. Deterministic Doc→Action Extraction | v1.3 | 4/4 | Complete   | 2026-07-08 |
 | 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 0/0 | Not started | - |
 | 17. Live Acceptance & Framing Honesty | v1.3 | 0/0 | Not started | - |
