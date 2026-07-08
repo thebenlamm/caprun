@@ -9,8 +9,8 @@ Scoped with caprun-opus-77 (coordinator, delegated by Ben Lamm) plus an advisor 
 
 ### SMTP (broker-mediated adapter)
 
-- [ ] **SMTP-01**: Broker-mediated adapter sends email only after executor-authorize + human-confirm; the confined worker never performs the SMTP call. Proven with a Linux NEGATIVE assertion: the confined worker attempting a direct SMTP connection FAILS (default-deny net) — a kernel-enforced claim, not just code structure.
-- [ ] **SMTP-02**: SMTP secrets/credentials live only in the broker process. Asserted absent from worker env/args AND from any plan-node payload.
+- [x] **SMTP-01**: Broker-mediated adapter sends email only after executor-authorize + human-confirm; the confined worker never performs the SMTP call. Proven with a Linux NEGATIVE assertion: the confined worker attempting a direct SMTP connection FAILS (default-deny net) — a kernel-enforced claim, not just code structure.
+- [x] **SMTP-02**: SMTP secrets/credentials live only in the broker process. Asserted absent from worker env/args AND from any plan-node payload.
 - [x] **SMTP-03**: Acceptance-gate test targets a local capture SMTP (MailHog/Mailpit) — Linux-verifiable, repeatable, no live infra dependency.
 - [x] **SMTP-05**: Adapter constructs the wire message so tainted literals CANNOT alter envelope/headers (CRLF/header injection) — a tainted body containing `\r\nBcc: attacker@...` must not smuggle recipients past the human's body confirm. Tested with a CRLF injection fixture.
 
@@ -44,7 +44,7 @@ Scoped with caprun-opus-77 (coordinator, delegated by Ben Lamm) plus an advisor 
 
 ### DESIGN (process gate)
 
-- [ ] **DESIGN-01**: A reviewed DESIGN doc (content-sensitivity semantics + real-adapter mediation + confirm-binding) exists and is ADVERSARIALLY reviewed BEFORE any executor/TCB code — same discipline as v1.0/v1.2. This is the roadmap's Phase 1 (design gate); CONTENT-01/SMTP-05/CONFIRM-03 executor code may not precede it.
+- [x] **DESIGN-01**: A reviewed DESIGN doc (content-sensitivity semantics + real-adapter mediation + confirm-binding) exists and is ADVERSARIALLY reviewed BEFORE any executor/TCB code — same discipline as v1.0/v1.2. This is the roadmap's Phase 1 (design gate); CONTENT-01/SMTP-05/CONFIRM-03 executor code may not precede it.
 
 ### DOC (framing honesty)
 
@@ -78,9 +78,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DESIGN-01 | Phase 12 | Pending |
-| SMTP-01 | Phase 13 | Pending |
-| SMTP-02 | Phase 13 | Pending |
+| DESIGN-01 | Phase 12 | Complete |
+| SMTP-01 | Phase 13 | Complete |
+| SMTP-02 | Phase 13 | Complete |
 | SMTP-03 | Phase 13 | Complete |
 | SMTP-05 | Phase 13 | Complete |
 | CONTENT-01 | Phase 14 | Pending |

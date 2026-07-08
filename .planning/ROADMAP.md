@@ -192,7 +192,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 | 10. Single-Shot Confirmation Loop | v1.2 | 3/3 | Complete | 2026-07-07 |
 | 11. Live Acceptance — Tainted Session, Human Gate | v1.2 | 1/1 | Complete | 2026-07-07 |
 | 12. Content, Adapter & Confirm-Binding Design Gate | v1.3 | 3/3 | Complete   | 2026-07-07 |
-| 13. Real Broker-Mediated SMTP Adapter | v1.3 | 4/4 | Complete   | 2026-07-08 |
+| 13. Real Broker-Mediated SMTP Adapter | v1.3 | 4/4 | Complete    | 2026-07-08 |
 | 14. Content-Sensitive Sink-Arg Blocking | v1.3 | 0/0 | Not started | - |
 | 15. Deterministic Doc→Action Extraction | v1.3 | 0/0 | Not started | - |
 | 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 0/0 | Not started | - |
