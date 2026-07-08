@@ -250,13 +250,10 @@ fn smtp_03_confirmed_send_captured_by_mailpit() {
     );
 
     let ids = wait_for_message_count(&host, 1);
-    // RED (deliberate, Task 2 TDD): assert an impossible count to prove this
-    // harness actually observes Mailpit's real state rather than trivially
-    // passing — corrected to `1` in the GREEN commit.
     assert_eq!(
         ids.len(),
-        2,
-        "expected exactly one captured message (RED placeholder assertion)"
+        1,
+        "expected exactly one captured message addressed to the intended recipient"
     );
 
     let detail = fetch_message_detail(&host, &ids[0]);
