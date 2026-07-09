@@ -1,13 +1,27 @@
 /// sinks/email_smtp — the real broker-mediated SMTP adapter (SMTP-01..SMTP-05).
 ///
 /// This module is the ONLY code path in the whole TCB that performs an actual
-/// SMTP call (D-03). It is broker-resident, NEVER confined-worker-resident,
-/// and is invoked ONLY from the confirm-path process AFTER a human has
-/// confirmed a Blocked plan node's tainted routing args
-/// (`crate::confirmation::confirm()`). Plan 02 wires
-/// `invoke_email_smtp_from_resolved` into `confirm()`'s atomic CAS +
-/// `email_send_attempted` transaction; this module does not know about that
-/// transaction and never touches `pending_confirmations` itself.
+/// SMTP call (D-03). It is broker-resident, NEVER confined-worker-resident.
+///
+/// # Sanctioned callers (Phase 16 amendment — BOTH, not one)
+///
+/// `invoke_email_smtp_from_resolved` has exactly TWO sanctioned callers:
+///   1. `crate::confirmation::confirm()`'s `email.send` special case, AFTER
+///      its atomic CAS (`pending -> confirmed`) + durable
+///      `email_send_attempted` transaction commits (Plan 16-02/SEND-01) — the
+///      Blocked-then-human-confirmed path.
+///   2. `server.rs`'s `SubmitPlanNode` Allowed-decision dispatch, AFTER its
+///      own durable, opaque `email_send_attempted` append succeeds (Plan
+///      16-04, CONTROL-01) — the trusted, never-blocked path. This caller has
+///      NO CAS/`PendingConfirmation` (there is nothing to confirm on an
+///      Allowed decision); see the REPLAY RESIDUAL RISK note at that call
+///      site.
+///
+/// SHARED PRECONDITION (both callers): a durable, opaque `email_send_attempted`
+/// event MUST be appended (parent-chained onto the caller's own current head)
+/// BEFORE this function is ever called — so a crash/power-loss between the
+/// attempt and delivery always leaves an audit record naming `email.send`,
+/// regardless of which caller reached this function.
 ///
 /// # Wire-message construction — CRLF/header-injection defense (SMTP-05, D-07/D-22)
 ///
@@ -173,22 +187,30 @@ fn build_message(resolved_args: &[ResolvedArg]) -> Result<Message> {
 }
 
 /// Invoke the real `email.send` SMTP sink from a FROZEN `ResolvedArg`
-/// snapshot (confirm-time re-invocation, mirrors
-/// `file_create.rs::invoke_file_create_from_resolved`'s frozen-snapshot
-/// shape). This is the ONLY code path in the whole TCB that performs an SMTP
-/// call (D-03) — never called from the confined worker, never from the
-/// allow-path plan-node dispatch, only from Plan 02's confirm-path special
-/// case AFTER the CAS + `email_send_attempted` transaction commits.
+/// snapshot (mirrors `file_create.rs::invoke_file_create_from_resolved`'s
+/// frozen-snapshot shape). This is the ONLY code path in the whole TCB that
+/// performs an SMTP call (D-03) — never called from the confined worker.
+/// It has exactly TWO sanctioned callers (see the module doc comment above,
+/// "Sanctioned callers" — Phase 16 amendment): (1) `confirm()`'s `email.send`
+/// special case, AFTER its CAS + `email_send_attempted` transaction commits;
+/// (2) `server.rs`'s Allowed-decision plan-node dispatch, AFTER its own
+/// durable `email_send_attempted` append succeeds. BOTH share the SAME
+/// precondition: a durable, opaque `email_send_attempted` MUST be appended
+/// (parent-chained) before this function is called.
 ///
 /// # Arguments
 /// * `conn`          — open rusqlite connection (broker-owned; used for the
-///   succeeded/failed append AFTER the caller's CAS transaction commits).
-/// * `session_id`    — the Session the blocked plan node belonged to.
-/// * `effect_id`     — the SAME `effect_id` as the original block's anchor.
-/// * `resolved_args` — the frozen `ResolvedArg` snapshot from
-///   `PendingConfirmation`.
-/// * `parent_id`     — causal predecessor event id (the `email_send_attempted`
-///   event Plan 02 appends inside its own transaction).
+///   succeeded/failed append AFTER the caller's own precondition append
+///   commits).
+/// * `session_id`    — the Session the plan node belonged to.
+/// * `effect_id`     — the SAME `effect_id` as the caller's plan-node
+///   evaluation (the original block's anchor for caller 1; the broker-minted
+///   effect identity for caller 2).
+/// * `resolved_args` — the frozen `ResolvedArg` snapshot (from
+///   `PendingConfirmation` for caller 1; resolved live from the
+///   per-connection `ValueStore` for caller 2).
+/// * `parent_id`     — causal predecessor event id (the caller's own
+///   `email_send_attempted` event).
 /// * `parent_hash`   — hash of that predecessor row (chain anchor).
 ///
 /// # Returns

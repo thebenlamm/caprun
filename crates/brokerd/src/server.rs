@@ -702,6 +702,91 @@ pub async fn dispatch_request(
                 *last_event_hash = sink_hash;
             }
 
+            // Phase 16 (CONTROL-01): on an Allowed `email.send` decision,
+            // mirror the file.create Allowed-dispatch above — same locking,
+            // head-advance, and two-phase (authorize, then effect) ordering.
+            // The executor already ran the I2/CONTENT/session-state predicate
+            // and did NOT block, so this fires ONLY on a trusted, never-
+            // blocked send; no PendingConfirmation/combined_digest is ever
+            // created on this path (that shape is exclusive to the Block
+            // path above).
+            if matches!(decision, runtime_core::ExecutorDecision::Allowed)
+                && plan_node.sink.0 == "email.send"
+            {
+                // Resolve the FULL arg set from the live per-connection
+                // ValueStore into a Vec<ResolvedArg> — the SAME resolve-loop
+                // shape as the block-time snapshot above — fail closed if any
+                // handle does not resolve (a broker-internal invariant
+                // violation; validate_schema already guaranteed presence).
+                let mut resolved_args = Vec::with_capacity(plan_node.args.len());
+                for arg in &plan_node.args {
+                    let record = value_store.resolve(&arg.value_id).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "email.send Allowed-dispatch: arg `{}` handle did not resolve",
+                            arg.name
+                        )
+                    })?;
+                    resolved_args.push(crate::confirmation::ResolvedArg {
+                        name: arg.name.clone(),
+                        value_id: arg.value_id.clone(),
+                        literal: record.literal.clone(),
+                        taint: record.taint.clone(),
+                        provenance_chain: record.provenance_chain.clone(),
+                    });
+                }
+
+                let locked = conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+
+                // MAJOR-4: append a durable, OPAQUE email_send_attempted event
+                // BEFORE the SMTP socket ever opens — parent-chained onto the
+                // just-advanced plan_node_evaluated head, under the SAME lock.
+                // A crash/power-loss between attempt and delivery still leaves
+                // an audit record naming email.send (mirrors confirm()'s
+                // attempt-ledger shape in confirmation.rs, minus the CAS —
+                // there is no PendingConfirmation to CAS on this never-
+                // blocked path).
+                let attempted_event = Event::new(
+                    Uuid::new_v4(),
+                    Some(*last_event_id),
+                    session_id,
+                    format!("sink:email.send:{effect_id}"),
+                    "email_send_attempted".into(),
+                    Utc::now(),
+                    vec![],
+                );
+                let attempted_event_id = attempted_event.id;
+                let attempted_hash = append_event(&locked, &attempted_event, Some(last_event_hash))
+                    .map_err(|e| {
+                        eprintln!(
+                            "[brokerd] email_send_attempted audit append FAILED (fail-closed): {e}"
+                        );
+                        anyhow::anyhow!("email_send_attempted append failed: {e}")
+                    })?;
+                *last_event_id = attempted_event_id;
+                *last_event_hash = attempted_hash.clone();
+
+                // AFTER the durable attempt append succeeded — only now does
+                // an SMTP connection ever open. REPLAY RESIDUAL RISK (named,
+                // not silent): this Allowed path has no CAS/PendingConfirmation
+                // — a replayed SubmitPlanNode mints a fresh effect_id and would
+                // send again (N submissions => N emails). Accepted for v1.3
+                // (the durable per-attempt ledger above makes each send
+                // auditable); v2 obligation tracked in .planning/todos/pending.
+                let (sink_event_id, sink_hash) =
+                    crate::sinks::email_smtp::invoke_email_smtp_from_resolved(
+                        &locked,
+                        session_id,
+                        effect_id,
+                        &resolved_args,
+                        attempted_event_id,
+                        &attempted_hash,
+                    )?;
+                *last_event_id = sink_event_id;
+                *last_event_hash = sink_hash;
+            }
+
             // Only send the decision AFTER the durable append (and any sink
             // invocation) succeeded.
             send_response(stream, &BrokerResponse::PlanNodeDecision { decision }).await?;
