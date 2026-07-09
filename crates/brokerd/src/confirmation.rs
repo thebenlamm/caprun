@@ -21,7 +21,77 @@ use anyhow::Result;
 use chrono::Utc;
 use rusqlite::params;
 use runtime_core::plan_node::TaintLabel;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+/// The single shared primitive computing CONFIRM-03's combined digest over a
+/// full `(arg_name, literal)` set (`planning-docs/DESIGN-confirm-binding.md`,
+/// "Combined-Digest Binding", Round-6 amendment).
+///
+/// Both the PRODUCER (`server.rs`'s Block-time write, Task 2 of this plan)
+/// and the VERIFIER (`confirm()`, Plan 16-02) call this SAME function over
+/// the SAME domain — every element of `resolved_args` (blocked AND trusted
+/// together) — so they CANNOT diverge on ordering, uniqueness, or element
+/// encoding. The primitive owns all three:
+///
+/// 1. **Uniqueness** — asserts arg-name uniqueness across `args` (fail-closed:
+///    a duplicate name makes the canonical order undefined — DESIGN Round-6
+///    MUST).
+/// 2. **Canonical order** — sorts a COPY of `args` by BYTE-WISE ASCENDING
+///    `arg_name` (Rust `str`'s `Ord`, which compares the underlying UTF-8
+///    bytes — never a locale/collation compare), so callers may hand it the
+///    set in ANY input order.
+/// 3. **Element encoding** — for each pair, IN THAT CANONICAL ORDER, computes
+///    the arg_name's fixed-width 64-hex SHA-256 digest AND the literal's
+///    fixed-width 64-hex SHA-256 digest (the exact `literal_sha256` pattern
+///    from `crates/executor/src/lib.rs`, applied to both name and literal),
+///    then feeds both 64-hex strings — name-digest THEN literal-digest — into
+///    ONE outer SHA-256 hasher. Returns `hex::encode` of the outer hasher's
+///    finalize.
+///
+/// This is `sha256(name)‖sha256(literal)` per element, at FIXED 64-hex
+/// width — NOT raw literals, NOT literal-only, NOT plain concatenation: the
+/// fixed width removes the partition-blindness bypass (`to`/`body` boundary
+/// shift, DESIGN finding #4) and binding the name removes the rename bypass
+/// (DESIGN Round-6: renaming a bound arg without binding its name would leave
+/// the sorted literal sequence unchanged).
+///
+/// # Panics
+/// Panics (fail-closed) if `args` contains a duplicate `arg_name` — the
+/// ordering is undefined otherwise, and a producer/verifier pair silently
+/// picking different "winners" for the duplicate would be a correctness
+/// defect, not a recoverable case.
+pub fn combined_digest(args: &[(&str, &str)]) -> String {
+    let mut sorted: Vec<(&str, &str)> = args.to_vec();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+
+    for pair in sorted.windows(2) {
+        assert_ne!(
+            pair[0].0,
+            pair[1].0,
+            "combined_digest: duplicate arg_name `{}` — arg-name uniqueness \
+             MUST be asserted before hashing (DESIGN-confirm-binding.md Round-6)",
+            pair[0].0
+        );
+    }
+
+    let mut hasher = Sha256::new();
+    for (name, literal) in &sorted {
+        let name_digest = {
+            let mut h = Sha256::new();
+            h.update(name.as_bytes());
+            hex::encode(h.finalize())
+        };
+        let literal_digest = {
+            let mut h = Sha256::new();
+            h.update(literal.as_bytes());
+            hex::encode(h.finalize())
+        };
+        hasher.update(name_digest.as_bytes());
+        hasher.update(literal_digest.as_bytes());
+    }
+    hex::encode(hasher.finalize())
+}
 
 /// One resolved sink argument, frozen at Block time.
 ///
@@ -115,6 +185,20 @@ pub struct PendingConfirmation {
     /// The FULL resolved arg set for the blocked sink call — one `ResolvedArg` per
     /// original `PlanArg`, not merely the one arg that triggered the Block.
     pub resolved_args: Vec<ResolvedArg>,
+    /// The ordered subset of `resolved_args` names that were BLOCKED (Phase 16,
+    /// DESIGN-confirm-binding.md Round-6) — DISPLAY-MARKING metadata ONLY
+    /// (which of the full set Plan 16-02's narration marks BLOCKED vs
+    /// TRUSTED). Does NOT select `combined_digest`'s domain — that is every
+    /// current `resolved_args` element, blocked and trusted together. Frozen
+    /// at Block time, never re-derived.
+    pub blocked_arg_names: Vec<String>,
+    /// The CONFIRM-03 combined SHA-256 digest over EVERY current
+    /// `resolved_args` element's name+literal (Round-6 amendment),
+    /// byte-wise-ascending-name order — mirrors the value stored in the
+    /// hashed `sink_blocked` Event payload (the tamper-evident source of
+    /// truth). Frozen at Block time, never re-derived: recompute-and-compared
+    /// (never overwritten) at confirm/send time (Plan 16-02).
+    pub combined_digest: String,
     /// The workspace directory the confirm process must reopen to re-invoke the
     /// sink. The other plumbing field the design doc's illustrative struct omits
     /// (RESEARCH Open Question 1 / Assumption A2).
@@ -125,27 +209,31 @@ pub struct PendingConfirmation {
 
 /// Persist a new `PendingConfirmation` row.
 ///
-/// One `INSERT` binding all seven columns. Serializes `resolved_args` with
-/// `serde_json::to_string`, `sink` as `pc.sink.0`, uuids via `.to_string()`,
-/// state via `as_str()`. Caller should invoke this under the same broker-owned
-/// connection lock as the `append_event` that wrote the anchoring `sink_blocked`
-/// row (the two writes MUST succeed or fail together).
+/// One `INSERT` binding all nine columns. Serializes `resolved_args` and
+/// `blocked_arg_names` with `serde_json::to_string`, `sink` as `pc.sink.0`,
+/// uuids via `.to_string()`, state via `as_str()`. Caller should invoke this
+/// under the same broker-owned connection lock as the `append_event` that
+/// wrote the anchoring `sink_blocked` row (the two writes MUST succeed or
+/// fail together).
 pub fn insert_pending_confirmation(
     conn: &rusqlite::Connection,
     pc: &PendingConfirmation,
 ) -> Result<()> {
     let resolved_args_json = serde_json::to_string(&pc.resolved_args)?;
+    let blocked_arg_names_json = serde_json::to_string(&pc.blocked_arg_names)?;
     conn.execute(
         "INSERT INTO pending_confirmations \
          (effect_id, session_id, blocked_event_id, sink, resolved_args, \
-          workspace_root_path, state) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+          blocked_arg_names, combined_digest, workspace_root_path, state) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             pc.effect_id.to_string(),
             pc.session_id.to_string(),
             pc.blocked_event_id.to_string(),
             &pc.sink.0,
             &resolved_args_json,
+            &blocked_arg_names_json,
+            &pc.combined_digest,
             &pc.workspace_root_path,
             pc.state.as_str(),
         ],
@@ -162,7 +250,7 @@ pub fn find_pending_confirmation(
 ) -> Result<Option<PendingConfirmation>> {
     let mut stmt = conn.prepare(
         "SELECT effect_id, session_id, blocked_event_id, sink, resolved_args, \
-                workspace_root_path, state \
+                blocked_arg_names, combined_digest, workspace_root_path, state \
          FROM pending_confirmations WHERE effect_id = ?1",
     )?;
     let mut rows = stmt.query(params![effect_id])?;
@@ -173,10 +261,13 @@ pub fn find_pending_confirmation(
             let blocked_event_id: String = row.get(2)?;
             let sink: String = row.get(3)?;
             let resolved_args_json: String = row.get(4)?;
-            let workspace_root_path: String = row.get(5)?;
-            let state: String = row.get(6)?;
+            let blocked_arg_names_json: String = row.get(5)?;
+            let combined_digest: String = row.get(6)?;
+            let workspace_root_path: String = row.get(7)?;
+            let state: String = row.get(8)?;
 
             let resolved_args: Vec<ResolvedArg> = serde_json::from_str(&resolved_args_json)?;
+            let blocked_arg_names: Vec<String> = serde_json::from_str(&blocked_arg_names_json)?;
 
             Ok(Some(PendingConfirmation {
                 effect_id: uuid::Uuid::parse_str(&effect_id)?,
@@ -184,6 +275,8 @@ pub fn find_pending_confirmation(
                 blocked_event_id: uuid::Uuid::parse_str(&blocked_event_id)?,
                 sink: runtime_core::plan_node::SinkId(sink),
                 resolved_args,
+                blocked_arg_names,
+                combined_digest,
                 workspace_root_path,
                 state: PendingConfirmationState::from_str(&state)?,
             }))
@@ -559,28 +652,124 @@ mod tests {
     use runtime_core::plan_node::{SinkId, TaintLabel, ValueId};
     use uuid::Uuid;
 
+    // ── combined_digest primitive (Task 1, CONFIRM-03 / DESIGN Round-6) ─────
+
+    /// Local test helper mirroring the exact `literal_sha256` pattern
+    /// `combined_digest` uses internally, so the expected-formula test can
+    /// independently recompute the SAME value without calling into the
+    /// function under test.
+    fn sha256_hex(s: &str) -> String {
+        let mut h = Sha256::new();
+        h.update(s.as_bytes());
+        hex::encode(h.finalize())
+    }
+
+    /// `combined_digest(&[("to", "a")])` equals
+    /// `SHA-256(sha256_hex("to") ‖ sha256_hex("a"))` hex-encoded — the exact
+    /// single-element formula (DESIGN "Combined-Digest Binding").
+    #[test]
+    fn combined_digest_single_element_matches_expected_formula() {
+        let expected = {
+            let mut h = Sha256::new();
+            h.update(sha256_hex("to").as_bytes());
+            h.update(sha256_hex("a").as_bytes());
+            hex::encode(h.finalize())
+        };
+        assert_eq!(combined_digest(&[("to", "a")]), expected);
+    }
+
+    /// Partition-binding (DESIGN finding #4): with the SAME arg names, a
+    /// boundary-shift literal pair yields a DIFFERENT digest — plain
+    /// concatenation would collapse these to the same hash.
+    #[test]
+    fn combined_digest_partition_binding_boundary_shift_differs() {
+        let a = combined_digest(&[("to", "mallory@evil.co"), ("body", "m sent...")]);
+        let b = combined_digest(&[("to", "mallory@evil.com"), ("body", " sent...")]);
+        assert_ne!(
+            a, b,
+            "a to/body boundary shift MUST change the combined digest \
+             (fixed-width per-element hashing removes partition-blindness)"
+        );
+    }
+
+    /// Name-binding (DESIGN Round-6 rename bypass): renaming an arg changes
+    /// the digest even with an IDENTICAL literal.
+    #[test]
+    fn combined_digest_name_binding_rename_differs() {
+        let body_digest = combined_digest(&[("body", "x")]);
+        let cc_digest = combined_digest(&[("cc", "x")]);
+        assert_ne!(
+            body_digest, cc_digest,
+            "renaming a bound arg (body -> cc) with an identical literal MUST \
+             change the combined digest (closes the Round-6 rename bypass)"
+        );
+    }
+
+    /// Canonical order is INTRINSIC to the primitive: it sorts by byte-wise
+    /// ascending arg_name internally, so INPUT order does not matter.
+    #[test]
+    fn combined_digest_input_order_invariant() {
+        let forward = combined_digest(&[("to", "a@example.com"), ("body", "hello")]);
+        let reversed = combined_digest(&[("body", "hello"), ("to", "a@example.com")]);
+        assert_eq!(
+            forward, reversed,
+            "combined_digest must be invariant to input order — it sorts \
+             internally by byte-wise ascending arg_name"
+        );
+    }
+
+    /// Transposing which literal a name binds to DOES change the digest
+    /// (distinct from mere input reordering above).
+    #[test]
+    fn combined_digest_transposed_literals_differs() {
+        let original = combined_digest(&[("to", "a@example.com"), ("body", "hello")]);
+        let transposed = combined_digest(&[("to", "hello"), ("body", "a@example.com")]);
+        assert_ne!(
+            original, transposed,
+            "swapping which literal a name binds to MUST change the digest"
+        );
+    }
+
+    /// Duplicate arg names are a FAIL-CLOSED error (uniqueness asserted
+    /// before hashing) — `combined_digest` MUST NOT silently produce a
+    /// digest over an ambiguously-ordered duplicate-name set.
+    #[test]
+    #[should_panic(expected = "duplicate arg_name")]
+    fn combined_digest_duplicate_arg_name_panics() {
+        combined_digest(&[("to", "a@example.com"), ("to", "b@example.com")]);
+    }
+
     fn make_pending_confirmation(effect_id: Uuid) -> PendingConfirmation {
+        let resolved_args = vec![
+            ResolvedArg {
+                name: "path".to_string(),
+                value_id: ValueId::new(),
+                literal: "/workspace/out.txt".to_string(),
+                taint: vec![TaintLabel::PathRaw],
+                provenance_chain: vec![Uuid::new_v4()],
+            },
+            ResolvedArg {
+                name: "contents".to_string(),
+                value_id: ValueId::new(),
+                literal: "hello world".to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![Uuid::new_v4(), Uuid::new_v4()],
+            },
+        ];
+        let combined_digest = combined_digest(
+            &resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
         PendingConfirmation {
             effect_id,
             session_id: Uuid::new_v4(),
             blocked_event_id: Uuid::new_v4(),
             sink: SinkId("file.create".to_string()),
-            resolved_args: vec![
-                ResolvedArg {
-                    name: "path".to_string(),
-                    value_id: ValueId::new(),
-                    literal: "/workspace/out.txt".to_string(),
-                    taint: vec![TaintLabel::PathRaw],
-                    provenance_chain: vec![Uuid::new_v4()],
-                },
-                ResolvedArg {
-                    name: "contents".to_string(),
-                    value_id: ValueId::new(),
-                    literal: "hello world".to_string(),
-                    taint: vec![TaintLabel::UserTrusted],
-                    provenance_chain: vec![Uuid::new_v4(), Uuid::new_v4()],
-                },
-            ],
+            resolved_args,
+            blocked_arg_names: vec!["path".to_string()],
+            combined_digest,
             workspace_root_path: "/workspace".to_string(),
             state: PendingConfirmationState::Pending,
         }
@@ -732,12 +921,42 @@ mod tests {
             provenance_chain: vec![read_event_id],
             read_event_id,
         };
+
+        let resolved_args = vec![
+            ResolvedArg {
+                name: "path".to_string(),
+                value_id: ValueId::new(),
+                literal: path.to_string(),
+                taint: vec![TaintLabel::PathRaw],
+                provenance_chain: vec![read_event_id],
+            },
+            ResolvedArg {
+                name: "contents".to_string(),
+                value_id: ValueId::new(),
+                literal: contents.to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![],
+            },
+        ];
+        // CONFIRM-03 (Round-6): computed once over the FULL resolved_args
+        // set, threaded into BOTH the sink_blocked Event and the
+        // PendingConfirmation below — mirrors server.rs's Block-time write.
+        let digest = combined_digest(
+            &resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let blocked_arg_names = vec!["path".to_string()];
+
         let blocked_event = Event::sink_blocked(
             Uuid::new_v4(),
             Some(root.id),
             session_id,
             chrono::Utc::now(),
             vec![anchor],
+            Some(digest.clone()),
+            blocked_arg_names.clone(),
         );
         let blocked_event_id = blocked_event.id;
         append_event(conn, &blocked_event, Some(&root_hash)).unwrap();
@@ -748,22 +967,9 @@ mod tests {
             session_id,
             blocked_event_id,
             sink: SinkId("file.create".into()),
-            resolved_args: vec![
-                ResolvedArg {
-                    name: "path".to_string(),
-                    value_id: ValueId::new(),
-                    literal: path.to_string(),
-                    taint: vec![TaintLabel::PathRaw],
-                    provenance_chain: vec![read_event_id],
-                },
-                ResolvedArg {
-                    name: "contents".to_string(),
-                    value_id: ValueId::new(),
-                    literal: contents.to_string(),
-                    taint: vec![TaintLabel::UserTrusted],
-                    provenance_chain: vec![],
-                },
-            ],
+            resolved_args,
+            blocked_arg_names,
+            combined_digest: digest,
             workspace_root_path: workspace_root_path.to_string(),
             state: PendingConfirmationState::Pending,
         };
@@ -967,12 +1173,49 @@ mod tests {
             provenance_chain: vec![read_event_id],
             read_event_id,
         };
+
+        let resolved_args = vec![
+            ResolvedArg {
+                name: "to".to_string(),
+                value_id: ValueId::new(),
+                literal: to.to_string(),
+                taint: vec![TaintLabel::ExternalUntrusted],
+                provenance_chain: vec![read_event_id],
+            },
+            ResolvedArg {
+                name: "subject".to_string(),
+                value_id: ValueId::new(),
+                literal: subject.to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![],
+            },
+            ResolvedArg {
+                name: "body".to_string(),
+                value_id: ValueId::new(),
+                literal: body.to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![],
+            },
+        ];
+        // CONFIRM-03 (Round-6): computed once over the FULL resolved_args
+        // set, threaded into BOTH the sink_blocked Event and the
+        // PendingConfirmation below — mirrors server.rs's Block-time write.
+        let digest = combined_digest(
+            &resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let blocked_arg_names = vec!["to".to_string()];
+
         let blocked_event = Event::sink_blocked(
             Uuid::new_v4(),
             Some(root.id),
             session_id,
             chrono::Utc::now(),
             vec![anchor],
+            Some(digest.clone()),
+            blocked_arg_names.clone(),
         );
         let blocked_event_id = blocked_event.id;
         append_event(conn, &blocked_event, Some(&root_hash)).unwrap();
@@ -983,29 +1226,9 @@ mod tests {
             session_id,
             blocked_event_id,
             sink: SinkId("email.send".into()),
-            resolved_args: vec![
-                ResolvedArg {
-                    name: "to".to_string(),
-                    value_id: ValueId::new(),
-                    literal: to.to_string(),
-                    taint: vec![TaintLabel::ExternalUntrusted],
-                    provenance_chain: vec![read_event_id],
-                },
-                ResolvedArg {
-                    name: "subject".to_string(),
-                    value_id: ValueId::new(),
-                    literal: subject.to_string(),
-                    taint: vec![TaintLabel::UserTrusted],
-                    provenance_chain: vec![],
-                },
-                ResolvedArg {
-                    name: "body".to_string(),
-                    value_id: ValueId::new(),
-                    literal: body.to_string(),
-                    taint: vec![TaintLabel::UserTrusted],
-                    provenance_chain: vec![],
-                },
-            ],
+            resolved_args,
+            blocked_arg_names,
+            combined_digest: digest,
             workspace_root_path: "/unused-for-email-send".to_string(),
             state: PendingConfirmationState::Pending,
         };

@@ -74,6 +74,28 @@ pub struct Event {
     /// byte-verify guard to false-reject a legitimate derivation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform_kind: Option<String>,
+
+    /// The CONFIRM-03 combined SHA-256 digest over the FULL current
+    /// `resolved_args` set (Phase 16, Round-6 amendment,
+    /// `planning-docs/DESIGN-confirm-binding.md`), computed ONCE at Block
+    /// time by `crate::confirmation::combined_digest` over every arg's
+    /// `(arg_name, literal)` pair — blocked AND trusted args together, not
+    /// only the blocked subset. Empty/`None` for every event type except
+    /// `sink_blocked`. `#[serde(default, skip_serializing_if)]` keeps every
+    /// pre-Phase-16 event byte-identical (no DB migration — mirrors the
+    /// `derived_value_id` precedent above), and this field rides inside the
+    /// hashed `payload` column, so it is tamper-evident: any post-hoc edit
+    /// to it or to any arg literal breaks the audit-DAG hash chain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub combined_digest: Option<String>,
+    /// The ordered subset of `resolved_args` names that were BLOCKED (as
+    /// opposed to merely TRUSTED-but-bound) — DISPLAY-MARKING metadata for
+    /// Plan 16-02's per-arg narration only. It does NOT select
+    /// `combined_digest`'s domain (that is every current `resolved_args`
+    /// element, per the Round-6 amendment). Empty for every event type
+    /// except `sink_blocked`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_arg_names: Vec<String>,
 }
 
 impl Event {
@@ -105,6 +127,8 @@ impl Event {
             input_value_ids: vec![],
             input_provenance_chains: vec![],
             transform_kind: None,
+            combined_digest: None,
+            blocked_arg_names: vec![],
         }
     }
 
@@ -114,12 +138,21 @@ impl Event {
     /// `event_type = "sink_blocked"`, `actor = "executor"`, and — critically —
     /// `taint` by merging every anchor's taint (DESIGN §4 rule 6; DB readers
     /// re-derive trust from each anchor's `taint`, no stored bool).
+    ///
+    /// `combined_digest`/`blocked_arg_names` carry the CONFIRM-03 whole-set
+    /// binding (Phase 16, Round-6 amendment) — computed ONCE by the caller
+    /// (`crate::confirmation::combined_digest` over the full `resolved_args`
+    /// set) and threaded straight through; this constructor sets NOTHING
+    /// itself (T-04-03 anti-stapling discipline, extended to the digest).
+    #[allow(clippy::too_many_arguments)]
     pub fn sink_blocked(
         id: Uuid,
         parent_id: Option<Uuid>,
         session_id: Uuid,
         timestamp: DateTime<Utc>,
         anchors: Vec<SinkBlockedAnchor>,
+        combined_digest: Option<String>,
+        blocked_arg_names: Vec<String>,
     ) -> Self {
         let taint = anchors.iter().flat_map(|a| a.taint.clone()).collect();
         Event {
@@ -135,6 +168,8 @@ impl Event {
             input_value_ids: vec![],
             input_provenance_chains: vec![],
             transform_kind: None,
+            combined_digest,
+            blocked_arg_names,
         }
     }
 
@@ -176,6 +211,8 @@ impl Event {
             input_value_ids,
             input_provenance_chains,
             transform_kind,
+            combined_digest: None,
+            blocked_arg_names: vec![],
         }
     }
 }
@@ -221,11 +258,75 @@ mod tests {
             !json.contains("anchor"),
             "serialized anchors:[] Event must contain no \"anchors\" key"
         );
+        assert!(
+            !json.contains("combined_digest"),
+            "serialized non-sink_blocked Event must contain no \"combined_digest\" key \
+             (Phase 16 additive field — must not leak into non-block events)"
+        );
+        assert!(
+            !json.contains("blocked_arg_names"),
+            "serialized non-sink_blocked Event must contain no \"blocked_arg_names\" key \
+             (Phase 16 additive field — must not leak into non-block events)"
+        );
 
         // Round-trips: #[serde(default)] supplies anchors: vec![] on deserialize.
         let restored: Event = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(restored, event, "Event must round-trip byte-identically");
         assert!(restored.anchors.is_empty(), "restored anchors must be empty");
+        assert!(
+            restored.combined_digest.is_none(),
+            "restored combined_digest must be None"
+        );
+        assert!(
+            restored.blocked_arg_names.is_empty(),
+            "restored blocked_arg_names must be empty"
+        );
+    }
+
+    /// A `sink_blocked` Event round-trips its `combined_digest` +
+    /// `blocked_arg_names` intact (Phase 16, Task 1).
+    #[test]
+    fn sink_blocked_event_combined_digest_round_trips() {
+        use crate::executor_decision::SinkBlockedAnchor;
+        use crate::plan_node::{SinkId, ValueId};
+
+        let read_event_id = Uuid::new_v4();
+        let anchor = SinkBlockedAnchor {
+            effect_id: Uuid::new_v4(),
+            sink: SinkId("email.send".into()),
+            arg: "body".into(),
+            value_id: ValueId::new(),
+            literal_sha256: "deadbeef".repeat(8),
+            taint: vec![TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![read_event_id],
+            read_event_id,
+        };
+
+        let event = Event::sink_blocked(
+            Uuid::new_v4(),
+            None,
+            Uuid::new_v4(),
+            DateTime::from_timestamp(0, 0).expect("epoch timestamp"),
+            vec![anchor],
+            Some("abc123".to_string()),
+            vec!["body".to_string()],
+        );
+
+        assert_eq!(event.combined_digest, Some("abc123".to_string()));
+        assert_eq!(event.blocked_arg_names, vec!["body".to_string()]);
+
+        let json = serde_json::to_string(&event).expect("serialize");
+        assert!(
+            json.contains("\"combined_digest\":\"abc123\""),
+            "sink_blocked JSON must carry combined_digest verbatim; got {json}"
+        );
+        assert!(
+            json.contains("\"blocked_arg_names\":[\"body\"]"),
+            "sink_blocked JSON must carry blocked_arg_names verbatim; got {json}"
+        );
+
+        let restored: Event = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored, event, "sink_blocked Event must round-trip byte-identically");
     }
 
     /// A `derivation` event's payload carries derived_value_id, input_value_ids,

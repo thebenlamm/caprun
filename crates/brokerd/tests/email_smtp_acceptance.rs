@@ -31,7 +31,7 @@ use adapter_fs::workspace::WorkspaceRoot;
 use brokerd::audit::{append_event, insert_blocked_literal, open_audit_db};
 #[cfg(target_os = "linux")]
 use brokerd::confirmation::{
-    confirm, insert_pending_confirmation, ConfirmOutcome, PendingConfirmation,
+    combined_digest, confirm, insert_pending_confirmation, ConfirmOutcome, PendingConfirmation,
     PendingConfirmationState, ResolvedArg,
 };
 #[cfg(target_os = "linux")]
@@ -204,12 +204,49 @@ fn seed_and_confirm_email_send(
         provenance_chain: vec![read_event_id],
         read_event_id,
     };
+
+    let resolved_args = vec![
+        ResolvedArg {
+            name: "to".to_string(),
+            value_id: ValueId::new(),
+            literal: to.to_string(),
+            taint: vec![TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![read_event_id],
+        },
+        ResolvedArg {
+            name: "subject".to_string(),
+            value_id: ValueId::new(),
+            literal: subject.to_string(),
+            taint: vec![TaintLabel::UserTrusted],
+            provenance_chain: vec![],
+        },
+        ResolvedArg {
+            name: "body".to_string(),
+            value_id: ValueId::new(),
+            literal: body.to_string(),
+            taint: vec![TaintLabel::UserTrusted],
+            provenance_chain: vec![],
+        },
+    ];
+    // CONFIRM-03 (Round-6): computed once over the FULL resolved_args set,
+    // threaded into BOTH the sink_blocked Event and the PendingConfirmation
+    // below — mirrors server.rs's Block-time write.
+    let digest = combined_digest(
+        &resolved_args
+            .iter()
+            .map(|a| (a.name.as_str(), a.literal.as_str()))
+            .collect::<Vec<_>>(),
+    );
+    let blocked_arg_names = vec!["to".to_string()];
+
     let blocked_event = Event::sink_blocked(
         Uuid::new_v4(),
         Some(root.id),
         session_id,
         chrono::Utc::now(),
         vec![anchor],
+        Some(digest.clone()),
+        blocked_arg_names.clone(),
     );
     let blocked_event_id = blocked_event.id;
     append_event(conn, &blocked_event, Some(&root_hash)).unwrap();
@@ -220,29 +257,9 @@ fn seed_and_confirm_email_send(
         session_id,
         blocked_event_id,
         sink: SinkId("email.send".into()),
-        resolved_args: vec![
-            ResolvedArg {
-                name: "to".to_string(),
-                value_id: ValueId::new(),
-                literal: to.to_string(),
-                taint: vec![TaintLabel::ExternalUntrusted],
-                provenance_chain: vec![read_event_id],
-            },
-            ResolvedArg {
-                name: "subject".to_string(),
-                value_id: ValueId::new(),
-                literal: subject.to_string(),
-                taint: vec![TaintLabel::UserTrusted],
-                provenance_chain: vec![],
-            },
-            ResolvedArg {
-                name: "body".to_string(),
-                value_id: ValueId::new(),
-                literal: body.to_string(),
-                taint: vec![TaintLabel::UserTrusted],
-                provenance_chain: vec![],
-            },
-        ],
+        resolved_args,
+        blocked_arg_names,
+        combined_digest: digest,
         workspace_root_path: "/unused-for-email-send".to_string(),
         state: PendingConfirmationState::Pending,
     };

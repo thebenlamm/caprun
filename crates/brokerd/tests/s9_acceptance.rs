@@ -171,6 +171,10 @@ fn s9_acceptance() {
         session_id,
         chrono::Utc::now(),
         vec![anchor.clone()],
+        // Not exercising CONFIRM-03's combined digest in this in-process
+        // taint-consistency check (Phase 16 scope) — None/empty is correct.
+        None,
+        vec![],
     );
     assert_eq!(
         block_event.taint, anchor.taint,
