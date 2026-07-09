@@ -62,7 +62,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 - [x] **Phase 13: Real Broker-Mediated SMTP Adapter** - caprun can send a real email through a broker-mediated adapter — worker never touches the network, secrets never leave the broker, and the send is idempotent/failure-safe (completed 2026-07-08)
 - [x] **Phase 14: Content-Sensitive Sink-Arg Blocking** - The executor blocks a tainted email body the same way it already blocks a tainted recipient (completed 2026-07-08)
 - [x] **Phase 15: Deterministic Doc→Action Extraction** - A confined, deterministic extractor turns a hostile document's bytes into a plan node, with a proven unbroken audit-DAG edge from read to block, including through a transformation (completed 2026-07-08, independently verified live on Linux — 8/8 must-haves)
-- [ ] **Phase 16: Confirm UX, Literal Binding & Negative Controls** - A human sees the verbatim, provenance-narrated recipient and body before deciding; confirm is bound to the exact resolved literals; the gate is proven taint-driven, not a blanket email block
+- [x] **Phase 16: Confirm UX, Literal Binding & Negative Controls** - A human sees the verbatim, provenance-narrated recipient and body before deciding; confirm is bound to the exact resolved literals; the gate is proven taint-driven, not a blanket email block (completed 2026-07-09)
 - [ ] **Phase 17: Live Acceptance & Framing Honesty** - The full doc→action chain runs live on real Linux as one unbroken audit DAG, composing the hostile block and the clean control in the same run, with honest public framing of what was and wasn't proven
 
 ## Phase Details
@@ -172,7 +172,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   4. A fully-trusted send (recipient+body from a trusted, non-doc source) proceeds with NO block and NO confirm gate, in the same acceptance run as the hostile block — proving the gate is taint-driven.
   5. A send with a tainted body but a trusted recipient still blocks — proving the body dimension isn't dead code redundant with the routing block.
 
-**Plans**: 2/4 plans executed
+**Plans**: 4/4 plans complete
 
 **Wave 1**
 
@@ -185,7 +185,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 
 **Wave 3** *(blocked on Wave 1 + Wave 2; reviewed as a distinct security-surface unit)*
 
-- [ ] 16-04-PLAN.md — email.send Allowed-decision dispatch + BLOCKER-1 guards (ProvideIntent once/before-RequestFd, executor non-live Deny, disabled CreateSession IPC arm) + MAJOR-4 durable attempt ledger + MAJOR-5 caller-comment + BLOCKER-3 behavioral test surface + CONTROL-01 live A/B (CONTROL-01)
+- [x] 16-04-PLAN.md — email.send Allowed-decision dispatch + BLOCKER-1 guards (ProvideIntent once/before-RequestFd, executor non-live Deny, disabled CreateSession IPC arm) + MAJOR-4 durable attempt ledger + MAJOR-5 caller-comment + BLOCKER-3 behavioral test surface + CONTROL-01 live A/B (CONTROL-01)
 
 ### Phase 17: Live Acceptance & Framing Honesty
 
@@ -220,5 +220,5 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 | 13. Real Broker-Mediated SMTP Adapter | v1.3 | 4/4 | Complete    | 2026-07-08 |
 | 14. Content-Sensitive Sink-Arg Blocking | v1.3 | 2/2 | Complete    | 2026-07-08 |
 | 15. Deterministic Doc→Action Extraction | v1.3 | 4/4 | Complete    | 2026-07-08 |
-| 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 2/4 | In Progress|  |
+| 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 4/4 | Complete   | 2026-07-09 |
 | 17. Live Acceptance & Framing Honesty | v1.3 | 0/0 | Not started | - |

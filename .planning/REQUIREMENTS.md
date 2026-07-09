@@ -34,7 +34,7 @@ Scoped with caprun-opus-77 (coordinator, delegated by Ben Lamm) plus an advisor 
 
 ### CONTROL (negative controls)
 
-- [ ] **CONTROL-01**: A fully-TRUSTED send (recipient+body from a trusted/first-party source, not the doc) proceeds with NO block and NO confirm gate — proves the gate is TAINT-driven, not "blocks all email." Runs in the SAME acceptance run as the hostile block (the A/B that turns the demo into a controlled experiment, not an anecdote).
+- [x] **CONTROL-01**: A fully-TRUSTED send (recipient+body from a trusted/first-party source, not the doc) proceeds with NO block and NO confirm gate — proves the gate is TAINT-driven, not "blocks all email." Runs in the SAME acceptance run as the hostile block (the A/B that turns the demo into a controlled experiment, not an anecdote).
 - [x] **CONTROL-02**: Body TAINTED + recipient TRUSTED → STILL blocks. Proves the body dimension isn't dead code / redundant with the routing block — without it, CONTENT-01 is vacuously satisfied by the recipient block alone.
 
 ### SEND (idempotency — bounded)
@@ -92,7 +92,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONFIRM-02 | Phase 15 | Complete |
 | CONFIRM-03 | Phase 16 | Complete |
 | CONFIRM-04 | Phase 16 | Complete |
-| CONTROL-01 | Phase 16 | Pending |
+| CONTROL-01 | Phase 16 | Complete |
 | CONTROL-02 | Phase 16 | Complete |
 | SEND-01 | Phase 13 | Complete |
 | SEND-02 | Phase 13 | Complete |
