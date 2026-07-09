@@ -336,6 +336,12 @@ pub enum ConfirmOutcome {
     /// `email_send_failed` event already appended by the adapter, is how the
     /// failure is surfaced without being swallowed. No auto-retry.
     EmailSendFailed,
+    /// `caprun review <effect_id>` displayed the block narration for a KNOWN
+    /// effect_id — WITHOUT transitioning `PendingConfirmationState`, appending
+    /// any Event, or invoking any sink (MAJOR-8 pre-decision surface). Purely
+    /// read-only: always safe to re-run, any number of times, on a Pending
+    /// OR terminal row.
+    Reviewed,
 }
 
 /// Stable, dotted-lowercase rendering of a `TaintLabel` for the CLI display
@@ -365,75 +371,78 @@ fn short_evt(id: &Uuid) -> String {
 }
 
 /// Render the exact terminal output for a Pending block (DESIGN
-/// "caprun confirm CLI Contract"). Shown by BOTH `confirm` and `deny` before
-/// acting, so a human sees the same evidence regardless of which verb they run.
+/// "caprun confirm CLI Contract" + "Block Narration for Every Arg", Round-6).
+/// Shown by `confirm`, `deny`, AND the read-only `review` verb, so a human
+/// sees the SAME evidence regardless of which of the three they run.
 ///
-/// Selects the display arg as the FIRST `resolved_args` entry carrying an
-/// untrusted taint label (the routing-sensitive blocked arg, e.g. `path`). The
-/// literal is shown byte-exact, in quotes, with NO truncation or
-/// canonicalization (T-10-04 mitigation / DESIGN Accepted Residual Risk 1).
+/// Narrates EVERY element of `pc.resolved_args` — blocked AND trusted
+/// together — in BYTE-WISE ASCENDING `arg_name` order (Rust `str`'s `Ord`),
+/// the SAME canonical order `combined_digest` binds, so a human manually
+/// re-deriving the digest from this display needs no separate ordering
+/// convention. Each arg is marked `[BLOCKED]` (its name is in
+/// `pc.blocked_arg_names`) or `[trusted]`, and its literal is shown byte-exact,
+/// in quotes, with NO truncation, elision, or canonicalization (DESIGN
+/// "Verbatim Display — No Truncation" / T-10-04 mitigation / Accepted
+/// Residual Risk 1) — this MUST widen to the full set because Round-6 widened
+/// `combined_digest`'s domain to the full set too: a display that still
+/// showed only the blocked subset would let a human confirm bytes (a trusted
+/// arg) the display never showed them.
 ///
-/// Phase 14 scope guard (T-14-08): this function's single-arg display path is
-/// UNCHANGED for the single-blocked-arg case. A genuinely-plural block (more
-/// than one arg that was BOTH sensitive AND tainted at Block time — the exact
-/// `is_routing_sensitive || is_content_sensitive` predicate the executor's
-/// collect-then-Block loop used) is a FAIL-CLOSED panic here, not silent
-/// truncation to one of N — full multi-arg narration is Phase 16 (CONFIRM-04).
+/// T-14-08 (superseded): this function's PRIOR shape was a single-arg display
+/// selection guarded by a FAIL-CLOSED `assert!(blocked_count <= 1)` panic on
+/// any genuinely-plural block (proven to fire in a committed regression test,
+/// `render_block_display_panics_on_genuine_two_blocked_arg_block_t14_08`,
+/// BEFORE this rewrite replaced it — the two-commit discipline). That
+/// single-arg selection and its guard are GONE: every arg is now narrated,
+/// so there is no "plural" case left to panic on.
 pub fn render_block_display(pc: &PendingConfirmation) -> String {
-    let blocked_count = pc
-        .resolved_args
-        .iter()
-        .filter(|a| {
-            (executor::sink_sensitivity::is_routing_sensitive(&pc.sink, &a.name)
-                || executor::sink_sensitivity::is_content_sensitive(&pc.sink, &a.name))
-                && a.taint.iter().any(TaintLabel::is_untrusted)
-        })
-        .count();
-    assert!(
-        blocked_count <= 1,
-        "render_block_display: genuinely-plural block ({blocked_count} blocked args) — \
-         multi-arg narration is Phase 16 (CONFIRM-04); fail-closed here rather than \
-         silently showing one of N (T-14-08)"
-    );
+    let mut sorted_args: Vec<&ResolvedArg> = pc.resolved_args.iter().collect();
+    sorted_args.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let display_arg = pc
-        .resolved_args
-        .iter()
-        .find(|a| a.taint.iter().any(TaintLabel::is_untrusted))
-        .or_else(|| pc.resolved_args.first());
-
-    let (arg_name, literal, taint, provenance_chain): (&str, &str, &[TaintLabel], &[Uuid]) =
-        match display_arg {
-            Some(a) => (
-                a.name.as_str(),
-                a.literal.as_str(),
-                a.taint.as_slice(),
-                a.provenance_chain.as_slice(),
-            ),
-            // Fail-safe only: a genuine I2 block always has at least one arg.
-            None => ("(none)", "(none)", &[], &[]),
+    let mut per_arg = String::new();
+    for arg in &sorted_args {
+        let marker = if pc.blocked_arg_names.iter().any(|n| n == &arg.name) {
+            "BLOCKED"
+        } else {
+            "trusted"
         };
 
-    let taint_str = taint
-        .iter()
-        .map(taint_label_display)
-        .collect::<Vec<_>>()
-        .join(", ");
+        let taint_str = arg
+            .taint
+            .iter()
+            .map(taint_label_display)
+            .collect::<Vec<_>>()
+            .join(", ");
 
-    let source_evt = provenance_chain
-        .first()
-        .map(short_evt)
-        .unwrap_or_else(|| "(none)".to_string());
+        let source_evt = arg
+            .provenance_chain
+            .first()
+            .map(short_evt)
+            .unwrap_or_else(|| "(none)".to_string());
 
-    let mut chain_str = provenance_chain
-        .iter()
-        .map(short_evt)
-        .collect::<Vec<_>>()
-        .join(" -> ");
-    if !chain_str.is_empty() {
-        chain_str.push_str(" -> ");
+        let mut chain_str = arg
+            .provenance_chain
+            .iter()
+            .map(short_evt)
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        if !chain_str.is_empty() {
+            chain_str.push_str(" -> ");
+        }
+        chain_str.push_str("(this arg)");
+
+        per_arg.push_str(&format!(
+            "\n\
+             Arg:                {name} [{marker}]\n\
+             Literal value:      \"{literal}\"\n\
+             Taint:              [{taint_str}]\n\
+             Source:             {source_evt}  (session {session_id})\n\
+             Provenance chain:   {chain_str}\n",
+            name = arg.name,
+            literal = arg.literal,
+            session_id = pc.session_id,
+        ));
     }
-    chain_str.push_str("(this arg)");
 
     let effect_id = pc.effect_id;
     format!(
@@ -441,18 +450,36 @@ pub fn render_block_display(pc: &PendingConfirmation) -> String {
          \n\
          Effect ID:         {effect_id}\n\
          Sink:               {sink}\n\
-         Arg:                {arg_name}\n\
-         Literal value:      \"{literal}\"\n\
-         Taint:              [{taint_str}]\n\
-         Source:             file_read {source_evt}  (session {session_id})\n\
-         Provenance chain:   {chain_str}\n\
+         {per_arg}\n\
+         This session is Draft / untrusted-seeded (I0/I1): it was seeded from\n\
+         untrusted content read during this session. Confirming authorizes an\n\
+         IRREVERSIBLE EXTERNAL send of every literal shown above, EXACTLY as\n\
+         shown, from that posture — this confirm IS the I0/I1 human gate.\n\
          \n\
-         This value came from untrusted content read during this session. Run\n\
-         `caprun confirm {effect_id}` to release this EXACT value, or\n\
+         Run `caprun confirm {effect_id}` to release this EXACT set, or\n\
          `caprun deny {effect_id}` to block it permanently.",
         sink = pc.sink.0,
-        session_id = pc.session_id,
     )
+}
+
+/// `caprun review <effect_id>` — read-only pre-decision surface (MAJOR-8).
+///
+/// Prints the SAME narration `confirm`/`deny` would show, via the SAME
+/// `render_block_display` call — WITHOUT transitioning
+/// `PendingConfirmationState`, appending any Event, or invoking any sink /
+/// `executor::submit_plan_node`. Exists because `render_block_display`'s only
+/// two call sites were previously INSIDE `confirm()`/`deny()`, AFTER the
+/// operator already typed the decision verb — meaning the human "confirmed"
+/// bytes they had not yet read. `review` gives the human the verbatim
+/// literals + provenance at a point where they can still decide either way.
+/// Idempotent: running it any number of times never changes state.
+pub fn review(conn: &rusqlite::Connection, effect_id: &str) -> Result<ConfirmOutcome> {
+    let pc = match find_pending_confirmation(conn, effect_id)? {
+        Some(pc) => pc,
+        None => return Ok(ConfirmOutcome::UnknownEffect),
+    };
+    println!("{}", render_block_display(&pc));
+    Ok(ConfirmOutcome::Reviewed)
 }
 
 /// `caprun confirm <effect_id>` decision logic — Steps 1-4a of DESIGN
@@ -928,13 +955,107 @@ mod tests {
         }
     }
 
-    /// T-14-08: the UN-MODIFIED plurality guard panics against a genuine
-    /// 2-blocked-arg block — proving it fires, before it is replaced.
+    /// T-14-08 COMMIT 2: the plurality guard is GONE — the SAME genuine
+    /// 2-blocked-arg fixture COMMIT 1 proved panics the un-modified guard now
+    /// renders successfully, narrating ALL THREE args (to/subject/body), each
+    /// marked BLOCKED or trusted, in byte-wise ascending arg_name order
+    /// (body < subject < to) — the SAME canonical order `combined_digest`
+    /// binds — plus the Draft/untrusted-seeded posture statement.
     #[test]
-    #[should_panic(expected = "genuinely-plural block")]
-    fn render_block_display_panics_on_genuine_two_blocked_arg_block_t14_08() {
+    fn render_block_display_narrates_all_args_marked_blocked_or_trusted() {
         let pc = make_two_blocked_email_send_pending_confirmation();
-        render_block_display(&pc);
+        let output = render_block_display(&pc);
+
+        // Every arg name + its verbatim literal appears.
+        assert!(output.contains("Arg:                body [BLOCKED]"), "{output}");
+        assert!(output.contains("Arg:                subject [trusted]"), "{output}");
+        assert!(output.contains("Arg:                to [BLOCKED]"), "{output}");
+        assert!(output.contains("\"attacker-controlled body text\""), "{output}");
+        assert!(output.contains("\"hello\""), "{output}");
+        assert!(output.contains("\"mallory@evil.example\""), "{output}");
+
+        // Byte-wise ascending arg_name order: body < subject < to.
+        let body_pos = output.find("Arg:                body [BLOCKED]").unwrap();
+        let subject_pos = output.find("Arg:                subject [trusted]").unwrap();
+        let to_pos = output.find("Arg:                to [BLOCKED]").unwrap();
+        assert!(
+            body_pos < subject_pos && subject_pos < to_pos,
+            "narration order must match combined_digest's byte-wise-ascending \
+             arg_name order (body < subject < to); got:\n{output}"
+        );
+
+        // Draft/untrusted-seeded posture + irreversible-send statement (D-20).
+        assert!(output.contains("Draft"), "{output}");
+        assert!(output.to_lowercase().contains("untrusted-seeded"), "{output}");
+        assert!(output.to_lowercase().contains("irreversible"), "{output}");
+
+        // No hardcoded "file_read" source mislabel (SOURCE-LABEL finding).
+        assert!(
+            !output.contains("file_read"),
+            "render_block_display must no longer hardcode the file_read source \
+             label; got:\n{output}"
+        );
+    }
+
+    /// The single-blocked-arg case (existing file.create seed) still renders
+    /// correctly: its one blocked arg marked BLOCKED, its trusted `contents`
+    /// arg marked trusted.
+    #[test]
+    fn render_block_display_single_blocked_arg_still_renders_correctly() {
+        let pc = make_pending_confirmation(Uuid::new_v4());
+        let output = render_block_display(&pc);
+
+        assert!(output.contains("Arg:                path [BLOCKED]"), "{output}");
+        assert!(output.contains("Arg:                contents [trusted]"), "{output}");
+        assert!(output.contains("\"/workspace/out.txt\""), "{output}");
+        assert!(output.contains("\"hello world\""), "{output}");
+    }
+
+    /// No truncation/elision of any literal, even a long body (DESIGN
+    /// "Verbatim Display — No Truncation").
+    #[test]
+    fn render_block_display_does_not_truncate_a_long_literal() {
+        let long_body = "x".repeat(5000);
+        let resolved_args = vec![
+            ResolvedArg {
+                name: "to".to_string(),
+                value_id: ValueId::new(),
+                literal: "recipient@example.com".to_string(),
+                taint: vec![TaintLabel::ExternalUntrusted],
+                provenance_chain: vec![Uuid::new_v4()],
+            },
+            ResolvedArg {
+                name: "body".to_string(),
+                value_id: ValueId::new(),
+                literal: long_body.clone(),
+                taint: vec![TaintLabel::ExternalUntrusted],
+                provenance_chain: vec![Uuid::new_v4()],
+            },
+        ];
+        let digest = combined_digest(
+            &resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let pc = PendingConfirmation {
+            effect_id: Uuid::new_v4(),
+            session_id: Uuid::new_v4(),
+            blocked_event_id: Uuid::new_v4(),
+            sink: SinkId("email.send".to_string()),
+            resolved_args,
+            blocked_arg_names: vec!["body".to_string(), "to".to_string()],
+            combined_digest: digest,
+            workspace_root_path: "/unused".to_string(),
+            state: PendingConfirmationState::Pending,
+        };
+
+        let output = render_block_display(&pc);
+        assert!(
+            output.contains(&format!("\"{long_body}\"")),
+            "the full 5000-byte body literal must appear verbatim, with no \
+             truncation or elision"
+        );
     }
 
     // ── confirm/deny decision logic (Task 1) ──────────────────────────────
@@ -1195,6 +1316,70 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    // ── `caprun review` — read-only pre-decision surface (Task 1, MAJOR-8) ──
+
+    /// `review` on a Pending block prints the narration, returns `Reviewed`,
+    /// and — crucially — does NOT transition state or append any event.
+    /// Running it twice leaves state Pending both times (idempotent, no side
+    /// effects).
+    #[test]
+    fn review_prints_narration_without_mutating_state_or_appending_event() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_review_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, _blocked_event_id) =
+            seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
+
+        let before_events = query_events_by_session(&conn, &session_id.to_string())
+            .unwrap()
+            .len();
+
+        let outcome = review(&conn, &effect_id.to_string()).expect("review");
+        assert_eq!(outcome, ConfirmOutcome::Reviewed);
+
+        let pc = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            pc.state,
+            PendingConfirmationState::Pending,
+            "review must never transition state"
+        );
+
+        let after_events = query_events_by_session(&conn, &session_id.to_string())
+            .unwrap()
+            .len();
+        assert_eq!(
+            before_events, after_events,
+            "review must never append any event"
+        );
+
+        // Running it again: still Pending, still no new event, still Reviewed.
+        let outcome2 = review(&conn, &effect_id.to_string()).expect("review again");
+        assert_eq!(outcome2, ConfirmOutcome::Reviewed);
+        let pc2 = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .unwrap();
+        assert_eq!(pc2.state, PendingConfirmationState::Pending);
+        let after_events2 = query_events_by_session(&conn, &session_id.to_string())
+            .unwrap()
+            .len();
+        assert_eq!(before_events, after_events2);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `review` on an unknown effect_id returns `UnknownEffect` (T-10-03), the
+    /// same fail-closed contract `confirm`/`deny` already have.
+    #[test]
+    fn review_on_unknown_effect_id_returns_unknown_effect() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let outcome = review(&conn, &Uuid::new_v4().to_string()).unwrap();
+        assert_eq!(outcome, ConfirmOutcome::UnknownEffect);
     }
 
     // ── email.send atomic CAS + email_send_attempted (Task 2, SEND-01/SEND-02) ──
