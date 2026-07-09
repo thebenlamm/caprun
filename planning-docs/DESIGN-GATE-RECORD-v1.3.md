@@ -248,31 +248,28 @@ literal-leak-on-failure fixes were CONFIRMED CLOSED by round 3.
 
 ## Documents Under Review
 
-These are the **post-round-6-amendment (current, DRAFTED — Round 6 sign-off PENDING per above)**
-hashes. Prior rounds' hashes are retained below for provenance (full hash history is kept, never
-overwritten/deleted).
+These are the **post-round-6-amendment (current, APPROVED)** hashes. Prior rounds' hashes are retained
+below for provenance (full hash history is kept, never overwritten/deleted).
 
-| Document | sha256 (current, post-round-6-amendment, pending confirmation) |
+| Document | sha256 (current, post-round-6-amendment, APPROVED) |
 |----------|--------|
 | `planning-docs/DESIGN-content-adapter-mediation.md` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged since round 3) |
 | `planning-docs/DESIGN-confirm-binding.md` | `7f9397605b80012ae387b4f24f9f5117926a6124b2ba2f8506940e4add65ab71` |
 
 **Hash history (provenance — do not delete prior rounds):**
 
-| Document | round-1 input | round-2 input (post-round-1-fix) | round-3 input (post-round-2-fix) | round-3-final (post-tightening, APPROVED) | round-4 (post-phase-assignment-amendment) | round-5 (post-reconciliation-amendment) | round-6 (post-strengthening-amendment, PENDING) |
+| Document | round-1 input | round-2 input (post-round-1-fix) | round-3 input (post-round-2-fix) | round-3-final (post-tightening, APPROVED) | round-4 (post-phase-assignment-amendment) | round-5 (post-reconciliation-amendment) | round-6 (post-strengthening-amendment, APPROVED) |
 |----------|---------------|----------------------------------|----------------------------------|----------------------------------|----------------------------------|----------------------------------|----------------------------------|
 | `DESIGN-content-adapter-mediation.md` | `c2506396852d4bd619d7985cf2973cdd3b140177cff3c5d82f53038b3fa6724c` | `bec703fef52a6342a38d2924ef4f56b0b18c6873c09388bd8a2928fa630ec07e` | `ba365cd082b648b104177caedd4922d790f24e77b8019fedf31a0a654c23e792` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged) | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged) | `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged) |
 | `DESIGN-confirm-binding.md` | `c7a614233324f8a3d012a27836e4b891f27f2aff4197bcbd8d85e3db65b3f1f2` | `68dfd9d9e8c6c4e538234c5b0130914fbf77be9a0c65f6c9509292a8c54eb470` | `f4b6e1c1099a5758dfd054ca79beb9a197ffaeba4218e693bbfefc9ddf2b6d49` | `fab14ec90db3a8fc5c41864fa045b1db5bf9644615c74bd33530408f35c08c17` | `e89277785cd62378e562d04341d607a6cb7e64e1e9624f766fadbca361feb7bd` | `284ec3b3809f71596c90ec36bd352e9ab3bd3e0fa90ce7ffd3325101609e3f3c` | `7f9397605b80012ae387b4f24f9f5117926a6124b2ba2f8506940e4add65ab71` |
 
-Hashes were re-computed with `shasum -a 256` after drafting the Round-6 strengthening amendment (Phase
-16 execution planning, 2026-07-08). `DESIGN-content-adapter-mediation.md` is untouched (hash identical
-to the round-3-final/APPROVED value). **The Round-6 row is PENDING caprun-opus-77's confirmation of the
-applied text** — unlike Rounds 4/5, this domain-redefining change was not pre-blessed as a blanket
-move; it is flagged in the round-4 Phase 16 report for explicit sign-off. Anyone re-verifying this
-record should confirm
+Hashes were re-computed with `shasum -a 256` after the Round-6 strengthening amendment (Phase 16
+execution planning, 2026-07-08). `DESIGN-content-adapter-mediation.md` is untouched (hash identical to
+the round-3-final/APPROVED value). **caprun-opus-77 independently confirmed this hash matches the file
+they reviewed** (commit `179431e`) before granting sign-off — see the Round 6 section above. Anyone
+re-verifying this record should confirm
 `shasum -a 256 planning-docs/DESIGN-content-adapter-mediation.md planning-docs/DESIGN-confirm-binding.md`
-matches the current row above, and check the Round 6 section's status line for whether confirmation has
-landed.
+matches the current row above.
 
 <!-- shasum -->
 ```
@@ -669,7 +666,8 @@ Current hashes:
   `284ec3b3809f71596c90ec36bd352e9ab3bd3e0fa90ce7ffd3325101609e3f3c`
 
 **Round 6 (post-approval STRENGTHENING amendment, during Phase 16 execution planning, 2026-07-08 —
-DRAFTED, PENDING CONFIRMATION, NOT a blanket pre-bless like Rounds 4/5):** a fresh-context adversarial
+APPROVED after fresh confirmation of the applied text, NOT a blanket pre-bless like Rounds 4/5):** a
+fresh-context adversarial
 panel found `DESIGN-confirm-binding.md`'s digest domain (the collected blocked-arg subset only) was
 insufficient: a side-table actor with `pending_confirmations` write access could APPEND a new arg to
 `resolved_args` after Block time (e.g. an unbound `bcc`) which the sink reads and sends, invisible to a
@@ -700,14 +698,17 @@ intact with a forward-pointer to this round, not rewritten. `blocked_arg_names` 
 DISPLAY-MARKING metadata (which elements to narrate as BLOCKED vs TRUSTED) — it no longer gates the
 digest's domain. `DESIGN-content-adapter-mediation.md` is untouched (hash unchanged).
 
-**Status: DRAFTED AND APPLIED to the file, sign-off PENDING.** Per caprun-opus-77's explicit
-instruction, this amendment requires their fresh confirmation of the applied text (not merely the
-direction) before Decision/Gate status can be considered settled for this change — unlike Rounds 4/5,
-there is no standing pre-bless for a domain-redefining change. The orchestrator (caprun-sonnet-77) has
-applied the three tightenings and computed the post-amendment hash below; flagged to caprun-opus-77 for
-confirmation in the round-4 Phase 16 report. If caprun-opus-77 requests further changes, this section
-will be revised again before being marked confirmed.
-Current hashes (as drafted, pending confirmation):
+**Status: APPROVED.** caprun-opus-77 independently verified the applied text at commit `179431e`
+(not the executor's summary) and confirmed all three tightenings are faithfully implemented: the
+full-set domain with the filter-by-recorded-names recompute deleted (`blocked_arg_names` demoted to
+display-marking metadata only), names bound alongside literals (`sha256(arg_name) ‖ sha256(literal)`,
+both fixed-width, correctly distinguished from the retracted raw length-prefix form), and the
+byte-wise-ascending-UTF-8-name order pinned with name-uniqueness asserted before hashing. Narration
+widened in step (every sink-read arg shown verbatim, marked BLOCKED/TRUSTED) tied to the
+`render_block_display` panic-guard two-commit proof. Sign-off granted under
+`DEC-ai-review-satisfies-human-gate`. This is now the pinned Round-6 contract; Decision remains
+**APPROVED**, Gate status remains **UNBLOCKED**.
+Current hashes (confirmed):
 - `planning-docs/DESIGN-content-adapter-mediation.md`:
   `ca6294c39b97cc85bbf2c3de369996aaaed2d1e8b0b50f37b7840c5dcba803d9` (unchanged)
 - `planning-docs/DESIGN-confirm-binding.md`:
