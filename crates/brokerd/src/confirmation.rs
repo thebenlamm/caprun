@@ -867,6 +867,76 @@ mod tests {
         assert!(PendingConfirmationState::from_str("bogus").is_err());
     }
 
+    // ── T-14-08 regression proof (Plan 16-02, Task 1, COMMIT 1) ─────────────
+    //
+    // Builds a GENUINE 2-blocked-arg email.send block (a tainted, routing-
+    // sensitive `to` AND a tainted, content-sensitive `body`, per
+    // `executor::sink_sensitivity`'s EMAIL_SEND_ROUTING_SENSITIVE /
+    // EMAIL_SEND_CONTENT_SENSITIVE membership) — proving the CURRENT
+    // `assert!(blocked_count <= 1)` plurality guard in `render_block_display`
+    // actually panics against a real fixture, BEFORE COMMIT 2 replaces that
+    // guard with full ALL-args narration (DESIGN "Block Narration for Every
+    // Arg", coordinator's T-14-08 two-commit discipline).
+
+    /// A genuine 2-blocked-arg email.send `PendingConfirmation`: `to` (routing-
+    /// sensitive, untrusted) and `body` (content-sensitive, untrusted) are
+    /// BOTH blocked; `subject` is trusted. `blocked_arg_names` is the ordered
+    /// byte-wise-ascending subset `["body", "to"]` (Round-6 display-marking
+    /// metadata), and `combined_digest` is computed via the SAME shared
+    /// primitive over the FULL resolved_args set, matching a real Block-time
+    /// write.
+    fn make_two_blocked_email_send_pending_confirmation() -> PendingConfirmation {
+        let resolved_args = vec![
+            ResolvedArg {
+                name: "to".to_string(),
+                value_id: ValueId::new(),
+                literal: "mallory@evil.example".to_string(),
+                taint: vec![TaintLabel::ExternalUntrusted],
+                provenance_chain: vec![Uuid::new_v4()],
+            },
+            ResolvedArg {
+                name: "subject".to_string(),
+                value_id: ValueId::new(),
+                literal: "hello".to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![],
+            },
+            ResolvedArg {
+                name: "body".to_string(),
+                value_id: ValueId::new(),
+                literal: "attacker-controlled body text".to_string(),
+                taint: vec![TaintLabel::ExternalUntrusted],
+                provenance_chain: vec![Uuid::new_v4(), Uuid::new_v4()],
+            },
+        ];
+        let digest = combined_digest(
+            &resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        PendingConfirmation {
+            effect_id: Uuid::new_v4(),
+            session_id: Uuid::new_v4(),
+            blocked_event_id: Uuid::new_v4(),
+            sink: SinkId("email.send".to_string()),
+            resolved_args,
+            blocked_arg_names: vec!["body".to_string(), "to".to_string()],
+            combined_digest: digest,
+            workspace_root_path: "/unused-for-render".to_string(),
+            state: PendingConfirmationState::Pending,
+        }
+    }
+
+    /// T-14-08: the UN-MODIFIED plurality guard panics against a genuine
+    /// 2-blocked-arg block — proving it fires, before it is replaced.
+    #[test]
+    #[should_panic(expected = "genuinely-plural block")]
+    fn render_block_display_panics_on_genuine_two_blocked_arg_block_t14_08() {
+        let pc = make_two_blocked_email_send_pending_confirmation();
+        render_block_display(&pc);
+    }
+
     // ── confirm/deny decision logic (Task 1) ──────────────────────────────
 
     use crate::audit::{
