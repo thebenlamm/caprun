@@ -107,6 +107,7 @@ dependencies = [
  "anyhow",
  "brokerd",
  "chrono",
+ "executor",
  "hex",
  "runtime-core",
  "rusqlite",
