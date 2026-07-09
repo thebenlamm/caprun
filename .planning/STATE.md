@@ -6,13 +6,13 @@ current_phase: 16
 current_phase_name: Confirm UX, Literal Binding & Negative Controls
 status: executing
 stopped_at: Completed 15-04-PLAN.md (Wave 3, final plan of Phase 15)
-last_updated: "2026-07-08T15:57:51.708Z"
-last_activity: 2026-07-08
-last_activity_desc: Phase 15 complete, transitioned to Phase 16
+last_updated: "2026-07-09T01:08:58.812Z"
+last_activity: 2026-07-09
+last_activity_desc: Phase 16 execution started
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 13
+  total_plans: 17
   completed_plans: 13
   percent: 67
 ---
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — now extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, and (v1.3, in progress) with content-sensitive body blocking plus a real broker-mediated SMTP send, both proven live on real Linux.
-**Current focus:** Phase 15 — Deterministic Doc→Action Extraction
+**Current focus:** Phase 16 — Confirm UX, Literal Binding & Negative Controls
 
 ## Current Position
 
-Phase: 16 — Confirm UX, Literal Binding & Negative Controls
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-08 — Phase 15 complete, transitioned to Phase 16
+Phase: 16 (Confirm UX, Literal Binding & Negative Controls) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 16
+Last activity: 2026-07-09 — Phase 16 execution started
 
 ## Performance Metrics
 
