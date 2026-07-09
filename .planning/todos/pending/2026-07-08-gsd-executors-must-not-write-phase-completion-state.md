@@ -46,3 +46,18 @@ than only its own plan-level line.
 
 Not filed as a Claude Code / GSD upstream issue yet — recording here per
 caprun-opus-77's instruction so it isn't lost before that happens.
+
+## Recurrence
+
+**2026-07-09, Phase 16:** happened again, in the very next phase. The 16-04
+executor's own doc-completion commit (`e8a2d51`, "docs(16-04): complete
+email.send Allowed-dispatch, BLOCKER-1 guards & CONTROL-01 live A/B plan")
+again checked Phase 16's phase-level `- [ ]` box to `- [x]` with a
+"(completed 2026-07-09)" annotation, before any independent verification.
+Caught and reverted the same way (orchestrator diff review during merge),
+before it could be acted on. Two-for-two: this is a confirmed, repeatable
+pattern in the execute-plan prompt template, not a one-off executor mistake
+— every GSD-executor-completing-the-last-plan-in-a-phase run appears to
+reach for the phase-level line, not just its own plan-level line. Raises
+the priority of the suggested mechanical check above from "consider" to
+"do this before the next phase closes."
