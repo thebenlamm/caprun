@@ -52,7 +52,7 @@ Scoped with caprun-opus-77 (coordinator, delegated by Ben Lamm) plus an advisor 
 
 ### ACCEPT (hero demo — composes the above)
 
-- [ ] **ACCEPT-01**: Full live acceptance, Linux-verified via Colima+Docker, ONE unbroken audit DAG: hostile doc read → I1 demotion → deterministic extraction → tainted recipient+body block (I2+CONTENT-01) → confirm sends exactly once (real adapter → local capture SMTP) → deny sends nothing. Composes CONTROL-01 (clean send, ungated) alongside the hostile block in the SAME run.
+- [x] **ACCEPT-01**: Full live acceptance, Linux-verified via Colima+Docker, ONE unbroken audit DAG: hostile doc read → I1 demotion → deterministic extraction → tainted recipient+body block (I2+CONTENT-01) → confirm sends exactly once (real adapter → local capture SMTP) → deny sends nothing. Composes CONTROL-01 (clean send, ungated) alongside the hostile block in the SAME run.
 
 ## v2 Requirements
 
@@ -97,7 +97,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SEND-01 | Phase 13 | Complete |
 | SEND-02 | Phase 13 | Complete |
 | DOC-01 | Phase 17 | Pending |
-| ACCEPT-01 | Phase 17 | Pending |
+| ACCEPT-01 | Phase 17 | Complete |
 
 **Coverage:**
 
