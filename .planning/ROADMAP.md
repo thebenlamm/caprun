@@ -199,7 +199,23 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
   3. **HARD GATE — milestone-failing, not a soft criterion.** Phase 15's unbroken-edge audit-DAG proof + anti-staple check (raw-read Event → extractor-derived ValueNodes → blocked sink args, genuine not stapled) holds in this live run too — this milestone is not DONE if the live acceptance's taint chain can be satisfied by a value stapled fresh at the sink.
   4. PROJECT.md explicitly states that v1.3 proves taint ENFORCEMENT through a deterministic extractor with genuine propagation, and does NOT claim taint survives a real LLM planner's regeneration ("laundering") — no external claim contradicts this.
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+**Wave 1**
+
+- [ ] 17-01-PLAN.md — Promote Phase-15 genuine-taint proof predicates to a public `brokerd::provenance_proof` module (reuse, not reimplement) [ACCEPT-01]
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 17-02-PLAN.md — Composed ACCEPT-01 live scenario: 3 sessions / 1 shared audit.db (confirm/deny/clean), nonce-domain fixtures, Mailpit count helper, teeth #1/#3/#4/#5 [ACCEPT-01]
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 17-03-PLAN.md — HARD GATE tooth #2: genuine-taint re-proof against the live hostile anchors (both anti-staple controls) + SUMMARY interpretation sentence [ACCEPT-01]
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 17-04-PLAN.md — DOC-01: all 8 framing points + nonce honesty line + one-unbroken-DAG scope sentence in PROJECT.md, point 7 late-sequenced [DOC-01]
 
 ## Progress
 
