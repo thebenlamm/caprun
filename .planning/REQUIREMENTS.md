@@ -29,7 +29,7 @@ Scoped with caprun-opus-77 (coordinator, delegated by Ben Lamm) plus an advisor 
 
 - [ ] **CONFIRM-01**: `caprun confirm`/`deny` displays the verbatim recipient AND body (not just recipient) plus provenance, for a doc-derived send blocked at I2+CONTENT-01.
 - [x] **CONFIRM-02**: A realistic doc fixture exists (embedded injection attempting to redirect/alter the send) for gate-test and live-demo use.
-- [ ] **CONFIRM-03**: `caprun confirm` binds to ONE combined hash covering the FULL SET of blocked args' exact resolved literals (recipient AND body together) — so the bytes the human read are provably the bytes the adapter sends; the plan node cannot drift between confirm and send; no truncated display of long bodies; no partial-set confirm. Builds on the existing `PendingConfirmation` resolved_args store.
+- [x] **CONFIRM-03**: `caprun confirm` binds to ONE combined hash covering the FULL SET of blocked args' exact resolved literals (recipient AND body together) — so the bytes the human read are provably the bytes the adapter sends; the plan node cannot drift between confirm and send; no truncated display of long bodies; no partial-set confirm. Builds on the existing `PendingConfirmation` resolved_args store.
 - [ ] **CONFIRM-04**: The BLOCK moment narrates provenance for EVERY blocked arg in the set, not "Error: blocked" and not just the first-matched arg — renders recipient/body → untrusted doc → these bytes → this sink arg, for each. The block is the demo's climax.
 
 ### CONTROL (negative controls)
@@ -90,7 +90,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EXTRACT-03 | Phase 15 | Complete |
 | CONFIRM-01 | Phase 16 | Pending |
 | CONFIRM-02 | Phase 15 | Complete |
-| CONFIRM-03 | Phase 16 | Pending |
+| CONFIRM-03 | Phase 16 | Complete |
 | CONFIRM-04 | Phase 16 | Pending |
 | CONTROL-01 | Phase 16 | Pending |
 | CONTROL-02 | Phase 16 | Pending |
