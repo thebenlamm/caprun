@@ -66,13 +66,14 @@ fn mailpit_host() -> String {
 const MAILPIT_HTTP_PORT: u16 = 8025;
 
 /// Serializes the two Mailpit-backed acceptance tests in this file against
-/// each other. Both tests share ONE external Mailpit inbox (a real SMTP
-/// server, not an in-process fixture) — `cargo test`'s default
-/// multi-threaded runner would otherwise let them race on the same inbox
-/// (one test's `wait_for_message_count` could observe the OTHER test's
-/// message). Each test acquires this lock for its entire body, mirroring
+/// each other (their bodies both mutate `CAPRUN_SMTP_*` env vars via
+/// `seed_and_confirm_email_send` -> `confirm` -> the email_smtp adapter).
+/// Each test acquires this lock for its entire body, mirroring
 /// `email_smtp.rs::SMTP_ENV_LOCK`'s rationale for a different shared
-/// process-global resource.
+/// process-global resource. Phase 16 (16-04, BLOCKER-3 3.5): the tests
+/// themselves no longer race on Mailpit's shared inbox — each isolates by a
+/// UNIQUE per-test recipient via `wait_for_message_for_recipient`, never a
+/// purge-all or a global message count.
 #[cfg(target_os = "linux")]
 static MAILPIT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
