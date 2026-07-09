@@ -417,6 +417,50 @@ pub fn find_event_by_id(
     }
 }
 
+/// Return the session's LEAF event — the event that is no other event's
+/// `parent_id` within this `session_id` — as `(id, hash)`, or `None` if the
+/// session has no events at all.
+///
+/// On a LINEAR chain (the only shape `append_event`'s single-caller-at-a-time
+/// discipline is meant to produce) this is exactly one row: the last event
+/// appended. Callers that continue the session's causal chain (`confirm()`,
+/// `deny()` — Plan 16-02, MAJOR-7) MUST parent their next appended event on
+/// THIS head, never on a mid-chain id like `blocked_event_id` — parenting on
+/// a mid-chain id makes that id have two children (a FORK), which
+/// `verify_chain`'s single-linear-chain recursive-CTE walk cannot traverse
+/// past (empirically discovered in `quarantine.rs`'s `mint_from_read`
+/// `chain_head_id`/`chain_head_hash` threading, mirrored here).
+///
+/// If the chain is ALREADY forked (more than one leaf), this query can return
+/// more than one row; `ORDER BY rowid DESC LIMIT 1` picks the most-recently
+/// -appended one so the function still returns a single answer, but a forked
+/// chain has already failed `verify_chain` — callers MUST gate on
+/// `verify_chain` FIRST (Plan 16-02's `confirm()` does exactly this) so this
+/// function is only ever consulted against a chain already known to be
+/// linear.
+pub fn current_chain_head(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<Option<(uuid::Uuid, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, hash FROM events \
+         WHERE session_id = ?1 AND id NOT IN ( \
+             SELECT parent_id FROM events \
+             WHERE session_id = ?1 AND parent_id IS NOT NULL \
+         ) \
+         ORDER BY rowid DESC LIMIT 1",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![session_id])?;
+    match rows.next()? {
+        Some(row) => {
+            let id: String = row.get(0)?;
+            let hash: String = row.get(1)?;
+            Ok(Some((uuid::Uuid::parse_str(&id)?, hash)))
+        }
+        None => Ok(None),
+    }
+}
+
 /// Walk the audit chain for `session_id` and verify every hash link.
 ///
 /// Uses a recursive CTE to traverse from the root event (parent_id IS NULL)
@@ -547,6 +591,48 @@ mod tests {
             .expect("find_event_by_type");
 
         assert!(found.is_none(), "no email_send_stub event should be found");
+    }
+
+    /// On a linear chain, `current_chain_head` returns the LAST-appended
+    /// event's (id, hash) — never an earlier event, even though the root
+    /// event still exists in the same `events` table (Plan 16-02, MAJOR-7).
+    #[test]
+    fn current_chain_head_returns_last_appended_event_on_linear_chain() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+
+        let root = make_file_read_event(session_id);
+        let root_hash = append_event(&conn, &root, None).expect("append root");
+
+        let child = Event::new(
+            Uuid::new_v4(),
+            Some(root.id),
+            session_id,
+            "worker".to_string(),
+            "sink_ok".to_string(),
+            Utc::now(),
+            vec![],
+        );
+        let child_hash = append_event(&conn, &child, Some(&root_hash)).expect("append child");
+
+        let head = current_chain_head(&conn, &session_id.to_string())
+            .expect("current_chain_head")
+            .expect("a linear chain must have exactly one leaf");
+        assert_eq!(
+            head,
+            (child.id, child_hash),
+            "current_chain_head must return the LAST-appended event, not the root"
+        );
+    }
+
+    /// A session with no events at all returns `None` (no leaf to report).
+    #[test]
+    fn current_chain_head_returns_none_for_session_with_no_events() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+
+        let head = current_chain_head(&conn, &session_id.to_string()).expect("current_chain_head");
+        assert!(head.is_none());
     }
 
     /// find_event_by_id disambiguates among TWO events of the SAME event_type

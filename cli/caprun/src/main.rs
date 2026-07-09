@@ -51,15 +51,17 @@ const DEFAULT_EMAIL_BODY: &str = "Please see the attached workspace summary.";
 async fn main() -> anyhow::Result<()> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
 
-    // ── confirm/deny dispatch — VERY FIRST branch, before ANYTHING else ──────
+    // ── confirm/deny/review dispatch — VERY FIRST branch, before ANYTHING else ──
     // (RESEARCH Pitfall 6): `caprun confirm <effect_id> [audit-db-path]` /
-    // `caprun deny <effect_id> [audit-db-path]` have a completely different arg
-    // shape than `<intent-kind> <intent-param> <workspace-file> [audit-db-path]`,
-    // so this MUST be checked before the `--seed-from-file` pre-parse below and
-    // before the intent-kind match. Handled and the process exits explicitly
-    // here — it never falls through to the intent-kind parse.
+    // `caprun deny <effect_id> [audit-db-path]` / `caprun review <effect_id>
+    // [audit-db-path]` (MAJOR-8 read-only pre-decision surface) have a
+    // completely different arg shape than `<intent-kind> <intent-param>
+    // <workspace-file> [audit-db-path]`, so this MUST be checked before the
+    // `--seed-from-file` pre-parse below and before the intent-kind match.
+    // Handled and the process exits explicitly here — it never falls through
+    // to the intent-kind parse.
     if let Some(verb) = raw_args.first().map(String::as_str) {
-        if verb == "confirm" || verb == "deny" {
+        if verb == "confirm" || verb == "deny" || verb == "review" {
             let usage = format!("usage: caprun {verb} <effect_id> [audit-db-path]");
             let effect_id = match raw_args.get(1) {
                 Some(id) => id.as_str(),
@@ -314,29 +316,36 @@ async fn main() -> anyhow::Result<()> {
 ///
 /// `confirm` needs the workspace root the block was resolved against
 /// (`PendingConfirmation.workspace_root_path`); `deny` needs no workspace root
-/// at all, since it never invokes any sink (CONFIRM-03).
+/// at all, since it never invokes any sink (CONFIRM-03). `review` (MAJOR-8)
+/// likewise never opens the workspace root — it is a read-only pre-decision
+/// display and MUST NOT invoke any sink either.
 fn run_confirm_or_deny(verb: &str, effect_id: &str, audit_path: &str) -> anyhow::Result<i32> {
-    use brokerd::confirmation::{confirm, deny, find_pending_confirmation, ConfirmOutcome};
+    use brokerd::confirmation::{confirm, deny, find_pending_confirmation, review, ConfirmOutcome};
 
     let mut conn = open_audit_db(audit_path).context("open_audit_db")?;
 
-    let outcome = if verb == "confirm" {
-        // find_pending_confirmation itself returns None → confirm()'s
-        // UnknownEffect for an absent row — this is what makes an omitted
-        // audit-db-path (defaulting to :memory:) fail closed rather than
-        // panic: an in-memory DB simply has no row, ever.
-        match find_pending_confirmation(&conn, effect_id)? {
-            None => ConfirmOutcome::UnknownEffect,
-            Some(pc) => {
-                let ws = adapter_fs::workspace::WorkspaceRoot::open(Path::new(
-                    &pc.workspace_root_path,
-                ))
-                .context("open workspace root for confirm")?;
-                confirm(&mut conn, effect_id, &ws)?
+    let outcome = match verb {
+        "confirm" => {
+            // find_pending_confirmation itself returns None → confirm()'s
+            // UnknownEffect for an absent row — this is what makes an omitted
+            // audit-db-path (defaulting to :memory:) fail closed rather than
+            // panic: an in-memory DB simply has no row, ever.
+            match find_pending_confirmation(&conn, effect_id)? {
+                None => ConfirmOutcome::UnknownEffect,
+                Some(pc) => {
+                    let ws = adapter_fs::workspace::WorkspaceRoot::open(Path::new(
+                        &pc.workspace_root_path,
+                    ))
+                    .context("open workspace root for confirm")?;
+                    confirm(&mut conn, effect_id, &ws)?
+                }
             }
         }
-    } else {
-        deny(&conn, effect_id)?
+        "deny" => deny(&conn, effect_id)?,
+        // review (MAJOR-8): read-only — never opens the workspace root, never
+        // invokes any sink, never transitions state.
+        "review" => review(&conn, effect_id)?,
+        other => anyhow::bail!("run_confirm_or_deny: unreachable verb `{other}`"),
     };
 
     // Exit-code contract (DESIGN "caprun confirm CLI Contract" — each outcome
@@ -355,6 +364,14 @@ fn run_confirm_or_deny(verb: &str, effect_id: &str, audit_path: &str) -> anyhow:
         ConfirmOutcome::EmailSendFailed => {
             (7, Some("email send failed after confirm; recorded, not retried"))
         }
+        ConfirmOutcome::Reviewed => (0, None),
+        ConfirmOutcome::DigestMismatch => (
+            8,
+            Some(
+                "integrity check failed (broken audit chain or digest mismatch); \
+                 refusing to release",
+            ),
+        ),
     };
     if let Some(msg) = message {
         eprintln!("caprun {verb}: {msg}");
