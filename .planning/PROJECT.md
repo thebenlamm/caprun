@@ -55,6 +55,9 @@ doc and reports nothing stays Active (v2 obligation: demote at `RequestFd`).
 ProvideIntent mints worker-declared intent as UserTrusted only BEFORE any fd
 read, exactly once — broker-ENFORCED, not assumed. The confined worker's send
 path links brokerd → lettre → native-tls (a factual dependency-chain note).
+CONFIRM-01's verbatim recipient+body narration is proven END-TO-END live for
+the FIRST time in Phase 17's composed acceptance run — at Phase 16 it was
+exercised only against a synthetic fixture.
 Three additional accepted residual risks (verify_chain's forgeable chain
 head, guard-(c)'s runtime-vs-compile-time gap, and the Allowed-path's replay
 exposure) are detailed in the v1.3 residual-risks clause below — do not stop
