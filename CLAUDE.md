@@ -37,14 +37,22 @@ docker run --rm \
 
 No `--privileged` — the confinement stack is fully unprivileged. Landlock needs kernel ≥5.13.
 
-**Phases needing a local capture SMTP (Mailpit) — e.g. Phase 13, 17:** use
-`scripts/mailpit-verify.sh` instead of the bare `docker run rust:1` recipe
-above. It starts an `axllent/mailpit` sidecar on a user-defined Docker
-network, runs the same unprivileged `rust:1` verification container on that
-network (`CAPRUN_SMTP_HOST=mailpit`/`CAPRUN_SMTP_PORT=1025`), additionally
-installs `libssl-dev`/`pkg-config` before `cargo test` (required once
-`lettre`'s default `native-tls` feature is a build dependency), and tears
-down the sidecar afterward. Run: `bash scripts/mailpit-verify.sh`.
+**From Phase 16 onward, ALL Linux verification goes through
+`scripts/mailpit-verify.sh` — never the bare `docker run rust:1` recipe
+above.** Phase 16 wired a real `email.send` Allowed-decision dispatch
+(CONTROL-01): a benign `send-email-summary` run can now trigger a LIVE SMTP
+send, so a Mailpit listener must be present even for tests that only look
+"benign." `scripts/mailpit-verify.sh` starts an `axllent/mailpit` sidecar on a
+user-defined Docker network, runs the same unprivileged `rust:1` verification
+container on that network (`CAPRUN_SMTP_HOST=<the resolved Mailpit container
+IP>`, NOT the literal `mailpit` — `CAPRUN_SMTP_PORT=1025`; Mailpit's HTTP API
+is reachable at that same IP on port 8025), additionally installs
+`libssl-dev`/`pkg-config` before running the verification command (required
+once `lettre`'s default `native-tls` feature is a build dependency), and
+tears down the sidecar afterward. Run: `bash scripts/mailpit-verify.sh`.
+Override the verification command with `MAILPIT_VERIFY_CMD` (default `cargo
+test --workspace --no-fail-fast`) to scope a run to a single test, e.g.
+`MAILPIT_VERIFY_CMD='cargo test -p caprun --test s9_live_block s9_control_ab_taint_driven' bash scripts/mailpit-verify.sh`.
 
 ## Architecture
 

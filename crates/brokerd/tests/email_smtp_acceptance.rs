@@ -79,9 +79,16 @@ static MAILPIT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Minimal dependency-light raw HTTP/1.1 client (no new HTTP crate
 /// dependency introduced — matches this phase's "keep it dependency-light"
 /// instruction). Sends `Connection: close` so Mailpit closes the socket
-/// after replying, letting a simple read-to-EOF loop work without needing to
-/// parse `Content-Length` or chunked-encoding framing (empirically verified
-/// against a live Mailpit instance during Task 1: it honors `Connection: close`).
+/// after replying, letting a simple read-to-EOF loop work.
+///
+/// Phase 16 (16-04) CORRECTION: the original comment here claimed Mailpit
+/// never uses chunked-encoding framing under `Connection: close` — empirically
+/// FALSE under this plan's live run (a large `/api/v1/messages` LIST body, once
+/// this suite's own email.send Allowed-dispatch traffic accumulated many
+/// messages in the shared inbox, arrived `Transfer-Encoding: chunked`). Decode
+/// the chunk framing at the byte level (never a lossy `str` split, which could
+/// corrupt a chunk boundary landing mid-multi-byte-UTF-8-character) before
+/// ever converting to a `str`.
 #[cfg(target_os = "linux")]
 fn http_request(method: &str, host: &str, port: u16, path: &str) -> String {
     let mut stream = TcpStream::connect((host, port))
@@ -96,10 +103,50 @@ fn http_request(method: &str, host: &str, port: u16, path: &str) -> String {
     stream
         .read_to_end(&mut raw)
         .unwrap_or_else(|e| panic!("failed reading Mailpit HTTP API response: {e}"));
-    let text = String::from_utf8_lossy(&raw).into_owned();
-    text.split_once("\r\n\r\n")
-        .map(|(_, b)| b.to_string())
-        .unwrap_or_else(|| panic!("malformed HTTP response from Mailpit (no header/body separator): {text}"))
+
+    let sep_pos = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap_or_else(|| {
+        panic!(
+            "malformed HTTP response from Mailpit (no header/body separator): {}",
+            String::from_utf8_lossy(&raw)
+        )
+    });
+    let headers = String::from_utf8_lossy(&raw[..sep_pos]).to_lowercase();
+    let body_bytes = &raw[sep_pos + 4..];
+
+    let body = if headers.contains("transfer-encoding: chunked") {
+        decode_chunked(body_bytes)
+    } else {
+        body_bytes.to_vec()
+    };
+    String::from_utf8_lossy(&body).into_owned()
+}
+
+/// Decode an HTTP/1.1 chunked-transfer-encoded body into its unwrapped
+/// bytes. Byte-level only — never a lossy `str` split.
+#[cfg(target_os = "linux")]
+fn decode_chunked(mut body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let nl = match body.windows(2).position(|w| w == b"\r\n") {
+            Some(p) => p,
+            None => break,
+        };
+        let size_str = std::str::from_utf8(&body[..nl]).unwrap_or("0").trim();
+        let size = usize::from_str_radix(size_str, 16).unwrap_or(0);
+        let data_start = nl + 2;
+        if size == 0 || data_start + size > body.len() {
+            break;
+        }
+        out.extend_from_slice(&body[data_start..data_start + size]);
+        let after_data = data_start + size;
+        let next_start = if body.get(after_data..after_data + 2) == Some(b"\r\n") {
+            after_data + 2
+        } else {
+            after_data
+        };
+        body = &body[next_start..];
+    }
+    out
 }
 
 /// GET a path from Mailpit's HTTP API, parsed as JSON.
@@ -110,34 +157,34 @@ fn http_get_json(host: &str, port: u16, path: &str) -> serde_json::Value {
         .unwrap_or_else(|e| panic!("failed to parse Mailpit JSON response: {e}\nbody: {body}"))
 }
 
-/// Delete ALL messages from Mailpit's inbox (`DELETE /api/v1/messages`) —
-/// called at the start of each test (under `MAILPIT_TEST_LOCK`) so each test
-/// starts from a known-empty inbox regardless of what a prior test run left
-/// behind (Mailpit's inbox otherwise persists across test runs against the
-/// same sidecar container).
-#[cfg(target_os = "linux")]
-fn clear_mailpit_inbox(host: &str) {
-    let _ = http_request("DELETE", host, MAILPIT_HTTP_PORT, "/api/v1/messages");
-}
-
-/// Poll Mailpit's LIST endpoint until at least `expected_count` messages have
-/// arrived, returning their `ID`s. A real SMTP send completes asynchronously
+/// Phase 16 (16-04, BLOCKER-3 3.5): NEVER purge-all / NEVER assert a global
+/// message count — parallel `cargo test --workspace` binaries (this file's
+/// own tests, plus caprun's e2e/s9_live_block/confirm tests) all send through
+/// the SAME external Mailpit inbox, so a purge here could delete another
+/// binary's in-flight capture, and a bare count assertion would be inflated
+/// or deflated by their concurrent sends. Every assertion below isolates by
+/// filtering the message list on a UNIQUE per-test recipient address instead.
+///
+/// Poll Mailpit's LIST endpoint until a message addressed to `recipient` has
+/// arrived, returning its `ID`. A real SMTP send completes asynchronously
 /// relative to this HTTP poll — bound the wait so a genuine failure doesn't
 /// hang forever.
 #[cfg(target_os = "linux")]
-fn wait_for_message_count(host: &str, expected_count: usize) -> Vec<String> {
+fn wait_for_message_for_recipient(host: &str, recipient: &str) -> String {
     for _ in 0..50 {
-        let list = http_get_json(host, MAILPIT_HTTP_PORT, "/api/v1/messages");
+        let list = http_get_json(host, MAILPIT_HTTP_PORT, "/api/v1/messages?limit=250");
         let messages = list["messages"].as_array().cloned().unwrap_or_default();
-        if messages.len() >= expected_count {
-            return messages
-                .iter()
-                .filter_map(|m| m["ID"].as_str().map(String::from))
-                .collect();
+        for m in &messages {
+            if let Some(id) = m["ID"].as_str() {
+                let detail = fetch_message_detail(host, id);
+                if addresses(&detail, "To").contains(&recipient.to_string()) {
+                    return id.to_string();
+                }
+            }
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    panic!("timed out waiting for {expected_count} message(s) to appear in Mailpit");
+    panic!("timed out waiting for a message addressed to {recipient} to appear in Mailpit");
 }
 
 /// Fetch a single message's DETAIL via Mailpit's HTTP API — the endpoint
@@ -276,37 +323,33 @@ fn seed_and_confirm_email_send(
 }
 
 /// (SMTP-03) A confirmed `email.send` effect (clean recipient/subject/body)
-/// results in exactly one message captured by Mailpit, addressed to the
-/// intended recipient — sent by the broker/confirm process.
+/// results in a message captured by Mailpit, addressed to the intended
+/// recipient — sent by the broker/confirm process. Isolates by a UNIQUE
+/// per-run recipient (Phase 16, BLOCKER-3 3.5) rather than a purge-all +
+/// global count, since this inbox is shared with other concurrently-running
+/// test binaries.
 #[cfg(target_os = "linux")]
 #[test]
 fn smtp_03_confirmed_send_captured_by_mailpit() {
     let _guard = MAILPIT_TEST_LOCK.lock().unwrap();
     let host = mailpit_host();
-    clear_mailpit_inbox(&host);
+    let recipient = format!("smtp03-{}@example.test", Uuid::new_v4());
     let mut conn = open_audit_db(":memory:").expect("open_audit_db");
 
-    let outcome =
-        seed_and_confirm_email_send(&mut conn, "recipient@example.com", "hello", "hi there");
+    let outcome = seed_and_confirm_email_send(&mut conn, &recipient, "hello", "hi there");
     assert_eq!(
         outcome,
         ConfirmOutcome::Released,
         "a confirmed clean email.send must Release (real send succeeded)"
     );
 
-    let ids = wait_for_message_count(&host, 1);
-    assert_eq!(
-        ids.len(),
-        1,
-        "expected exactly one captured message addressed to the intended recipient"
-    );
-
-    let detail = fetch_message_detail(&host, &ids[0]);
+    let id = wait_for_message_for_recipient(&host, &recipient);
+    let detail = fetch_message_detail(&host, &id);
     let to = addresses(&detail, "To");
     assert_eq!(
         to,
-        vec!["recipient@example.com".to_string()],
-        "captured message must be addressed to the intended recipient"
+        vec![recipient],
+        "captured message must be addressed to the intended (unique) recipient"
     );
 }
 
@@ -326,12 +369,11 @@ fn smtp_03_confirmed_send_captured_by_mailpit() {
 fn smtp_05_crlf_body_cannot_smuggle_recipient() {
     let _guard = MAILPIT_TEST_LOCK.lock().unwrap();
     let host = mailpit_host();
-    clear_mailpit_inbox(&host);
+    let recipient = format!("smtp05-{}@example.test", Uuid::new_v4());
     let mut conn = open_audit_db(":memory:").expect("open_audit_db");
 
     let malicious_body = "hi there\r\nBcc: attacker@evil.com";
-    let outcome =
-        seed_and_confirm_email_send(&mut conn, "victim@example.com", "hello", malicious_body);
+    let outcome = seed_and_confirm_email_send(&mut conn, &recipient, "hello", malicious_body);
     assert_eq!(
         outcome,
         ConfirmOutcome::Released,
@@ -339,18 +381,16 @@ fn smtp_05_crlf_body_cannot_smuggle_recipient() {
          the recipient literal is parsed via Address, never the body"
     );
 
-    let ids = wait_for_message_count(&host, 1);
-    assert_eq!(ids.len(), 1, "expected exactly one captured message");
-
-    let detail = fetch_message_detail(&host, &ids[0]);
+    let id = wait_for_message_for_recipient(&host, &recipient);
+    let detail = fetch_message_detail(&host, &id);
     let to = addresses(&detail, "To");
     let cc = addresses(&detail, "Cc");
     let bcc = addresses(&detail, "Bcc");
 
     assert_eq!(
         to,
-        vec!["victim@example.com".to_string()],
-        "To must contain ONLY the intended recipient"
+        vec![recipient],
+        "To must contain ONLY the intended (unique) recipient"
     );
     assert!(cc.is_empty(), "Cc must be empty — no smuggled recipient");
     assert!(

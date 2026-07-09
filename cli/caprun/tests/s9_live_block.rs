@@ -163,6 +163,23 @@ fn s9_live_clean_allow_path() {
         "no sink_blocked event may exist on the clean allow-path (plan_node_evaluated id={})",
         plan_node_evaluated.id
     );
+
+    // (e) Phase 16 (CONTROL-01/BLOCKER-3): the Allowed decision now reaches
+    // the email.send Allowed-dispatch — a real send now happens on this
+    // clean path (previously there was no live sink invocation here at all).
+    // This assertion only checks the DURABLE EVENT, not the Mailpit capture
+    // (that live proof is CONTROL-01's dedicated A/B test below, which uses a
+    // UNIQUE per-run recipient) — this test's recipient
+    // ("analyst@example.test") is a FIXED literal shared across runs, so it
+    // must never be used for a Mailpit-inbox query (cross-binary race).
+    assert!(
+        find_event_by_type(&conn, &session_id, "email_send_succeeded")
+            .expect("query email_send_succeeded")
+            .is_some(),
+        "an email_send_succeeded event must now exist on the clean allow-path \
+         (Phase 16 CONTROL-01 — this test must run under scripts/mailpit-verify.sh, \
+         a live Mailpit listener, or the send would fail instead)"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -588,6 +605,292 @@ fn s9_live_file_create_clean_allow() {
         Some(evaluated.id),
         "sink_executed must be parented onto plan_node_evaluated (authorize → effect)"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 16 (16-04): CONTROL-01 — the live taint-driven A/B, composed in ONE run.
+//
+// A minimal, std-only Mailpit HTTP client (mirrors
+// crates/brokerd/tests/email_smtp_acceptance.rs's http_request/http_get_json
+// shape — no new Cargo dependency; cli/caprun's test binary cannot reach
+// brokerd's test-only module, so this is a deliberate, small duplication).
+// Reads the Mailpit host from CAPRUN_SMTP_HOST (the resolved sidecar IP
+// scripts/mailpit-verify.sh sets — NOT the literal "mailpit") at Mailpit's
+// fixed HTTP API port 8025. Every assertion here isolates by filtering on a
+// SPECIFIC recipient address (never a global message count, never a
+// purge-all) so parallel `cargo test --workspace` binaries sharing ONE
+// Mailpit inbox do not race each other.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(target_os = "linux")]
+mod mailpit_client {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    /// Mailpit's HTTP API port is FIXED at 8025 by Mailpit's own convention —
+    /// distinct from the SMTP port (CAPRUN_SMTP_PORT, 1025).
+    const HTTP_PORT: u16 = 8025;
+
+    /// The Mailpit host — the SAME env var the broker/adapter reads for the
+    /// SMTP connection itself (CAPRUN_SMTP_HOST, D-04 endpoint sourcing).
+    /// scripts/mailpit-verify.sh sets this to the sidecar's resolved
+    /// container IP, never the literal "mailpit".
+    pub fn host() -> String {
+        std::env::var("CAPRUN_SMTP_HOST").unwrap_or_else(|_| "127.0.0.1".to_string())
+    }
+
+    fn http_request(method: &str, host: &str, port: u16, path: &str) -> String {
+        let mut stream = TcpStream::connect((host, port)).unwrap_or_else(|e| {
+            panic!("failed to connect to Mailpit HTTP API at {host}:{port}: {e}")
+        });
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let request =
+            format!("{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
+        stream.write_all(request.as_bytes()).unwrap();
+        let mut raw = Vec::new();
+        stream
+            .read_to_end(&mut raw)
+            .unwrap_or_else(|e| panic!("failed reading Mailpit HTTP API response: {e}"));
+
+        // Split header/body on the raw CRLFCRLF byte sequence (byte-level, not
+        // a naive lossy-String split, to avoid any UTF-8 boundary risk).
+        let sep_pos = raw
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .unwrap_or_else(|| {
+                panic!(
+                    "malformed HTTP response from Mailpit (no header/body separator): {}",
+                    String::from_utf8_lossy(&raw)
+                )
+            });
+        let headers = String::from_utf8_lossy(&raw[..sep_pos]).to_lowercase();
+        let body_bytes = &raw[sep_pos + 4..];
+
+        // Mailpit's Go HTTP server streams JSON responses without a
+        // precomputed Content-Length, so larger LIST responses arrive
+        // Transfer-Encoding: chunked despite the `Connection: close` request
+        // header — empirically discovered running this suite against a live
+        // inbox with many accumulated messages (Phase 16-04). Decode the
+        // chunk framing before ever converting to a `str`.
+        let body = if headers.contains("transfer-encoding: chunked") {
+            decode_chunked(body_bytes)
+        } else {
+            body_bytes.to_vec()
+        };
+        String::from_utf8_lossy(&body).into_owned()
+    }
+
+    /// Decode an HTTP/1.1 chunked-transfer-encoded body into its unwrapped
+    /// bytes. Operates purely on `&[u8]` (never a lossy `str` split) so a
+    /// chunk boundary landing mid-multi-byte-UTF-8-character never corrupts
+    /// the decode.
+    fn decode_chunked(mut body: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        loop {
+            let nl = match body.windows(2).position(|w| w == b"\r\n") {
+                Some(p) => p,
+                None => break,
+            };
+            let size_str = std::str::from_utf8(&body[..nl]).unwrap_or("0").trim();
+            let size = usize::from_str_radix(size_str, 16).unwrap_or(0);
+            let data_start = nl + 2;
+            if size == 0 || data_start + size > body.len() {
+                break;
+            }
+            out.extend_from_slice(&body[data_start..data_start + size]);
+            let after_data = data_start + size;
+            let next_start = if body.get(after_data..after_data + 2) == Some(b"\r\n") {
+                after_data + 2
+            } else {
+                after_data
+            };
+            body = &body[next_start..];
+        }
+        out
+    }
+
+    fn http_get_json(host: &str, port: u16, path: &str) -> serde_json::Value {
+        let body = http_request("GET", host, port, path);
+        serde_json::from_str(&body)
+            .unwrap_or_else(|e| panic!("failed to parse Mailpit JSON response: {e}\nbody: {body}"))
+    }
+
+    fn message_ids(host: &str) -> Vec<String> {
+        let list = http_get_json(host, HTTP_PORT, "/api/v1/messages?limit=250");
+        list["messages"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|m| m["ID"].as_str().map(String::from))
+            .collect()
+    }
+
+    /// Fetch a message's DETAIL (the endpoint whose `To` field is always an
+    /// array — see email_smtp_acceptance.rs's module doc comment for the
+    /// empirically-confirmed LIST-vs-DETAIL divergence) and check whether
+    /// `recipient` appears in it.
+    fn detail_addressed_to(host: &str, id: &str, recipient: &str) -> bool {
+        let detail = http_get_json(host, HTTP_PORT, &format!("/api/v1/message/{id}"));
+        detail["To"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .any(|entry| entry["Address"].as_str() == Some(recipient))
+            })
+            .unwrap_or(false)
+    }
+
+    /// Poll until a message addressed to `recipient` is captured; panics on
+    /// timeout. Isolates by recipient, not by count — safe under a shared,
+    /// concurrently-written inbox.
+    pub fn wait_for_recipient_captured(host: &str, recipient: &str) {
+        for _ in 0..50 {
+            for id in message_ids(host) {
+                if detail_addressed_to(host, &id, recipient) {
+                    return;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        panic!("timed out waiting for a message addressed to {recipient} to appear in Mailpit");
+    }
+
+    /// Asserts NO captured message is addressed to `recipient`. A single
+    /// pass suffices here (never a poll-for-absence loop): the caller only
+    /// uses this after a BLOCKED run, where no send was ever attempted, so
+    /// there is no race to wait out — the recipient either is or is not
+    /// already in the shared inbox from some earlier, unrelated send.
+    pub fn assert_recipient_not_captured(host: &str, recipient: &str) {
+        for id in message_ids(host) {
+            assert!(
+                !detail_addressed_to(host, &id, recipient),
+                "recipient {recipient} MUST NOT appear in Mailpit (blocked send, \
+                 no send was ever attempted)"
+            );
+        }
+    }
+}
+
+/// CONTROL-01: the live taint-driven A/B, composed in ONE test/one run.
+///
+/// (A) a trusted-intent clean run (send-email-summary over CLEAN_PATH_CONTENT,
+///     with a UNIQUE per-run recipient) is Allowed AND delivered: exit 0, a
+///     plan_node_evaluated event, NO sink_blocked event, ZERO rows in
+///     pending_confirmations for this session (the "no confirm gate" claim —
+///     stronger than "sink_blocked absent"), an email_send_succeeded event,
+///     AND the message is captured in Mailpit for that unique recipient.
+/// (B) a doc-derived hostile run (over HOSTILE_EMAIL_CONTENT) is Blocked and
+///     never sent: exit non-zero, a sink_blocked event, NO
+///     email_send_succeeded event, and its (fixed, doc-derived) recipient
+///     never appears in Mailpit.
+///
+/// HONEST FRAMING (per this plan's success_criteria — never "same doc, taint
+/// flipped"): the clean half sources its args from the TRUSTED INTENT, not
+/// from a doc; the two halves are not a same-content A/B. The true claim is
+/// "trusted-intent send Allowed AND delivered vs doc-derived send Blocked and
+/// not sent."
+#[cfg(target_os = "linux")]
+#[test]
+fn s9_control_ab_taint_driven() {
+    use brokerd::audit::{find_event_by_type, open_audit_db};
+
+    // ── (A) trusted-intent clean run — Allowed AND delivered ────────────────
+    let clean_recipient = format!("ctrl01-{}@example.test", uuid::Uuid::new_v4());
+    let (success_a, audit_db_a) = run_caprun_intent_on(
+        "send-email-summary",
+        &clean_recipient,
+        CLEAN_PATH_CONTENT,
+        "control01_clean",
+    );
+    assert!(
+        success_a,
+        "CONTROL-01 clean half: caprun MUST exit 0 — trusted-intent Allowed"
+    );
+
+    let conn_a = open_audit_db(audit_db_a.to_str().unwrap()).expect("open audit DB (clean half)");
+    let session_id_a: String = conn_a
+        .query_row("SELECT id FROM sessions LIMIT 1", [], |row| row.get(0))
+        .expect("one session row must exist (clean half)");
+
+    assert!(
+        find_event_by_type(&conn_a, &session_id_a, "plan_node_evaluated")
+            .expect("query plan_node_evaluated")
+            .is_some(),
+        "CONTROL-01 clean half must have a plan_node_evaluated event (Allowed decision)"
+    );
+    assert!(
+        find_event_by_type(&conn_a, &session_id_a, "sink_blocked")
+            .expect("query sink_blocked")
+            .is_none(),
+        "CONTROL-01 clean half must have NO sink_blocked event"
+    );
+
+    // The stronger "no confirm gate" claim: ZERO pending_confirmations rows
+    // for this session — not merely "no sink_blocked event".
+    let pending_count: i64 = conn_a
+        .query_row(
+            "SELECT COUNT(*) FROM pending_confirmations WHERE session_id = ?1",
+            [&session_id_a],
+            |row| row.get(0),
+        )
+        .expect("query pending_confirmations count");
+    assert_eq!(
+        pending_count, 0,
+        "CONTROL-01 clean half must have ZERO pending_confirmations rows — \
+         an Allowed, never-blocked send has no confirm gate at all"
+    );
+
+    assert!(
+        find_event_by_type(&conn_a, &session_id_a, "email_send_succeeded")
+            .expect("query email_send_succeeded")
+            .is_some(),
+        "CONTROL-01 clean half must have an email_send_succeeded event (delivered)"
+    );
+
+    let host = mailpit_client::host();
+    mailpit_client::wait_for_recipient_captured(&host, &clean_recipient);
+
+    // ── (B) doc-derived hostile run — Blocked and never sent ────────────────
+    let (success_b, audit_db_b) = run_caprun_intent_on(
+        "send-email-summary",
+        "ops@company.example",
+        HOSTILE_EMAIL_CONTENT,
+        "control01_hostile",
+    );
+    assert!(
+        !success_b,
+        "CONTROL-01 hostile half: caprun MUST exit non-zero — doc-derived Blocked"
+    );
+
+    let conn_b =
+        open_audit_db(audit_db_b.to_str().unwrap()).expect("open audit DB (hostile half)");
+    let session_id_b: String = conn_b
+        .query_row("SELECT id FROM sessions LIMIT 1", [], |row| row.get(0))
+        .expect("one session row must exist (hostile half)");
+
+    assert!(
+        find_event_by_type(&conn_b, &session_id_b, "sink_blocked")
+            .expect("query sink_blocked")
+            .is_some(),
+        "CONTROL-01 hostile half must have a sink_blocked event"
+    );
+    assert!(
+        find_event_by_type(&conn_b, &session_id_b, "email_send_succeeded")
+            .expect("query email_send_succeeded")
+            .is_none(),
+        "CONTROL-01 hostile half must have NO email_send_succeeded event — never sent"
+    );
+
+    // HOSTILE_EMAIL_CONTENT's concat-derived recipient is always the fixed
+    // literal "accounts@ev1l.com" (never the CLI-supplied fallback) — this
+    // exact address is NEVER successfully sent to anywhere in this suite (it
+    // only ever arises from a doc-derived path, which always blocks), so
+    // checking its absence carries no cross-test race despite not being a
+    // fresh-per-run UUID.
+    mailpit_client::assert_recipient_not_captured(&host, "accounts@ev1l.com");
 }
 
 /// Cross-platform guard: this always-compiled test keeps `cargo test -p caprun`

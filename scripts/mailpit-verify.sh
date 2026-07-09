@@ -22,8 +22,9 @@
 #      either.
 #   4. Inside that container: installs `libssl-dev`/`pkg-config` (lettre's
 #      default `native-tls` feature is a NEW build dependency this phase
-#      introduces — Pitfall 3, RESEARCH.md), then runs
-#      `cargo test --workspace --no-fail-fast`.
+#      introduces — Pitfall 3, RESEARCH.md), then runs the verification
+#      command (MAILPIT_VERIFY_CMD, default `cargo test --workspace
+#      --no-fail-fast`).
 #   5. Stops/removes the Mailpit sidecar unconditionally (trap on EXIT), even
 #      if the test run fails, so no stray container is left behind.
 #
@@ -32,13 +33,26 @@
 # Run from the workspace root (same directory as Cargo.toml).
 #
 # Env overrides (rarely needed):
-#   MAILPIT_NET   — Docker network name (default: caprun-mailpit-net)
-#   MAILPIT_NAME  — Mailpit container name (default: caprun-mailpit)
+#   MAILPIT_NET       — Docker network name (default: caprun-mailpit-net)
+#   MAILPIT_NAME      — Mailpit container name (default: caprun-mailpit)
+#   MAILPIT_VERIFY_CMD — the command run inside the rust:1 container (default:
+#                        `cargo test --workspace --no-fail-fast`). Phase 16
+#                        (16-04, BLOCKER-3 3.1): scope a run to a single test,
+#                        e.g.
+#                        MAILPIT_VERIFY_CMD='cargo test -p caprun --test s9_live_block s9_control_ab_taint_driven' \
+#                          bash scripts/mailpit-verify.sh
 
 set -euo pipefail
 
 MAILPIT_NET="${MAILPIT_NET:-caprun-mailpit-net}"
 MAILPIT_NAME="${MAILPIT_NAME:-caprun-mailpit}"
+# Phase 16 (16-04, BLOCKER-3 3.1): allow a caller to scope the verification
+# command to a subset of the suite (e.g. a single new test) instead of always
+# running the full `cargo test --workspace --no-fail-fast`. Previously this
+# was a bare hardcoded string at the `docker run` invocation below — any plan
+# text saying `MAILPIT_VERIFY_CMD='...' bash scripts/mailpit-verify.sh` was
+# just a comment, not a real override. Now it is honored.
+MAILPIT_VERIFY_CMD="${MAILPIT_VERIFY_CMD:-cargo test --workspace --no-fail-fast}"
 
 cleanup() {
     echo "Cleaning up Mailpit sidecar (${MAILPIT_NAME}) ..."
@@ -98,7 +112,7 @@ docker run --rm \
     -e CAPRUN_SMTP_HOST="${MAILPIT_IP}" \
     -e CAPRUN_SMTP_PORT=1025 \
     rust:1 \
-    bash -c "apt-get update && apt-get install -y libssl-dev pkg-config && cargo test --workspace --no-fail-fast"
+    bash -c "apt-get update && apt-get install -y libssl-dev pkg-config && ${MAILPIT_VERIFY_CMD}"
 
 echo "Mailpit-backed Linux verification suite PASSED."
 
