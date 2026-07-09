@@ -62,7 +62,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 - [x] **Phase 13: Real Broker-Mediated SMTP Adapter** - caprun can send a real email through a broker-mediated adapter — worker never touches the network, secrets never leave the broker, and the send is idempotent/failure-safe (completed 2026-07-08)
 - [x] **Phase 14: Content-Sensitive Sink-Arg Blocking** - The executor blocks a tainted email body the same way it already blocks a tainted recipient (completed 2026-07-08)
 - [x] **Phase 15: Deterministic Doc→Action Extraction** - A confined, deterministic extractor turns a hostile document's bytes into a plan node, with a proven unbroken audit-DAG edge from read to block, including through a transformation (completed 2026-07-08, independently verified live on Linux — 8/8 must-haves)
-- [ ] **Phase 16: Confirm UX, Literal Binding & Negative Controls** - A human sees the verbatim, provenance-narrated recipient and body before deciding; confirm is bound to the exact resolved literals; the gate is proven taint-driven, not a blanket email block (4/4 plans executed, independent verification pending)
+- [x] **Phase 16: Confirm UX, Literal Binding & Negative Controls** - A human sees the verbatim, provenance-narrated recipient and body before deciding; confirm is bound to the exact resolved literals; the gate is proven taint-driven, not a blanket email block (completed 2026-07-09, independently verified — 10/10 checks, real exfiltration hole confirmed closed in source)
 - [ ] **Phase 17: Live Acceptance & Framing Honesty** - The full doc→action chain runs live on real Linux as one unbroken audit DAG, composing the hostile block and the clean control in the same run, with honest public framing of what was and wasn't proven
 
 ## Phase Details
@@ -220,5 +220,5 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 | 13. Real Broker-Mediated SMTP Adapter | v1.3 | 4/4 | Complete    | 2026-07-08 |
 | 14. Content-Sensitive Sink-Arg Blocking | v1.3 | 2/2 | Complete    | 2026-07-08 |
 | 15. Deterministic Doc→Action Extraction | v1.3 | 4/4 | Complete    | 2026-07-08 |
-| 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 4/4 | Complete   | 2026-07-09 |
+| 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 4/4 | Complete    | 2026-07-09 |
 | 17. Live Acceptance & Framing Honesty | v1.3 | 0/0 | Not started | - |
