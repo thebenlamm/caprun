@@ -45,6 +45,46 @@ proves taint *enforcement* through a deterministic extractor — it does not
 claim taint survives a real LLM planner's regeneration ("laundering"); that is
 v1.4+ (see `DOC-01`).
 
+**What v1.3's live proof does and does not claim (DOC-01):** CONTROL-01
+proves that a send built from TRUSTED intent is Allowed and delivers, and that
+a send whose args are DOC-DERIVED is Blocked — it does NOT prove "same doc,
+taint flipped"; the benign doc is decorative on the clean path. I1's
+draft-only demotion triggers when the broker mints untrusted taint from a
+REPORTED read (`mint_from_read`) — NOT on fd release; a worker that reads the
+doc and reports nothing stays Active (v2 obligation: demote at `RequestFd`).
+ProvideIntent mints worker-declared intent as UserTrusted only BEFORE any fd
+read, exactly once — broker-ENFORCED, not assumed. The confined worker's send
+path links brokerd → lettre → native-tls (a factual dependency-chain note).
+Three additional accepted residual risks (verify_chain's forgeable chain
+head, guard-(c)'s runtime-vs-compile-time gap, and the Allowed-path's replay
+exposure) are detailed in the v1.3 residual-risks clause below — do not stop
+reading at this paragraph.
+
+The controlled-experiment framing is: the hostile confirm and deny legs use
+two documents with IDENTICAL injection text and IDENTICAL derivation
+structure, differing ONLY in a per-run test-isolation recipient token; both
+are blocked identically as doc-derived tainted recipients; the operator
+confirms one and denies the other; confirm sends exactly once, deny sends
+nothing. The controlled variable is the OPERATOR'S DECISION. That per-run
+recipient token is a UUID in the domain fragment that exists PURELY so the
+live Mailpit assertions can isolate each leg on a shared listener — not
+because the two docs differ in any way the taint mechanism sees.
+
+Scope note: "one unbroken audit DAG" means per-session `verify_chain`
+integrity across a SHARED audit.db log (three sessions in one file, each
+independently chain-verified, with genuine-taint descent re-proven for the
+hostile anchors) — NOT a single cross-session `parent_id` chain spanning
+confirm/deny/clean.
+
+Self-consistency note: the live composed run's `to`/`body` anchor pin is a
+SELF-CONSISTENCY reconstruction (expected roots rebuilt from the same
+derivation record being checked), NOT an independently-sourced ground-truth
+pin. Independent ground-truth root pinning (via out-of-band mint-return
+values) lives only in Phase-15's still-green DB-alone test — the one source
+of truth for that property. The substantive anti-staple teeth (per-element
+real-file_read check, genuine_derivation_binds, both anti-staple controls)
+hold independently of this nuance.
+
 **Progress:** Phase 12 (DESIGN-01 design gate), Phase 13 (real
 broker-mediated SMTP adapter — SMTP-01/02/03/05, SEND-01/02), and Phase 14
 (content-sensitive sink-arg blocking — CONTENT-01/02, collect-then-Block
@@ -240,6 +280,16 @@ as of 2026-07-07 unless noted:
   the I0 draft-only rule); steganographic encoding in extract values (accepted,
   documented in the threat model); broker bugs = full compromise (mitigated by
   keeping the broker small).
+- **v1.3 residual risks (Phase 16/17, DOC-01):** `verify_chain` detects
+  single-store and non-recomputing multi-store tampering, but the chain head
+  is NOT externally anchored — an actor with `events` table write access can
+  forge it end-to-end. Accepted residual risk; v2: keyed-MAC / head-pin. The
+  Allowed email.send path has NO CAS — a replayed `SubmitPlanNode` sends N
+  emails; the durable per-attempt ledger makes each send auditable but does
+  not prevent duplication. Accepted residual risk. Guard-(c)
+  (`CAPRUN_ENABLE_IPC_CREATE_SESSION`) is a runtime default-deny flag, not a
+  compile-time exclusion — the forced-Active mint code ships in the
+  production binary. v2: build-exclude it.
 - **Post-v0 roadmap:** v1 — Git/GitHub/test adapters, patch/PR, workspace
   snapshots, rich approval. v2 — multi-worker decomposition, parallel execution.
   v3 — cross-machine Sessions, Ed25519 export, broker federation. v4 — general
