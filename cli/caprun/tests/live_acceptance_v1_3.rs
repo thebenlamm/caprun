@@ -20,13 +20,14 @@
 //! share one blocked effect, so a minimum of 3 sessions is structurally
 //! required: 2 hostile-block-then-decide + 1 clean).
 //!
-//! This plan (17-02) delivers the harness scaffolding and the composed
-//! scenario through assertion teeth #1 (per-session verify_chain sweep), #3
+//! Plan 17-02 delivered the harness scaffolding and the composed scenario
+//! through assertion teeth #1 (per-session verify_chain sweep), #3
 //! (clean-control delivers ungated), #4 (confirm sends exactly once / deny
-//! sends nothing), and #5 (exactly 3 sessions). Tooth #2 (the HARD-GATE
-//! genuine-taint re-proof reusing `brokerd::provenance_proof`) is appended by
-//! Plan 03 (17-03) at the `TEETH-2-INSERTION-POINT` sentinel left at the end
-//! of `live_acceptance_v1_3_composed`.
+//! sends nothing), and #5 (exactly 3 sessions). Plan 17-03 appends tooth #2
+//! (the HARD-GATE genuine-taint re-proof reusing `brokerd::provenance_proof`,
+//! re-run against BOTH hostile sessions' `to`+`body` anchors THIS run
+//! produced, plus both anti-staple controls) at the end of
+//! `live_acceptance_v1_3_composed`.
 //!
 //! The live assertions are `#[cfg(target_os = "linux")]` because the
 //! confinement stack (abstract UDS + Landlock + seccomp) is Linux-only. On
@@ -360,7 +361,20 @@ mod mailpit_client {
 #[cfg(target_os = "linux")]
 #[test]
 fn live_acceptance_v1_3_composed() {
-    use brokerd::audit::{find_event_by_type, open_audit_db, verify_chain};
+    use brokerd::audit::{current_chain_head, find_event_by_type, open_audit_db, verify_chain};
+    // Tooth #2 (HARD GATE, 17-03/COORD-T2): the promoted Phase-15 genuine-taint
+    // proof predicates, re-run here against THIS composed run's live hostile
+    // anchors — never reimplemented (see brokerd::provenance_proof's own doc
+    // comment on why a reimplementation is forbidden).
+    use brokerd::provenance_proof::{assert_unbroken_edge, genuine_derivation_binds, union_provenance_chains};
+    // Anti-staple control B's naive re-anchor mint — the SAME production
+    // mint_from_read the broker's own dispatch path uses (check-invariants.sh
+    // Gate 3 exempts any file under a `tests/` dir from the mint-call-site
+    // restriction, since this is a Cargo integration-test binary exercising
+    // the real production function, not a bypass module).
+    use brokerd::quarantine::{mint_from_read, Claim};
+    use executor::value_store::ValueStore;
+    use runtime_core::Event;
 
     let run_id = uuid::Uuid::new_v4();
     let tmp = std::env::temp_dir().join(format!("caprun_live_v13_{run_id}"));
@@ -547,7 +561,181 @@ fn live_acceptance_v1_3_composed() {
         );
     }
 
-    // TEETH-2-INSERTION-POINT: genuine-taint re-proof appended by Plan 03 (17-03)
+    // ── TOOTH #2 (HARD GATE, milestone-failing) — genuine-taint re-proof ──
+    // (17-03/COORD-T2). Phase 15's DB-alone proof is re-run HERE, against
+    // BOTH hostile sessions' `to`+`body` anchors produced by THIS composed
+    // live run, using the promoted brokerd::provenance_proof functions — not
+    // a reimplementation. A block with only one anchor's edge proven is a
+    // partial pass, i.e. a FAIL: every step below runs for BOTH anchors.
+    for (sid, leg) in [
+        (confirm_session_id.as_str(), "confirm"),
+        (deny_session_id.as_str(), "deny"),
+    ] {
+        let blocked = find_event_by_type(&conn, sid, "sink_blocked")
+            .expect("query sink_blocked (tooth #2)")
+            .unwrap_or_else(|| {
+                panic!("{leg} leg: a durable sink_blocked event must exist for tooth #2")
+            });
+        assert_eq!(
+            blocked.anchors.len(),
+            2,
+            "{leg} leg: tooth #2 requires exactly two anchors (collect-then-Block)"
+        );
+        let mut arg_names: Vec<&str> = blocked.anchors.iter().map(|a| a.arg.as_str()).collect();
+        arg_names.sort();
+        assert_eq!(
+            arg_names,
+            vec!["body", "to"],
+            "{leg} leg: the two anchors must carry distinct arg names {{\"to\",\"body\"}}"
+        );
+
+        let to_anchor = blocked
+            .anchors
+            .iter()
+            .find(|a| a.arg == "to")
+            .expect("a `to` anchor must be present");
+        let body_anchor = blocked
+            .anchors
+            .iter()
+            .find(|a| a.arg == "body")
+            .expect("a `body` anchor must be present");
+
+        // ── POSITIVE per-anchor unbroken edge (both anchors) ──
+        //
+        // Reconstruct the `to` anchor's expected roots from the derivation
+        // RECORD itself (a NO-LIMIT inline scan of every `derivation` event in
+        // this session, finding the one whose `derived_value_id` matches this
+        // anchor's `value_id`) — a SELF-CONSISTENCY reconstruction, NOT an
+        // independently-sourced ground truth (that pin lives only in
+        // Phase-15's DB-alone test). The substantive anti-staple teeth below
+        // (per-element real-file_read check, genuine_derivation_binds, both
+        // anti-staple controls) hold independently of this nuance.
+        let mut stmt = conn
+            .prepare("SELECT payload FROM events WHERE session_id = ?1 AND event_type = 'derivation'")
+            .expect("prepare derivation scan (tooth #2, no LIMIT — mirrors genuine_derivation_binds)");
+        let payloads: Vec<String> = stmt
+            .query_map(rusqlite::params![sid], |row| row.get(0))
+            .expect("query derivation scan")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect derivation event payloads");
+        let mut expected_roots_to: Option<Vec<uuid::Uuid>> = None;
+        for payload in &payloads {
+            let ev: Event = serde_json::from_str(payload).expect("deserialize derivation event");
+            if ev.derived_value_id.as_ref() == Some(&to_anchor.value_id) {
+                expected_roots_to = Some(union_provenance_chains(&ev.input_provenance_chains));
+                break;
+            }
+        }
+        let expected_roots_to = expected_roots_to.unwrap_or_else(|| {
+            panic!("{leg} leg: a derivation event binding the `to` anchor's value_id must exist")
+        });
+
+        assert_unbroken_edge(&conn, sid, &to_anchor.provenance_chain, &expected_roots_to).unwrap_or_else(
+            |e| panic!("{leg} leg: the derived `to` anchor's unbroken-edge proof failed: {e}"),
+        );
+
+        let expected_roots_body = vec![body_anchor.read_event_id];
+        assert_unbroken_edge(&conn, sid, &body_anchor.provenance_chain, &expected_roots_body)
+            .unwrap_or_else(|e| panic!("{leg} leg: the `body` anchor's unbroken-edge proof failed: {e}"));
+
+        // ── PAYLOAD-BOUND genuine-derivation for the derived `to` (finding #2) ──
+        assert!(
+            genuine_derivation_binds(&conn, sid, &to_anchor.value_id, &to_anchor.provenance_chain),
+            "{leg} leg: genuine_derivation_binds must hold for the derived `to` anchor"
+        );
+
+        // ── EXTRACT-03 survival ──
+        assert!(
+            to_anchor.taint.iter().any(|t| t.is_untrusted()),
+            "{leg} leg: the concat-derived recipient must still carry untrusted taint after the transform"
+        );
+
+        // ── ANTI-STAPLE CONTROL A (fabricated root REJECTED) ──
+        let fab = vec![uuid::Uuid::new_v4()];
+        let control_a_result = assert_unbroken_edge(&conn, sid, &fab, &fab);
+        assert!(
+            control_a_result.is_err(),
+            "{leg} leg: control A — a fabricated root must be REJECTED"
+        );
+        assert!(
+            control_a_result.unwrap_err().contains("does not resolve"),
+            "{leg} leg: control A rejection must be because the fabricated root does not resolve"
+        );
+    }
+
+    // ── ANTI-STAPLE CONTROL B (re-anchored staple REJECTED) — MUTATES the ──
+    // DAG, so run it LAST, and only against the confirm-leg session (the
+    // control proves the predicate's teeth, session-independent; running it
+    // on both is acceptable but not required, per the plan).
+    {
+        let sid = confirm_session_id.as_str();
+
+        // Sanity (finding #11's vacuous-check trap): a genuine derivation
+        // event DOES exist in this session — the block's own.
+        let session_has_a_derivation_event = find_event_by_type(&conn, sid, "derivation")
+            .expect("query derivation")
+            .is_some();
+        assert!(
+            session_has_a_derivation_event,
+            "confirm leg: a derivation event must exist (sanity — a session-wide existence \
+             query would be vacuously satisfied, which is why the real predicate must be \
+             payload-bound instead)"
+        );
+
+        // Chain the naive re-mint onto the session's LIVE chain head — by
+        // this point in the composed run that is `email_send_succeeded` (the
+        // confirm leg already released), NOT the mid-chain `sink_blocked`
+        // event. Parenting onto a mid-chain node would give it a second
+        // child, forking the DAG (the Phase-16 MAJOR-7 fork-bug class).
+        let (head_id, head_hash) = current_chain_head(&conn, sid)
+            .expect("query current_chain_head")
+            .expect("confirm leg: a chain head must exist by this point in the composed run");
+
+        let confirm_session_uuid =
+            uuid::Uuid::parse_str(sid).expect("parse confirm_session_id as Uuid");
+        let mut scratch_store = ValueStore::default();
+        // A naive extractor's defect, modeled exactly as the canonical
+        // extract_02_anti_staple_control_b test does: mint the
+        // already-assembled recipient literal via a PLAIN mint_from_read,
+        // using the `email_address` claim shape (NOT `doc_fragment`, whose
+        // looks_like_doc_fragment guard rejects any '@'-containing token) —
+        // a REAL, same-session mint with NO threaded ancestry to the two
+        // original recipient-half reads.
+        let naive_claim = Claim {
+            claim_type: "email_address".into(),
+            value: expected_recipient(&confirm_nonce),
+        };
+        let (naive_read_id, _naive_hash, naive_value_id, _demoted_id, _demoted_hash) = mint_from_read(
+            &conn,
+            &mut scratch_store,
+            confirm_session_uuid,
+            &naive_claim,
+            Some(head_id),
+            Some(&head_hash),
+        )
+        .expect("mint_from_read (naive re-anchor) must succeed — a REAL, same-session mint");
+
+        let naive_provenance_chain = vec![naive_read_id];
+
+        // THE TEETH: rejected specifically on the payload-binding predicate,
+        // never on session-wide existence (asserted true above).
+        assert!(
+            !genuine_derivation_binds(&conn, sid, &naive_value_id, &naive_provenance_chain),
+            "control B (finding #11): NO derivation event's payload may bind the naive \
+             re-anchored value_id to its (nonexistent) input chains, even though a derivation \
+             event EXISTS in this session (asserted above) — the predicate is payload-bound, \
+             not existence-based"
+        );
+
+        // Currently-passing assertion (do NOT remove or weaken): proves the
+        // anti-staple control runs green against THIS run's real
+        // linear-chain data, chained onto the live head rather than the
+        // mid-chain sink_blocked node (tooth #2's whole purpose).
+        assert!(
+            verify_chain(&conn, sid),
+            "verify_chain must remain true after Control B's linear append"
+        );
+    }
 }
 
 /// Cross-platform guard: this always-compiled test keeps `cargo test -p
