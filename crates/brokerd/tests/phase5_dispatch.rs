@@ -191,6 +191,11 @@ async fn block_appends_durable_causal_sink_blocked() {
     // Drive the real dispatch_request SubmitPlanNode arm over a UnixStream pair.
     let (mut server_end, _client_end) =
         tokio::net::UnixStream::pair().expect("UnixStream::pair");
+    // Phase 16 (BLOCKER-1 guard a): dispatch_request gained two new
+    // per-connection `&mut bool` ordering-guard params; this harness never
+    // drives ProvideIntent/RequestFd, so fresh `false` locals are correct.
+    let mut intent_provided = false;
+    let mut fd_requested = false;
     dispatch_request(
         BrokerRequest::SubmitPlanNode {
             plan_node: email_plan(value_id),
@@ -203,6 +208,8 @@ async fn block_appends_durable_causal_sink_blocked() {
         &mut store,
         &ws_root(),
         &mut session_status,
+        &mut intent_provided,
+        &mut fd_requested,
     )
     .await
     .expect("dispatch_request must succeed once the append is durable");
@@ -273,6 +280,11 @@ async fn append_failure_is_fail_closed() {
 
     let (mut server_end, _client_end) =
         tokio::net::UnixStream::pair().expect("UnixStream::pair");
+    // Phase 16 (BLOCKER-1 guard a): dispatch_request gained two new
+    // per-connection `&mut bool` ordering-guard params; this harness never
+    // drives ProvideIntent/RequestFd, so fresh `false` locals are correct.
+    let mut intent_provided = false;
+    let mut fd_requested = false;
     let result = dispatch_request(
         BrokerRequest::SubmitPlanNode {
             plan_node: email_plan(value_id),
@@ -285,6 +297,8 @@ async fn append_failure_is_fail_closed() {
         &mut store,
         &ws_root(),
         &mut session_status,
+        &mut intent_provided,
+        &mut fd_requested,
     )
     .await;
 

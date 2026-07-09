@@ -119,6 +119,12 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
     let (mut server_end, mut client_end) =
         tokio::net::UnixStream::pair().expect("UnixStream::pair");
 
+    // Phase 16 (BLOCKER-1 guard a): dispatch_request gained two new
+    // per-connection `&mut bool` ordering-guard params; this test drives a
+    // single ProvideIntent and never RequestFd, so fresh `false` locals are correct.
+    let mut intent_provided = false;
+    let mut fd_requested = false;
+
     // Send ProvideIntent through the real dispatch arm.
     dispatch_request(
         BrokerRequest::ProvideIntent {
@@ -136,6 +142,8 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
         &mut store,
         &ws_root,
         &mut session_status,
+        &mut intent_provided,
+        &mut fd_requested,
     )
     .await
     .expect("dispatch ProvideIntent must succeed");
@@ -297,6 +305,12 @@ struct DispatchHarness {
     last_event_id: uuid::Uuid,
     last_event_hash: String,
     session_status: runtime_core::SessionStatus,
+    // Phase 16 (BLOCKER-1 guard a): threaded across every `.dispatch()` call
+    // on this harness instance, exactly like `session_status` — a test that
+    // drives multiple requests through the SAME harness sees the guard
+    // persist across them, mirroring a real connection's per-connection state.
+    intent_provided: bool,
+    fd_requested: bool,
     ws_root: std::sync::Arc<adapter_fs::workspace::WorkspaceRoot>,
     server_end: tokio::net::UnixStream,
     client_end: tokio::net::UnixStream,
@@ -329,6 +343,8 @@ impl DispatchHarness {
             last_event_id,
             last_event_hash,
             session_status,
+            intent_provided: false,
+            fd_requested: false,
             ws_root,
             server_end,
             client_end,
@@ -354,6 +370,8 @@ impl DispatchHarness {
             &mut self.store,
             &self.ws_root,
             &mut self.session_status,
+            &mut self.intent_provided,
+            &mut self.fd_requested,
         )
         .await?;
 

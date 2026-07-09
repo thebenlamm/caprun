@@ -192,10 +192,23 @@ pub fn submit_plan_node(
         | SessionStatus::Done
         | SessionStatus::Failed
         | SessionStatus::RolledBack => {
-            // No deny from THIS gate — these lifecycle states are not a
-            // session-trust concern this check governs. Matched explicitly
-            // (not a wildcard) so a future SessionStatus variant is a compile
-            // error, not a silent bypass.
+            // Phase 16 (BLOCKER-1 guard b, DESIGN-session-trust-state.md): these
+            // lifecycle states are terminal or paused — a CommitIrreversible
+            // sink must NEVER fall through to Allowed here. A non-terminal
+            // Allowed-dispatch (e.g. a naively-added email.send branch) could
+            // otherwise be reached via a stale/replayed submission against a
+            // session that has already moved past Active. Non-CommitIrreversible
+            // sinks (Observe/MutateReversible) are unaffected — this gate is
+            // scoped to the CommitIrreversible class only, same as the Draft arm.
+            if sink_sensitivity::sink_effect_class(&plan_node.sink) == EffectClass::CommitIrreversible {
+                return ExecutorDecision::Denied {
+                    reason: DenyReason::NonLiveSessionDeniesCommitIrreversible {
+                        sink: plan_node.sink.clone(),
+                    },
+                };
+            }
+            // Non-CommitIrreversible sinks in these lifecycle states: no deny
+            // from THIS gate; fall through to Allowed.
         }
     }
 

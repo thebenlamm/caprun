@@ -146,6 +146,12 @@ async fn handle_connection(
     // result, updated in place after mint_from_read demotes (never re-queried
     // from the DB per call, DESIGN §4, RESEARCH Pitfall 2).
     let mut session_status = initial_session_status;
+    // Phase 16 (BLOCKER-1 guard a): per-connection, broker-enforced ordering
+    // state — ProvideIntent is accepted EXACTLY ONCE and ONLY BEFORE any
+    // RequestFd on this connection. Initialized false per connection, exactly
+    // like `session_status` above (never re-derived from IPC).
+    let mut intent_provided = false;
+    let mut fd_requested = false;
 
     loop {
         // Read 4-byte LE length prefix; clean EOF ends the connection loop.
@@ -198,6 +204,8 @@ async fn handle_connection(
             &mut value_store,
             &workspace_root,
             &mut session_status,
+            &mut intent_provided,
+            &mut fd_requested,
         )
         .await?;
     }
@@ -215,6 +223,14 @@ async fn handle_connection(
 /// advanced to `Draft` after `ReportClaims` demotes, and passed by reference
 /// (never re-derived from IPC/PlanNode) into `executor::submit_plan_node`
 /// (DESIGN-session-trust-state.md §4/§11 condition 0).
+///
+/// `intent_provided` / `fd_requested` (Phase 16, BLOCKER-1 guard a) are the
+/// broker-enforced, per-connection ordering state for `ProvideIntent`: it is
+/// accepted EXACTLY ONCE and ONLY BEFORE any `RequestFd` on this connection.
+/// Both start `false`, are threaded by `&mut` exactly like `session_status`,
+/// and are set at the RequestFd/ProvideIntent arms below — never reset,
+/// never re-derived from IPC.
+#[allow(clippy::too_many_arguments)]
 pub async fn dispatch_request(
     request: BrokerRequest,
     stream: &mut tokio::net::UnixStream,
@@ -225,13 +241,49 @@ pub async fn dispatch_request(
     value_store: &mut ValueStore,
     workspace_root: &Arc<adapter_fs::workspace::WorkspaceRoot>,
     session_status: &mut SessionStatus,
+    intent_provided: &mut bool,
+    fd_requested: &mut bool,
 ) -> anyhow::Result<()> {
     match request {
         BrokerRequest::CreateSession { intent_id } => {
+            // Phase 16 (BLOCKER-1 guard c): this in-broker IPC arm forces a
+            // fresh session Active via SeedProvenance::TrustedArg — a forced-
+            // Active mint reachable over IPC with NO once-only/ordering guard
+            // would, combined with the reach-to-a-send path BLOCKER-1
+            // documents, let ANY IPC caller obtain a trusted-seeded session.
+            // It is test-only (the live cli/caprun path calls create_session
+            // directly, never through this arm) and is now gated behind a
+            // fail-closed RUNTIME opt-in env flag — NOT `cfg(test)`, which is
+            // unset when brokerd compiles as a dependency of an integration-
+            // test binary (the Round-3 mechanism this replaces was Linux-
+            // invisible and would panic uds_ipc.rs's own tests under
+            // mailpit-verify.sh). Exactly the string "1" enables the arm
+            // (never `.is_ok()` — F3 hardening: an EMPTY inherited
+            // CAPRUN_ENABLE_IPC_CREATE_SESSION="" must NOT enable it). Default
+            // (unset/empty/anything else) = Error, mint nothing. The confined
+            // worker cannot set the broker PROCESS's own environment
+            // (separate process), so no production IPC caller can obtain a
+            // forced-Active session this way.
+            if !matches!(
+                std::env::var("CAPRUN_ENABLE_IPC_CREATE_SESSION").as_deref(),
+                Ok("1")
+            ) {
+                let _ = intent_id;
+                send_response(
+                    stream,
+                    &BrokerResponse::Error {
+                        message: "CreateSession over IPC is disabled; set \
+                                  CAPRUN_ENABLE_IPC_CREATE_SESSION=1 to enable \
+                                  (test-only path)"
+                            .into(),
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
+
             // Session-independent: mints its own fresh session (parent_id None);
-            // does NOT thread the connection chain. This in-broker IPC path is
-            // test-only (the live cli/caprun path calls create_session directly,
-            // not through this arm) and always seeds SeedProvenance::TrustedArg.
+            // does NOT thread the connection chain.
             let seed_provenance = SeedProvenance::TrustedArg;
             let session = create_session(intent_id, seed_provenance.clone());
             let new_session_id = session.id;
@@ -286,6 +338,12 @@ pub async fn dispatch_request(
         }
 
         BrokerRequest::RequestFd { path } => {
+            // Phase 16 (BLOCKER-1 guard a): mark fd_requested at entry, BEFORE
+            // any other work — this is what makes a subsequent ProvideIntent
+            // rejected fail-closed, regardless of whether this RequestFd itself
+            // ultimately succeeds or errors below.
+            *fd_requested = true;
+
             // HARD-04: resolve the worker-supplied path BENEATH the workspace
             // dirfd anchor via a single openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)
             // syscall. Absolute paths, `..` traversal, and symlink escapes are
@@ -749,6 +807,28 @@ pub async fn dispatch_request(
         }
 
         BrokerRequest::ProvideIntent { intent } => {
+            // Phase 16 (BLOCKER-1 guard a): ProvideIntent is accepted EXACTLY
+            // ONCE and ONLY BEFORE any RequestFd on this connection —
+            // broker-enforced, not assumed from an honest worker's startup
+            // ordering. A second ProvideIntent, or one arriving after ANY
+            // RequestFd, is rejected fail-closed: mint NOTHING, no chain-head
+            // advance. This closes the attack path where RequestFd releases
+            // raw untrusted bytes (never demoting session_status) and the
+            // worker then calls ProvideIntent to mint an ARBITRARY
+            // attacker-chosen literal as fully-trusted UserTrusted.
+            if *intent_provided || *fd_requested {
+                send_response(
+                    stream,
+                    &BrokerResponse::Error {
+                        message: "ProvideIntent rejected: must arrive exactly once, \
+                                  before any RequestFd (fail-closed)"
+                            .into(),
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
+
             // Extract the user-provided literal(s) from the typed intent.
             // Exhaustive match: adding a new CaprunIntent variant causes a compile error here,
             // forcing the dispatcher to be updated (no silent unhandled variants).
@@ -829,6 +909,11 @@ pub async fn dispatch_request(
                 (recipient_value_id, subject_value_id, body_value_id)
             };
 
+            // Guard (a): mark accepted ONLY after the mint(s) succeeded — a
+            // failed ProvideIntent (propagated via `?` above) never marks the
+            // connection as having consumed its one-shot allowance.
+            *intent_provided = true;
+
             send_response(
                 stream,
                 &BrokerResponse::IntentAccepted {
@@ -866,4 +951,247 @@ async fn send_response(
     stream.write_all(&len).await?;
     stream.write_all(&body).await?;
     Ok(())
+}
+
+/// Phase 16 (BLOCKER-1 guard a) — ProvideIntent once-and-before-RequestFd unit
+/// tests over `UnixStream::pair` (mirrors the existing dispatch_request arm
+/// tests in `crates/brokerd/tests/proto_claims.rs`, but as `--lib` tests since
+/// they drive `dispatch_request` in-crate and assert purely on the new
+/// per-connection ordering-guard locals).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audit::open_audit_db;
+    use runtime_core::intent::CaprunIntent;
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+
+    /// Read one framed `BrokerResponse` from the client end of a
+    /// `UnixStream::pair` (mirrors `send_response`'s wire framing).
+    async fn read_framed(stream: &mut tokio::net::UnixStream) -> BrokerResponse {
+        let mut len_buf = [0u8; 4];
+        stream.read_exact(&mut len_buf).await.expect("read length");
+        let msg_len = u32::from_le_bytes(len_buf) as usize;
+        let mut body = vec![0u8; msg_len];
+        stream.read_exact(&mut body).await.expect("read body");
+        serde_json::from_slice(&body).expect("deserialize response")
+    }
+
+    fn sample_intent() -> CaprunIntent {
+        CaprunIntent::SendEmailSummary {
+            recipient: "boss@company.com".to_string(),
+            subject: "Q3 summary".to_string(),
+            body: "See attached.".to_string(),
+        }
+    }
+
+    /// A fresh in-memory audit DB + per-connection state, mirroring
+    /// `proto_claims.rs::DispatchHarness`'s setup shape.
+    fn harness() -> (
+        Arc<Mutex<rusqlite::Connection>>,
+        Uuid,
+        ValueStore,
+        Uuid,
+        String,
+        SessionStatus,
+        Arc<adapter_fs::workspace::WorkspaceRoot>,
+    ) {
+        let conn = Arc::new(Mutex::new(open_audit_db(":memory:").expect("open_audit_db")));
+        let session_id = Uuid::new_v4();
+        let store = ValueStore::default();
+        let last_event_id = Uuid::new_v4();
+        let last_event_hash = "genesis-hash".to_string();
+        let session_status = SessionStatus::Active;
+        let ws_root = Arc::new(
+            adapter_fs::workspace::WorkspaceRoot::open(std::env::temp_dir().as_path())
+                .expect("open ws root"),
+        );
+        (
+            conn,
+            session_id,
+            store,
+            last_event_id,
+            last_event_hash,
+            session_status,
+            ws_root,
+        )
+    }
+
+    /// Guard (a), positive case: the first ProvideIntent before any RequestFd
+    /// still succeeds — the happy path is unchanged.
+    #[tokio::test]
+    async fn provide_intent_before_any_request_fd_succeeds() {
+        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, mut session_status, ws_root) =
+            harness();
+        let mut intent_provided = false;
+        let mut fd_requested = false;
+        let (mut server_end, mut client_end) =
+            tokio::net::UnixStream::pair().expect("UnixStream::pair");
+
+        dispatch_request(
+            BrokerRequest::ProvideIntent { intent: sample_intent() },
+            &mut server_end,
+            &conn,
+            session_id,
+            &mut last_event_id,
+            &mut last_event_hash,
+            &mut store,
+            &ws_root,
+            &mut session_status,
+            &mut intent_provided,
+            &mut fd_requested,
+        )
+        .await
+        .expect("ProvideIntent before any RequestFd must succeed");
+
+        let resp = read_framed(&mut client_end).await;
+        assert!(
+            matches!(resp, BrokerResponse::IntentAccepted { .. }),
+            "expected IntentAccepted, got {resp:?}"
+        );
+        assert!(intent_provided, "intent_provided must be set true after success");
+        assert!(!fd_requested, "fd_requested must remain false — RequestFd never ran");
+    }
+
+    /// Guard (a), negative case 1: a SECOND ProvideIntent on the same
+    /// connection is rejected fail-closed (Error, mints nothing) — accepted
+    /// EXACTLY ONCE.
+    #[tokio::test]
+    async fn second_provide_intent_is_rejected() {
+        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, mut session_status, ws_root) =
+            harness();
+        let mut intent_provided = false;
+        let mut fd_requested = false;
+        let (mut server_end, mut client_end) =
+            tokio::net::UnixStream::pair().expect("UnixStream::pair");
+
+        dispatch_request(
+            BrokerRequest::ProvideIntent { intent: sample_intent() },
+            &mut server_end,
+            &conn,
+            session_id,
+            &mut last_event_id,
+            &mut last_event_hash,
+            &mut store,
+            &ws_root,
+            &mut session_status,
+            &mut intent_provided,
+            &mut fd_requested,
+        )
+        .await
+        .expect("first ProvideIntent must succeed");
+        let _ = read_framed(&mut client_end).await;
+
+        let last_event_id_before_second = last_event_id;
+        let last_event_hash_before_second = last_event_hash.clone();
+
+        dispatch_request(
+            BrokerRequest::ProvideIntent { intent: sample_intent() },
+            &mut server_end,
+            &conn,
+            session_id,
+            &mut last_event_id,
+            &mut last_event_hash,
+            &mut store,
+            &ws_root,
+            &mut session_status,
+            &mut intent_provided,
+            &mut fd_requested,
+        )
+        .await
+        .expect("dispatch must complete (Error response, not a transport failure)");
+
+        let resp = read_framed(&mut client_end).await;
+        assert!(
+            matches!(resp, BrokerResponse::Error { .. }),
+            "a second ProvideIntent must be rejected fail-closed, got {resp:?}"
+        );
+        assert_eq!(
+            last_event_id, last_event_id_before_second,
+            "no chain-head advance on the rejected second ProvideIntent (mints nothing)"
+        );
+        assert_eq!(last_event_hash, last_event_hash_before_second);
+    }
+
+    /// Guard (a), negative case 2: a ProvideIntent arriving AFTER any
+    /// RequestFd on the same connection is rejected fail-closed, even though
+    /// no ProvideIntent has ever succeeded on this connection.
+    #[tokio::test]
+    async fn provide_intent_after_request_fd_is_rejected() {
+        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, mut session_status, _ws_root) =
+            harness();
+        // A real workspace dir + file so RequestFd's read_within succeeds
+        // (the arm sets fd_requested at ENTRY regardless, but a real target
+        // keeps this test representative of a genuine RequestFd call).
+        let mut ws_dir = std::env::temp_dir();
+        ws_dir.push(format!("caprun_guard_a_rfd_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&ws_dir).expect("create ws dir");
+        std::fs::write(ws_dir.join("workspace.txt"), b"hello").expect("write ws file");
+        let ws_root = Arc::new(
+            adapter_fs::workspace::WorkspaceRoot::open(&ws_dir).expect("open ws root"),
+        );
+
+        let mut intent_provided = false;
+        let mut fd_requested = false;
+        let (mut server_end, mut client_end) =
+            tokio::net::UnixStream::pair().expect("UnixStream::pair");
+
+        dispatch_request(
+            BrokerRequest::RequestFd { path: "workspace.txt".to_string() },
+            &mut server_end,
+            &conn,
+            session_id,
+            &mut last_event_id,
+            &mut last_event_hash,
+            &mut store,
+            &ws_root,
+            &mut session_status,
+            &mut intent_provided,
+            &mut fd_requested,
+        )
+        .await
+        .expect("RequestFd must succeed");
+        // The RequestFd arm sends the fd's 1-byte SCM_RIGHTS sendmsg payload
+        // BEFORE the FdGranted JSON response (mirrors cli/caprun/src/worker.rs's
+        // real client-side ordering) — drain that 1 byte via recv_fd FIRST, or
+        // read_framed's length-prefix read would be corrupted by it and hang
+        // waiting for bytes that will never arrive.
+        let received_fd = adapter_fs::recv_fd(client_end.as_raw_fd())
+            .expect("recv_fd must consume the RequestFd arm's SCM_RIGHTS payload");
+        drop(unsafe { std::fs::File::from_raw_fd(received_fd) });
+        let _ = read_framed(&mut client_end).await;
+        assert!(fd_requested, "fd_requested must be set true after RequestFd");
+
+        let last_event_id_before_intent = last_event_id;
+        let last_event_hash_before_intent = last_event_hash.clone();
+
+        dispatch_request(
+            BrokerRequest::ProvideIntent { intent: sample_intent() },
+            &mut server_end,
+            &conn,
+            session_id,
+            &mut last_event_id,
+            &mut last_event_hash,
+            &mut store,
+            &ws_root,
+            &mut session_status,
+            &mut intent_provided,
+            &mut fd_requested,
+        )
+        .await
+        .expect("dispatch must complete (Error response, not a transport failure)");
+
+        let resp = read_framed(&mut client_end).await;
+        assert!(
+            matches!(resp, BrokerResponse::Error { .. }),
+            "ProvideIntent arriving after RequestFd must be rejected fail-closed, got {resp:?}"
+        );
+        assert!(!intent_provided, "intent_provided must remain false — the mint never ran");
+        assert_eq!(
+            last_event_id, last_event_id_before_intent,
+            "no chain-head advance on the rejected post-RequestFd ProvideIntent"
+        );
+        assert_eq!(last_event_hash, last_event_hash_before_intent);
+
+        std::fs::remove_dir_all(&ws_dir).ok();
+    }
 }

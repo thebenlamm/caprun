@@ -23,6 +23,14 @@ mod linux_tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use uuid::Uuid;
 
+    /// Serializes every test in this file that mutates the process-global
+    /// `CAPRUN_ENABLE_IPC_CREATE_SESSION` env var — mirrors
+    /// `email_smtp.rs::SMTP_ENV_LOCK`'s rationale for a different shared
+    /// process-global resource. Without this, `cargo test`'s default
+    /// multi-threaded runner could interleave one test's `set_var("1")` with
+    /// another's `remove_var`, racing the guard-c gate itself.
+    static CREATE_SESSION_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Helper: send a framed BrokerRequest and receive a BrokerResponse.
     ///
     /// Framing: 4-byte LE length prefix, then JSON body.
@@ -45,8 +53,16 @@ mod linux_tests {
 
     /// Start a broker server, connect a client, round-trip a CreateSession request,
     /// and assert the server returns SessionCreated.
+    ///
+    /// Phase 16 (BLOCKER-1 guard c): this test legitimately needs the
+    /// in-broker CreateSession arm to mint, so it explicitly OPTS IN via the
+    /// runtime flag before spawning the broker (the arm reads the flag at
+    /// dispatch time, and the broker runs in-process via tokio::spawn, so
+    /// setting it here is visible to that task).
     #[tokio::test]
     async fn server_accept() {
+        let _env_guard = CREATE_SESSION_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::set_var("CAPRUN_ENABLE_IPC_CREATE_SESSION", "1");
         let conn: Arc<Mutex<Connection>> =
             Arc::new(Mutex::new(open_audit_db(":memory:").expect("open_audit_db")));
 
@@ -100,8 +116,14 @@ mod linux_tests {
     /// 1. SessionCreated response with a valid UUID.
     /// 2. A `sessions` row exists in the SQLite DB for the returned session_id.
     /// 3. A `session_created` Event exists in the audit DAG for that session.
+    ///
+    /// Phase 16 (BLOCKER-1 guard c): opts in via the runtime flag (see
+    /// `server_accept` above) — this test legitimately needs CreateSession to
+    /// mint.
     #[tokio::test]
     async fn create_session_round_trip() {
+        let _env_guard = CREATE_SESSION_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::set_var("CAPRUN_ENABLE_IPC_CREATE_SESSION", "1");
         let conn: Arc<Mutex<Connection>> =
             Arc::new(Mutex::new(open_audit_db(":memory:").expect("open_audit_db")));
 
@@ -175,6 +197,86 @@ mod linux_tests {
         );
 
         drop(locked);
+        server_handle.abort();
+    }
+
+    /// F2 (MANDATORY — BLOCKER-1 guard c default-deny proof): with the runtime
+    /// opt-in flag explicitly UNSET (never merely "not set by this test" —
+    /// `remove_var` guards against a value inherited from the test process's
+    /// own environment), a `CreateSession` request over the real abstract
+    /// socket returns `BrokerResponse::Error` (never `SessionCreated`) AND
+    /// mints ZERO new session rows. This is the ONE test that would catch a
+    /// future accidental default-flip (e.g. someone changes the check to
+    /// `!= Some("0")` instead of `== Some("1")`) — every other test in this
+    /// file OPTS IN to the flag, so this specific negative test is not
+    /// optional.
+    #[tokio::test]
+    async fn create_session_over_ipc_denied_by_default_when_flag_unset() {
+        let _env_guard = CREATE_SESSION_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var("CAPRUN_ENABLE_IPC_CREATE_SESSION");
+
+        let conn: Arc<Mutex<Connection>> =
+            Arc::new(Mutex::new(open_audit_db(":memory:").expect("open_audit_db")));
+
+        let pid = std::process::id();
+        let server_session_id = format!("ipc-f2-default-deny-{pid}");
+        let sock_path = format!("\0/agentos/{server_session_id}");
+
+        let conn_clone = conn.clone();
+        let session_id_clone = server_session_id.clone();
+        let ws_root = std::sync::Arc::new(
+            adapter_fs::workspace::WorkspaceRoot::open(std::env::temp_dir().as_path())
+                .expect("open ws root"),
+        );
+
+        // Baseline: zero session rows before the request (fresh :memory: DB).
+        let sessions_before: i64 = conn
+            .lock()
+            .expect("mutex poisoned")
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+            .expect("query sessions baseline");
+        assert_eq!(sessions_before, 0, "sanity: fresh DB has zero session rows");
+
+        let server_handle = tokio::spawn(async move {
+            let _ = run_broker_server(
+                &session_id_clone,
+                conn_clone,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                String::new(),
+                SessionStatus::Active,
+                ws_root,
+            )
+            .await;
+        });
+
+        tokio::task::yield_now().await;
+
+        let mut stream = tokio::net::UnixStream::connect(&sock_path)
+            .await
+            .expect("connect to broker abstract socket");
+
+        let intent_id = Uuid::new_v4();
+        let resp = round_trip(&mut stream, &BrokerRequest::CreateSession { intent_id }).await;
+
+        assert!(
+            matches!(resp, BrokerResponse::Error { .. }),
+            "expected BrokerResponse::Error with the opt-in flag unset, got {:?}",
+            resp
+        );
+
+        tokio::task::yield_now().await;
+
+        let sessions_after: i64 = conn
+            .lock()
+            .expect("mutex poisoned")
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+            .expect("query sessions after");
+        assert_eq!(
+            sessions_after, 0,
+            "CreateSession over IPC with the flag unset must mint ZERO new session rows"
+        );
+
         server_handle.abort();
     }
 }
