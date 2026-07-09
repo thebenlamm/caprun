@@ -6,14 +6,14 @@ current_phase: 16
 current_phase_name: Confirm UX, Literal Binding & Negative Controls
 status: executing
 stopped_at: Completed 16-01-PLAN.md
-last_updated: "2026-07-09T01:28:32.943Z"
+last_updated: "2026-07-09T01:36:02.305Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 16 execution started
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 17
-  completed_plans: 14
+  completed_plans: 15
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 16 (Confirm UX, Literal Binding & Negative Controls) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-07-09 — Phase 16 execution started
 
@@ -59,6 +59,7 @@ Last activity: 2026-07-09 — Phase 16 execution started
 | Phase 15-deterministic-doc-action-extraction P03 | 55min | 2 tasks | 3 files |
 | Phase 15 P04 | ~2h10min | 3 tasks | 11 files |
 | Phase 16 P01 | 40min | 2 tasks | 8 files |
+| Phase 16 P03 | 25min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,7 @@ completes and is adversarially reviewed (mirrors v1.0 Phase 2 / v1.2 Phase 8).
 - [Phase ?]: 15-04: s9_live_email_hostile_block added as a new live test to satisfy the plan's own verification line requiring live email-BLOCK coverage, not explicitly named in the task action text
 - [Phase ?]: combined_digest binds sha256(name)‖sha256(literal) per element over the FULL resolved_args set (blocked+trusted), byte-wise-ascending arg_name order, per DESIGN Round-6 amendment
 - [Phase ?]: Migration gated on PRAGMA table_info presence check, not blind ALTER TABLE + error-catch
+- [Phase ?]: CONTROL-02 live fixture models CLEAN_PATH_CONTENT's no-marker recipient side + a Body: marker only, verified against worker.rs's extraction branch directly before writing the test, to guarantee no accidental recipient taint (Pitfall 5).
 
 ### Pending Todos
 
@@ -106,7 +108,7 @@ pre-existing item, still benign). No new deferrals from roadmap creation.
 
 ## Session Continuity
 
-Last session: 2026-07-09T01:28:32.937Z
+Last session: 2026-07-09T01:35:47.009Z
 Stopped at: Completed 16-01-PLAN.md
 Resume file: None
 
