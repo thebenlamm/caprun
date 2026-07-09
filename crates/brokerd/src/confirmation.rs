@@ -342,6 +342,31 @@ pub enum ConfirmOutcome {
     /// read-only: always safe to re-run, any number of times, on a Pending
     /// OR terminal row.
     Reviewed,
+    /// The audit chain was broken (`audit::verify_chain` returned `false`),
+    /// OR the FULL-set `combined_digest` recomputed from the frozen
+    /// `resolved_args` snapshot did NOT match the hash-chained `sink_blocked`
+    /// Event's stored `combined_digest` (or that Event/field was missing) —
+    /// confirm refuses to release (BLOCKER-2, MAJOR-3).
+    ///
+    /// This is an INTEGRITY ALARM, not an operator deny: the row is
+    /// intentionally LEFT `Pending` (retriable), never auto-transitioned to
+    /// `Denied` — an actor who can TRIGGER a mismatch (e.g. by tampering a
+    /// trusted arg's literal) must NOT thereby gain the power to
+    /// force-terminate a confirmation a human might still legitimately retry.
+    /// A durable `confirm_digest_mismatch` Event is appended, parented on the
+    /// CURRENT CHAIN HEAD (never `blocked_event_id` — MAJOR-7, so a
+    /// mismatch→retry sequence extends the chain linearly and never forks
+    /// `verify_chain`). No sink is ever invoked on this path.
+    ///
+    /// HONESTY (MAJOR-6): `audit::verify_chain` recomputes hashes from the
+    /// SAME SQLite store and nothing pins the chain head — an actor with
+    /// `events` table write access could forge the chain end-to-end. Wiring
+    /// it here detects single-store and non-recomputing multi-store
+    /// tampering; it does NOT make tamper-evidence "fully closed." The
+    /// chain-head-not-anchored residual risk is an Accepted Residual Risk
+    /// (v2 obligation: keyed-MAC / external head-pin) — see
+    /// `.planning/todos/pending`.
+    DigestMismatch,
 }
 
 /// Stable, dotted-lowercase rendering of a `TaintLabel` for the CLI display
@@ -482,8 +507,53 @@ pub fn review(conn: &rusqlite::Connection, effect_id: &str) -> Result<ConfirmOut
     Ok(ConfirmOutcome::Reviewed)
 }
 
+/// Fetch `audit::current_chain_head` and fail closed (an internal invariant
+/// violation, not a normal `ConfirmOutcome`) if the session has NO events at
+/// all — a `PendingConfirmation` row always implies at least the anchoring
+/// `sink_blocked` Event exists, so a `None` here means the DB is corrupt in a
+/// way this module has no recovery for.
+fn current_chain_head_or_bail(
+    conn: &rusqlite::Connection,
+    session_id: uuid::Uuid,
+) -> Result<(Uuid, String)> {
+    crate::audit::current_chain_head(conn, &session_id.to_string())?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "internal invariant violation: no chain head for session {session_id} \
+             (a PendingConfirmation row implies at least one event exists)"
+        )
+    })
+}
+
+/// Append a durable `confirm_digest_mismatch` Event, parented on the CURRENT
+/// CHAIN HEAD (never `blocked_event_id` — MAJOR-7): this is what keeps a
+/// mismatch→retry sequence a LINEAR extension of the chain rather than a
+/// fork of `blocked_event_id` (which would permanently break
+/// `audit::verify_chain`'s single-linear-chain walk, exactly as
+/// `quarantine.rs`'s `chain_head_id` doc comment describes empirically
+/// discovering for `mint_from_read`).
+fn append_confirm_digest_mismatch_event(
+    conn: &rusqlite::Connection,
+    pc: &PendingConfirmation,
+    effect_id: &str,
+    head_id: Uuid,
+    head_hash: &str,
+) -> Result<()> {
+    let mismatch_event = runtime_core::Event::new(
+        Uuid::new_v4(),
+        Some(head_id),
+        pc.session_id,
+        format!("confirm:{effect_id}"),
+        "confirm_digest_mismatch".into(),
+        Utc::now(),
+        vec![],
+    );
+    crate::audit::append_event(conn, &mismatch_event, Some(head_hash))?;
+    Ok(())
+}
+
 /// `caprun confirm <effect_id>` decision logic — Steps 1-4a of DESIGN
-/// "Confirmation Decision Logic".
+/// "Confirmation Decision Logic", extended (Plan 16-02) with a chain-verify +
+/// FULL-set recompute-and-compare integrity gate BEFORE any send.
 ///
 /// Re-reads `PendingConfirmation.state` from the persisted DB on EVERY
 /// invocation — never a cache — because the process running `confirm` is
@@ -518,18 +588,64 @@ pub fn confirm(
     // Step 4: display the verbatim literal + provenance (CONFIRM-01).
     println!("{}", render_block_display(&pc));
 
-    // Step 5: append confirm_granted, anchored onto the sink_blocked event —
-    // preserving one unbroken causal chain (CONFIRM-04).
-    let block_hash = crate::audit::event_hash_by_id(conn, &pc.blocked_event_id.to_string())?
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "internal invariant violation: no event hash for blocked_event_id {}",
-                pc.blocked_event_id
-            )
-        })?;
+    // Step 4.5a: CHAIN-VERIFY FIRST (MAJOR-3) — fail closed on a broken chain
+    // BEFORE trusting ANYTHING read back from the hash-chained `sink_blocked`
+    // Event. `find_event_by_id` only DESERIALIZES; it does NOT check hashes.
+    // HONESTY (MAJOR-6): `verify_chain` recomputes hashes from the SAME
+    // SQLite store and nothing pins the chain head — this detects
+    // single-store and non-recomputing multi-store tampering, it is NOT
+    // authenticated/externally-anchored (see ConfirmOutcome::DigestMismatch's
+    // doc comment for the full honest scope + Accepted Residual Risk).
+    if !crate::audit::verify_chain(conn, &pc.session_id.to_string()) {
+        let (head_id, head_hash) = current_chain_head_or_bail(conn, pc.session_id)?;
+        append_confirm_digest_mismatch_event(conn, &pc, effect_id, head_id, &head_hash)?;
+        return Ok(ConfirmOutcome::DigestMismatch);
+    }
+
+    // Step 4.5b: RECOMPUTE-AND-COMPARE over the FULL current resolved_args set
+    // (BLOCKER-2) — NEVER the blocked subset. `pairs` is fed to the SAME
+    // shared `combined_digest` primitive the producer (server.rs, Plan 16-01)
+    // used: it owns the byte-wise-ascending-name sort, the name-uniqueness
+    // assertion, and the sha256(name)‖sha256(literal) element binding, so
+    // producer and verifier cannot diverge on ordering/uniqueness/encoding.
+    // These pairs borrow directly from `pc.resolved_args` — the SAME frozen,
+    // single in-memory snapshot that Step 7 below hands to the sink; there is
+    // NO intervening DB read between this compare and the send (no TOCTOU
+    // window).
+    let pairs: Vec<(&str, &str)> = pc
+        .resolved_args
+        .iter()
+        .map(|a| (a.name.as_str(), a.literal.as_str()))
+        .collect();
+    let recomputed_digest = combined_digest(&pairs);
+
+    let authoritative_digest = crate::audit::find_event_by_id(
+        conn,
+        &pc.session_id.to_string(),
+        &pc.blocked_event_id.to_string(),
+    )?
+    .and_then(|e| e.combined_digest);
+
+    // Fail closed uniformly whether the sink_blocked Event is missing, its
+    // combined_digest field is absent, or the recompute simply disagrees —
+    // all three are the SAME integrity alarm from confirm()'s perspective.
+    if authoritative_digest.as_deref() != Some(recomputed_digest.as_str()) {
+        let (head_id, head_hash) = current_chain_head_or_bail(conn, pc.session_id)?;
+        append_confirm_digest_mismatch_event(conn, &pc, effect_id, head_id, &head_hash)?;
+        return Ok(ConfirmOutcome::DigestMismatch);
+    }
+
+    // Step 5: append confirm_granted, parented on the CURRENT CHAIN HEAD
+    // (MAJOR-7) — NOT `pc.blocked_event_id` directly. In the single-shot case
+    // (nothing appended since the Block) the head IS `blocked_event_id`, so
+    // existing `parent_id == Some(blocked_event_id)` assertions still hold;
+    // after a mismatch has appended a `confirm_digest_mismatch` event, the
+    // head has advanced and this keeps the DAG linear rather than forking
+    // `blocked_event_id`.
+    let (head_id, head_hash) = current_chain_head_or_bail(conn, pc.session_id)?;
     let granted_event = runtime_core::Event::new(
         Uuid::new_v4(),
-        Some(pc.blocked_event_id),
+        Some(head_id),
         pc.session_id,
         format!("confirm:{effect_id}"),
         "confirm_granted".into(),
@@ -537,7 +653,7 @@ pub fn confirm(
         vec![],
     );
     let granted_event_id = granted_event.id;
-    let granted_hash = crate::audit::append_event(conn, &granted_event, Some(&block_hash))?;
+    let granted_hash = crate::audit::append_event(conn, &granted_event, Some(&head_hash))?;
 
     // Step 6: at-most-once — the state transition is persisted BEFORE the sink
     // is invoked (DESIGN Step 4a.5). A `0` return means a raced re-transition
@@ -631,7 +747,9 @@ pub fn confirm(
 ///
 /// `deny` NEVER invokes any sink — the effect never proceeds (CONFIRM-03).
 /// It does not need the redaction gate (it releases nothing), but MUST still
-/// find the block and set the causal parent chain onto the sink_blocked event.
+/// find the block and set the causal parent chain onto the CURRENT CHAIN HEAD
+/// (MAJOR-7 — never `blocked_event_id` directly; in the single-shot case the
+/// head IS `blocked_event_id`, so this is behavior-preserving there).
 pub fn deny(conn: &rusqlite::Connection, effect_id: &str) -> Result<ConfirmOutcome> {
     // Steps 1-2: same fresh lookup + terminal-state check as confirm.
     let pc = match find_pending_confirmation(conn, effect_id)? {
@@ -645,23 +763,17 @@ pub fn deny(conn: &rusqlite::Connection, effect_id: &str) -> Result<ConfirmOutco
     // Both verbs show the same evidence before acting (DESIGN CLI Contract).
     println!("{}", render_block_display(&pc));
 
-    let block_hash = crate::audit::event_hash_by_id(conn, &pc.blocked_event_id.to_string())?
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "internal invariant violation: no event hash for blocked_event_id {}",
-                pc.blocked_event_id
-            )
-        })?;
+    let (head_id, head_hash) = current_chain_head_or_bail(conn, pc.session_id)?;
     let denied_event = runtime_core::Event::new(
         Uuid::new_v4(),
-        Some(pc.blocked_event_id),
+        Some(head_id),
         pc.session_id,
         format!("deny:{effect_id}"),
         "confirm_denied".into(),
         Utc::now(),
         vec![],
     );
-    crate::audit::append_event(conn, &denied_event, Some(&block_hash))?;
+    crate::audit::append_event(conn, &denied_event, Some(&head_hash))?;
 
     let affected = transition_state(conn, effect_id, PendingConfirmationState::Denied)?;
     if affected == 0 {
@@ -1381,6 +1493,254 @@ mod tests {
         let outcome = review(&conn, &Uuid::new_v4().to_string()).unwrap();
         assert_eq!(outcome, ConfirmOutcome::UnknownEffect);
     }
+
+    // ── chain-verify + FULL-set recompute-and-compare gate (Task 2, BLOCKER-2/MAJOR-3/6/7) ──
+
+    /// Directly mutate a `pending_confirmations` row's `resolved_args` JSON —
+    /// simulating an actor with `pending_confirmations` write access tampering
+    /// ONE arg's literal, WITHOUT updating `combined_digest` — the exact
+    /// side-table write BLOCKER-2's recompute-and-compare gate must catch.
+    fn mutate_resolved_arg_literal(
+        conn: &rusqlite::Connection,
+        effect_id: Uuid,
+        arg_name: &str,
+        new_literal: &str,
+    ) {
+        let mut pc = find_pending_confirmation(conn, &effect_id.to_string())
+            .unwrap()
+            .unwrap();
+        for arg in pc.resolved_args.iter_mut() {
+            if arg.name == arg_name {
+                arg.literal = new_literal.to_string();
+            }
+        }
+        let json = serde_json::to_string(&pc.resolved_args).unwrap();
+        conn.execute(
+            "UPDATE pending_confirmations SET resolved_args = ?1 WHERE effect_id = ?2",
+            rusqlite::params![json, effect_id.to_string()],
+        )
+        .unwrap();
+    }
+
+    /// Directly RENAME a `resolved_args` element (same literal, different
+    /// name) — the Round-6 name-binding proof: the digest binds
+    /// sha256(arg_name)‖sha256(literal), so a rename changes the recompute
+    /// even with an unchanged literal set.
+    fn rename_resolved_arg(
+        conn: &rusqlite::Connection,
+        effect_id: Uuid,
+        old_name: &str,
+        new_name: &str,
+    ) {
+        let mut pc = find_pending_confirmation(conn, &effect_id.to_string())
+            .unwrap()
+            .unwrap();
+        for arg in pc.resolved_args.iter_mut() {
+            if arg.name == old_name {
+                arg.name = new_name.to_string();
+            }
+        }
+        let json = serde_json::to_string(&pc.resolved_args).unwrap();
+        conn.execute(
+            "UPDATE pending_confirmations SET resolved_args = ?1 WHERE effect_id = ?2",
+            rusqlite::params![json, effect_id.to_string()],
+        )
+        .unwrap();
+    }
+
+    /// Directly patch the hash-chained `sink_blocked` Event's `payload`
+    /// column to carry a NEW `combined_digest` — WITHOUT recomputing the
+    /// row's `hash` column. This desyncs `payload` from `hash`: a bare
+    /// deserialize-and-compare (no `verify_chain`) would see a
+    /// self-consistent digest, but `verify_chain`'s hash recompute catches
+    /// the desync (MAJOR-6's honestly-scoped "single-store tampering"
+    /// detection).
+    fn tamper_event_payload_digest_inconsistently(
+        conn: &rusqlite::Connection,
+        blocked_event_id: Uuid,
+        new_digest: &str,
+    ) {
+        let payload: String = conn
+            .query_row(
+                "SELECT payload FROM events WHERE id = ?1",
+                rusqlite::params![blocked_event_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut event: runtime_core::Event = serde_json::from_str(&payload).unwrap();
+        event.combined_digest = Some(new_digest.to_string());
+        let new_payload = serde_json::to_string(&event).unwrap();
+        conn.execute(
+            "UPDATE events SET payload = ?1 WHERE id = ?2",
+            rusqlite::params![new_payload, blocked_event_id.to_string()],
+        )
+        .unwrap();
+    }
+
+    /// (b) BLOCKER-2: a TAMPERED TRUSTED arg (`contents`, not the blocked
+    /// `path`) is caught. Before Round-6 this class of tamper was invisible
+    /// to a blocked-subset-only digest; confirm() must fail closed
+    /// (DigestMismatch), invoke NO sink, and append a durable
+    /// `confirm_digest_mismatch` event.
+    #[test]
+    fn confirm_fails_closed_with_digest_mismatch_when_trusted_arg_tampered() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_confirm_tamper_trusted_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, _blocked_event_id) =
+            seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
+
+        mutate_resolved_arg_literal(&conn, effect_id, "contents", "attacker-injected contents");
+
+        let outcome = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm");
+        assert_eq!(outcome, ConfirmOutcome::DigestMismatch);
+        assert!(
+            !root.join("out.txt").exists(),
+            "no sink must ever run when a trusted arg's literal was tampered (BLOCKER-2)"
+        );
+        assert_eq!(
+            count_events_of_type(&conn, session_id, "confirm_digest_mismatch"),
+            1,
+            "a durable confirm_digest_mismatch event must exist"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// (b') Round-6 name-binding proof: renaming a resolved_arg post-Block
+    /// (`body` -> `cc`) with an OTHERWISE UNCHANGED literal set is caught —
+    /// the digest binds the name, not just the literal.
+    #[test]
+    fn confirm_fails_closed_with_digest_mismatch_when_arg_renamed_post_block() {
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let root = std::env::temp_dir().join(format!("caprun_confirm_rename_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let (effect_id, session_id, _blocked_event_id) =
+            seed_pending_email_send_block(&conn, "recipient@example.com", "hello", "body text");
+
+        rename_resolved_arg(&conn, effect_id, "body", "cc");
+
+        let outcome = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm");
+        assert_eq!(outcome, ConfirmOutcome::DigestMismatch);
+        assert_eq!(
+            count_events_of_type(&conn, session_id, "email_send_attempted"),
+            0,
+            "no sink dispatch may occur when an arg was renamed post-Block (Round-6 rename bypass)"
+        );
+        assert_eq!(
+            count_events_of_type(&conn, session_id, "confirm_digest_mismatch"),
+            1
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// (c) A self-consistent literal+Event-digest edit (both changed
+    /// together, so a BARE compare would pass) is caught by `verify_chain`
+    /// instead — proving the chain-verify step is doing REAL work, distinct
+    /// from the plain digest-compare tests above.
+    #[test]
+    fn confirm_fails_closed_via_verify_chain_when_literal_and_event_digest_edited_self_consistently()
+    {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_confirm_chain_tamper_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, blocked_event_id) =
+            seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
+
+        // Mutate the trusted `contents` literal AND recompute a matching
+        // digest, persisting the NEW digest into BOTH the PendingConfirmation
+        // row AND the sink_blocked Event's payload — self-consistent from a
+        // bare-compare view, but the Event payload edit desyncs `payload`
+        // from the row's `hash` column.
+        let mut pc = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .unwrap();
+        for arg in pc.resolved_args.iter_mut() {
+            if arg.name == "contents" {
+                arg.literal = "attacker contents".to_string();
+            }
+        }
+        let new_digest = combined_digest(
+            &pc.resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let resolved_args_json = serde_json::to_string(&pc.resolved_args).unwrap();
+        conn.execute(
+            "UPDATE pending_confirmations SET resolved_args = ?1, combined_digest = ?2 \
+             WHERE effect_id = ?3",
+            rusqlite::params![resolved_args_json, new_digest, effect_id.to_string()],
+        )
+        .unwrap();
+        tamper_event_payload_digest_inconsistently(&conn, blocked_event_id, &new_digest);
+
+        // Sanity: this edit genuinely breaks verify_chain — proving this test
+        // exercises the chain-hash path, not the plain-compare path.
+        assert!(
+            !crate::audit::verify_chain(&conn, &session_id.to_string()),
+            "sanity: the Event payload edit must break verify_chain"
+        );
+
+        let outcome = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm");
+        assert_eq!(outcome, ConfirmOutcome::DigestMismatch);
+        assert!(!root.join("out.txt").exists());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// (d) MAJOR-7 no-fork: a DigestMismatch (row left Pending, an alarm not
+    /// a deny) followed by a SECOND confirm attempt — this time with the
+    /// tamper reverted, so it succeeds — leaves `audit::verify_chain` STILL
+    /// TRUE throughout. The mismatch event chained onto the CURRENT HEAD
+    /// (not `blocked_event_id`), so the retry never forks the DAG.
+    #[test]
+    fn digest_mismatch_then_retry_does_not_fork_dag_verify_chain_stays_true() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_confirm_mismatch_retry_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, _blocked_event_id) =
+            seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
+
+        mutate_resolved_arg_literal(&conn, effect_id, "contents", "attacker-injected");
+
+        let first = confirm(&mut conn, &effect_id.to_string(), &ws).expect("first confirm");
+        assert_eq!(first, ConfirmOutcome::DigestMismatch);
+        assert!(
+            crate::audit::verify_chain(&conn, &session_id.to_string()),
+            "the chain must remain linear (verify_chain true) immediately after the mismatch append"
+        );
+
+        // The row is left Pending (an alarm, not a deny) — revert the tamper
+        // and retry; the recompute now matches the ORIGINAL digest again.
+        mutate_resolved_arg_literal(&conn, effect_id, "contents", "hello");
+        let second = confirm(&mut conn, &effect_id.to_string(), &ws).expect("second confirm");
+        assert_eq!(second, ConfirmOutcome::Released);
+        assert!(
+            crate::audit::verify_chain(&conn, &session_id.to_string()),
+            "verify_chain must STILL be true after mismatch -> retry (MAJOR-7 no-fork)"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // (e) deny is unaffected: `deny_on_pending_block_is_durable` (above)
+    // already asserts confirm_denied.parent_id == Some(blocked_event_id) in
+    // the single-shot case, which current_chain_head_or_bail preserves
+    // exactly (head == blocked_event_id when nothing has been appended since
+    // the Block).
 
     // ── email.send atomic CAS + email_send_attempted (Task 2, SEND-01/SEND-02) ──
 

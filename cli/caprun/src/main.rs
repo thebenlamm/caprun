@@ -365,6 +365,13 @@ fn run_confirm_or_deny(verb: &str, effect_id: &str, audit_path: &str) -> anyhow:
             (7, Some("email send failed after confirm; recorded, not retried"))
         }
         ConfirmOutcome::Reviewed => (0, None),
+        ConfirmOutcome::DigestMismatch => (
+            8,
+            Some(
+                "integrity check failed (broken audit chain or digest mismatch); \
+                 refusing to release",
+            ),
+        ),
     };
     if let Some(msg) = message {
         eprintln!("caprun {verb}: {msg}");
