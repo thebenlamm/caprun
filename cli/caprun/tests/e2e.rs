@@ -128,10 +128,14 @@ fn substrate_demo() {
 
 /// dag_chain_integrity — verifies the unbroken hash chain:
 /// session_created → intent_received(recipient) → intent_received(subject) →
-/// intent_received(body) → fd_granted → plan_node_evaluated (the 6-event
-/// benign chain, UPDATED Phase 15 / 15-04 — see BLOCKER note below).
-/// EMPIRICALLY VERIFIED under Colima/Docker (Linux) at 15-04 time — this is
-/// not a Mac-side inference.
+/// intent_received(body) → fd_granted → plan_node_evaluated →
+/// email_send_attempted → email_send_succeeded (the 8-event benign chain,
+/// UPDATED Phase 16 / 16-04, CONTROL-01/BLOCKER-3 — see BLOCKER note below).
+/// EMPIRICALLY VERIFIED under Colima/Docker (Linux) at 15-04 time for the
+/// first 6 events — this is not a Mac-side inference. The trailing two
+/// events are new as of Phase 16's email.send Allowed-dispatch and require
+/// `scripts/mailpit-verify.sh` (a live Mailpit listener) to observe
+/// email_send_succeeded rather than email_send_failed.
 ///
 /// Runs `caprun` independently of `substrate_demo` (no shared state) and then:
 ///  1. Calls `brokerd::audit::verify_chain` — asserts the SHA-256 chain is
@@ -156,11 +160,20 @@ fn substrate_demo() {
 /// `mint_from_intent` calls for `SendEmailSummary` (recipient, subject, body)
 /// each append their OWN `intent_received` event, chained onto the previous
 /// one (`Some(*last_event_id)` threading in `server.rs`) — so there are
-/// THREE `intent_received` events, not one. The full benign chain is
-/// session_created → intent_received(recipient) → intent_received(subject) →
-/// intent_received(body) → fd_granted → plan_node_evaluated (6 events total).
-/// The §9 BLOCK path is exercised by `crates/brokerd/tests/s9_acceptance.rs`
-/// and (live) by `s9_live_block.rs::s9_live_email_hostile_block`.
+/// THREE `intent_received` events, not one.
+///
+/// FURTHER (Phase 16 / 16-04, CONTROL-01/BLOCKER-3): the benign send here is
+/// an all-UserTrusted `SendEmailSummary` — an Allowed decision — which now
+/// reaches the new email.send Allowed-dispatch branch in `server.rs`. That
+/// branch appends a durable `email_send_attempted` event (MAJOR-4) BEFORE
+/// invoking the real SMTP adapter, then (under a live Mailpit listener, i.e.
+/// `scripts/mailpit-verify.sh`) an `email_send_succeeded` event. The full
+/// benign chain is now session_created → intent_received(recipient) →
+/// intent_received(subject) → intent_received(body) → fd_granted →
+/// plan_node_evaluated → email_send_attempted → email_send_succeeded (8
+/// events total). The §9 BLOCK path is exercised by
+/// `crates/brokerd/tests/s9_acceptance.rs` and (live) by
+/// `s9_live_block.rs::s9_live_email_hostile_block`.
 #[cfg(target_os = "linux")]
 #[test]
 fn dag_chain_integrity() {
@@ -239,10 +252,11 @@ fn dag_chain_integrity() {
 
     assert_eq!(
         events.len(),
-        6,
-        "audit DAG must contain exactly 6 events (session_created, THREE \
+        8,
+        "audit DAG must contain exactly 8 events (session_created, THREE \
          intent_received — recipient/subject/body, Phase 15 finding #6 — \
-         fd_granted, plan_node_evaluated); got {}: {:?}",
+         fd_granted, plan_node_evaluated, email_send_attempted, \
+         email_send_succeeded — Phase 16 CONTROL-01); got {}: {:?}",
         events.len(),
         events.iter().map(|(et, _, _)| et.as_str()).collect::<Vec<_>>()
     );
@@ -263,7 +277,9 @@ fn dag_chain_integrity() {
     let (e2_type, e2_parent, e2_hash) = &events[2];
     let (e3_type, e3_parent, e3_hash) = &events[3];
     let (e4_type, e4_parent, e4_hash) = &events[4];
-    let (e5_type, e5_parent, _e5_hash) = &events[5];
+    let (e5_type, e5_parent, e5_hash) = &events[5];
+    let (e6_type, e6_parent, e6_hash) = &events[6];
+    let (e7_type, e7_parent, _e7_hash) = &events[7];
 
     assert_eq!(e0_type, "session_created", "event[0] must be session_created");
     assert!(
@@ -309,6 +325,33 @@ fn dag_chain_integrity() {
         Some(e4_hash.as_str()),
         "plan_node_evaluated.parent_hash must equal fd_granted.hash \
          (no file_read event intervenes — zero doc-fragment claims for this benign content)"
+    );
+
+    // Phase 16 (CONTROL-01/BLOCKER-3): the Allowed decision now reaches the
+    // email.send Allowed-dispatch branch, which appends email_send_attempted
+    // (MAJOR-4) BEFORE invoking the adapter, then — under a live Mailpit
+    // listener (scripts/mailpit-verify.sh) — email_send_succeeded.
+    assert_eq!(
+        e6_type, "email_send_attempted",
+        "event[6] must be email_send_attempted (MAJOR-4 durable attempt ledger, \
+         appended BEFORE the SMTP socket ever opens)"
+    );
+    assert_eq!(
+        e6_parent.as_deref(),
+        Some(e5_hash.as_str()),
+        "email_send_attempted.parent_hash must equal plan_node_evaluated.hash"
+    );
+
+    assert_eq!(
+        e7_type, "email_send_succeeded",
+        "event[7] must be email_send_succeeded — this test MUST run under \
+         scripts/mailpit-verify.sh (a live Mailpit listener); under the bare \
+         rust:1 recipe (no listener) this would instead be email_send_failed"
+    );
+    assert_eq!(
+        e7_parent.as_deref(),
+        Some(e6_hash.as_str()),
+        "email_send_succeeded.parent_hash must equal email_send_attempted.hash"
     );
 
     // ── Cleanup ──────────────────────────────────────────────────────────────

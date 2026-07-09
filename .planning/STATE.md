@@ -4,17 +4,17 @@ milestone: v1.3
 milestone_name: — Doc → Action Assistant
 current_phase: 16
 current_phase_name: Confirm UX, Literal Binding & Negative Controls
-status: executing
-stopped_at: Completed 16-02-PLAN.md and 16-03-PLAN.md (Wave 2, parallel)
-last_updated: "2026-07-09T01:44:51.017Z"
+status: verifying
+stopped_at: Completed 16-04-PLAN.md
+last_updated: "2026-07-09T02:30:34.536Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 16 execution started
 progress:
   total_phases: 6
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 17
-  completed_plans: 15
-  percent: 67
+  completed_plans: 17
+  percent: 83
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 
 Phase: 16 (Confirm UX, Literal Binding & Negative Controls) — EXECUTING
 Plan: 4 of 4 (16-04, Wave 3, remaining)
-Status: Executing Phase 16
+Status: Phase complete — ready for verification
 Last activity: 2026-07-09 — Phase 16 execution started
 
 ## Performance Metrics
@@ -61,6 +61,7 @@ Last activity: 2026-07-09 — Phase 16 execution started
 | Phase 16 P01 | 40min | 2 tasks | 8 files |
 | Phase 16 P02 | 50min | 2 tasks | 3 files |
 | Phase 16 P03 | 25min | 1 tasks | 1 files |
+| Phase 16 P04 | 3h | 3 tasks | 16 files |
 
 ## Accumulated Context
 
@@ -89,6 +90,10 @@ completes and is adversarially reviewed (mirrors v1.0 Phase 2 / v1.2 Phase 8).
 - [Phase 16]: confirm()'s DigestMismatch leaves the row Pending (integrity alarm, not an operator deny) so an attacker triggering a mismatch cannot force-terminate a retriable confirmation
 - [Phase 16]: verify_chain's scope recorded honestly: detects single-store/non-recomputing-multi-store tampering only, NOT authenticated/externally-anchored -- chain-head-not-anchored is an Accepted Residual Risk with a v2 obligation
 - [Phase 16]: CONTROL-02 live fixture models CLEAN_PATH_CONTENT's no-marker recipient side + a Body: marker only, verified against worker.rs's extraction branch directly before writing the test, to guarantee no accidental recipient taint (Pitfall 5).
+- [Phase ?]: 16-04: All three BLOCKER-1 guards (ProvideIntent ordering, non-live-state Deny, CreateSession IPC opt-in) landed in Task 1, strictly before Task 2's email.send Allowed-dispatch, so the dispatch never exists without its guards.
+- [Phase ?]: 16-04: CreateSession IPC arm gated behind CAPRUN_ENABLE_IPC_CREATE_SESSION == exactly "1" (runtime opt-in, fail-closed default-deny) instead of cfg(test), which is unset when brokerd compiles as an integration-test dependency.
+- [Phase ?]: 16-04: MAJOR-4 replay residual risk (no CAS on the Allowed email.send path) accepted for v1.3; durable per-attempt ledger makes each send auditable. Tracked as v2 obligation.
+- [Phase ?]: 16-04: 'Deny sends nothing' send-level proof recorded as an explicit Phase 17/ACCEPT-01 requirement — not yet covered by any test.
 
 ### Pending Todos
 
@@ -112,8 +117,8 @@ pre-existing item, still benign). No new deferrals from roadmap creation.
 
 ## Session Continuity
 
-Last session: 2026-07-09T01:44:51.009Z
-Stopped at: Completed 16-02-PLAN.md and 16-03-PLAN.md (Wave 2, parallel)
+Last session: 2026-07-09T02:30:34.530Z
+Stopped at: Completed 16-04-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

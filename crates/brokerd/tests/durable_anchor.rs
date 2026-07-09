@@ -147,6 +147,11 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
 
     let (mut server_end, _client_end) =
         tokio::net::UnixStream::pair().expect("UnixStream::pair");
+    // Phase 16 (BLOCKER-1 guard a): dispatch_request gained two new
+    // per-connection `&mut bool` ordering-guard params; this harness never
+    // drives ProvideIntent/RequestFd, so fresh `false` locals are correct.
+    let mut intent_provided = false;
+    let mut fd_requested = false;
     dispatch_request(
         BrokerRequest::SubmitPlanNode { plan_node },
         &mut server_end,
@@ -157,6 +162,8 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
         &mut store,
         &ws_root(),
         &mut session_status,
+        &mut intent_provided,
+        &mut fd_requested,
     )
     .await
     .expect("dispatch_request must succeed once the block append is durable");

@@ -46,6 +46,17 @@ pub enum DenyReason {
     /// audit/CLI legibility. This is an append to the ONE denial taxonomy above —
     /// never a second, parallel denial error type.
     DraftOnlySessionDeniesCommitIrreversible { sink: crate::plan_node::SinkId },
+
+    // ── Phase 16 addition (BLOCKER-1 guard b, DESIGN-session-trust-state.md) ──
+    /// A `CommitIrreversible` plan node was submitted while the session is in a
+    /// non-live lifecycle state (`WaitingApproval`, `Done`, `Failed`, or
+    /// `RolledBack`) and no per-arg I2 Block already fired. These lifecycle
+    /// states are terminal or paused — a `CommitIrreversible` sink must never
+    /// fall through to `Allowed` in any of them. Distinct from
+    /// `DraftOnlySessionDeniesCommitIrreversible` (which covers `Draft`) so the
+    /// two denial codes remain independently matchable for audit/CLI. Carries
+    /// the offending `SinkId`, matching the existing convention.
+    NonLiveSessionDeniesCommitIrreversible { sink: crate::plan_node::SinkId },
 }
 
 impl DenyReason {
@@ -61,6 +72,9 @@ impl DenyReason {
             DenyReason::MissingArg(_) => "missing_arg",
             DenyReason::DraftOnlySessionDeniesCommitIrreversible { .. } => {
                 "draft_only_session_denies_commit_irreversible"
+            }
+            DenyReason::NonLiveSessionDeniesCommitIrreversible { .. } => {
+                "non_live_session_denies_commit_irreversible"
             }
         }
     }
@@ -85,6 +99,12 @@ impl std::fmt::Display for DenyReason {
             DenyReason::DraftOnlySessionDeniesCommitIrreversible { sink } => write!(
                 f,
                 "draft-only session denies CommitIrreversible sink `{sink}`",
+                sink = sink.0
+            ),
+            DenyReason::NonLiveSessionDeniesCommitIrreversible { sink } => write!(
+                f,
+                "non-live session (WaitingApproval/Done/Failed/RolledBack) denies \
+                 CommitIrreversible sink `{sink}`",
                 sink = sink.0
             ),
         }

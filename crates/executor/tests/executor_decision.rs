@@ -535,6 +535,88 @@ fn body_tainted_recipient_trusted_blocks() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 16 (BLOCKER-1 guard b): non-live-state Step 0.5 class deny
+// (DESIGN-session-trust-state.md, per-session-status exhaustive match)
+// ---------------------------------------------------------------------------
+
+/// A `CommitIrreversible` plan node (clean, all-trusted args — no per-arg
+/// Block) submitted while the session is in ANY of the four non-live
+/// lifecycle states (`WaitingApproval`, `Done`, `Failed`, `RolledBack`) is
+/// `Denied { NonLiveSessionDeniesCommitIrreversible { sink } }` at Step 0.5 —
+/// never falls through to `Allowed`.
+#[test]
+fn non_live_session_denies_commit_irreversible_in_all_four_states() {
+    for status in [
+        SessionStatus::WaitingApproval,
+        SessionStatus::Done,
+        SessionStatus::Failed,
+        SessionStatus::RolledBack,
+    ] {
+        let mut store = ValueStore::default();
+        let event_id = Uuid::new_v4();
+        let path_id = store
+            .mint(
+                "/workspace/out.txt".to_string(),
+                vec![TaintLabel::UserTrusted],
+                vec![event_id],
+            )
+            .expect("valid mint");
+        let contents_id = store
+            .mint("hello".to_string(), vec![TaintLabel::UserTrusted], vec![event_id])
+            .expect("valid mint");
+
+        let plan = PlanNode {
+            sink: SinkId("file.create".to_string()),
+            args: vec![
+                PlanArg { name: "path".to_string(), value_id: path_id },
+                PlanArg { name: "contents".to_string(), value_id: contents_id },
+            ],
+        };
+        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &status);
+
+        match decision {
+            ExecutorDecision::Denied {
+                reason: DenyReason::NonLiveSessionDeniesCommitIrreversible { sink },
+            } => {
+                assert_eq!(sink.0, "file.create");
+            }
+            other => panic!(
+                "expected Denied {{ NonLiveSessionDeniesCommitIrreversible }} for session_status \
+                 {status:?}, got {other:?}"
+            ),
+        }
+    }
+}
+
+/// A non-`CommitIrreversible` (`Observe`) plan node in any of the four
+/// non-live lifecycle states is NOT denied by Step 0.5 — this gate is scoped
+/// to the CommitIrreversible class only, mirroring TAINT-03's Draft-state
+/// Observe-passthrough proof.
+#[test]
+fn non_live_session_allows_observe() {
+    for status in [
+        SessionStatus::WaitingApproval,
+        SessionStatus::Done,
+        SessionStatus::Failed,
+        SessionStatus::RolledBack,
+    ] {
+        let store = ValueStore::default();
+        let plan = PlanNode {
+            sink: SinkId("test.observe".to_string()),
+            args: vec![],
+        };
+        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &status);
+
+        assert_eq!(
+            decision,
+            ExecutorDecision::Allowed,
+            "non-live session_status {status:?} + Observe-class sink must NOT be denied \
+             by Step 0.5"
+        );
+    }
+}
+
 /// D-23: a plan node carrying an unsupported attachment arg on email.send is
 /// Denied(UnknownArg) at the Step 0 schema gate, before any sensitivity
 /// evaluation — proving the descope, not a new DenyReason variant.
