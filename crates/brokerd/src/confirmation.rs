@@ -21,7 +21,77 @@ use anyhow::Result;
 use chrono::Utc;
 use rusqlite::params;
 use runtime_core::plan_node::TaintLabel;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+/// The single shared primitive computing CONFIRM-03's combined digest over a
+/// full `(arg_name, literal)` set (`planning-docs/DESIGN-confirm-binding.md`,
+/// "Combined-Digest Binding", Round-6 amendment).
+///
+/// Both the PRODUCER (`server.rs`'s Block-time write, Task 2 of this plan)
+/// and the VERIFIER (`confirm()`, Plan 16-02) call this SAME function over
+/// the SAME domain — every element of `resolved_args` (blocked AND trusted
+/// together) — so they CANNOT diverge on ordering, uniqueness, or element
+/// encoding. The primitive owns all three:
+///
+/// 1. **Uniqueness** — asserts arg-name uniqueness across `args` (fail-closed:
+///    a duplicate name makes the canonical order undefined — DESIGN Round-6
+///    MUST).
+/// 2. **Canonical order** — sorts a COPY of `args` by BYTE-WISE ASCENDING
+///    `arg_name` (Rust `str`'s `Ord`, which compares the underlying UTF-8
+///    bytes — never a locale/collation compare), so callers may hand it the
+///    set in ANY input order.
+/// 3. **Element encoding** — for each pair, IN THAT CANONICAL ORDER, computes
+///    the arg_name's fixed-width 64-hex SHA-256 digest AND the literal's
+///    fixed-width 64-hex SHA-256 digest (the exact `literal_sha256` pattern
+///    from `crates/executor/src/lib.rs`, applied to both name and literal),
+///    then feeds both 64-hex strings — name-digest THEN literal-digest — into
+///    ONE outer SHA-256 hasher. Returns `hex::encode` of the outer hasher's
+///    finalize.
+///
+/// This is `sha256(name)‖sha256(literal)` per element, at FIXED 64-hex
+/// width — NOT raw literals, NOT literal-only, NOT plain concatenation: the
+/// fixed width removes the partition-blindness bypass (`to`/`body` boundary
+/// shift, DESIGN finding #4) and binding the name removes the rename bypass
+/// (DESIGN Round-6: renaming a bound arg without binding its name would leave
+/// the sorted literal sequence unchanged).
+///
+/// # Panics
+/// Panics (fail-closed) if `args` contains a duplicate `arg_name` — the
+/// ordering is undefined otherwise, and a producer/verifier pair silently
+/// picking different "winners" for the duplicate would be a correctness
+/// defect, not a recoverable case.
+pub fn combined_digest(args: &[(&str, &str)]) -> String {
+    let mut sorted: Vec<(&str, &str)> = args.to_vec();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+
+    for pair in sorted.windows(2) {
+        assert_ne!(
+            pair[0].0,
+            pair[1].0,
+            "combined_digest: duplicate arg_name `{}` — arg-name uniqueness \
+             MUST be asserted before hashing (DESIGN-confirm-binding.md Round-6)",
+            pair[0].0
+        );
+    }
+
+    let mut hasher = Sha256::new();
+    for (name, literal) in &sorted {
+        let name_digest = {
+            let mut h = Sha256::new();
+            h.update(name.as_bytes());
+            hex::encode(h.finalize())
+        };
+        let literal_digest = {
+            let mut h = Sha256::new();
+            h.update(literal.as_bytes());
+            hex::encode(h.finalize())
+        };
+        hasher.update(name_digest.as_bytes());
+        hasher.update(literal_digest.as_bytes());
+    }
+    hex::encode(hasher.finalize())
+}
 
 /// One resolved sink argument, frozen at Block time.
 ///
@@ -559,6 +629,93 @@ mod tests {
     use runtime_core::plan_node::{SinkId, TaintLabel, ValueId};
     use uuid::Uuid;
 
+    // ── combined_digest primitive (Task 1, CONFIRM-03 / DESIGN Round-6) ─────
+
+    /// Local test helper mirroring the exact `literal_sha256` pattern
+    /// `combined_digest` uses internally, so the expected-formula test can
+    /// independently recompute the SAME value without calling into the
+    /// function under test.
+    fn sha256_hex(s: &str) -> String {
+        let mut h = Sha256::new();
+        h.update(s.as_bytes());
+        hex::encode(h.finalize())
+    }
+
+    /// `combined_digest(&[("to", "a")])` equals
+    /// `SHA-256(sha256_hex("to") ‖ sha256_hex("a"))` hex-encoded — the exact
+    /// single-element formula (DESIGN "Combined-Digest Binding").
+    #[test]
+    fn combined_digest_single_element_matches_expected_formula() {
+        let expected = {
+            let mut h = Sha256::new();
+            h.update(sha256_hex("to").as_bytes());
+            h.update(sha256_hex("a").as_bytes());
+            hex::encode(h.finalize())
+        };
+        assert_eq!(combined_digest(&[("to", "a")]), expected);
+    }
+
+    /// Partition-binding (DESIGN finding #4): with the SAME arg names, a
+    /// boundary-shift literal pair yields a DIFFERENT digest — plain
+    /// concatenation would collapse these to the same hash.
+    #[test]
+    fn combined_digest_partition_binding_boundary_shift_differs() {
+        let a = combined_digest(&[("to", "mallory@evil.co"), ("body", "m sent...")]);
+        let b = combined_digest(&[("to", "mallory@evil.com"), ("body", " sent...")]);
+        assert_ne!(
+            a, b,
+            "a to/body boundary shift MUST change the combined digest \
+             (fixed-width per-element hashing removes partition-blindness)"
+        );
+    }
+
+    /// Name-binding (DESIGN Round-6 rename bypass): renaming an arg changes
+    /// the digest even with an IDENTICAL literal.
+    #[test]
+    fn combined_digest_name_binding_rename_differs() {
+        let body_digest = combined_digest(&[("body", "x")]);
+        let cc_digest = combined_digest(&[("cc", "x")]);
+        assert_ne!(
+            body_digest, cc_digest,
+            "renaming a bound arg (body -> cc) with an identical literal MUST \
+             change the combined digest (closes the Round-6 rename bypass)"
+        );
+    }
+
+    /// Canonical order is INTRINSIC to the primitive: it sorts by byte-wise
+    /// ascending arg_name internally, so INPUT order does not matter.
+    #[test]
+    fn combined_digest_input_order_invariant() {
+        let forward = combined_digest(&[("to", "a@example.com"), ("body", "hello")]);
+        let reversed = combined_digest(&[("body", "hello"), ("to", "a@example.com")]);
+        assert_eq!(
+            forward, reversed,
+            "combined_digest must be invariant to input order — it sorts \
+             internally by byte-wise ascending arg_name"
+        );
+    }
+
+    /// Transposing which literal a name binds to DOES change the digest
+    /// (distinct from mere input reordering above).
+    #[test]
+    fn combined_digest_transposed_literals_differs() {
+        let original = combined_digest(&[("to", "a@example.com"), ("body", "hello")]);
+        let transposed = combined_digest(&[("to", "hello"), ("body", "a@example.com")]);
+        assert_ne!(
+            original, transposed,
+            "swapping which literal a name binds to MUST change the digest"
+        );
+    }
+
+    /// Duplicate arg names are a FAIL-CLOSED error (uniqueness asserted
+    /// before hashing) — `combined_digest` MUST NOT silently produce a
+    /// digest over an ambiguously-ordered duplicate-name set.
+    #[test]
+    #[should_panic(expected = "duplicate arg_name")]
+    fn combined_digest_duplicate_arg_name_panics() {
+        combined_digest(&[("to", "a@example.com"), ("to", "b@example.com")]);
+    }
+
     fn make_pending_confirmation(effect_id: Uuid) -> PendingConfirmation {
         PendingConfirmation {
             effect_id,
@@ -738,6 +895,12 @@ mod tests {
             session_id,
             chrono::Utc::now(),
             vec![anchor],
+            // Task 1 placeholder — this seed helper predates the Phase 16
+            // combined-digest wiring; Task 2's call-site sweep threads the
+            // real computed values through here alongside the new
+            // PendingConfirmation fields.
+            None,
+            vec![],
         );
         let blocked_event_id = blocked_event.id;
         append_event(conn, &blocked_event, Some(&root_hash)).unwrap();
@@ -973,6 +1136,10 @@ mod tests {
             session_id,
             chrono::Utc::now(),
             vec![anchor],
+            // Task 1 placeholder — see seed_pending_file_create_block's
+            // identical note; Task 2's call-site sweep threads real values.
+            None,
+            vec![],
         );
         let blocked_event_id = blocked_event.id;
         append_event(conn, &blocked_event, Some(&root_hash)).unwrap();

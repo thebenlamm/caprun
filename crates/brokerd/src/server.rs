@@ -457,6 +457,12 @@ pub async fn dispatch_request(
                         session_id,
                         Utc::now(),
                         anchors.iter().map(|b| b.anchor.clone()).collect(),
+                        // Task 1 placeholder — Task 2 computes the real
+                        // CONFIRM-03 combined digest over the FULL
+                        // resolved_args set (not just this anchors
+                        // collection) and threads it through here.
+                        None,
+                        vec![],
                     ),
                     anchors
                         .iter()
