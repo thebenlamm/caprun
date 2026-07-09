@@ -5,7 +5,7 @@ milestone_name: — Doc → Action Assistant
 current_phase: 16
 current_phase_name: Confirm UX, Literal Binding & Negative Controls
 status: executing
-stopped_at: Completed 16-02-PLAN.md
+stopped_at: Completed 16-02-PLAN.md and 16-03-PLAN.md (Wave 2, parallel)
 last_updated: "2026-07-09T01:44:51.017Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 16 execution started
@@ -29,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 16 (Confirm UX, Literal Binding & Negative Controls) — EXECUTING
-Plan: 3 of 4
-Status: Ready to execute
+Plan: 4 of 4 (16-04, Wave 3, remaining)
+Status: Executing Phase 16
 Last activity: 2026-07-09 — Phase 16 execution started
 
 ## Performance Metrics
@@ -60,6 +60,7 @@ Last activity: 2026-07-09 — Phase 16 execution started
 | Phase 15 P04 | ~2h10min | 3 tasks | 11 files |
 | Phase 16 P01 | 40min | 2 tasks | 8 files |
 | Phase 16 P02 | 50min | 2 tasks | 3 files |
+| Phase 16 P03 | 25min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -87,6 +88,7 @@ completes and is adversarially reviewed (mirrors v1.0 Phase 2 / v1.2 Phase 8).
 - [Phase 16]: T-14-08 two-commit discipline: proved the plurality guard panics (commit 1f3336b) before replacing it with full ALL-args narration (commit b61e043)
 - [Phase 16]: confirm()'s DigestMismatch leaves the row Pending (integrity alarm, not an operator deny) so an attacker triggering a mismatch cannot force-terminate a retriable confirmation
 - [Phase 16]: verify_chain's scope recorded honestly: detects single-store/non-recomputing-multi-store tampering only, NOT authenticated/externally-anchored -- chain-head-not-anchored is an Accepted Residual Risk with a v2 obligation
+- [Phase 16]: CONTROL-02 live fixture models CLEAN_PATH_CONTENT's no-marker recipient side + a Body: marker only, verified against worker.rs's extraction branch directly before writing the test, to guarantee no accidental recipient taint (Pitfall 5).
 
 ### Pending Todos
 
@@ -111,7 +113,7 @@ pre-existing item, still benign). No new deferrals from roadmap creation.
 ## Session Continuity
 
 Last session: 2026-07-09T01:44:51.009Z
-Stopped at: Completed 16-02-PLAN.md
+Stopped at: Completed 16-02-PLAN.md and 16-03-PLAN.md (Wave 2, parallel)
 Resume file: None
 
 ## Operator Next Steps

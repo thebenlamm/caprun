@@ -181,7 +181,7 @@ Full detail archived in [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.m
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 16-02-PLAN.md — Confirm-side binding: ALL-args verbatim narration + `caprun review` pre-decision surface + Draft posture + T-14-08 test-then-replace + chain-verify + FULL-set recompute-and-compare fail-closed gate + no-fork mismatch (CONFIRM-01, CONFIRM-03, CONFIRM-04)
-- [ ] 16-03-PLAN.md — Live negative control CONTROL-02: body-tainted-only, recipient-trusted single-anchor block (CONTROL-02)
+- [x] 16-03-PLAN.md — Live negative control CONTROL-02: body-tainted-only, recipient-trusted single-anchor block (CONTROL-02)
 
 **Wave 3** *(blocked on Wave 1 + Wave 2; reviewed as a distinct security-surface unit)*
 

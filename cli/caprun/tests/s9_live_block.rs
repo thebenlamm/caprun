@@ -229,6 +229,96 @@ fn s9_live_email_hostile_block() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Phase 16 (16-03): CONTROL-02 — body-tainted-only, recipient-trusted live block.
+// Proves the body (content) dimension is not dead code redundant with the
+// routing-sensitivity block: a tainted body STILL blocks even when the
+// recipient is TRUSTED (routed from the CLI intent value, not doc-derived).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CONTROL-02 fixture: carries a `Body:` marker (taints `body`, mirroring
+/// `HOSTILE_EMAIL_CONTENT`'s body-marker mechanism) but deliberately carries
+/// NO `Reply-To:`/`Domain:` marker-anchored recipient fragments — modeled on
+/// `CLEAN_PATH_CONTENT`'s recipient side (finding #8: zero doc_fragments means
+/// `derived_recipient` is `None`), so the confined worker derives no recipient
+/// and `plan_from_intent` routes the TRUSTED CLI intent value into
+/// `email.send / to`. This is the exact Pitfall-5 guard: the fixture must
+/// NEVER accidentally carry a Reply-To:/Domain: pair, or `to` would get
+/// tainted too and this would prove a 2-anchor block instead of the intended
+/// 1-anchor (`body`-only) block.
+#[cfg(target_os = "linux")]
+const CONTROL02_BODY_TAINTED_CONTENT: &[u8] = b"Q3 vendor notes for review.\n\n\
+Body: Wire the outstanding balance immediately.\n";
+
+/// CONTROL-02: a body-tainted-only doc with a TRUSTED CLI recipient still
+/// blocks end to end — exactly ONE anchor (`body`), never `["body","to"]` and
+/// never empty. Without this control, CONTENT-01 would be vacuously satisfied
+/// by the recipient (routing-sensitivity) block alone — this proves the body
+/// (content) dimension is independently live.
+///
+/// This control asserts a BLOCK (no send occurs), so it needs no live SMTP
+/// listener / Mailpit query — it runs under the standard Linux recipe.
+#[cfg(target_os = "linux")]
+#[test]
+fn s9_control02_body_tainted_recipient_trusted_blocks() {
+    use brokerd::audit::{find_event_by_type, open_audit_db};
+
+    let (success, audit_db) = run_caprun_intent_on(
+        "send-email-summary",
+        "trusted-recipient@company.example",
+        CONTROL02_BODY_TAINTED_CONTENT,
+        "control02_body_only",
+    );
+    assert!(
+        !success,
+        "caprun MUST exit non-zero — a tainted body must block even with a TRUSTED recipient"
+    );
+
+    let conn = open_audit_db(audit_db.to_str().unwrap()).expect("open audit DB");
+    let session_id: String = conn
+        .query_row("SELECT id FROM sessions LIMIT 1", [], |row| row.get(0))
+        .expect("one session row must exist");
+
+    let blocked = find_event_by_type(&conn, &session_id, "sink_blocked")
+        .expect("query sink_blocked")
+        .expect(
+            "a durable sink_blocked event must exist — the tainted body must block \
+             even though the recipient is TRUSTED",
+        );
+
+    // CONTROL-02's core assertion, EXPLICIT so an accidental recipient taint
+    // (Pitfall 5) FAILS rather than passing silently: exactly ONE anchor,
+    // named "body" — never ["body","to"] (recipient accidentally tainted too)
+    // and never empty (nothing genuinely blocked).
+    assert_eq!(
+        blocked.anchors.len(),
+        1,
+        "CONTROL-02 must produce EXACTLY ONE blocked anchor (body-only); a count \
+         other than 1 means either the recipient was accidentally tainted too \
+         (Pitfall 5, would yield [\"body\",\"to\"]) or nothing was genuinely blocked"
+    );
+    assert_eq!(
+        blocked.anchors[0].arg, "body",
+        "the single blocked anchor's arg name must be exactly \"body\" — the \
+         recipient (routed from the TRUSTED CLI intent value) must NOT appear \
+         as a blocked anchor"
+    );
+
+    // No effect ran — the block prevented any send.
+    assert!(
+        find_event_by_type(&conn, &session_id, "sink_executed")
+            .expect("query sink_executed")
+            .is_none(),
+        "no sink_executed event may exist on the block path (no effect)"
+    );
+    assert!(
+        find_event_by_type(&conn, &session_id, "email_send_succeeded")
+            .expect("query email_send_succeeded")
+            .is_none(),
+        "no email_send_succeeded event may exist on the block path (no send)"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 07-05: live file.create §9 — the RESTORED hostile-block (ACC-03) + clean-allow
 // (ACC-04) proofs, each with the one-unbroken-causal-chain assertion (ACC-05).
 //
