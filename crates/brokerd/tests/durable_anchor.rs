@@ -504,3 +504,100 @@ async fn pending_confirmation_persisted_atomically_with_block() {
     drop(reopened);
     cleanup_db(&db_path);
 }
+
+/// Phase 16, Task 2 (CONFIRM-03, DESIGN-confirm-binding.md Round-6): a genuine
+/// block over a plan node with a TRUSTED arg (`contents`) and a TAINTED arg
+/// (`path`) durably records ONE combined digest over the FULL `resolved_args`
+/// set — not just the blocked subset — identically in the hash-chained
+/// `sink_blocked` Event payload and the mirrored `PendingConfirmation` row,
+/// reconstructed from the reopened DB alone.
+#[tokio::test]
+async fn combined_digest_covers_full_set_and_matches_between_event_and_pending_confirmation() {
+    use brokerd::confirmation::{combined_digest, find_pending_confirmation};
+
+    let (db_path, session_id, _read_event_id) = build_hostile_block_db("combined_digest").await;
+    let sid = session_id.to_string();
+
+    let reopened = open_audit_db(db_path.to_str().unwrap()).expect("reopen audit DB");
+
+    let blocked = find_event_by_type(&reopened, &sid, "sink_blocked")
+        .expect("query sink_blocked")
+        .expect("a durable sink_blocked event must exist");
+    let anchor = blocked
+        .anchors
+        .first()
+        .expect("sink_blocked must carry an anchor");
+
+    let pc = find_pending_confirmation(&reopened, &anchor.effect_id.to_string())
+        .expect("find_pending_confirmation")
+        .expect("a pending_confirmations row must exist");
+
+    // (a) The Event and the PendingConfirmation carry IDENTICAL combined_digest
+    // + blocked_arg_names — one computation, mirrored into both under the
+    // same Block-time write (no drift, no second computation).
+    let event_digest = blocked
+        .combined_digest
+        .as_ref()
+        .expect("sink_blocked Event must carry a combined_digest (Phase 16)");
+    assert_eq!(
+        event_digest, &pc.combined_digest,
+        "Event.combined_digest must equal PendingConfirmation.combined_digest"
+    );
+    assert_eq!(
+        blocked.blocked_arg_names, pc.blocked_arg_names,
+        "Event.blocked_arg_names must equal PendingConfirmation.blocked_arg_names"
+    );
+
+    // (b) The digest equals combined_digest recomputed independently over
+    // ALL of resolved_args' (arg_name, literal) pairs — the FULL set (both
+    // `path` and `contents`), NOT the blocked subset — proving the digest's
+    // domain is every current resolved_args element (BLOCKER-2 widening).
+    assert_eq!(
+        pc.resolved_args.len(),
+        2,
+        "sanity: this fixture has exactly two resolved_args (path, contents)"
+    );
+    let full_set_pairs: Vec<(&str, &str)> = pc
+        .resolved_args
+        .iter()
+        .map(|a| (a.name.as_str(), a.literal.as_str()))
+        .collect();
+    let recomputed_full_set = combined_digest(&full_set_pairs);
+    assert_eq!(
+        &recomputed_full_set, event_digest,
+        "combined_digest recomputed over the FULL resolved_args set must equal \
+         the persisted digest — the domain is every current element, not just \
+         the blocked subset"
+    );
+
+    // Falsification: a digest computed over ONLY the blocked subset (`path`)
+    // must NOT equal the persisted full-set digest — proving the persisted
+    // value genuinely covers the trusted `contents` arg too, not merely the
+    // blocked one (this is the exact BLOCKER-2 hole this widening closes).
+    let blocked_subset_only: Vec<(&str, &str)> = pc
+        .resolved_args
+        .iter()
+        .filter(|a| a.name == "path")
+        .map(|a| (a.name.as_str(), a.literal.as_str()))
+        .collect();
+    let blocked_subset_digest = combined_digest(&blocked_subset_only);
+    assert_ne!(
+        &blocked_subset_digest, event_digest,
+        "a digest over the blocked subset ONLY must differ from the persisted \
+         full-set digest — otherwise a side-table rewrite of the trusted \
+         `contents` arg would go undetected (BLOCKER-2)"
+    );
+
+    // (c) blocked_arg_names is the ordered BLOCKED subset ONLY (display-
+    // marking metadata) — `path` (tainted, routing-sensitive), never
+    // `contents` (trusted, untainted).
+    assert_eq!(
+        pc.blocked_arg_names,
+        vec!["path".to_string()],
+        "blocked_arg_names must be exactly the blocked subset (`path`), not the \
+         full resolved_args name set"
+    );
+
+    drop(reopened);
+    cleanup_db(&db_path);
+}

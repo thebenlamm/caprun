@@ -24,7 +24,8 @@
 /// behind `#[cfg(target_os = "linux")]`.
 use brokerd::audit::{append_event, insert_blocked_literal, open_audit_db};
 use brokerd::confirmation::{
-    insert_pending_confirmation, PendingConfirmation, PendingConfirmationState, ResolvedArg,
+    combined_digest, insert_pending_confirmation, PendingConfirmation, PendingConfirmationState,
+    ResolvedArg,
 };
 use chrono::Utc;
 use runtime_core::executor_decision::SinkBlockedAnchor;
@@ -85,12 +86,42 @@ fn seed_pending_file_create_block(
         provenance_chain: vec![read_event_id],
         read_event_id,
     };
+
+    let resolved_args = vec![
+        ResolvedArg {
+            name: "path".into(),
+            value_id: ValueId::new(),
+            literal: path.to_string(),
+            taint: vec![TaintLabel::PathRaw],
+            provenance_chain: vec![read_event_id],
+        },
+        ResolvedArg {
+            name: "contents".into(),
+            value_id: ValueId::new(),
+            literal: contents.to_string(),
+            taint: vec![TaintLabel::UserTrusted],
+            provenance_chain: vec![],
+        },
+    ];
+    // CONFIRM-03 (Round-6): computed once over the FULL resolved_args set,
+    // threaded into BOTH the sink_blocked Event and the PendingConfirmation
+    // below — mirrors server.rs's Block-time write.
+    let digest = combined_digest(
+        &resolved_args
+            .iter()
+            .map(|a| (a.name.as_str(), a.literal.as_str()))
+            .collect::<Vec<_>>(),
+    );
+    let blocked_arg_names = vec!["path".to_string()];
+
     let blocked_event = Event::sink_blocked(
         Uuid::new_v4(),
         Some(root.id),
         session_id,
         Utc::now(),
         vec![anchor],
+        Some(digest.clone()),
+        blocked_arg_names.clone(),
     );
     let blocked_event_id = blocked_event.id;
     append_event(&conn, &blocked_event, Some(&root_hash)).expect("append sink_blocked");
@@ -102,22 +133,9 @@ fn seed_pending_file_create_block(
         session_id,
         blocked_event_id,
         sink: SinkId("file.create".into()),
-        resolved_args: vec![
-            ResolvedArg {
-                name: "path".into(),
-                value_id: ValueId::new(),
-                literal: path.to_string(),
-                taint: vec![TaintLabel::PathRaw],
-                provenance_chain: vec![read_event_id],
-            },
-            ResolvedArg {
-                name: "contents".into(),
-                value_id: ValueId::new(),
-                literal: contents.to_string(),
-                taint: vec![TaintLabel::UserTrusted],
-                provenance_chain: vec![],
-            },
-        ],
+        resolved_args,
+        blocked_arg_names,
+        combined_digest: digest,
         workspace_root_path: workspace_root.to_string_lossy().into_owned(),
         state: PendingConfirmationState::Pending,
     };
@@ -356,12 +374,49 @@ fn seed_pending_email_send_block(
         provenance_chain: vec![read_event_id],
         read_event_id,
     };
+
+    let resolved_args = vec![
+        ResolvedArg {
+            name: "to".into(),
+            value_id: ValueId::new(),
+            literal: to.to_string(),
+            taint: vec![TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![read_event_id],
+        },
+        ResolvedArg {
+            name: "subject".into(),
+            value_id: ValueId::new(),
+            literal: subject.to_string(),
+            taint: vec![TaintLabel::UserTrusted],
+            provenance_chain: vec![],
+        },
+        ResolvedArg {
+            name: "body".into(),
+            value_id: ValueId::new(),
+            literal: body.to_string(),
+            taint: vec![TaintLabel::UserTrusted],
+            provenance_chain: vec![],
+        },
+    ];
+    // CONFIRM-03 (Round-6): computed once over the FULL resolved_args set,
+    // threaded into BOTH the sink_blocked Event and the PendingConfirmation
+    // below — mirrors server.rs's Block-time write.
+    let digest = combined_digest(
+        &resolved_args
+            .iter()
+            .map(|a| (a.name.as_str(), a.literal.as_str()))
+            .collect::<Vec<_>>(),
+    );
+    let blocked_arg_names = vec!["to".to_string()];
+
     let blocked_event = Event::sink_blocked(
         Uuid::new_v4(),
         Some(root.id),
         session_id,
         Utc::now(),
         vec![anchor],
+        Some(digest.clone()),
+        blocked_arg_names.clone(),
     );
     let blocked_event_id = blocked_event.id;
     append_event(&conn, &blocked_event, Some(&root_hash)).expect("append sink_blocked");
@@ -373,29 +428,9 @@ fn seed_pending_email_send_block(
         session_id,
         blocked_event_id,
         sink: SinkId("email.send".into()),
-        resolved_args: vec![
-            ResolvedArg {
-                name: "to".into(),
-                value_id: ValueId::new(),
-                literal: to.to_string(),
-                taint: vec![TaintLabel::ExternalUntrusted],
-                provenance_chain: vec![read_event_id],
-            },
-            ResolvedArg {
-                name: "subject".into(),
-                value_id: ValueId::new(),
-                literal: subject.to_string(),
-                taint: vec![TaintLabel::UserTrusted],
-                provenance_chain: vec![],
-            },
-            ResolvedArg {
-                name: "body".into(),
-                value_id: ValueId::new(),
-                literal: body.to_string(),
-                taint: vec![TaintLabel::UserTrusted],
-                provenance_chain: vec![],
-            },
-        ],
+        resolved_args,
+        blocked_arg_names,
+        combined_digest: digest,
         workspace_root_path: workspace_root.to_string_lossy().into_owned(),
         state: PendingConfirmationState::Pending,
     };

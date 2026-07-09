@@ -75,16 +75,74 @@ CREATE TABLE IF NOT EXISTS blocked_literals (
 -- redaction. `resolved_args` is a JSON-serialized `Vec<ResolvedArg>` blob, mirroring
 -- the `events.payload` convention of serializing the whole struct to one TEXT column —
 -- never a normalized child table (RESEARCH Open Question 2).
+--
+-- `blocked_arg_names`/`combined_digest` (Phase 16, CONFIRM-03, DESIGN-confirm-
+-- binding.md Round-6) are additive: `blocked_arg_names` is a JSON-serialized
+-- `Vec<String>` (DISPLAY-MARKING metadata only), and `combined_digest` is the
+-- SHA-256 digest mirrored from the hashed `sink_blocked` Event payload. A
+-- pre-existing DB predating these columns is widened idempotently by
+-- `migrate_pending_confirmations_schema` below — `CREATE TABLE IF NOT EXISTS`
+-- only ever fires on a FRESH database.
 CREATE TABLE IF NOT EXISTS pending_confirmations (
     effect_id           TEXT PRIMARY KEY,
     session_id          TEXT NOT NULL,
     blocked_event_id    TEXT NOT NULL,
     sink                TEXT NOT NULL,
     resolved_args       TEXT NOT NULL,
+    blocked_arg_names   TEXT NOT NULL,
+    combined_digest     TEXT NOT NULL,
     workspace_root_path TEXT NOT NULL,
     state               TEXT NOT NULL
 ) STRICT;
 ";
+
+/// Idempotently widen a pre-existing `pending_confirmations` table with the
+/// two Phase-16 CONFIRM-03 columns (`blocked_arg_names`, `combined_digest`).
+///
+/// `CREATE TABLE IF NOT EXISTS` in `SCHEMA_DDL` above only ever creates the
+/// table on a FRESH database — a pre-existing `audit.db` (created before this
+/// change) keeps its original 7-column shape forever unless explicitly
+/// migrated here. Without this, the widened `insert_pending_confirmation`
+/// would fail with "no such column" the moment `caprun confirm` reuses a
+/// run's original DB (`main.rs:321`).
+///
+/// Gated on a `PRAGMA table_info(pending_confirmations)` column-presence
+/// check — never a blind `ALTER TABLE ... ADD COLUMN`, which errors on a
+/// column that already exists. This function runs on EVERY `open_audit_db`
+/// call, so it MUST be safe to re-run against an already-migrated (or
+/// freshly-created, already-widened) DB — verified by
+/// `pending_confirmations_migration_is_idempotent` below.
+///
+/// A legacy row that predates this migration gets the DEFAULT values
+/// (`''`/`'[]'`) — `confirm()`'s recompute-and-compare (Plan 16-02) will fail
+/// its digest compare closed for such a row, which is the correct, accepted
+/// behavior for data that predates the binding.
+fn migrate_pending_confirmations_schema(conn: &rusqlite::Connection) -> Result<()> {
+    let mut existing_columns: Vec<String> = Vec::new();
+    {
+        let mut stmt = conn.prepare("PRAGMA table_info(pending_confirmations)")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            // PRAGMA table_info columns: cid, name, type, notnull, dflt_value, pk.
+            let name: String = row.get(1)?;
+            existing_columns.push(name);
+        }
+    }
+
+    if !existing_columns.iter().any(|c| c == "blocked_arg_names") {
+        conn.execute(
+            "ALTER TABLE pending_confirmations ADD COLUMN blocked_arg_names TEXT NOT NULL DEFAULT '[]'",
+            [],
+        )?;
+    }
+    if !existing_columns.iter().any(|c| c == "combined_digest") {
+        conn.execute(
+            "ALTER TABLE pending_confirmations ADD COLUMN combined_digest TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    Ok(())
+}
 
 /// Open (or create) the audit database at `path` and run schema DDL.
 ///
@@ -98,6 +156,7 @@ CREATE TABLE IF NOT EXISTS pending_confirmations (
 pub fn open_audit_db(path: &str) -> Result<rusqlite::Connection> {
     let conn = rusqlite::Connection::open(path)?;
     conn.execute_batch(SCHEMA_DDL)?;
+    migrate_pending_confirmations_schema(&conn)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     Ok(conn)
 }
@@ -588,14 +647,16 @@ mod tests {
         conn.execute(
             "INSERT INTO pending_confirmations \
              (effect_id, session_id, blocked_event_id, sink, resolved_args, \
-              workspace_root_path, state) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+              blocked_arg_names, combined_digest, workspace_root_path, state) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 effect_id,
                 session_id,
                 blocked_event_id,
                 "file.create",
                 "[]",
+                "[]",
+                "deadbeef",
                 "/workspace",
                 "pending",
             ],
@@ -605,14 +666,16 @@ mod tests {
         let duplicate = conn.execute(
             "INSERT INTO pending_confirmations \
              (effect_id, session_id, blocked_event_id, sink, resolved_args, \
-              workspace_root_path, state) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+              blocked_arg_names, combined_digest, workspace_root_path, state) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 effect_id,
                 session_id,
                 blocked_event_id,
                 "file.create",
                 "[]",
+                "[]",
+                "deadbeef",
                 "/workspace",
                 "pending",
             ],
@@ -622,6 +685,98 @@ mod tests {
             duplicate.is_err(),
             "duplicate effect_id insert must fail the PRIMARY KEY constraint"
         );
+    }
+
+    /// (Task 2 migration test) A DB whose `pending_confirmations` table
+    /// PREDATES the Phase-16 `blocked_arg_names`/`combined_digest` columns
+    /// (the OLD 7-column shape) is widened idempotently by
+    /// `migrate_pending_confirmations_schema` — reopening it a second time
+    /// does not error, and a widened 9-column INSERT then succeeds where it
+    /// would otherwise fail with "no such column."
+    #[test]
+    fn pending_confirmations_migration_widens_legacy_schema_idempotently() {
+        // Build a temp-file DB (":memory:" can't be reopened across
+        // connections) with the OLD 7-column `pending_confirmations` shape —
+        // bypassing `open_audit_db`/`SCHEMA_DDL` entirely to simulate a
+        // pre-Phase-16 database on disk.
+        let mut path = std::env::temp_dir();
+        path.push(format!("caprun_legacy_pending_confirmations_{}.db", Uuid::new_v4()));
+
+        {
+            let legacy_conn = rusqlite::Connection::open(&path).expect("open legacy db");
+            legacy_conn
+                .execute_batch(
+                    "CREATE TABLE pending_confirmations (
+                        effect_id           TEXT PRIMARY KEY,
+                        session_id          TEXT NOT NULL,
+                        blocked_event_id    TEXT NOT NULL,
+                        sink                TEXT NOT NULL,
+                        resolved_args       TEXT NOT NULL,
+                        workspace_root_path TEXT NOT NULL,
+                        state               TEXT NOT NULL
+                    ) STRICT;",
+                )
+                .expect("create legacy 7-column table");
+        }
+
+        // First open: `open_audit_db` runs `SCHEMA_DDL` (a no-op — the table
+        // already exists) then the migration, which MUST widen the legacy
+        // table in place.
+        let conn = open_audit_db(path.to_str().unwrap()).expect("open_audit_db (first, migrating)");
+
+        let widened = conn.execute(
+            "INSERT INTO pending_confirmations \
+             (effect_id, session_id, blocked_event_id, sink, resolved_args, \
+              blocked_arg_names, combined_digest, workspace_root_path, state) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+                "file.create",
+                "[]",
+                "[]",
+                "deadbeef",
+                "/workspace",
+                "pending",
+            ],
+        );
+        assert!(
+            widened.is_ok(),
+            "a widened 9-column INSERT must succeed after migrating a legacy \
+             7-column pending_confirmations table: {widened:?}"
+        );
+        drop(conn);
+
+        // Second open (a fresh connection, simulating `caprun confirm` reusing
+        // the same DB file later): the migration must be idempotent — no
+        // "duplicate column name" error, and the widened INSERT still works.
+        let conn2 = open_audit_db(path.to_str().unwrap()).expect("open_audit_db (second, already-migrated)");
+        let widened_again = conn2.execute(
+            "INSERT INTO pending_confirmations \
+             (effect_id, session_id, blocked_event_id, sink, resolved_args, \
+              blocked_arg_names, combined_digest, workspace_root_path, state) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+                "file.create",
+                "[]",
+                "[]",
+                "deadbeef",
+                "/workspace",
+                "pending",
+            ],
+        );
+        assert!(
+            widened_again.is_ok(),
+            "re-opening an already-migrated DB must not error, and a second \
+             widened INSERT must still succeed: {widened_again:?}"
+        );
+
+        drop(conn2);
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

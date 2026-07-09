@@ -439,62 +439,27 @@ pub async fn dispatch_request(
             // Fail-closed: an append error propagates with `?`, so the block is
             // NEVER reported to the worker as having succeeded.
             //
-            // A block persists ALL durable anchors via the broker-owned
-            // Event::sink_blocked constructor (sets Event.taint by merging every
-            // anchor's taint, anchors = the full collection). The causal parent
-            // stays the chain head — NOT read_event_id (two graphs are never
-            // equated, DESIGN §0/§4 rule 3). On a block, capture EVERY blocked
-            // arg's LIVE literal (name + literal) so each can be written to the
-            // redactable `blocked_literals` side table (keyed by the sink_blocked
-            // event id AND arg name — Phase 14 plural). The literal is NEVER put
-            // in the hashed event payload — the anchor carries only its digest
-            // (`literal_sha256`).
-            let (audit_event, blocked_literals) = match &decision {
-                runtime_core::ExecutorDecision::BlockedPendingConfirmation { anchors } => (
-                    Event::sink_blocked(
-                        Uuid::new_v4(),
-                        Some(*last_event_id), // causal head — never read_event_id
-                        session_id,
-                        Utc::now(),
-                        anchors.iter().map(|b| b.anchor.clone()).collect(),
-                        // Task 1 placeholder — Task 2 computes the real
-                        // CONFIRM-03 combined digest over the FULL
-                        // resolved_args set (not just this anchors
-                        // collection) and threads it through here.
-                        None,
-                        vec![],
-                    ),
-                    anchors
-                        .iter()
-                        .map(|b| (b.anchor.arg.clone(), b.literal.clone()))
-                        .collect::<Vec<(String, String)>>(),
-                ),
-                _ => (
-                    Event::new(
-                        Uuid::new_v4(),
-                        Some(*last_event_id), // causal parent preserved — not None
-                        session_id,
-                        "executor".into(),
-                        "plan_node_evaluated".into(),
-                        Utc::now(),
-                        vec![],
-                    ),
-                    Vec::new(),
-                ),
-            };
-            let event_type = audit_event.event_type.clone();
-
             // On a block, resolve the FULL arg set from the still-live per-
-            // connection ValueStore into a Vec<ResolvedArg> snapshot — this is
-            // the ONLY moment those literals are recoverable (the ValueStore
-            // does not survive process exit; DESIGN-confirmation-release.md
-            // "The Problem Being Solved"). A handle that fails to resolve here
-            // is a broker-internal invariant violation (validate_schema already
-            // guaranteed presence) — fail closed, never persist a partial
-            // snapshot.
-            let pending_confirmation = if let runtime_core::ExecutorDecision::BlockedPendingConfirmation {
-                anchors,
-            } = &decision
+            // connection ValueStore into a Vec<ResolvedArg> snapshot FIRST —
+            // this is the ONLY moment those literals are recoverable (the
+            // ValueStore does not survive process exit;
+            // DESIGN-confirmation-release.md "The Problem Being Solved"). A
+            // handle that fails to resolve here is a broker-internal invariant
+            // violation (validate_schema already guaranteed presence) — fail
+            // closed, never persist a partial snapshot.
+            //
+            // The CONFIRM-03 combined digest (Phase 16, DESIGN-confirm-binding.md
+            // Round-6 amendment) MUST be computed over this SAME full set —
+            // blocked AND trusted args together, never a subset — so it is
+            // computed HERE, once, and threaded into BOTH the sink_blocked
+            // Event and the PendingConfirmation below (no second computation,
+            // no new lock).
+            let block_snapshot: Option<(
+                Vec<crate::confirmation::ResolvedArg>,
+                String,
+                Vec<String>,
+            )> = if let runtime_core::ExecutorDecision::BlockedPendingConfirmation { anchors } =
+                &decision
             {
                 let mut resolved_args = Vec::with_capacity(plan_node.args.len());
                 for arg in &plan_node.args {
@@ -512,6 +477,83 @@ pub async fn dispatch_request(
                         provenance_chain: record.provenance_chain.clone(),
                     });
                 }
+                // CONFIRM-03 (Round-6): the digest covers EVERY current
+                // resolved_args element (blocked AND trusted together) — the
+                // primitive sorts by byte-wise ascending arg_name and asserts
+                // name-uniqueness internally, so no manual sort/filter is
+                // needed here.
+                let pairs: Vec<(&str, &str)> = resolved_args
+                    .iter()
+                    .map(|a| (a.name.as_str(), a.literal.as_str()))
+                    .collect();
+                let digest = crate::confirmation::combined_digest(&pairs);
+                // blocked_arg_names is DISPLAY-MARKING metadata ONLY (which of
+                // the full set Plan 16-02 narrates as BLOCKED vs TRUSTED) — the
+                // ordered `anchors` collection IS the ordered blocked subset
+                // from the executor's collect-then-Block loop; never re-filter
+                // resolved_args for this, and it does NOT gate the digest's
+                // domain.
+                let blocked_arg_names: Vec<String> =
+                    anchors.iter().map(|b| b.anchor.arg.clone()).collect();
+                Some((resolved_args, digest, blocked_arg_names))
+            } else {
+                None
+            };
+
+            // A block persists ALL durable anchors via the broker-owned
+            // Event::sink_blocked constructor (sets Event.taint by merging every
+            // anchor's taint, anchors = the full collection). The causal parent
+            // stays the chain head — NOT read_event_id (two graphs are never
+            // equated, DESIGN §0/§4 rule 3). On a block, capture EVERY blocked
+            // arg's LIVE literal (name + literal) so each can be written to the
+            // redactable `blocked_literals` side table (keyed by the sink_blocked
+            // event id AND arg name — Phase 14 plural). The literal is NEVER put
+            // in the hashed event payload — the anchor carries only its digest
+            // (`literal_sha256`). `combined_digest`/`blocked_arg_names` (Phase 16)
+            // ride inside this SAME hashed Event payload, computed once above.
+            let (audit_event, blocked_literals) = match &decision {
+                runtime_core::ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+                    let (_, digest, blocked_arg_names) = block_snapshot.as_ref().expect(
+                        "block_snapshot is Some for every BlockedPendingConfirmation decision",
+                    );
+                    (
+                        Event::sink_blocked(
+                            Uuid::new_v4(),
+                            Some(*last_event_id), // causal head — never read_event_id
+                            session_id,
+                            Utc::now(),
+                            anchors.iter().map(|b| b.anchor.clone()).collect(),
+                            Some(digest.clone()),
+                            blocked_arg_names.clone(),
+                        ),
+                        anchors
+                            .iter()
+                            .map(|b| (b.anchor.arg.clone(), b.literal.clone()))
+                            .collect::<Vec<(String, String)>>(),
+                    )
+                }
+                _ => (
+                    Event::new(
+                        Uuid::new_v4(),
+                        Some(*last_event_id), // causal parent preserved — not None
+                        session_id,
+                        "executor".into(),
+                        "plan_node_evaluated".into(),
+                        Utc::now(),
+                        vec![],
+                    ),
+                    Vec::new(),
+                ),
+            };
+            let event_type = audit_event.event_type.clone();
+
+            let pending_confirmation = if let runtime_core::ExecutorDecision::BlockedPendingConfirmation {
+                anchors,
+            } = &decision
+            {
+                let (resolved_args, combined_digest, blocked_arg_names) = block_snapshot.expect(
+                    "block_snapshot is Some for every BlockedPendingConfirmation decision",
+                );
                 Some(crate::confirmation::PendingConfirmation {
                     // Every element shares one effect_id — one Block, one
                     // effect_id, N blocked args (Phase 14 plural).
@@ -520,6 +562,8 @@ pub async fn dispatch_request(
                     blocked_event_id: audit_event.id,
                     sink: plan_node.sink.clone(),
                     resolved_args,
+                    blocked_arg_names,
+                    combined_digest,
                     workspace_root_path: workspace_root.root_path().to_string_lossy().into_owned(),
                     state: crate::confirmation::PendingConfirmationState::Pending,
                 })
