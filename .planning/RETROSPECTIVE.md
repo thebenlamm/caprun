@@ -131,6 +131,54 @@ Draft-only session demotion and single-shot human confirmation, proven live on r
 - 111 commits across the milestone (`git log v1.1..v1.2`); 97 files changed, +16569/-231 lines; 6 days wall-clock (2026-07-01 → 2026-07-07).
 - Notable: the live-Linux proof was run twice again (executor + orchestrator independently) — deliberate redundancy for the security gate, same as v1.1, now a confirmed pattern rather than a one-off.
 
+## Milestone: v1.3 — Doc → Action Assistant
+
+**Shipped:** 2026-07-09
+**Phases:** 6 (12-17) | **Plans:** 21 | **Tasks:** 49
+
+### What Was Built
+
+The hero demo: a confined worker deterministically extracts a "send to X" action from an untrusted document (no LLM planner), a tainted recipient AND body both Block at the sink, and confirm/deny/clean-control compose into one live-verified acceptance run:
+
+- **Design gate (Phase 12)** — `DESIGN-content-adapter-mediation.md` (collect-then-Block executor hardening, real broker-mediated SMTP adapter mediation, CRLF/header-injection defense) + `DESIGN-confirm-binding.md` (full-set name-bound `combined_digest`). Round-1 review and 6 amendment rounds; DESIGN-01 adversarial gate closed without the authoring session self-reviewing.
+- **Real SMTP adapter (Phase 13)** — broker-resident `email_smtp.rs` via `lettre`, atomic `pending→confirmed` CAS + durable send-attempt ledger in ONE SQLite transaction, kernel-denied negative-net control, live Mailpit-captured send + CRLF-injection defense proven on real Linux.
+- **Content-sensitive blocking (Phase 14)** — executor's collect-then-Block reshape: `ExecutorDecision`/`SinkBlockedAnchor` made plural so a tainted body Blocks alongside a tainted recipient in the SAME decision, never first-match-wins.
+- **Deterministic doc→action extraction (Phase 15)** — `mint_from_derivation` closes the milestone's #1 laundering risk: a transform-derived value's provenance_chain threads its inputs' own read-rooted chains, never a fresh transform-local root, with a byte-verified concat check and two anti-staple negative controls.
+- **Confirm UX & negative controls (Phase 16)** — full-set name-bound `combined_digest`, verbatim block narration, `verify_chain` wired into confirm/deny, CONTROL-01/02 live A/B proof. Round-1 mandate (email.send Allowed-dispatch) opened a real live-exfiltration hole (a worker could skip `ReportClaims` and inject an arbitrary recipient via `ProvideIntent`) — caught by the coordinator's own panel, closed with 3 guards in the same phase.
+- **Live acceptance & framing honesty (Phase 17)** — composed 3-session live test sharing ONE audit.db: confirm sends exactly once, a SEPARATE hostile block is denied sending nothing (Mailpit count AND ledger), a clean control delivers ungated, all sessions independently `verify_chain`-true; the milestone's HARD GATE re-proven against these live anchors; all 8 DOC-01 honesty points landed in PROJECT.md.
+
+### What Worked
+
+- **The coordinator's own round-1 mandate introduced a real vulnerability, and the same discipline caught and closed it.** Phase 16's email.send Allowed-dispatch (mandated by caprun-opus-77 itself) opened a live exfiltration path; the coordinator's own adversarial panel found it, owned the mistake explicitly, and mandated the fix as its own dedicated plan with its own review pass. The gate caught its own author's error — exactly what the discipline is for.
+- **Flagging a locked-decision contradiction instead of self-resolving, twice.** Both the planner (Phase 17: the coordinator's "byte-identical fixture" ruling collided with the deny-leg's live Mailpit count==0 requirement and an existing passing test's fixed-literal assertion) and the orchestrator (the multi-session-vs-single-chain interpretation of "one unbroken audit DAG") surfaced genuine tensions in a coordinator ruling rather than picking a side unilaterally. Both times the coordinator revised its own ruling in response — a correction that would have shipped silently wrong if either party had "just made it work."
+- **A fresh-context adversarial panel caught a real DAG-fork bug pre-execution.** Phase 17 round 1: the planner's anti-staple Control B copied a chaining pattern from the Phase-15 single-session template (mint onto `sink_blocked`'s hash) into a composed multi-event context where `sink_blocked` is no longer the chain head — would have forked the DAG and failed `verify_chain` on real Linux. Caught by the coordinator's panel before any executor touched the code, same class as Phase 16's MAJOR-7 fix recurring in a new harness.
+- **Independent live-Linux re-verification, now 4-for-4 across the whole project.** The orchestrator re-ran the full unscoped `scripts/mailpit-verify.sh` itself (250/250, exit 0 captured before any pipe) before flagging DONE; the coordinator separately re-ran the same proof under its own execution AND personally read the final DOC-01 prose for points 2/3, rather than accepting either party's SUMMARY.md.
+- **`scripts/mailpit-verify.sh` scaled cleanly to a shared multi-session harness.** No changes to the verification recipe itself were needed to support 3 sequential `caprun` invocations sharing one audit.db and one Mailpit sidecar — the existing sidecar-per-verification-run design already assumed multiple sends into one inbox (recipient-scoped assertions, not whole-inbox counts).
+
+### What Was Inefficient
+
+- **The `LIMIT 1` session-lookup anti-pattern was invisible until composition exposed it.** Every prior live test used a fresh tmp-dir/audit.db per invocation, so `SELECT id FROM sessions LIMIT 1` was correct by construction, never by design — for 6+ call sites across 2 test files, across 2 milestones. Phase 17's research pass caught it before code was written by reading the actual queries, not by a failure; costs nothing when caught in research, would have been a confusing silent-wrong-session bug if it shipped.
+- **A locked ruling was over-specified on the first pass and needed a same-day correction.** The coordinator's "byte-identical hostile fixture" ruling was internally unsatisfiable (collided with its own tooth-#4 requirement and an existing test's fixed-literal assertion) — caught mid-planning, not mid-review, costing one extra FAMP round-trip but no wasted code.
+
+### Patterns Established
+
+- **A coordinator's mandate is not exempt from the adversarial gate it enforces on everyone else.** When a fresh panel finds a real vulnerability traceable to the coordinator's own prior instruction, the fix is: the coordinator owns the mistake explicitly, mandates the fix as its own plan, and gets its own fresh review — not a quiet patch folded into unrelated work.
+- **When a locked ruling collides with another locked constraint, flag before encoding — even mid-execution.** Both the orchestrator (architectural interpretation) and the planner (fixture rule) treated a coordinator ruling as revisable-on-conflict rather than immutable-once-issued, and both times the coordinator's revision was substantively better than either the original ruling or a silent workaround would have been.
+- **Composition phases re-prove, they don't reuse-by-assumption.** Phase 17's HARD GATE explicitly re-ran Phase 15's genuine-taint proof against the LIVE composed run's own anchors rather than treating Phase 15's own test coverage as sufficient — "the composition must re-prove descent here, or the 'one DAG' claim is decorative."
+- **A DAG-fork bug class recurs whenever a proof pattern is copied from a single-session template into a multi-event composed context.** Anything that "chains onto event X's hash" must chain onto the CURRENT chain head at append time, never a specific named event that predates later appends — check this explicitly whenever composing sessions/scenarios that were individually proven in isolation.
+
+### Key Lessons
+
+- The project's own security-gate discipline is not immune to being the source of a new vulnerability — Phase 16 proved that a coordinator's mandate can introduce a real hole, and the same discipline (fresh panels, independent re-runs, explicit ownership of mistakes) is what catches it. Don't treat "the coordinator said so" as a lower-scrutiny path than any other change.
+- "Independently re-run the live proof at verification time" is now a 4-for-4 confirmed pattern (v1.1, v1.2, and twice more within v1.3's own close) across two independent parties (executor-side orchestrator AND the delegated coordinator) — the redundancy has caught nothing wrong yet, but the discipline is what makes that a meaningful signal rather than luck.
+- A locked ruling is a starting point for execution, not a substitute for verifying it against the actual code and existing tests before encoding it into a plan — over-specification (e.g. "byte-identical") is as real a risk as under-specification.
+
+### Cost Observations
+
+- Model mix: orchestrator Sonnet 5; planner on Opus; researcher and plan-checker on Sonnet; coordinator (caprun-opus-77, a separate delegated FAMP agent) ran all adversarial panels independently.
+- 6 phases, ~4 adversarial FAMP rounds each (research/plan → coordinator review → revision → re-check), every round found something real — none were rubber-stamps.
+- Notable: Phase 17 alone required 2 full adversarial rounds with the coordinator (1 BLOCKER + 5 MEDIUM + 1 NIT on round 1) before clearance, on top of the orchestrator's own independent gsd-plan-checker pass and a separate fresh-check pass after the revision — 3 independent verification layers before execution began.
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Shipped | Notes |
@@ -138,3 +186,4 @@ Draft-only session demotion and single-shot human confirmation, proven live on r
 | v1.0 MVP  | 4      | 15    | 2026-06-30 | v0 DONE — genuine-taint §9 gate cleared |
 | v1.1 Usable Runtime | 3 | 15 | 2026-07-01 | Live §9 from the CLI — real `file.create` sink, DB-durable taint chain, Linux-verified |
 | v1.2 Tainted Session, Human Gate | 4 | 11 | 2026-07-07 | Draft-only session demotion (I1/I0) + single-shot confirmation loop, live-proven on real Linux; independent live-run re-verification now a confirmed 2/2 pattern |
+| v1.3 Doc → Action Assistant | 6 | 21 | 2026-07-09 | Doc→action hero demo: genuine-taint extraction, collect-then-Block, full-set confirm binding, a real live email send, closed exfiltration path, composed confirm/deny/clean live acceptance, honest DOC-01 framing; independent live-run re-verification now 4/4, across two independent parties |
