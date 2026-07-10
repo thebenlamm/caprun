@@ -16,7 +16,65 @@ Event → ValueNode → sensitive sink argument) deterministically blocks
 value-injection at the sink. If everything else fails, **I2 enforcement on a
 genuine taint chain must hold.**
 
-## Current Milestone: v1.3 "Doc → Action Assistant"
+## Current Milestone: v1.4 — Trust-Boundary Integrity & the Adversarial Planner
+
+**Goal:** Fix a confirmed live cross-connection trust bypass in the broker
+(Phase 0 — a security fix, gated by an already-red regression test), then
+prove the trust boundary is indifferent to planner intelligence by putting an
+adversarial LLM planner behind it (Phase 1+) — a hostile injected document
+makes the planner *comply* and try to route a tainted value to `email.send`,
+and the executor **Blocks deterministically** anyway, with genuine taint
+propagation re-verified live (the §9 standard: `verify_chain` true, Mailpit
+== 0), because the value flows around the planner through the worker's own
+mint sites, never through the planner's tokens.
+
+**Why now:** an adversarial review found, and a Linux repro CONFIRMED (cargo
+exit 101, 2 independent runs — `crates/brokerd/tests/two_connection_intent_bypass.rs`),
+that v1.3's guard(a) (`ProvideIntent` sealed after any `RequestFd`) is
+per-connection state only. A worker opens a SECOND `AF_UNIX` connection to
+the same session socket, gets fresh guard(a) state and a stale
+`session_status`, and can mint an attacker-controlled literal `UserTrusted`
+via `ProvideIntent` on that second connection — routing it to `email.send` as
+`Allowed`. This falsifies the invariant the whole I0/I1/I2 model rests on:
+`UserTrusted` == "the human typed it." Fix precedes all new capability.
+
+**Target features:**
+- **Phase 0 (fix, blocks everything):** broker rejects a second connection to
+  an already-active session (closes the bypass with the smaller hammer — a
+  confined worker only ever needs one connection), gated by a DESIGN doc
+  (`planning-docs/DESIGN-session-trust-coherence.md`) that clears a fresh
+  adversarial panel before any `server.rs` change. Replay risk (MAJOR-2) is
+  re-earned in writing against the new adaptive-planner threat model, not
+  silently inherited. `two_connection_intent_bypass_repro`'s `#[ignore]` is
+  removed and the test goes green by fixing the broker, never by weakening
+  the assertions. `scripts/mailpit-verify.sh` stays green (no regression).
+  DOC-01 is corrected to disclose the bypass and the fix.
+- **Phase 1+ (the adversarial planner, unblocked by Phase 0):** a minimal LLM
+  planner emitting only `PlanNode{sink, args}` (no literal field to carry),
+  running on a connection holding no mint verb (`ProvideIntent`,
+  `ReportClaims`, `ReportDerivedClaim` are worker-only) — designing the
+  planner seam that doesn't exist yet (`planner.rs`'s `plan_from_intent` is a
+  bare fn today, no `Planner` trait). Hard gate: hostile-doc-primed planner
+  complies and emits a tainted routing PlanNode → executor Blocks
+  deterministically → `verify_chain` true → Mailpit == 0; a trusted-intent
+  control on the same sink Allows and delivers exactly once. The old
+  context-dump grep (theater — tests harness input, misses recipient
+  fragmentation) is replaced by a deterministic construction-site assertion:
+  feed the prompt constructor a sentinel-tagged tainted record, assert the
+  sentinel bytes never appear in the constructed prompt.
+- **T2 (slot-type binding) deferred to v1.5:** the executor doesn't check
+  that a handle's semantic origin matches its slot — a `UserTrusted` handle
+  in `to` is neither sensitive-untrusted nor slot-checked, so I2 doesn't
+  fire. Safe today only *incidentally* (every `UserTrusted` handle is
+  human-typed, so a misroute carries the human's own string). Documented as
+  the accepted v1.4 residual; enforcement is v1.5 scope.
+
+**Explicitly not reopened beyond the above:** Git/GitHub adapters, Cedar
+policy engine, cross-host delegation/Biscuit crypto, gVisor/Firecracker, a
+web UI, marketplace, or long-term memory.
+
+<details>
+<summary>✅ v1.3 — Doc → Action Assistant — SHIPPED 2026-07-09</summary>
 
 **Goal:** caprun ingests an untrusted document containing an embedded
 injection, deterministically extracts a "send to X" action (recipient + body
@@ -28,22 +86,23 @@ real broker-mediated SMTP adapter, deny sends nothing — one unbroken audit DAG
 for both outcomes, plus a clean-send negative control in the same run, proven
 live on real Linux via Colima+Docker.
 
-**Target features:**
-- Real broker-mediated SMTP adapter (worker never sends; secrets live only in
-  the broker; gate test targets a local capture SMTP — MailHog/Mailpit)
-- CONTENT-01: content-sensitive sink-arg blocking (body, not just
-  recipient/routing) — reopens a decision deferred at v1.2 scoping
-- Deterministic (non-LLM), confined doc→action extraction with a manipulation
-  variant proving taint survives transformation, not just copying
-- Negative controls (trusted send proceeds ungated; tainted-body/trusted-
-  recipient still blocks) so the demo is a controlled experiment, not anecdote
-- Confirm-binding to resolved literals (anti-TOCTOU) and idempotent, failure-
-  safe send
+**Delivered:** real broker-mediated SMTP adapter (SMTP-01/02/03/05,
+SEND-01/02); CONTENT-01 content-sensitive sink-arg blocking; deterministic
+doc→action extraction with genuine provenance threading
+(`mint_from_derivation`); full-set name-bound confirm binding
+(CONFIRM-01..04, CONTROL-01/02); ACCEPT-01 composed live acceptance (3
+sessions, one shared audit.db, all `verify_chain`-true).
 
-**Explicitly not reopened:** the LLM planner stays out/deterministic. v1.3
-proves taint *enforcement* through a deterministic extractor — it does not
-claim taint survives a real LLM planner's regeneration ("laundering"); that is
-v1.4+ (see `DOC-01`).
+**⚠️ Superseded finding (v1.4 Phase 0):** an adversarial review after v1.3
+shipped found, and a Linux repro CONFIRMED, that guard(a) (`ProvideIntent`
+sealed after `RequestFd`) is **per-connection state only** — a second
+`AF_UNIX` connection to the same session socket bypasses it entirely,
+minting an attacker-controlled `UserTrusted` literal that routes to
+`email.send` as `Allowed`. This means the `UserTrusted == human-typed`
+invariant, which v1.3's whole confirm/deny narrative rests on, did **not**
+hold across connections as shipped. Not a production incident (nothing
+deployed; repo unpushed). See `crates/brokerd/tests/two_connection_intent_bypass.rs`
+(the regression gate) and v1.4 Phase 0 (the fix).
 
 **What v1.3's live proof does and does not claim (DOC-01):** CONTROL-01
 proves that a send built from TRUSTED intent is Allowed and delivers, and that
@@ -53,15 +112,17 @@ draft-only demotion triggers when the broker mints untrusted taint from a
 REPORTED read (`mint_from_read`) — NOT on fd release; a worker that reads the
 doc and reports nothing stays Active (v2 obligation: demote at `RequestFd`).
 ProvideIntent mints worker-declared intent as UserTrusted only BEFORE any fd
-read, exactly once — broker-ENFORCED, not assumed. The confined worker's send
+read, exactly once, **on that same connection** — broker-ENFORCED per-
+connection, but (per the superseded finding above) not coherent across
+connections. The confined worker's send
 path links brokerd → lettre → native-tls (a factual dependency-chain note).
 CONFIRM-01's verbatim recipient+body narration is proven END-TO-END live for
 the FIRST time in Phase 17's composed acceptance run — at Phase 16 it was
 exercised only against a synthetic fixture.
-Three additional accepted residual risks (verify_chain's forgeable chain
-head, guard-(c)'s runtime-vs-compile-time gap, and the Allowed-path's replay
-exposure) are detailed in the v1.3 residual-risks clause below — do not stop
-reading at this paragraph.
+Four accepted residual risks (verify_chain's forgeable chain
+head, guard-(c)'s runtime-vs-compile-time gap, the Allowed-path's replay
+exposure, and the cross-connection trust-coherence gap above) are detailed in
+the v1.3 residual-risks clause below — do not stop reading at this paragraph.
 
 The controlled-experiment framing is: the hostile confirm and deny legs use
 two documents with IDENTICAL injection text and IDENTICAL derivation
@@ -88,18 +149,12 @@ of truth for that property. The substantive anti-staple teeth (per-element
 real-file_read check, genuine_derivation_binds, both anti-staple controls)
 hold independently of this nuance.
 
-**Progress:** Phase 12 (DESIGN-01 design gate), Phase 13 (real
-broker-mediated SMTP adapter — SMTP-01/02/03/05, SEND-01/02), and Phase 14
-(content-sensitive sink-arg blocking — CONTENT-01/02, collect-then-Block
-plural-anchor reshape) are all complete and verified. Phase 13's claims
-were verified live on real Linux via Colima+Docker (kernel-enforced
-negative-net denial, real Mailpit-captured send, CRLF/header-injection
-fixture, atomic at-most-once send). Phase 14's plural reshape was
-independently gsd-verifier-checked: both a tainted `to`+`body` pair block
-together (not first-match-wins) and a body-tainted/recipient-trusted case
-still blocks, with no regression to the existing routing-only block or
-`file.create`'s dispatch arm. Phases 15-17 (doc→action extraction, confirm
-UX, live acceptance) remain.
+**Progress:** Phases 12-17 (DESIGN-01 design gate, real SMTP adapter,
+content-sensitive blocking, doc→action extraction, confirm UX, live
+acceptance) all complete and verified. Full traceability archived in
+`.planning/milestones/v1.3-REQUIREMENTS.md`.
+
+</details>
 
 Full v1.2 detail archived in
 [`milestones/v1.2-ROADMAP.md`](milestones/v1.2-ROADMAP.md) and
@@ -236,8 +291,16 @@ archived in `.planning/milestones/v1.3-REQUIREMENTS.md`.
 
 ### Active
 
-Unscoped — v1.3 is the most recently shipped milestone. Run
-`/gsd-new-milestone` to scope v1.4.
+v1.4 — Trust-Boundary Integrity & the Adversarial Planner (scoped
+2026-07-10). See `.planning/REQUIREMENTS.md` for REQ-IDs.
+
+- Phase 0: cross-connection trust coherence fix (reject a 2nd connection to
+  an active session), DESIGN-session-trust-coherence.md + adversarial gate,
+  replay risk re-earned in writing, DOC-01 correction
+- Phase 1+: adversarial LLM planner behind the existing trust boundary,
+  per-verb capability split (planner connection holds no mint verb),
+  deterministic construction-site sentinel assertion replacing the
+  context-dump grep, T2 slot-type binding deferred to v1.5
 
 ### Out of Scope
 
@@ -251,9 +314,14 @@ as of 2026-07-07 unless noted:
 - Cross-host delegation / Biscuit crypto — v3 concern
 - gVisor / Firecracker — bubblewrap + seccomp + Landlock remains the boundary
   through v1.3
-- LLM planner — a hard-coded / deterministic planner remains sufficient;
-  re-affirmed at v1.3 scoping (NOT reopened alongside CONTENT-01/adapter — see
-  `DOC-01`, which scopes what v1.3 does and does not prove about it)
+- LLM planner — a hard-coded / deterministic planner remained sufficient
+  through v1.3 (re-affirmed at v1.3 scoping; NOT reopened alongside
+  CONTENT-01/adapter — see `DOC-01`). **Reopened at v1.4** (Phase 1+): an
+  adversarial LLM planner is now in scope, unblocked by Phase 0's
+  trust-coherence fix — see Current Milestone above.
+- T2 slot-type binding (executor enforcement that a handle's semantic origin
+  matches its slot) — identified at v1.4 scoping as unenforced but safe-by-
+  incidental-human-typing; deferred to v1.5, not v1.4
 - Live SES / real inbox send — **downgraded from a v1.3 requirement to an
   optional post-milestone config-swap** (was `SMTP-04` in the initial draft).
   MailHog/Mailpit IS a real SMTP send with a web UI showing arrival, which
@@ -313,8 +381,9 @@ as of 2026-07-07 unless noted:
   typed `DenyReason`; durable genuine-taint anchor (ACC-07) persisted across
   process exit; live §9 hostile-block + clean-allow + unbroken causal chain green
   on real Linux `caprun`. Verifier independently re-ran the Colima/Docker recipe.
-- **Next milestone:** unscoped — run `/gsd-new-milestone` (questioning →
-  research → requirements → roadmap).
+- **Next milestone:** v1.4 — Trust-Boundary Integrity & the Adversarial
+  Planner, scoped 2026-07-10. Phase 0 (fix) blocks Phase 1+ (planner) —
+  non-negotiable ordering.
 - **Source of truth:** `planning-docs/PLAN.md` ("AgentOS v0 — Definitive Plan").
   On any conflict, PLAN.md wins. Background detail lives under `archive/`
   (security: `archive/AGENT-RUNTIME-HANDOVER.md`; architecture narrative:
@@ -471,7 +540,10 @@ Python OK for non-TCB experiments only.
 | **REOPENED v1.3** — Real broker-mediated SMTP adapter, previously a mediated sink *stub* per `DEC-layer-roles`, is now IN | The hero demo requires an actual send (confirm → email arrives) to be a genuine live-acceptance proof, not a stub invocation | — Reopened 2026-07-07 (Ben + caprun-opus-77). Confined worker never performs the SMTP call; secrets live only in the broker; gate test targets local MailHog/Mailpit — live SES is optional and NOT gated (see Out of Scope). |
 | **NOT reopened v1.3** — LLM planner stays out/deterministic (`DEC-security-invariants`, `DEC-canonical-docs`) | v1.3 proves taint *enforcement* through a deterministic extractor; it explicitly does not claim taint survives a real LLM planner's regeneration ("laundering" — a real model can re-emit a tainted value as fresh model-authored tokens with no provenance). That is a v1.4+ concern. | — Confirmed 2026-07-07. `DOC-01` requires PROJECT.md/external claims to state this scope honestly — no claim that v1.3 proves taint-survives-a-real-agent. |
 | Phase 17's ACCEPT-01 composes 3 sessions sharing ONE audit.db, "one unbroken DAG" = per-session `verify_chain` integrity, NOT a literal cross-session `parent_id` chain | Confirm/deny are mutually-exclusive terminal states on one blocked effect (structurally requires ≥3 sessions); a literal single-session chain across confirm/deny/clean would contradict the pinned single-session-per-process DESIGN model and buy nothing — a synthetic cross-session edge is exactly the "staple" this milestone exists to reject | — Locked (caprun-opus-77, Phase 17 round 1). Adversarial panel caught a DAG-fork bug in the anti-staple control's re-mint parenting before execution (mid-chain `sink_blocked` vs. `current_chain_head`) — fixed pre-execution, confirmed in the shipped test. |
-| **v1.3 "Doc → Action Assistant" SHIPPED** (2026-07-09) | Genuine byte-descent taint that propagates and blocks, collect-then-Block, full-set name-bound confirm binding, a real live email send, a controlled negative experiment (confirm sends once / deny sends nothing on the same hostile input), a closed exfiltration path, and honest disclosure of every residual risk — all proven live on real Linux and independently re-verified at every phase gate | — Shipped. No git tag (Ben's call, no push). v1.4 unscoped. |
+| **v1.3 "Doc → Action Assistant" SHIPPED** (2026-07-09) | Genuine byte-descent taint that propagates and blocks, collect-then-Block, full-set name-bound confirm binding, a real live email send, a controlled negative experiment (confirm sends once / deny sends nothing on the same hostile input), a closed exfiltration path, and honest disclosure of every residual risk — all proven live on real Linux and independently re-verified at every phase gate | — Shipped. No git tag (Ben's call, no push). |
+| **v1.4 Phase 0 fix shape: reject a 2nd connection to an active session** | Smaller hammer — a confined worker legitimately holds exactly one connection; rejecting a 2nd is simpler TCB surface than making all per-connection trust state (intent_provided/fd_requested/session_status) coherent across N connections | — Locked (Ben, 2026-07-10 scoping) |
+| **v1.4 MAJOR-2 replay risk: re-earn "accepted" in writing, no new CAS** | Under the v1.4 adaptive-planner threat model the replay actor collapses from "external" to "the milestone's own adversary," but amplification stays bounded to trusted/human-typed recipients (untrusted still Blocks) → DoS/duplication, not new exfil. Re-justify in the DESIGN doc rather than add TCB scope this milestone | — Locked (Ben, 2026-07-10 scoping). Revisit if Phase 1's planner can ever hold a mint verb. |
+| **v1.4 T2 (slot-type binding): defer to v1.5** | Keeps v1.4 to one milestone (Phase 0 fix + Phase 1 adversarial planner, T2 deferred); enforcing it now would split v1.4 into two milestones per matt-essentialist's right-sizing review | — Locked (Ben, 2026-07-10 scoping). Documented as v1.4's accepted residual: safe today only because every `UserTrusted` handle is human-typed. |
 
 ## Evolution
 
@@ -491,7 +563,22 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-09 after v1.3 "Doc → Action Assistant" shipped —
+*Last updated: 2026-07-10 after scoping v1.4 "Trust-Boundary Integrity & the
+Adversarial Planner" (`/gsd-new-milestone`). An adversarial review of a
+proposed LLM-planner milestone found, and a Linux repro CONFIRMED (cargo exit
+101, 2 runs), that v1.3's guard(a) is per-connection state only — a 2nd
+`AF_UNIX` connection to the same session socket bypasses it, minting an
+attacker-controlled `UserTrusted` literal that routes to `email.send` as
+`Allowed`. v1.3's Current Milestone entry above and its `DOC-01` section were
+retroactively annotated with a "Superseded finding" disclosure; the v1.3
+shipped-record itself is not rewritten. v1.4 Phase 0 (fix, blocks everything)
+rejects a 2nd connection to an active session, gated by a DESIGN doc + fresh
+adversarial panel; Phase 1+ puts an adversarial LLM planner behind the fixed
+boundary, replacing the theater-grade context-dump grep with a deterministic
+construction-site sentinel assertion; T2 slot-type binding is deferred to
+v1.5. Three open decisions (fix shape, replay CAS-vs-re-earn, T2 defer-vs-
+enforce) resolved with Ben, all matching the recommended defaults. Prior:
+2026-07-09 after v1.3 "Doc → Action Assistant" shipped —
 Phase 17 (Live Acceptance & Framing Honesty) closed the milestone: a
 composed 3-session live run on real Linux proves confirm-sends-once,
 deny-sends-nothing (Mailpit count AND ledger), and a clean control delivers,
