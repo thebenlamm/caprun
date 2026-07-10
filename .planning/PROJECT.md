@@ -200,11 +200,44 @@ traceability archived in `.planning/milestones/v1.2-REQUIREMENTS.md`.
   pre-existing stale test assertion (`s9_live_block.rs`, dating to Phase 9,
   never previously exercised on Linux) in the process.
 
+Shipped in **v1.3 — Doc → Action Assistant** (2026-07-09). Full traceability
+archived in `.planning/milestones/v1.3-REQUIREMENTS.md`.
+
+- ✓ DESIGN-01: adversarially-reviewed DESIGN doc gates all v1.3 executor/TCB
+  code (content-sensitivity, real-adapter mediation, confirm-binding) — v1.3
+- ✓ SMTP-01/02/03/05, SEND-01/02: real broker-mediated SMTP adapter (lettre,
+  `email_smtp.rs`) — worker never touches the network, secrets never leave
+  the broker, atomic at-most-once send, kernel-denied negative-net control,
+  CRLF/header-injection defense proven live — v1.3
+- ✓ CONTENT-01/02: executor collect-then-Block reshape — a tainted email
+  body Blocks the same way a tainted recipient does, in the SAME decision,
+  never first-match-wins — v1.3
+- ✓ EXTRACT-01/02/03: deterministic doc→action extraction with genuine
+  provenance threading (`mint_from_derivation`) — closes the milestone's #1
+  laundering risk (a transform-derived value can no longer be stapled fresh
+  at the sink) — v1.3
+- ✓ CONFIRM-01..04, CONTROL-01/02: full-set name-bound `combined_digest`
+  confirm binding, verbatim recipient+body narration, a real live negative
+  control (trusted send Allowed & delivers vs. doc-derived send Blocked) —
+  v1.3
+- ✓ **ACCEPT-01 (v1.3 DONE gate):** ONE shared audit.db, 3 sessions
+  (confirm/deny/clean), all independently `verify_chain`-true, live on real
+  Linux via Colima+Docker: hostile doc read → I1 demotion → deterministic
+  extraction → tainted recipient+body Block → confirm sends exactly once →
+  a SEPARATE hostile block denies, sending nothing (both Mailpit count==0
+  AND audit-ledger absence) → the clean-send control delivers ungated. The
+  milestone's HARD GATE (Phase 15's unbroken-edge + anti-staple proof)
+  re-verified against these live anchors, not assumed from Phase 15's own
+  coverage.
+- ✓ **DOC-01:** PROJECT.md honestly scopes what v1.3 proves (taint
+  enforcement via a deterministic extractor with genuine propagation) and
+  does not prove (taint surviving a real LLM planner's regeneration) — see
+  "What v1.3's live proof does and does not claim" above.
+
 ### Active
 
-Scoped for **v1.3 "Doc → Action Assistant"** — see
-`.planning/REQUIREMENTS.md` for full REQ-ID list (SMTP, CONTENT, EXTRACT,
-CONFIRM, CONTROL, SEND, DESIGN, DOC, ACCEPT categories).
+Unscoped — v1.3 is the most recently shipped milestone. Run
+`/gsd-new-milestone` to scope v1.4.
 
 ### Out of Scope
 
@@ -239,7 +272,23 @@ as of 2026-07-07 unless noted:
 
 ## Context
 
-- **Current state (v1.2 shipped 2026-07-07):** v0 done (v1.0) + Usable Runtime
+- **Current state (v1.3 shipped 2026-07-09):** v0 done (v1.0) + Usable
+  Runtime (v1.1) + Tainted Session, Human Gate (v1.2) + Doc → Action
+  Assistant (v1.3). 17 phases, 55 plans total across `runtime-core`,
+  `sandbox`, `brokerd`, `executor`, `adapter-fs`, and the `caprun` binary.
+  Live on real Linux, ONE composed run (`live_acceptance_v1_3_composed`,
+  shared audit.db, 3 sessions): a hostile document's bytes are read (I1
+  demotion), deterministically extracted into a tainted recipient+body pair,
+  Blocked (I2+CONTENT-01) with a genuinely-propagated (not stapled) taint
+  chain re-proven live; a human `caprun confirm` sends exactly once via the
+  real broker-mediated SMTP adapter; a SEPARATE hostile block is denied,
+  sending nothing (Mailpit count==0 AND no send-attempt ledger entry); a
+  clean, trusted-intent send is Allowed and delivers ungated in the SAME
+  run. All 3 sessions independently `verify_chain`-true. `cargo test
+  --workspace` = 250 passed / 0 failed across 36 binaries on real Linux via
+  `scripts/mailpit-verify.sh` (Linux-gated tests correctly show as excluded
+  on macOS, not "0 passed" gaps).
+- **Prior state (v1.2 shipped 2026-07-07):** v0 done (v1.0) + Usable Runtime
   (v1.1) + Tainted Session, Human Gate (v1.2). 11 phases, 34 plans across `runtime-core`,
   `sandbox`, `brokerd`, `executor`, `adapter-fs`, and the `caprun` binary.
   Live on real Linux: a session demoted mid-run by a hostile read (I1) has its
@@ -421,6 +470,8 @@ Python OK for non-TCB experiments only.
 | **REOPENED v1.3** — Content-sensitive sink-arg blocking (`CONTENT-01`), deferred to v2 at v1.2 scoping, is now IN | The doc→action hero demo requires blocking a tainted email *body*, not just recipient/routing — v1.2's routing-only I2 scope can't demonstrate it | — Reopened 2026-07-07 (Ben + caprun-opus-77). Hardcoded sensitivity for the email sink's args only (`CONTENT-02`), not a general taxonomy — scope guard from the advisor panel. |
 | **REOPENED v1.3** — Real broker-mediated SMTP adapter, previously a mediated sink *stub* per `DEC-layer-roles`, is now IN | The hero demo requires an actual send (confirm → email arrives) to be a genuine live-acceptance proof, not a stub invocation | — Reopened 2026-07-07 (Ben + caprun-opus-77). Confined worker never performs the SMTP call; secrets live only in the broker; gate test targets local MailHog/Mailpit — live SES is optional and NOT gated (see Out of Scope). |
 | **NOT reopened v1.3** — LLM planner stays out/deterministic (`DEC-security-invariants`, `DEC-canonical-docs`) | v1.3 proves taint *enforcement* through a deterministic extractor; it explicitly does not claim taint survives a real LLM planner's regeneration ("laundering" — a real model can re-emit a tainted value as fresh model-authored tokens with no provenance). That is a v1.4+ concern. | — Confirmed 2026-07-07. `DOC-01` requires PROJECT.md/external claims to state this scope honestly — no claim that v1.3 proves taint-survives-a-real-agent. |
+| Phase 17's ACCEPT-01 composes 3 sessions sharing ONE audit.db, "one unbroken DAG" = per-session `verify_chain` integrity, NOT a literal cross-session `parent_id` chain | Confirm/deny are mutually-exclusive terminal states on one blocked effect (structurally requires ≥3 sessions); a literal single-session chain across confirm/deny/clean would contradict the pinned single-session-per-process DESIGN model and buy nothing — a synthetic cross-session edge is exactly the "staple" this milestone exists to reject | — Locked (caprun-opus-77, Phase 17 round 1). Adversarial panel caught a DAG-fork bug in the anti-staple control's re-mint parenting before execution (mid-chain `sink_blocked` vs. `current_chain_head`) — fixed pre-execution, confirmed in the shipped test. |
+| **v1.3 "Doc → Action Assistant" SHIPPED** (2026-07-09) | Genuine byte-descent taint that propagates and blocks, collect-then-Block, full-set name-bound confirm binding, a real live email send, a controlled negative experiment (confirm sends once / deny sends nothing on the same hostile input), a closed exfiltration path, and honest disclosure of every residual risk — all proven live on real Linux and independently re-verified at every phase gate | — Shipped. No git tag (Ben's call, no push). v1.4 unscoped. |
 
 ## Evolution
 
@@ -440,7 +491,21 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-08 after Phase 14 (content-sensitive sink-arg
+*Last updated: 2026-07-09 after v1.3 "Doc → Action Assistant" shipped —
+Phase 17 (Live Acceptance & Framing Honesty) closed the milestone: a
+composed 3-session live run on real Linux proves confirm-sends-once,
+deny-sends-nothing (Mailpit count AND ledger), and a clean control delivers,
+all sharing one audit.db with per-session `verify_chain` integrity; the
+milestone's HARD GATE (genuine, non-stapled taint descent) was re-proven
+against these live anchors; all 8 DOC-01 honesty points landed in this
+document. Independently re-verified twice — once by caprun-sonnet-77 (250/250
+tests, exit 0 captured before any pipe) and once by caprun-opus-77 tracing
+the committed test source directly, not trusting either party's SUMMARY.
+Six phases (12-17), ~4 adversarial FAMP rounds each; every round found
+something real, including a live email-exfiltration hole this project's own
+Phase-16 mandate had opened and a Phase-17 audit-DAG fork bug. No git tag
+this milestone (Ben's call) — v1.4 unscoped. Prior: 2026-07-08 after Phase 14
+(content-sensitive sink-arg
 blocking) completed and verified — CONTENT-01/02 confirmed, collect-then-Block
 plural-anchor reshape independently gsd-verifier-checked. Prior: 2026-07-08
 after Phase 13 (real broker-mediated SMTP adapter) completed and verified —

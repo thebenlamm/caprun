@@ -2,42 +2,42 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: — Doc → Action Assistant
-current_phase: 17
-current_phase_name: Live Acceptance & Framing Honesty
-status: verifying
+current_phase: 3
+status: Awaiting next milestone
 stopped_at: Completed 16-04-PLAN.md
-last_updated: "2026-07-09T02:38:20.401Z"
+last_updated: "2026-07-09T23:59:58.398Z"
 last_activity: 2026-07-09
-last_activity_desc: Phase 16 complete, transitioned to Phase 17
+last_activity_desc: Milestone v1.3 completed and archived
 progress:
   total_phases: 6
-  completed_phases: 5
-  total_plans: 17
-  completed_plans: 17
-  percent: 83
+  completed_phases: 6
+  total_plans: 21
+  completed_plans: 21
+  percent: 100
+current_phase_name: Live Acceptance & Framing Honesty
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-07)
+See: .planning/PROJECT.md (updated 2026-07-09)
 
-**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — now extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, and (v1.3, in progress) with content-sensitive body blocking plus a real broker-mediated SMTP send, both proven live on real Linux.
-**Current focus:** Phase 16 — Confirm UX, Literal Binding & Negative Controls
+**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, and (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance proving confirm-sends-once/deny-sends-nothing, all proven live on real Linux.
+**Current focus:** Awaiting next milestone — run `/gsd-new-milestone` to scope v1.4.
 
 ## Current Position
 
-Phase: 17 — Live Acceptance & Framing Honesty
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-07-09 — Phase 16 complete, transitioned to Phase 17
+Phase: Milestone v1.3 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-09 — Milestone v1.3 completed and archived
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 25 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 7 [Phase 12: 3, Phase 13: 4])
+- Total plans completed: 55 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 [Phases 12-17])
 - Average duration: — min
 
 **By Phase (v1.2):**
@@ -53,7 +53,7 @@ Last activity: 2026-07-09 — Phase 16 complete, transitioned to Phase 17
 | 15 | 4 | - | - |
 | 16 | 4 | - | - |
 
-*Updated after each plan completion. v1.3 phases (12-17) have no plans yet — table rows added once `/gsd-plan-phase` runs.*
+*Updated after each plan completion. v1.3 (phases 12-17) shipped 2026-07-09 — 21/21 plans complete.*
 | Phase 14 P02 | 50min | 3 tasks | 10 files |
 | Phase 15-deterministic-doc-action-extraction P01 | 75min | 3 tasks | 3 files |
 | Phase 15-deterministic-doc-action-extraction P02 | 11min | 3 tasks | 3 files |
@@ -98,12 +98,13 @@ completes and is adversarially reviewed (mirrors v1.0 Phase 2 / v1.2 Phase 8).
 
 ### Pending Todos
 
-- Run `/gsd-execute-phase 14` to build content-sensitive sink-arg blocking (2 plans, already planned by a concurrent session).
-- `.planning/todos/pending/2026-07-07-gsd-phases-clear-deletes-all-milestones.md` — GSD tooling bug: `gsd_run query phases.clear --confirm` deletes ALL milestones' phase dirs, not just the previous one's leftovers. Caught and reverted unstaged during this milestone's init; not yet fixed upstream.
+- `.planning/todos/pending/2026-07-07-gsd-phases-clear-deletes-all-milestones.md` — GSD tooling bug: `gsd_run query phases.clear --confirm` deletes ALL milestones' phase dirs, not just the previous one's leftovers. Not yet fixed upstream; carries forward to v1.4.
+- `.planning/todos/pending/2026-07-08-gsd-executors-must-not-write-phase-completion-state.md` — GSD tooling bug: the last-wave executor's own doc-completion commit repeatedly flips ROADMAP.md's phase-level checkbox before verification (2-for-2, Phases 15/16). Did NOT recur at Phase 17 (closed manually by the orchestrator after independent verification, per this bug). Not yet fixed upstream; carries forward to v1.4.
+- `.planning/todos/pending/2026-07-08-v1.3-phase16-v2-security-obligations.md` — 5 v2 security obligations (demote-at-RequestFd, verify_chain keyed-MAC, Allowed-path replay CAS, CreateSession build-excluded path, kind-aware Source label). All 5 are already honestly disclosed in PROJECT.md's DOC-01 paragraph and residual-risks clause as of v1.3; this todo tracks the actual v2 fix work. Carries forward to v1.4.
 
 ### Blockers/Concerns
 
-None open. Phase 12's structural blocker (no CONTENT-01/SMTP-05/CONFIRM-03 executor/TCB code before the DESIGN-01 gate) is now satisfied — the gate is APPROVED/UNBLOCKED, so Phases 13-16 may proceed.
+None open.
 
 ## Deferred Items
 
@@ -112,9 +113,14 @@ Items acknowledged and deferred at prior milestone closes:
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
 | uat | 03-UAT.md (Phase 03, v1.0 milestone — passed, 0 pending scenarios; benign stale artifact) | passed | 2026-07-01 |
+| todo | gsd-phases-clear-deletes-all-milestones (GSD tooling bug) | open | 2026-07-09 |
+| todo | gsd-executors-must-not-write-phase-completion-state (GSD tooling bug) | open | 2026-07-09 |
+| todo | v1.3-phase16-v2-security-obligations (5 v2 security items, already disclosed in DOC-01) | open | 2026-07-09 |
 
 Re-acknowledged unchanged at v1.2 milestone close on 2026-07-07 (same
-pre-existing item, still benign). No new deferrals from roadmap creation.
+pre-existing item, still benign). Re-acknowledged at v1.3 milestone close on
+2026-07-09 via `audit-open` — all 4 open items (1 UAT, 3 todos) reviewed and
+accepted as known/benign or already-tracked v2 work; none block v1.3's close.
 
 ## Session Continuity
 
@@ -124,5 +130,4 @@ Resume file: None
 
 ## Operator Next Steps
 
-- Run `/gsd-execute-phase 14` to build content-sensitive sink-arg blocking (already planned).
-- Phase 15 (Deterministic Doc→Action Extraction) depends on Phase 12 + Phase 14 and carries the milestone's hard genuine-taint gate.
+- Start the next milestone with /gsd-new-milestone
