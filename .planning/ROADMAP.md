@@ -163,7 +163,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   2. Given a clean, trusted intent, the LLM planner emits a syntactically valid `PlanNode{sink, args}` referencing handle IDs only (never a literal value), and the executor Allows it, delivering a real send.
   3. The LLM planner's own prompt/tool-call construction is built only from typed extracts and handle IDs — never raw untrusted bytes — consistent with Phase 20's co-location boundary.
 
-**Plans**: 1/4 plans executed
+**Plans**: 3/4 plans executed
 
 Plans:
 **Wave 1**
@@ -172,8 +172,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 21-02-PLAN.md — `caprun-planner` out-of-process OpenAI sidecar (real tool-calling call; reqwest isolated here) + reqwest legitimacy gate (Wave 2)
-- [ ] 21-03-PLAN.md — worker-side `LlmPlanner` proxy behind the Phase-20 seam + caprun main/worker sidecar wiring, no TCB changes (Wave 2)
+- [x] 21-02-PLAN.md — `caprun-planner` out-of-process OpenAI sidecar (real tool-calling call; reqwest isolated here) + reqwest legitimacy gate (Wave 2)
+- [x] 21-03-PLAN.md — worker-side `LlmPlanner` proxy behind the Phase-20 seam + caprun main/worker sidecar wiring, no TCB changes (Wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -218,5 +218,5 @@ Plans:
 | 18. Trust-Boundary Coherence Design Gate | v1.4 | 2/2 | Complete    | 2026-07-11 |
 | 19. Cross-Connection Trust Coherence Fix | v1.4 | 2/2 | Complete    | 2026-07-11 |
 | 20. Planner Seam & Capability Split | v1.4 | 3/3 | Complete    | 2026-07-11 |
-| 21. Adversarial LLM Planner | v1.4 | 1/4 | In Progress|  |
+| 21. Adversarial LLM Planner | v1.4 | 3/4 | In Progress|  |
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 0/TBD | Not started | - |
