@@ -57,6 +57,150 @@ pub struct ResponseArg {
     pub value_id: ValueId,
 }
 
+/// Fail-closed errors `parse_planner_response` returns. Never fabricates or
+/// substitutes a handle — every non-Ok case is a hard rejection (T-21-02).
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlannerError {
+    /// The tool-call arguments were not valid JSON, or did not match the
+    /// expected `PlannerResponse` shape.
+    MalformedJson(String),
+    /// The response named a sink not present in the caller-supplied
+    /// `known_sinks` set.
+    UnknownSink(String),
+    /// A response arg's `value_id` was not a member of the caller-supplied
+    /// `offered` handle set — the LLM referenced a handle it was never
+    /// shown (or fabricated one).
+    UnknownHandle(ValueId),
+}
+
+impl std::fmt::Display for PlannerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PlannerError::MalformedJson(msg) => {
+                write!(f, "malformed planner response JSON: {msg}")
+            }
+            PlannerError::UnknownSink(sink) => {
+                write!(f, "planner response named unknown sink: {sink}")
+            }
+            PlannerError::UnknownHandle(value_id) => {
+                write!(f, "planner response referenced unoffered handle: {value_id:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PlannerError {}
+
+/// Build the LLM prompt from a `PlannerRequest` alone — never from a
+/// literal, because `PlannerRequest` cannot carry one (T-21-01). Composes a
+/// system+user prompt naming the `emit_plan_node` tool and listing every
+/// offered `(slot_hint, value_id)` pair plus the available sinks, instructing
+/// the model to copy handle IDs verbatim into arg `value_id`s.
+///
+/// This is a single pure function with NO I/O — the exact seam Phase 22's
+/// GATE-04 sentinel assertion targets: feed it a sentinel-tagged
+/// `PlannerRequest` and assert the sentinel bytes never appear in the
+/// output. Because this function reads only handle IDs + slot hints +
+/// intent_kind + sink names, there is no field through which a literal
+/// could enter.
+pub fn build_planner_prompt(request: &PlannerRequest) -> String {
+    let mut prompt = String::new();
+    prompt.push_str(
+        "You are a planning assistant. You must call the `emit_plan_node` tool exactly once, \
+         choosing a sink and binding each of its arguments to one of the handle IDs listed \
+         below. Copy each handle ID verbatim — never invent, alter, or guess a handle ID, and \
+         never emit a literal value.\n\n",
+    );
+    prompt.push_str(&format!("Intent kind: {}\n\n", request.intent_kind));
+
+    prompt.push_str("Available handles:\n");
+    for handle in &request.available_handles {
+        prompt.push_str(&format!(
+            "- slot_hint: {}, value_id: {}\n",
+            handle.slot_hint, handle.value_id.0
+        ));
+    }
+    prompt.push('\n');
+
+    prompt.push_str("Available sinks:\n");
+    for sink in &request.available_sinks {
+        prompt.push_str(&format!("- {sink}\n"));
+    }
+    prompt.push('\n');
+
+    prompt.push_str(
+        "Call `emit_plan_node` with a `sink` from the available sinks above and `args` whose \
+         each `value_id` is copied verbatim from the handle IDs listed above.\n",
+    );
+
+    prompt
+}
+
+/// Build the `emit_plan_node` tool's JSON-schema `parameters` object from a
+/// `PlannerRequest`. The `sink` field's `enum` is exactly
+/// `request.available_sinks`; each arg's `value_id` field's `enum` is
+/// exactly the set of offered handle-ID strings — so a conforming tool-call
+/// structurally cannot reference anything but an offered handle (T-21-01,
+/// T-21-03).
+pub fn build_tool_schema(request: &PlannerRequest) -> serde_json::Value {
+    let handle_id_strings: Vec<String> = request
+        .available_handles
+        .iter()
+        .map(|h| h.value_id.0.to_string())
+        .collect();
+
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "sink": {
+                "type": "string",
+                "enum": request.available_sinks,
+            },
+            "args": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "value_id": {
+                            "type": "string",
+                            "enum": handle_id_strings,
+                        },
+                    },
+                    "required": ["name", "value_id"],
+                },
+            },
+        },
+        "required": ["sink", "args"],
+    })
+}
+
+/// Parse the LLM sidecar's tool-call arguments into a `PlannerResponse`,
+/// failing closed (T-21-02). Returns `Ok` ONLY when the JSON is well-formed
+/// AND the sink is a member of `known_sinks` AND every arg's `value_id` is a
+/// member of `offered`. Never fabricates or substitutes a handle — any
+/// violation is a hard `Err`, with no wildcard fallback.
+pub fn parse_planner_response(
+    tool_arguments_json: &str,
+    offered: &[ValueId],
+    known_sinks: &[String],
+) -> Result<PlannerResponse, PlannerError> {
+    let response: PlannerResponse = serde_json::from_str(tool_arguments_json)
+        .map_err(|e| PlannerError::MalformedJson(e.to_string()))?;
+
+    if !known_sinks.iter().any(|s| s == &response.sink) {
+        return Err(PlannerError::UnknownSink(response.sink));
+    }
+
+    for arg in &response.args {
+        if !offered.iter().any(|v| v == &arg.value_id) {
+            return Err(PlannerError::UnknownHandle(arg.value_id.clone()));
+        }
+    }
+
+    Ok(response)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,22 +282,168 @@ mod tests {
         );
     }
 
-    // ── Task 2 (RED): build_planner_prompt / build_tool_schema /
-    //    parse_planner_response / PlannerError do not exist yet — this
-    //    module will not compile until Task 2's action step adds them.
-
-    #[test]
-    fn placeholder_task2_red() {
-        let req = PlannerRequest {
+    fn sample_request() -> PlannerRequest {
+        PlannerRequest {
             intent_kind: "SendEmailSummary".to_string(),
-            available_handles: vec![sample_handle()],
+            available_handles: vec![
+                HandleLabel {
+                    slot_hint: "recipient".to_string(),
+                    value_id: ValueId::new(),
+                },
+                HandleLabel {
+                    slot_hint: "subject".to_string(),
+                    value_id: ValueId::new(),
+                },
+                HandleLabel {
+                    slot_hint: "body".to_string(),
+                    value_id: ValueId::new(),
+                },
+            ],
             available_sinks: vec!["email.send".to_string()],
+        }
+    }
+
+    /// build_planner_prompt output contains every offered handle's UUID
+    /// string AND its slot_hint.
+    #[test]
+    fn build_planner_prompt_contains_every_handle_id_and_slot_hint() {
+        let req = sample_request();
+        let prompt = build_planner_prompt(&req);
+        for handle in &req.available_handles {
+            assert!(
+                prompt.contains(&handle.value_id.0.to_string()),
+                "prompt must contain handle id {}, got: {prompt}",
+                handle.value_id.0
+            );
+            assert!(
+                prompt.contains(&handle.slot_hint),
+                "prompt must contain slot_hint {}, got: {prompt}",
+                handle.slot_hint
+            );
+        }
+    }
+
+    /// build_tool_schema's value_id enum equals exactly the offered handle
+    /// IDs — no extras, none missing.
+    #[test]
+    fn build_tool_schema_value_id_enum_equals_offered_handles() {
+        let req = sample_request();
+        let schema = build_tool_schema(&req);
+
+        let value_id_enum = schema["properties"]["args"]["items"]["properties"]["value_id"]
+            ["enum"]
+            .as_array()
+            .expect("value_id enum is an array")
+            .iter()
+            .map(|v| v.as_str().expect("enum entry is a string").to_string())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        let expected: std::collections::BTreeSet<String> = req
+            .available_handles
+            .iter()
+            .map(|h| h.value_id.0.to_string())
+            .collect();
+
+        assert_eq!(
+            value_id_enum, expected,
+            "value_id enum must equal exactly the offered handle IDs, no extras"
+        );
+
+        let sink_enum = schema["properties"]["sink"]["enum"]
+            .as_array()
+            .expect("sink enum is an array")
+            .iter()
+            .map(|v| v.as_str().expect("enum entry is a string").to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(sink_enum, req.available_sinks);
+    }
+
+    /// parse_planner_response: Ok for a valid response whose sink and every
+    /// arg value_id are in the caller-supplied offered/known sets.
+    #[test]
+    fn parse_planner_response_ok_for_valid_response() {
+        let req = sample_request();
+        let offered: Vec<ValueId> = req
+            .available_handles
+            .iter()
+            .map(|h| h.value_id.clone())
+            .collect();
+        let known_sinks = req.available_sinks.clone();
+
+        let resp = PlannerResponse {
+            sink: "email.send".to_string(),
+            args: vec![ResponseArg {
+                name: "to".to_string(),
+                value_id: offered[0].clone(),
+            }],
         };
-        let _prompt: String = build_planner_prompt(&req);
-        let _schema: serde_json::Value = build_tool_schema(&req);
-        let offered: Vec<ValueId> = vec![];
-        let known_sinks: Vec<String> = vec![];
-        let _parsed: Result<PlannerResponse, PlannerError> =
-            parse_planner_response("{}", &offered, &known_sinks);
+        let json = serde_json::to_string(&resp).expect("serialize PlannerResponse");
+
+        let parsed = parse_planner_response(&json, &offered, &known_sinks);
+        assert_eq!(parsed, Ok(resp));
+    }
+
+    /// parse_planner_response: Err(UnknownSink) when the sink is not in
+    /// known_sinks.
+    #[test]
+    fn parse_planner_response_err_for_unknown_sink() {
+        let req = sample_request();
+        let offered: Vec<ValueId> = req
+            .available_handles
+            .iter()
+            .map(|h| h.value_id.clone())
+            .collect();
+        let known_sinks = req.available_sinks.clone();
+
+        let resp = PlannerResponse {
+            sink: "git.push".to_string(),
+            args: vec![],
+        };
+        let json = serde_json::to_string(&resp).expect("serialize PlannerResponse");
+
+        let parsed = parse_planner_response(&json, &offered, &known_sinks);
+        assert_eq!(parsed, Err(PlannerError::UnknownSink("git.push".to_string())));
+    }
+
+    /// parse_planner_response: Err(UnknownHandle) when an arg's value_id is
+    /// not in `offered` — a fabricated/unshown handle is rejected, never
+    /// substituted or fabricated on the parser's side.
+    #[test]
+    fn parse_planner_response_err_for_unoffered_handle() {
+        let req = sample_request();
+        let offered: Vec<ValueId> = req
+            .available_handles
+            .iter()
+            .map(|h| h.value_id.clone())
+            .collect();
+        let known_sinks = req.available_sinks.clone();
+
+        let fabricated = ValueId::new();
+        let resp = PlannerResponse {
+            sink: "email.send".to_string(),
+            args: vec![ResponseArg {
+                name: "to".to_string(),
+                value_id: fabricated.clone(),
+            }],
+        };
+        let json = serde_json::to_string(&resp).expect("serialize PlannerResponse");
+
+        let parsed = parse_planner_response(&json, &offered, &known_sinks);
+        assert_eq!(parsed, Err(PlannerError::UnknownHandle(fabricated)));
+    }
+
+    /// parse_planner_response: Err(MalformedJson) on invalid JSON.
+    #[test]
+    fn parse_planner_response_err_for_malformed_json() {
+        let req = sample_request();
+        let offered: Vec<ValueId> = req
+            .available_handles
+            .iter()
+            .map(|h| h.value_id.clone())
+            .collect();
+        let known_sinks = req.available_sinks.clone();
+
+        let parsed = parse_planner_response("not json", &offered, &known_sinks);
+        assert!(matches!(parsed, Err(PlannerError::MalformedJson(_))));
     }
 }
