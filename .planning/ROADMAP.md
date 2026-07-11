@@ -78,7 +78,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 **Milestone goal:** Fix a confirmed live cross-connection trust bypass in the broker (Phase 0 — a security fix, gated by an already-red regression test), then prove the trust boundary is indifferent to planner intelligence by putting an adversarial LLM planner behind it (Phase 1+) — a hostile injected document makes the planner *comply* and try to route a tainted value to `email.send`, and the executor **Blocks deterministically** anyway, with genuine taint propagation re-verified live (the §9 standard: `verify_chain` true, Mailpit == 0), because the value flows around the planner through the worker's own mint sites, never through the planner's tokens.
 
 - [x] **Phase 18: Trust-Boundary Coherence Design Gate** - A DESIGN doc resolving the cross-connection fix shape, the replay-risk re-earning, the three-mint-site audit, the decision-oracle question, the forward-looking per-verb capability split, and guard-(c)'s status exists and clears a fresh adversarial review, before any `server.rs` change (completed 2026-07-11)
-- [ ] **Phase 19: Cross-Connection Trust Coherence Fix** - The broker rejects a second connection to an already-active session, closing the cross-connection `ProvideIntent` bypass; the regression test goes green by fixing the broker, never by weakening its assertions
+- [x] **Phase 19: Cross-Connection Trust Coherence Fix** - The broker rejects a second connection to an already-active session, closing the cross-connection `ProvideIntent` bypass; the regression test goes green by fixing the broker, never by weakening its assertions (completed 2026-07-11)
 - [ ] **Phase 20: Planner Seam & Capability Split** - A designed `Planner` trait/seam exists, a planner-role connection can never hold a mint verb, and the planner is structurally kept out of the worker's raw-bytes path
 - [ ] **Phase 21: Adversarial LLM Planner** - A minimal LLM-backed planner, running behind the new seam, emits only `PlanNode{sink, args}` — no literal field to carry
 - [ ] **Phase 22: Adversarial Gate Proof & Residual Disclosure** - A hostile-doc-primed planner complies and is Blocked deterministically with genuine, live-verified taint propagation; T2 is documented as the accepted v1.4 residual
@@ -120,7 +120,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   3. `scripts/mailpit-verify.sh`'s full existing test suite (the v1.3 live acceptance) is independently re-run on real Linux and still passes — no regression, not assumed from a prior pass.
   4. PROJECT.md's DOC-02 correction is finalized against the shipped fix (the scoping-time draft disclosure is confirmed accurate against the actual fix, not left aspirational).
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 
 **Wave 1**
 
@@ -128,7 +128,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 
 **Wave 2** *(depends on Wave 1)*
 
-- [ ] 19-02-PLAN.md — Live Linux `mailpit-verify.sh` rerun with captured pass/fail counts (RED→GREEN proof + no-regression) + finalize PROJECT.md's DOC-02 disclosure against the shipped fix (TRUST-03, DOC-02)
+- [x] 19-02-PLAN.md — Live Linux `mailpit-verify.sh` rerun with captured pass/fail counts (RED→GREEN proof + no-regression) + finalize PROJECT.md's DOC-02 disclosure against the shipped fix (TRUST-03, DOC-02)
 
 ### Phase 20: Planner Seam & Capability Split
 
@@ -194,7 +194,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 4/4 | Complete    | 2026-07-09 |
 | 17. Live Acceptance & Framing Honesty | v1.3 | 4/4 | Complete | 2026-07-09 |
 | 18. Trust-Boundary Coherence Design Gate | v1.4 | 2/2 | Complete    | 2026-07-11 |
-| 19. Cross-Connection Trust Coherence Fix | v1.4 | 1/2 | In Progress|  |
+| 19. Cross-Connection Trust Coherence Fix | v1.4 | 2/2 | Complete   | 2026-07-11 |
 | 20. Planner Seam & Capability Split | v1.4 | 0/TBD | Not started | - |
 | 21. Adversarial LLM Planner | v1.4 | 0/TBD | Not started | - |
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 0/TBD | Not started | - |
