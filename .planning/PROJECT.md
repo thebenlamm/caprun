@@ -294,10 +294,24 @@ archived in `.planning/milestones/v1.3-REQUIREMENTS.md`.
 v1.4 — Trust-Boundary Integrity & the Adversarial Planner (scoped
 2026-07-10). See `.planning/REQUIREMENTS.md` for REQ-IDs.
 
-- Phase 0: cross-connection trust coherence fix (reject a 2nd connection to
-  an active session), DESIGN-session-trust-coherence.md + adversarial gate,
-  replay risk re-earned in writing, DOC-01 correction
-- Phase 1+: adversarial LLM planner behind the existing trust boundary,
+- ✓ **Phase 18 (Design Gate) COMPLETE (2026-07-11):** `planning-docs/DESIGN-session-trust-coherence.md`
+  authored and cleared a 2-round fresh adversarial review
+  (`planning-docs/DESIGN-GATE-RECORD-v1.4.md`, status CLEARED). Round 1 found
+  and closed a genuine BLOCKER: the original fix design released its
+  occupancy latch on disconnect and permitted reconnect, which left the
+  exact cross-connection exploit reachable via a sequential
+  close-then-reconnect sequence. Remediated to a ONE-WAY, session-lifetime
+  latch (never released, no reconnect permitted) — simpler than the
+  rejected draft, and still within the locked "reject-2nd-connection, not
+  shared state" decision. Round 2 (independent, no memory of round 1)
+  confirmed the fix closes both variants with no residual race. DESIGN-01
+  through DESIGN-06 all resolved; Phase 19 may begin the `server.rs` change.
+- Phase 19 (next): implement the one-way latch in `server.rs`'s accept
+  loop; un-ignore `two_connection_intent_bypass_repro` AND add a new
+  sequential-reconnect regression test variant, each against its own fresh
+  `run_broker_server` instance; independently re-run
+  `scripts/mailpit-verify.sh`; finalize DOC-02's PROJECT.md correction.
+- Phase 1+ (20-22): adversarial LLM planner behind the existing trust boundary,
   per-verb capability split (planner connection holds no mint verb),
   deterministic construction-site sentinel assertion replacing the
   context-dump grep, T2 slot-type binding deferred to v1.5
