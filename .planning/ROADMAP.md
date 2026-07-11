@@ -79,7 +79,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 
 - [x] **Phase 18: Trust-Boundary Coherence Design Gate** - A DESIGN doc resolving the cross-connection fix shape, the replay-risk re-earning, the three-mint-site audit, the decision-oracle question, the forward-looking per-verb capability split, and guard-(c)'s status exists and clears a fresh adversarial review, before any `server.rs` change (completed 2026-07-11)
 - [x] **Phase 19: Cross-Connection Trust Coherence Fix** - The broker rejects a second connection to an already-active session, closing the cross-connection `ProvideIntent` bypass; the regression test goes green by fixing the broker, never by weakening its assertions (completed 2026-07-11)
-- [ ] **Phase 20: Planner Seam & Capability Split** - A designed `Planner` trait/seam exists, a planner-role connection can never hold a mint verb, and the planner is structurally kept out of the worker's raw-bytes path
+- [x] **Phase 20: Planner Seam & Capability Split** - A designed `Planner` trait/seam exists, a planner-role connection can never hold a mint verb, and the planner is structurally kept out of the worker's raw-bytes path (completed 2026-07-11)
 - [ ] **Phase 21: Adversarial LLM Planner** - A minimal LLM-backed planner, running behind the new seam, emits only `PlanNode{sink, args}` — no literal field to carry
 - [ ] **Phase 22: Adversarial Gate Proof & Residual Disclosure** - A hostile-doc-primed planner complies and is Blocked deterministically with genuine, live-verified taint propagation; T2 is documented as the accepted v1.4 residual
 
@@ -142,7 +142,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   3. The planner never receives the worker's raw-bytes fd or raw untrusted content — it is given only typed extracts and handle IDs, with no filesystem capability and no network reachability beyond its own inference endpoint.
   4. All pre-existing deterministic-planner-based tests/behavior from v1.0-v1.3 continue to pass unchanged through the new seam — no regression from the refactor.
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 **Wave 1**
 
 - [x] 20-01-PLAN.md — Introduce the `Planner` trait seam; refactor the deterministic `plan_from_intent` to implement it; worker calls via the trait (PLANNER-01, PLANNER-04)
@@ -150,7 +150,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 20-03-PLAN.md — Reduce the `SubmitPlanNode` decision oracle for the planner role (no anchors/digest/literal), per DESIGN §7 (PLANNER-04)
+- [x] 20-03-PLAN.md — Reduce the `SubmitPlanNode` decision oracle for the planner role (no anchors/digest/literal), per DESIGN §7 (PLANNER-04)
 
 ### Phase 21: Adversarial LLM Planner
 
@@ -203,6 +203,6 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 17. Live Acceptance & Framing Honesty | v1.3 | 4/4 | Complete | 2026-07-09 |
 | 18. Trust-Boundary Coherence Design Gate | v1.4 | 2/2 | Complete    | 2026-07-11 |
 | 19. Cross-Connection Trust Coherence Fix | v1.4 | 2/2 | Complete    | 2026-07-11 |
-| 20. Planner Seam & Capability Split | v1.4 | 2/3 | In Progress|  |
+| 20. Planner Seam & Capability Split | v1.4 | 3/3 | Complete   | 2026-07-11 |
 | 21. Adversarial LLM Planner | v1.4 | 0/TBD | Not started | - |
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 0/TBD | Not started | - |
