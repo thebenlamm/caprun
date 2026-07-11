@@ -166,3 +166,7 @@ None - no external service configuration required.
 ---
 *Phase: 21-adversarial-llm-planner*
 *Completed: 2026-07-11*
+
+## Self-Check: PASSED
+
+All created files verified present (`crates/llm-planner/Cargo.toml`, `crates/llm-planner/src/lib.rs`, this SUMMARY.md); all 5 commit hashes (`82b0a10`, `bf0110b`, `6366a33`, `8896e26`, `ee6fabb`) verified present in git log; `cargo test -p llm-planner --lib` re-run and confirmed 10/10 passing.
