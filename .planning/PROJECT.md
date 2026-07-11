@@ -16,7 +16,13 @@ Event → ValueNode → sensitive sink argument) deterministically blocks
 value-injection at the sink. If everything else fails, **I2 enforcement on a
 genuine taint chain must hold.**
 
-## Current Milestone: v1.4 — Trust-Boundary Integrity & the Adversarial Planner
+## Current Milestone
+
+Unscoped — v1.4 is the most recently shipped milestone. Run
+`/gsd-new-milestone` to scope v1.5.
+
+<details>
+<summary>✅ v1.4 — Trust-Boundary Integrity & the Adversarial Planner — SHIPPED 2026-07-11</summary>
 
 **Goal:** Fix a confirmed live cross-connection trust bypass in the broker
 (Phase 0 — a security fix, gated by an already-red regression test), then
@@ -28,50 +34,85 @@ propagation re-verified live (the §9 standard: `verify_chain` true, Mailpit
 == 0), because the value flows around the planner through the worker's own
 mint sites, never through the planner's tokens.
 
-**Why now:** an adversarial review found, and a Linux repro CONFIRMED (cargo
-exit 101, 2 independent runs — `crates/brokerd/tests/two_connection_intent_bypass.rs`),
-that v1.3's guard(a) (`ProvideIntent` sealed after any `RequestFd`) is
-per-connection state only. A worker opens a SECOND `AF_UNIX` connection to
-the same session socket, gets fresh guard(a) state and a stale
-`session_status`, and can mint an attacker-controlled literal `UserTrusted`
-via `ProvideIntent` on that second connection — routing it to `email.send` as
-`Allowed`. This falsifies the invariant the whole I0/I1/I2 model rests on:
-`UserTrusted` == "the human typed it." Fix precedes all new capability.
+**Why it existed:** an adversarial review found, and a Linux repro CONFIRMED
+(cargo exit 101, 2 independent runs —
+`crates/brokerd/tests/two_connection_intent_bypass.rs`), that v1.3's guard(a)
+(`ProvideIntent` sealed after any `RequestFd`) was per-connection state only.
+A worker could open a SECOND `AF_UNIX` connection to the same session
+socket, get fresh guard(a) state and a stale `session_status`, and mint an
+attacker-controlled literal `UserTrusted` via `ProvideIntent` on that second
+connection — routing it to `email.send` as `Allowed`. This falsified the
+invariant the whole I0/I1/I2 model rests on: `UserTrusted` == "the human
+typed it." The fix (Phase 18-19) preceded all new capability.
 
-**Target features:**
-- **Phase 0 (fix, blocks everything):** broker rejects a second connection to
-  an already-active session (closes the bypass with the smaller hammer — a
-  confined worker only ever needs one connection), gated by a DESIGN doc
-  (`planning-docs/DESIGN-session-trust-coherence.md`) that clears a fresh
-  adversarial panel before any `server.rs` change. Replay risk (MAJOR-2) is
-  re-earned in writing against the new adaptive-planner threat model, not
-  silently inherited. `two_connection_intent_bypass_repro`'s `#[ignore]` is
-  removed and the test goes green by fixing the broker, never by weakening
-  the assertions. `scripts/mailpit-verify.sh` stays green (no regression).
-  DOC-01 is corrected to disclose the bypass and the fix.
-- **Phase 1+ (the adversarial planner, unblocked by Phase 0):** a minimal LLM
-  planner emitting only `PlanNode{sink, args}` (no literal field to carry),
-  running on a connection holding no mint verb (`ProvideIntent`,
-  `ReportClaims`, `ReportDerivedClaim` are worker-only) — designing the
-  planner seam that doesn't exist yet (`planner.rs`'s `plan_from_intent` is a
-  bare fn today, no `Planner` trait). Hard gate: hostile-doc-primed planner
-  complies and emits a tainted routing PlanNode → executor Blocks
-  deterministically → `verify_chain` true → Mailpit == 0; a trusted-intent
-  control on the same sink Allows and delivers exactly once. The old
-  context-dump grep (theater — tests harness input, misses recipient
-  fragmentation) is replaced by a deterministic construction-site assertion:
-  feed the prompt constructor a sentinel-tagged tainted record, assert the
-  sentinel bytes never appear in the constructed prompt.
-- **T2 (slot-type binding) deferred to v1.5:** the executor doesn't check
-  that a handle's semantic origin matches its slot — a `UserTrusted` handle
-  in `to` is neither sensitive-untrusted nor slot-checked, so I2 doesn't
-  fire. Safe today only *incidentally* (every `UserTrusted` handle is
-  human-typed, so a misroute carries the human's own string). Documented as
-  the accepted v1.4 residual; enforcement is v1.5 scope.
+**Delivered (5 phases, 18-22):**
+- **Phase 18 (Design Gate):** `planning-docs/DESIGN-session-trust-coherence.md`
+  authored, cleared a 2-round fresh adversarial review that caught and fixed a
+  genuine BLOCKER — round 1's original fix design (release the occupancy
+  latch on disconnect, permit reconnect) would have left the exact bypass
+  reachable via a sequential close-then-reconnect sequence; remediated to a
+  ONE-WAY, session-lifetime latch before round 2 cleared it.
+- **Phase 19 (Cross-Connection Trust Coherence Fix):** the one-way occupancy
+  latch shipped in `run_broker_server`'s accept loop
+  (`crates/brokerd/src/server.rs`) — rejects any 2nd connection to an
+  already-active session, set once on first accept, never released.
+  `two_connection_intent_bypass.rs` restructured into 3 independent
+  fresh-broker regression variants (guard-a control, overlapping,
+  sequential-reconnect), all green on real Linux. Full workspace suite:
+  253 passed / 0 failed / 37 binaries (v1.3's 250/0/36 baseline + the 3
+  newly-un-ignored tests), no regression.
+- **Phase 20 (Planner Seam & Capability Split):** a real `Planner` trait
+  introduced (`cli/caprun/src/planner.rs`); the broker gained a
+  `ConnectionRole` capability model — a 2nd, capability-restricted
+  planner-role connection may be admitted via a `DeclarePlannerRole`
+  handshake, fail-closed default-deny on all 4 mint verbs plus
+  `RequestFd`/`ReportRead`, receiving only a reduced
+  `PlanNodeDecisionReduced{blocked}` signal (no anchors/literal_sha256/
+  literal) on `SubmitPlanNode`.
+- **Phase 21 (Adversarial LLM Planner):** a genuine OpenAI-backed
+  `LlmPlanner` (`gpt-4o-mini` default, `CAPRUN_PLANNER_MODEL`-configurable)
+  implements the `Planner` trait exactly like `DeterministicPlanner` —
+  in-process, synchronous, worker submits via its own connection. The actual
+  LLM HTTP call runs in a separate `caprun-planner` sidecar process (the
+  confined worker itself cannot `execve` or open `AF_INET` sockets per
+  seccomp, so this separation was structurally required). Live-proven on
+  real Linux: real OpenAI call, `Chain verification: PASSED`, real Mailpit
+  delivery, ~$0.00012/request.
+- **Phase 22 (Adversarial Gate Proof & Residual Disclosure — the HARD
+  GATE):** a hostile document's embedded injection reaches the LLM planner
+  via a genuinely taint-tracked `task_instruction` channel (mint_from_read-
+  rooted, never itself a `PlanArg` value); the planner, offered BOTH a
+  trusted and a tainted recipient handle, complies with the injection and
+  routes the tainted one to `to` — the executor Blocks it deterministically
+  via I2, `verify_chain` true, Mailpit == 0 for the attacker. A genuine
+  architectural finding during this phase (not a corner cut): a locked v1.2
+  invariant (Draft sessions unconditionally deny `CommitIrreversible` sinks)
+  meant a "both handles offered, no injection" control leg could never reach
+  `Allowed` — proven instead via `Denied` + diagnostic-log proof that the
+  model still chose the TRUSTED handle absent the injection, demonstrating
+  two independent defense layers (I0 session-level class-deny, I2 per-arg
+  Block) both correctly firing depending on the model's actual choice. A
+  separate trusted-intent control in the SAME composed run Allows and
+  delivers exactly once. GATE-04's sentinel-leak assertion (deterministic,
+  non-network unit test against the real prompt-construction function)
+  replaced the old context-dump grep. T2 (slot-type binding) documented as
+  the accepted v1.4 residual, deferred to v1.5.
+
+**Milestone-closure finding (independent final re-verification, not caught by
+any individual phase's own live-verification task):** a bare `cargo test
+--workspace --no-fail-fast` doesn't reliably place the "nice-named"
+`target/debug/caprun-planner` copy for that bin-only sibling crate — a Cargo
+build-artifact-placement quirk, not a caprun logic bug — which intermittently
+broke every `CAPRUN_PLANNER=llm` live test depending on which command ran
+last. Fixed in `scripts/mailpit-verify.sh` (now runs `cargo build --workspace`
+before `cargo test --workspace`); re-ran the full default recipe from scratch
+afterward — real exit 0, 46 test groups all green, zero failures.
 
 **Explicitly not reopened beyond the above:** Git/GitHub adapters, Cedar
 policy engine, cross-host delegation/Biscuit crypto, gVisor/Firecracker, a
 web UI, marketplace, or long-term memory.
+
+</details>
 
 <details>
 <summary>✅ v1.3 — Doc → Action Assistant — SHIPPED 2026-07-09</summary>
@@ -307,65 +348,45 @@ archived in `.planning/milestones/v1.3-REQUIREMENTS.md`.
   does not prove (taint surviving a real LLM planner's regeneration) — see
   "What v1.3's live proof does and does not claim" above.
 
+Shipped in **v1.4 — Trust-Boundary Integrity & the Adversarial Planner**
+(2026-07-11). Full traceability in `.planning/REQUIREMENTS.md`.
+
+- ✓ TRUST-01/02/03, DOC-02: one-way session-lifetime occupancy latch closes
+  the cross-connection `ProvideIntent` bypass; 3 independent regression
+  variants (overlapping + sequential-reconnect, the latter added after a
+  fresh adversarial review caught the original release-on-disconnect design
+  was unsound); live on real Linux, no regression from v1.3 — v1.4
+- ✓ DESIGN-01..06: `DESIGN-session-trust-coherence.md` cleared a 2-round
+  fresh adversarial review before any TCB change — v1.4
+- ✓ PLANNER-01/02/04: real `Planner` trait seam; broker `ConnectionRole`
+  capability model admits one capability-restricted planner-role connection
+  (fail-closed default-deny on all mint verbs + raw-fd access), reduced
+  `PlanNodeDecisionReduced{blocked}` signal — v1.4
+- ✓ PLANNER-03: genuine OpenAI-backed `LlmPlanner`, structurally isolated in
+  a separate `caprun-planner` sidecar process (the confined worker cannot
+  `execve`/open `AF_INET` sockets), live-proven end-to-end on real Linux —
+  v1.4
+- ✓ **GATE-01/02/03/04 (v1.4 HARD GATE):** a hostile document's injection
+  reaches the LLM planner via a taint-tracked `task_instruction` channel
+  (never itself a sink-arg value); the planner, offered both a trusted and a
+  tainted handle, complies and routes the tainted one to `to`; the executor
+  Blocks deterministically via I2, `verify_chain` true, Mailpit==0 for the
+  attacker; a trusted-intent control in the SAME composed run Allows and
+  delivers exactly once; GATE-04's sentinel-leak assertion is a
+  deterministic, non-network unit test against the real prompt-construction
+  function. A genuine architectural finding (a locked v1.2 invariant made a
+  planned control leg's "Allowed" outcome impossible) was resolved without
+  touching any TCB code — see the v1.4 milestone summary above.
+- ✓ T2-01: slot-type binding (handle-origin-to-slot mismatch, e.g. a
+  `UserTrusted` handle placed in `to`) documented as the accepted v1.4
+  residual — safe today only incidentally (every `UserTrusted` handle is
+  human-typed) — enforcement deferred to v1.5.
+
 ### Active
 
-v1.4 — Trust-Boundary Integrity & the Adversarial Planner (scoped
-2026-07-10). See `.planning/REQUIREMENTS.md` for REQ-IDs.
-
-- ✓ **Phase 18 (Design Gate) COMPLETE (2026-07-11):** `planning-docs/DESIGN-session-trust-coherence.md`
-  authored and cleared a 2-round fresh adversarial review
-  (`planning-docs/DESIGN-GATE-RECORD-v1.4.md`, status CLEARED). Round 1 found
-  and closed a genuine BLOCKER: the original fix design released its
-  occupancy latch on disconnect and permitted reconnect, which left the
-  exact cross-connection exploit reachable via a sequential
-  close-then-reconnect sequence. Remediated to a ONE-WAY, session-lifetime
-  latch (never released, no reconnect permitted) — simpler than the
-  rejected draft, and still within the locked "reject-2nd-connection, not
-  shared state" decision. Round 2 (independent, no memory of round 1)
-  confirmed the fix closes both variants with no residual race. DESIGN-01
-  through DESIGN-06 all resolved; Phase 19 may begin the `server.rs` change.
-- ✓ **Phase 19 (Cross-Connection Trust Coherence Fix) SHIPPED (2026-07-11):**
-  one-way occupancy latch implemented in `server.rs`'s accept loop;
-  `two_connection_intent_bypass_repro`'s `#[ignore]` removed and the test
-  restructured into 3 independent fresh-broker variants (guard-a control,
-  overlapping, sequential-reconnect) — all green on real Linux;
-  `scripts/mailpit-verify.sh` independently re-run, full workspace suite
-  green (253 passed / 0 failed / 37 binaries, no regression from v1.3's
-  250/0/36 baseline). TRUST-01, TRUST-02, TRUST-03, and DOC-02 complete.
-- ✓ **Phase 20 (Planner Seam & Capability Split) SHIPPED (2026-07-11):** a real
-  `Planner` trait introduced (`cli/caprun/src/planner.rs`), existing
-  deterministic logic now implements it unchanged; broker gained a
-  `ConnectionRole` capability model (`crates/brokerd/src/server.rs`) —
-  Phase 19's one-way worker-slot latch extended (not weakened — empty diff
-  on its regression test) to admit exactly one additional, capability-
-  restricted planner-role connection via a `DeclarePlannerRole` handshake;
-  a planner-role connection is fail-closed default-deny on all 4 mint verbs
-  plus `RequestFd`/`ReportRead`, and receives only a reduced
-  `PlanNodeDecisionReduced{blocked}` signal on `SubmitPlanNode` (no
-  anchors/literal_sha256/literal). PLANNER-01, PLANNER-02, PLANNER-04
-  complete.
-- ✓ **Phase 21 (Adversarial LLM Planner) SHIPPED (2026-07-11):** a genuine
-  OpenAI-backed `LlmPlanner` (`gpt-4o-mini` by default, `CAPRUN_PLANNER_MODEL`-
-  configurable) implements Phase 20's `Planner` trait exactly like
-  `DeterministicPlanner` — in-process, synchronous, worker submits via its
-  own connection. The actual LLM HTTP call runs in a separate
-  `caprun-planner` sidecar process (spawned by unconfined `caprun` main; the
-  confined worker itself cannot `execve` or open `AF_INET` sockets per
-  seccomp, so this separation was structurally required, not a style
-  choice) and is shown only typed extracts + `ValueId` handle labels, never
-  literal content. Tool schema structurally bars literal emission. Live
-  proof on real Linux: `Chain verification: PASSED`, real Mailpit delivery
-  (count 1), ~$0.00012/request. Along the way, running Wave 2's two
-  independently-built pieces together for the first time surfaced and fixed
-  3 real composition bugs (abstract-socket connect API, sidecar reply wire
-  shape, arg-name canonicalization) — none TCB-touching. PLANNER-03
-  complete.
-- Phase 22 (next, the milestone's HARD GATE): hostile-doc-primed planner
-  complies and is Blocked deterministically, `verify_chain` true,
-  Mailpit==0, trusted control Allows+delivers once, deterministic
-  construction-site sentinel assertion replacing the context-dump grep, T2
-  slot-type binding documented as the accepted v1.4 residual (deferred to
-  v1.5).
+Unscoped — v1.4 is the most recently shipped milestone. Run
+`/gsd-new-milestone` to scope v1.5. (Full v1.4 detail: the "Current
+Milestone" collapsed summary above and Validated Requirements below.)
 
 ### Out of Scope
 
@@ -381,12 +402,12 @@ as of 2026-07-07 unless noted:
   through v1.3
 - LLM planner — a hard-coded / deterministic planner remained sufficient
   through v1.3 (re-affirmed at v1.3 scoping; NOT reopened alongside
-  CONTENT-01/adapter — see `DOC-01`). **Reopened at v1.4** (Phase 1+): an
-  adversarial LLM planner is now in scope, unblocked by Phase 0's
-  trust-coherence fix — see Current Milestone above.
+  CONTENT-01/adapter — see `DOC-01`). Reopened and SHIPPED in v1.4 (see the
+  v1.4 milestone summary above and Validated Requirements: PLANNER-01..04).
 - T2 slot-type binding (executor enforcement that a handle's semantic origin
   matches its slot) — identified at v1.4 scoping as unenforced but safe-by-
-  incidental-human-typing; deferred to v1.5, not v1.4
+  incidental-human-typing; documented as v1.4's accepted residual
+  (T2-01); enforcement deferred to v1.5
 - Live SES / real inbox send — **downgraded from a v1.3 requirement to an
   optional post-milestone config-swap** (was `SMTP-04` in the initial draft).
   MailHog/Mailpit IS a real SMTP send with a web UI showing arrival, which
@@ -405,22 +426,35 @@ as of 2026-07-07 unless noted:
 
 ## Context
 
-- **Current state (v1.3 shipped 2026-07-09):** v0 done (v1.0) + Usable
+- **Current state (v1.4 shipped 2026-07-11):** v0 done (v1.0) + Usable
   Runtime (v1.1) + Tainted Session, Human Gate (v1.2) + Doc → Action
-  Assistant (v1.3). 17 phases, 55 plans total across `runtime-core`,
-  `sandbox`, `brokerd`, `executor`, `adapter-fs`, and the `caprun` binary.
-  Live on real Linux, ONE composed run (`live_acceptance_v1_3_composed`,
-  shared audit.db, 3 sessions): a hostile document's bytes are read (I1
-  demotion), deterministically extracted into a tainted recipient+body pair,
-  Blocked (I2+CONTENT-01) with a genuinely-propagated (not stapled) taint
-  chain re-proven live; a human `caprun confirm` sends exactly once via the
-  real broker-mediated SMTP adapter; a SEPARATE hostile block is denied,
-  sending nothing (Mailpit count==0 AND no send-attempt ledger entry); a
-  clean, trusted-intent send is Allowed and delivers ungated in the SAME
-  run. All 3 sessions independently `verify_chain`-true. `cargo test
-  --workspace` = 250 passed / 0 failed across 36 binaries on real Linux via
-  `scripts/mailpit-verify.sh` (Linux-gated tests correctly show as excluded
-  on macOS, not "0 passed" gaps).
+  Assistant (v1.3) + Trust-Boundary Integrity & the Adversarial Planner
+  (v1.4). 22 phases, 68 plans total across `runtime-core`, `sandbox`,
+  `brokerd`, `executor`, `adapter-fs`, `crates/llm-planner`,
+  `cli/caprun-planner`, and the `caprun` binary. Live on real Linux, the
+  v1.4 composed HARD GATE run: a hostile document's injection reaches a
+  genuine OpenAI-backed `LlmPlanner` (via a taint-tracked instruction
+  channel, never a sink-arg value), the model complies and routes the
+  tainted handle to `to`, the executor Blocks it deterministically
+  (`verify_chain` true, Mailpit==0 for the attacker); a trusted-intent
+  control in the SAME run Allows and delivers exactly once. Full default
+  `scripts/mailpit-verify.sh` recipe: 46 test groups, 0 failed, real exit 0,
+  independently re-run from scratch as the milestone-closure gate (which
+  itself caught and fixed a Cargo build-artifact-placement bug — see the
+  v1.4 milestone summary above).
+- **Prior state (v1.3 shipped 2026-07-09):** v0 done (v1.0) + Usable Runtime
+  (v1.1) + Tainted Session, Human Gate (v1.2) + Doc → Action Assistant
+  (v1.3). 17 phases, 55 plans total. Live on real Linux, ONE composed run
+  (`live_acceptance_v1_3_composed`, shared audit.db, 3 sessions): a hostile
+  document's bytes are read (I1 demotion), deterministically extracted into
+  a tainted recipient+body pair, Blocked (I2+CONTENT-01) with a
+  genuinely-propagated (not stapled) taint chain re-proven live; a human
+  `caprun confirm` sends exactly once via the real broker-mediated SMTP
+  adapter; a SEPARATE hostile block is denied, sending nothing (Mailpit
+  count==0 AND no send-attempt ledger entry); a clean, trusted-intent send
+  is Allowed and delivers ungated in the SAME run. All 3 sessions
+  independently `verify_chain`-true. `cargo test --workspace` = 250 passed /
+  0 failed across 36 binaries on real Linux via `scripts/mailpit-verify.sh`.
 - **Prior state (v1.2 shipped 2026-07-07):** v0 done (v1.0) + Usable Runtime
   (v1.1) + Tainted Session, Human Gate (v1.2). 11 phases, 34 plans across `runtime-core`,
   `sandbox`, `brokerd`, `executor`, `adapter-fs`, and the `caprun` binary.
@@ -446,9 +480,9 @@ as of 2026-07-07 unless noted:
   typed `DenyReason`; durable genuine-taint anchor (ACC-07) persisted across
   process exit; live §9 hostile-block + clean-allow + unbroken causal chain green
   on real Linux `caprun`. Verifier independently re-ran the Colima/Docker recipe.
-- **Next milestone:** v1.4 — Trust-Boundary Integrity & the Adversarial
-  Planner, scoped 2026-07-10. Phase 0 (fix) blocks Phase 1+ (planner) —
-  non-negotiable ordering.
+- **Next milestone:** unscoped — run `/gsd-new-milestone` (questioning →
+  research → requirements → roadmap). v1.5 candidates already identified:
+  T2 slot-type binding enforcement (deferred at v1.4 scoping).
 - **Source of truth:** `planning-docs/PLAN.md` ("AgentOS v0 — Definitive Plan").
   On any conflict, PLAN.md wins. Background detail lives under `archive/`
   (security: `archive/AGENT-RUNTIME-HANDOVER.md`; architecture narrative:
@@ -628,6 +662,8 @@ Python OK for non-TCB experiments only.
 | **v1.4 Phase 0 fix shape: reject a 2nd connection to an active session** | Smaller hammer — a confined worker legitimately holds exactly one connection; rejecting a 2nd is simpler TCB surface than making all per-connection trust state (intent_provided/fd_requested/session_status) coherent across N connections | — Locked (Ben, 2026-07-10 scoping) |
 | **v1.4 MAJOR-2 replay risk: re-earn "accepted" in writing, no new CAS** | Under the v1.4 adaptive-planner threat model the replay actor collapses from "external" to "the milestone's own adversary," but amplification stays bounded to trusted/human-typed recipients (untrusted still Blocks) → DoS/duplication, not new exfil. Re-justify in the DESIGN doc rather than add TCB scope this milestone | — Locked (Ben, 2026-07-10 scoping). Revisit if Phase 1's planner can ever hold a mint verb. |
 | **v1.4 T2 (slot-type binding): defer to v1.5** | Keeps v1.4 to one milestone (Phase 0 fix + Phase 1 adversarial planner, T2 deferred); enforcing it now would split v1.4 into two milestones per matt-essentialist's right-sizing review | — Locked (Ben, 2026-07-10 scoping). Documented as v1.4's accepted residual: safe today only because every `UserTrusted` handle is human-typed. |
+| **v1.4 Phase 22 Leg-2 outcome: `Denied`, not `Allowed`** (architectural finding, not a corner cut) | A locked v1.2 invariant (Draft sessions unconditionally deny `CommitIrreversible` sinks) meant the original "both handles offered, no injection → Allowed" control leg was structurally unreachable without weakening TCB code. Redefined to assert `Denied` + diagnostic-log proof the model still chose the trusted handle — a stronger defense-in-depth finding (two independent layers both fire correctly) than the original design anticipated | — Locked (orchestrator decision during Phase 22 execution, 2026-07-11, verified directly against `crates/executor/src/lib.rs` Step 0.5 before deciding; `crates/executor` untouched). |
+| **v1.4 "Doc → Action Assistant" successor SHIPPED** (2026-07-11) | The one-way trust-coherence fix (live-verified, no regression), a real `Planner` trait + broker capability split, a genuine OpenAI-backed adversarial planner structurally isolated in its own sidecar process, and the milestone's HARD GATE (hostile-doc injection reaches the LLM, model complies, executor Blocks deterministically with genuine live-verified taint propagation, trusted control still Allows+delivers) — all proven live on real Linux, independently re-verified end-to-end by the orchestrator as the closing gate (which itself caught and fixed a real Cargo build-artifact-placement bug) | — Shipped. No git tag, not pushed (matches v1.3's precedent — Ben's standing call unless told otherwise). |
 
 ## Evolution
 
@@ -647,8 +683,28 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-10 after scoping v1.4 "Trust-Boundary Integrity & the
-Adversarial Planner" (`/gsd-new-milestone`). An adversarial review of a
+*Last updated: 2026-07-11 after v1.4 "Trust-Boundary Integrity & the
+Adversarial Planner" SHIPPED — all 5 phases (18-22) complete. Phase 18's
+2-round fresh adversarial review caught and fixed a genuine BLOCKER before
+any TCB code was written (release-on-disconnect would have left a sequential
+bypass reachable). Phase 19 shipped the one-way occupancy latch, live-verified
+on real Linux with no regression. Phase 20 shipped the `Planner` trait seam
+and the broker's `ConnectionRole` capability split. Phase 21 shipped a
+genuine OpenAI-backed adversarial planner in an isolated sidecar process.
+Phase 22 — the milestone's HARD GATE — proved live that a hostile document's
+injection makes the LLM planner comply and the executor Blocks it
+deterministically anyway, with a trusted control still Allowing and
+delivering in the same composed run; a genuine architectural finding mid-
+phase (a locked v1.2 invariant made one planned control-leg outcome
+unreachable) was resolved without touching any TCB code, strengthening
+rather than weakening the milestone's security narrative. The orchestrator's
+own independent final re-verification (re-running the full default
+`scripts/mailpit-verify.sh` recipe from scratch) caught and fixed one real
+bug of its own — a Cargo build-artifact-placement quirk breaking the LLM
+live tests intermittently depending on build order — before declaring the
+milestone done. No git tag, not pushed (matches v1.3's precedent). v1.5
+unscoped. Prior: 2026-07-10 after scoping v1.4 (`/gsd-new-milestone`). An
+adversarial review of a
 proposed LLM-planner milestone found, and a Linux repro CONFIRMED (cargo exit
 101, 2 runs), that v1.3's guard(a) is per-connection state only — a 2nd
 `AF_UNIX` connection to the same session socket bypasses it, minting an
