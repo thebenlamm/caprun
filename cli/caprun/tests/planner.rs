@@ -291,7 +291,7 @@ fn build_planner_request_offers_recipient_subject_body_handles() {
     let trusted_body = ValueId::new();
     let intent = email_intent("boss@company.com");
 
-    let (request, offered, known_sinks) = planner::build_planner_request(
+    let (request, offered, known_sinks, canonical_names) = planner::build_planner_request(
         &intent,
         &intent_vid,
         Some(&derived_vid),
@@ -303,6 +303,19 @@ fn build_planner_request_offers_recipient_subject_body_handles() {
     assert_eq!(request.intent_kind, "SendEmailSummary");
     assert_eq!(request.available_sinks, vec!["email.send".to_string()]);
     assert_eq!(known_sinks, vec!["email.send".to_string()]);
+
+    // canonical_names maps each offered handle to the EXACT arg name
+    // `crates/executor/src/sink_schema.rs`'s hardcoded `email.send` schema
+    // requires — never the model's own naming (Plan 21-04's live-run bug fix).
+    let canonical_name_for = |vid: &ValueId| {
+        canonical_names
+            .iter()
+            .find(|(v, _)| v == vid)
+            .map(|(_, n)| n.as_str())
+    };
+    assert_eq!(canonical_name_for(&derived_vid), Some("to"));
+    assert_eq!(canonical_name_for(&trusted_subject), Some("subject"));
+    assert_eq!(canonical_name_for(&trusted_body), Some("body"));
 
     assert_eq!(request.available_handles.len(), 3);
     let by_hint = |hint: &str| {
@@ -341,7 +354,7 @@ fn build_planner_request_create_file_offers_file_create_sink() {
     let trusted_body = ValueId::new();
     let intent = CaprunIntent::CreateFileFromReport { path: "report.txt".into() };
 
-    let (request, _offered, known_sinks) = planner::build_planner_request(
+    let (request, _offered, known_sinks, _canonical_names) = planner::build_planner_request(
         &intent,
         &intent_vid,
         None,
@@ -362,6 +375,10 @@ fn build_planner_request_create_file_offers_file_create_sink() {
 fn response_to_plan_node_ok_for_valid_response() {
     let offered = vec![ValueId::new(), ValueId::new()];
     let known_sinks = vec!["email.send".to_string()];
+    let canonical_names = vec![
+        (offered[0].clone(), "to".to_string()),
+        (offered[1].clone(), "subject".to_string()),
+    ];
 
     let resp = PlannerResponse {
         sink: "email.send".to_string(),
@@ -371,7 +388,7 @@ fn response_to_plan_node_ok_for_valid_response() {
         ],
     };
 
-    let plan = planner::response_to_plan_node(&resp, &offered, &known_sinks)
+    let plan = planner::response_to_plan_node(&resp, &offered, &known_sinks, &canonical_names)
         .expect("valid response must map to a PlanNode");
 
     assert_eq!(plan.sink, SinkId("email.send".into()));
@@ -380,19 +397,51 @@ fn response_to_plan_node_ok_for_valid_response() {
     assert_eq!(arg(&plan, "subject").value_id, offered[1]);
 }
 
+/// `response_to_plan_node` NEVER trusts the model's own `arg.name` — it
+/// always uses the caller-supplied `canonical_names` mapping (keyed by
+/// `value_id`) instead. Plan 21-04's live-run bug fix: a real model named
+/// the recipient arg after its `slot_hint` ("recipient") rather than the
+/// sink's required name ("to"), which `crates/executor/src/sink_schema.rs`
+/// then correctly `Denied(UnknownArg)`. This test proves the remap makes
+/// the FINAL `PlanArg.name` the canonical one regardless of what string the
+/// (simulated) model chose.
+#[test]
+fn response_to_plan_node_canonicalizes_arg_name_ignoring_model_naming() {
+    let offered = vec![ValueId::new()];
+    let known_sinks = vec!["email.send".to_string()];
+    let canonical_names = vec![(offered[0].clone(), "to".to_string())];
+
+    let resp = PlannerResponse {
+        sink: "email.send".to_string(),
+        // The model named this arg "recipient" (matching the slot_hint it
+        // was shown), NOT the sink's required "to".
+        args: vec![ResponseArg { name: "recipient".to_string(), value_id: offered[0].clone() }],
+    };
+
+    let plan = planner::response_to_plan_node(&resp, &offered, &known_sinks, &canonical_names)
+        .expect("a response naming an offered handle under any string must still map");
+
+    assert_eq!(
+        plan.args[0].name, "to",
+        "the final PlanArg name must be the canonical sink-required name, never the model's own \
+         arg.name string"
+    );
+}
+
 /// `response_to_plan_node`: Err when the response names a sink not in
 /// `known_sinks` — fails closed, never fabricates or substitutes.
 #[test]
 fn response_to_plan_node_err_for_unknown_sink() {
     let offered = vec![ValueId::new()];
     let known_sinks = vec!["email.send".to_string()];
+    let canonical_names: Vec<(ValueId, String)> = vec![];
 
     let resp = PlannerResponse {
         sink: "git.push".to_string(),
         args: vec![],
     };
 
-    let result = planner::response_to_plan_node(&resp, &offered, &known_sinks);
+    let result = planner::response_to_plan_node(&resp, &offered, &known_sinks, &canonical_names);
     assert!(result.is_err(), "unknown sink must be rejected");
 }
 
@@ -403,6 +452,7 @@ fn response_to_plan_node_err_for_unknown_sink() {
 fn response_to_plan_node_err_for_unoffered_handle() {
     let offered = vec![ValueId::new()];
     let known_sinks = vec!["email.send".to_string()];
+    let canonical_names: Vec<(ValueId, String)> = vec![];
     let fabricated = ValueId::new();
 
     let resp = PlannerResponse {
@@ -410,6 +460,6 @@ fn response_to_plan_node_err_for_unoffered_handle() {
         args: vec![ResponseArg { name: "to".to_string(), value_id: fabricated }],
     };
 
-    let result = planner::response_to_plan_node(&resp, &offered, &known_sinks);
+    let result = planner::response_to_plan_node(&resp, &offered, &known_sinks, &canonical_names);
     assert!(result.is_err(), "unoffered handle must be rejected");
 }
