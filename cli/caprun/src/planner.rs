@@ -48,6 +48,9 @@ use runtime_core::{
 };
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
+// Duration/Instant back the connect-retry loop in the Linux-only
+// `connect_to_sidecar` below; unused on the non-Linux stub sibling.
+#[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 
 /// The `Planner` seam (PLANNER-01): maps a typed intent + opaque `ValueId`
@@ -245,8 +248,47 @@ impl LlmPlanner {
     fn request_plan_from_sidecar(&self, request: &PlannerRequest) -> anyhow::Result<PlannerResponse> {
         let stream = connect_to_sidecar(&self.planner_sock)?;
         send_framed(&stream, request).context("send PlannerRequest to sidecar")?;
-        recv_framed(&stream).context("receive PlannerResponse from sidecar")
+        let reply: SidecarReply =
+            recv_framed(&stream).context("receive SidecarReply from sidecar")?;
+        match reply {
+            SidecarReply::Ok { response } => Ok(response),
+            SidecarReply::Error { message } => {
+                anyhow::bail!("sidecar returned an error reply: {message}")
+            }
+        }
     }
+}
+
+/// Mirror of `cli/caprun-planner`'s `SidecarReply` wire shape (see that
+/// crate's `main.rs` doc comment, which documents this exact JSON shape for
+/// Plan 21-03's proxy to match). Defined independently here (not shared via a
+/// common crate), per Plan 21-03's own documented decision — Plan 21-01 is
+/// closed and neither sibling plan's file list touches `llm-planner`.
+///
+/// # Bug found and fixed during Plan 21-04's live composed run
+///
+/// The ORIGINAL implementation called `recv_framed::<PlannerResponse>` —
+/// deserializing the frame body DIRECTLY as a bare `PlannerResponse` — but
+/// the sidecar's `handle_connection` ALWAYS wraps its reply in
+/// `{"status":"ok","response":{"sink":...,"args":[...]}}` /
+/// `{"status":"error","message":"..."}`. A bare-`PlannerResponse` parse
+/// therefore failed on EVERY real sidecar reply (the top-level JSON object
+/// has no `sink`/`args` keys — those are nested one level down, under
+/// `response`), 100% reproducible against the real sidecar — empirically
+/// confirmed live on Linux (`scripts/mailpit-verify.sh`, Plan 21-04): the
+/// real OpenAI call DID complete inside the sidecar (confirmed via the
+/// sidecar's own startup log line reaching stderr), but the worker-side
+/// proxy could never parse ANY reply, success or failure, before this fix.
+/// This is exactly the composition risk Plan 21-03's own SUMMARY flagged as
+/// unverified pending this plan's live run: the two sibling plans (21-02,
+/// 21-03) were built in parallel worktrees against a documented-but-untested
+/// wire contract, and the contract text and the implementation had silently
+/// diverged.
+#[derive(serde::Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum SidecarReply {
+    Ok { response: PlannerResponse },
+    Error { message: String },
 }
 
 impl Planner for LlmPlanner {
@@ -259,7 +301,7 @@ impl Planner for LlmPlanner {
         trusted_subject_handle: ValueId,
         trusted_body_handle: ValueId,
     ) -> PlanNode {
-        let (request, offered, known_sinks) = build_planner_request(
+        let (request, offered, known_sinks, canonical_names) = build_planner_request(
             intent,
             &intent_value_id,
             derived_recipient.as_ref(),
@@ -278,7 +320,7 @@ impl Planner for LlmPlanner {
             }
         };
 
-        match response_to_plan_node(&response, &offered, &known_sinks) {
+        match response_to_plan_node(&response, &offered, &known_sinks, &canonical_names) {
             Ok(plan_node) => plan_node,
             Err(e) => {
                 eprintln!(
@@ -299,14 +341,19 @@ impl Planner for LlmPlanner {
 ///                   `plan_from_intent`'s unconditional use).
 ///   - `body`      = `body` when `Some`, else `trusted_body_handle`.
 ///
-/// Returns the request alongside the `offered` handle set and `known_sinks`
-/// list so the caller can pass them, UNCHANGED, into `response_to_plan_node`
-/// — the validator's allowlists are always exactly what this function put on
-/// the wire, never re-derived or guessed. Carries only `ValueId` handles +
-/// slot hints and a typed `intent_kind`/`available_sinks` label — no other
-/// value-bearing field (the `PlannerRequest`/`HandleLabel` types themselves
-/// are structurally incapable of carrying a literal, per `llm-planner`'s own
-/// key-set tests).
+/// Returns the request alongside the `offered` handle set, `known_sinks`
+/// list, and `canonical_names` mapping so the caller can pass them,
+/// UNCHANGED, into `response_to_plan_node` — the validator's allowlists are
+/// always exactly what this function put on the wire, never re-derived or
+/// guessed. Carries only `ValueId` handles + slot hints and a typed
+/// `intent_kind`/`available_sinks` label — no other value-bearing field (the
+/// `PlannerRequest`/`HandleLabel` types themselves are structurally
+/// incapable of carrying a literal, per `llm-planner`'s own key-set tests).
+///
+/// `canonical_names` pairs each offered handle with the EXACT arg name
+/// `crates/executor/src/sink_schema.rs`'s hardcoded per-sink schema requires
+/// (`"to"`/`"subject"`/`"body"` for `email.send`) — see `response_to_plan_node`'s
+/// doc comment for why this exists and is NEVER the model's own `arg.name`.
 pub fn build_planner_request(
     intent: &CaprunIntent,
     intent_value_id: &ValueId,
@@ -314,7 +361,7 @@ pub fn build_planner_request(
     body: Option<&ValueId>,
     trusted_subject_handle: &ValueId,
     trusted_body_handle: &ValueId,
-) -> (PlannerRequest, Vec<ValueId>, Vec<String>) {
+) -> (PlannerRequest, Vec<ValueId>, Vec<String>, Vec<(ValueId, String)>) {
     let recipient = derived_recipient
         .cloned()
         .unwrap_or_else(|| intent_value_id.clone());
@@ -336,7 +383,28 @@ pub fn build_planner_request(
         HandleLabel { slot_hint: "body".to_string(), value_id: body_handle.clone() },
     ];
 
-    let offered = vec![recipient, subject, body_handle];
+    let offered = vec![recipient.clone(), subject.clone(), body_handle.clone()];
+
+    // The recipient/subject/body slot -> canonical sink-arg-name mapping,
+    // per intent kind. `CreateFileFromReport` only maps its routing
+    // (`recipient`-slot) handle to `"path"` — `file.create`'s OTHER required
+    // arg (`"contents"`) is always `intent_value_id` in `plan_from_intent`'s
+    // own deterministic mapping, never one of this function's three offered
+    // slots, so `file.create` via the LLM planner is intentionally left
+    // unmapped for `subject`/`body` here (out of this plan's tested scope —
+    // only the `SendEmailSummary` clean path is proven live by Plan 21-04; a
+    // `file.create` mismatch still fails closed via `validate_schema`,
+    // unchanged from before this fix).
+    let canonical_names: Vec<(ValueId, String)> = match intent {
+        CaprunIntent::SendEmailSummary { .. } => vec![
+            (recipient.clone(), "to".to_string()),
+            (subject.clone(), "subject".to_string()),
+            (body_handle.clone(), "body".to_string()),
+        ],
+        CaprunIntent::CreateFileFromReport { .. } => {
+            vec![(recipient.clone(), "path".to_string())]
+        }
+    };
 
     let request = PlannerRequest {
         intent_kind: intent_kind.to_string(),
@@ -344,7 +412,7 @@ pub fn build_planner_request(
         available_sinks: available_sinks.clone(),
     };
 
-    (request, offered, available_sinks)
+    (request, offered, available_sinks, canonical_names)
 }
 
 /// Map a validated sidecar `PlannerResponse` to a `PlanNode`, failing closed
@@ -352,10 +420,48 @@ pub fn build_planner_request(
 /// every `ResponseArg.value_id` is a member of `offered`. Never fabricates or
 /// substitutes a handle — any violation is a hard `Err`. Pure and
 /// unit-testable without a live sidecar.
+///
+/// # Bug found and fixed during Plan 21-04's live composed run: arg names are
+/// NEVER taken from the model's own `response_arg.name`
+///
+/// The ORIGINAL implementation copied `response_arg.name` verbatim into the
+/// final `PlanArg`. Nothing in `build_planner_prompt`/`build_tool_schema`
+/// (`crates/llm-planner`) tells the model which literal arg-name string a
+/// given sink expects — the model only sees `slot_hint`s
+/// ("recipient"/"subject"/"body"), which do NOT match
+/// `crates/executor/src/sink_schema.rs`'s hardcoded `email.send` schema
+/// (`{"to","cc","bcc","subject","body"}`). A real model reliably named the
+/// recipient arg something other than `"to"` (matching the `slot_hint` it
+/// was shown instead), so `sink_schema::validate_schema` correctly
+/// `Denied(UnknownArg(..))` the resulting plan node on EVERY real run before
+/// this fix — empirically confirmed live on Linux
+/// (`scripts/mailpit-verify.sh`): `plan_node_evaluated` was recorded (a
+/// `Denied` outcome uses the same generic event as `Allowed` — only
+/// `BlockedPendingConfirmation` gets its own `sink_blocked` event type), but
+/// NO `email_send_attempted`/`email_send_succeeded` event ever followed, and
+/// (compounding the symptom) `cli/caprun/src/worker.rs` only exited non-zero
+/// on `BlockedPendingConfirmation`, silently exiting 0 on `Denied` too (see
+/// that file's own fix note) — together making a 100%-reproducible schema
+/// rejection look, from the outside, like a quiet no-op success.
+///
+/// The FIX never trusts the model's `arg.name` string at all: it looks up
+/// the CALLER-SUPPLIED `canonical_names` mapping (built by
+/// `build_planner_request`, which alone knows which offered `ValueId` is the
+/// recipient/subject/body slot for the CHOSEN sink) by `value_id` identity,
+/// and uses THAT name. This keeps the "never trust the planner" security
+/// posture consistent with the rest of this module (PLANNER-04): the model
+/// only ever gets to pick WHICH offered handle occupies a slot (already
+/// enforced by the `offered`-membership check below) and WHICH sink to use
+/// (already enforced by the `known_sinks` check below) — never the arg name
+/// a sink's schema requires. A `value_id` absent from `canonical_names`
+/// falls back to the response's own name (harmless: `validate_schema` still
+/// fails it closed exactly as before, e.g. the `file.create` subject/body
+/// slots noted in `build_planner_request`'s doc comment).
 pub fn response_to_plan_node(
     resp: &PlannerResponse,
     offered: &[ValueId],
     known_sinks: &[String],
+    canonical_names: &[(ValueId, String)],
 ) -> anyhow::Result<PlanNode> {
     if !known_sinks.iter().any(|s| s == &resp.sink) {
         anyhow::bail!("llm planner response named unknown sink: {}", resp.sink);
@@ -369,8 +475,13 @@ pub fn response_to_plan_node(
                 response_arg.value_id
             );
         }
+        let name = canonical_names
+            .iter()
+            .find(|(vid, _)| vid == &response_arg.value_id)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| response_arg.name.clone());
         args.push(PlanArg {
-            name: response_arg.name.clone(),
+            name,
             value_id: response_arg.value_id.clone(),
         });
     }
@@ -378,17 +489,58 @@ pub fn response_to_plan_node(
     Ok(PlanNode { sink: SinkId(resp.sink.clone()), args })
 }
 
-/// Connect to `\0` + `planner_sock` with a bounded connect-retry, mirroring
-/// the worker's own broker-connect loop (`cli/caprun/src/worker.rs`) — the
-/// sidecar (spawned by `caprun` main just before the worker) may not have
-/// reached its synchronous `bind()` yet when the worker calls `plan()`.
+/// Connect to the abstract-namespace socket named `planner_sock` with a
+/// bounded connect-retry, mirroring the worker's own broker-connect loop
+/// (`cli/caprun/src/worker.rs`) — the sidecar (spawned by `caprun` main just
+/// before the worker) may not have reached its synchronous `bind()` yet when
+/// the worker calls `plan()`.
+///
+/// # Bug found and fixed during Plan 21-04's live composed run
+///
+/// The ORIGINAL implementation called `UnixStream::connect(&format!("\0{planner_sock}"))`
+/// — i.e. `std::os::unix::net::UnixStream`'s plain path-based `connect`, given
+/// a string with a LEADING NUL byte, on the (correct, in isolation) theory
+/// that this is "the same convention" as the broker/worker's abstract-socket
+/// connect elsewhere in this codebase (`cli/caprun/src/worker.rs`,
+/// `crates/brokerd/src/server.rs`). It is NOT: those call sites use
+/// `tokio::net::UnixStream`, whose implementation specifically detects a
+/// leading NUL byte and constructs an abstract-namespace `SocketAddr`
+/// internally (bypassing the interior-nul check — see those modules' own doc
+/// comments). Plain `std::os::unix::net`'s path-based `connect`/`bind`,
+/// however, ALWAYS goes through the generic `sockaddr_un` path-construction
+/// helper, which unconditionally rejects ANY nul byte in the path —
+/// including a leading one — with `io::ErrorKind::InvalidInput` ("paths must
+/// not contain interior null bytes"). Because `InvalidInput` is neither
+/// `ConnectionRefused` nor `NotFound`, the retry loop's guard never matched:
+/// every real invocation failed on the FIRST attempt, in well under a
+/// millisecond, indistinguishable at a glance from "the sidecar never came
+/// up" — empirically confirmed live on Linux (`scripts/mailpit-verify.sh`,
+/// Plan 21-04): the real OpenAI call was NEVER REACHED, `LlmPlanner::plan()`
+/// failed closed on every run before this fix, 100% reproducible, unrelated
+/// to any timing race.
+///
+/// The FIX uses the stable (since Rust 1.70) Linux-only
+/// `std::os::linux::net::SocketAddrExt::from_abstract_name` to construct the
+/// abstract-namespace `SocketAddr` explicitly, then
+/// `UnixStream::connect_addr`, which never routes through the
+/// interior-nul-rejecting path helper. This is std's own sanctioned API for
+/// exactly this use case (as opposed to tokio's incidental leading-NUL
+/// special-casing) and requires no new dependency. Gated `#[cfg(target_os =
+/// "linux")]` (the `std::os::linux::net` module does not exist on macOS) with
+/// a `#[cfg(not(target_os = "linux"))]` sibling that still compiles on the
+/// macOS dev box but fails fast at runtime, mirroring every other Linux-only
+/// abstract-socket path in this codebase (see CLAUDE.md, "Linux-only
+/// security tests").
+#[cfg(target_os = "linux")]
 fn connect_to_sidecar(planner_sock: &str) -> anyhow::Result<UnixStream> {
+    use std::os::linux::net::SocketAddrExt;
     const CONNECT_BUDGET: Duration = Duration::from_secs(2);
     const RETRY_DELAY: Duration = Duration::from_millis(25);
-    let sock_path = format!("\0{planner_sock}");
+    let addr = std::os::unix::net::SocketAddr::from_abstract_name(planner_sock.as_bytes())
+        .context("build abstract-namespace socket address for LLM planner sidecar")?;
     let deadline = Instant::now() + CONNECT_BUDGET;
     loop {
-        match UnixStream::connect(&sock_path) {
+        match UnixStream::connect_addr(&addr) {
             Ok(stream) => return Ok(stream),
             // Transient: the sidecar subprocess has not reached bind() yet.
             Err(e)
@@ -402,6 +554,15 @@ fn connect_to_sidecar(planner_sock: &str) -> anyhow::Result<UnixStream> {
             Err(e) => return Err(e).context("connect to LLM planner sidecar abstract UDS"),
         }
     }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn connect_to_sidecar(_planner_sock: &str) -> anyhow::Result<UnixStream> {
+    anyhow::bail!(
+        "LLM planner sidecar connect uses an abstract-namespace UDS, which is Linux-only \
+         (std::os::linux::net); this path only needs to COMPILE on macOS, exactly like the \
+         worker's own broker-connect and caprun-planner's own listener bind"
+    )
 }
 
 /// Write a framed message (4-byte LE length prefix + JSON body) — same wire

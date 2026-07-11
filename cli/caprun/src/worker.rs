@@ -332,9 +332,26 @@ async fn main() -> anyhow::Result<()> {
         other => anyhow::bail!("unexpected response to SubmitPlanNode: {other:?}"),
     };
 
-    // ── Exit non-success if blocked (durable audit event already recorded) ───
-    if matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }) {
-        eprintln!("[worker] BLOCKED: value-injection defense triggered — exiting 1");
+    // ── Exit non-success unless the effect actually ran (durable audit event
+    //    already recorded either way) ──────────────────────────────────────
+    //
+    // Bug found and fixed during Plan 21-04's live composed run: this
+    // originally checked ONLY `BlockedPendingConfirmation`, silently falling
+    // through to `Ok(())` (exit 0) for `ExecutorDecision::Denied { .. }` and
+    // `NotImplemented` — a plan node the executor REJECTED before any effect
+    // ran was indistinguishable, from the caller's exit code alone, from one
+    // that actually succeeded. This was never exercised by the
+    // `DeterministicPlanner` path (its hardcoded arg names always satisfy
+    // `sink_schema::validate_schema`, so it never produces `Denied`), but the
+    // `LlmPlanner` path CAN produce a schema-invalid plan node (e.g. the
+    // model naming an arg something other than the sink's required name) —
+    // empirically confirmed live on Linux (`scripts/mailpit-verify.sh`): a
+    // real run reached `Denied` and exited 0 with NO email ever sent, before
+    // this fix.
+    if !matches!(decision, ExecutorDecision::Allowed) {
+        eprintln!(
+            "[worker] NOT ALLOWED ({decision:?}): no effect ran — exiting 1"
+        );
         std::process::exit(1);
     }
 

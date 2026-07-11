@@ -116,20 +116,41 @@ echo "Running Linux verification suite (rust:1, network=${MAILPIT_NET}) ..."
 # api.openai.com over Docker's default (unrestricted) container egress — this
 # recipe does not add any network isolation of its own, so the container can
 # always reach the public internet unless the host's Docker daemon is
-# otherwise configured. Forwarding is UNCONDITIONAL-but-empty-tolerant: a
-# plain non-LLM run works fine with an empty/unset OPENAI_API_KEY (the `-e`
-# flag simply forwards an empty value), and the LLM live test itself is
-# responsible for skipping/xfail-ing when no real key is present — this
-# script does not hard-fail on a missing key.
-docker run --rm \
-    --security-opt seccomp=unconfined \
-    --network "${MAILPIT_NET}" \
-    -v "$PWD":/work -w /work \
-    -e CARGO_TARGET_DIR=/tmp/lt \
-    -e CAPRUN_SMTP_HOST="${MAILPIT_IP}" \
-    -e CAPRUN_SMTP_PORT=1025 \
-    -e OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
-    -e CAPRUN_PLANNER_MODEL="${CAPRUN_PLANNER_MODEL:-}" \
+# otherwise configured.
+#
+# OPENAI_API_KEY: UNCONDITIONAL-but-empty-tolerant — a plain non-LLM run
+# works fine with an empty/unset key (the `-e` flag simply forwards an empty
+# value), and the LLM live test itself is responsible for skipping/xfail-ing
+# when no real key is present. This script never hard-fails on a missing key.
+#
+# CAPRUN_PLANNER_MODEL: forwarded ONLY WHEN SET on the host (conditional, NOT
+# unconditional-but-empty-tolerant like the key above) — bug found live
+# during Plan 21-04's verification run: passing `-e
+# CAPRUN_PLANNER_MODEL="${CAPRUN_PLANNER_MODEL:-}"` unconditionally forwards
+# an EMPTY STRING (not "unset") whenever the host doesn't have the var
+# exported. `caprun`'s own sidecar-spawn code
+# (`cli/caprun/src/main.rs`) and `caprun-planner`'s own default
+# (`cli/caprun-planner/src/main.rs`) both apply their "gpt-4o-mini" default
+# via `unwrap_or_else` on an ABSENT var (`Err`), never on a present-but-empty
+# one (`Ok("")`) — so an empty forwarded value silently overrides that
+# default with an empty model name, and the real OpenAI call then fails with
+# HTTP 400 "you must provide a model parameter" (empirically reproduced).
+# Building the docker args in an array (rather than always passing the flag)
+# avoids ever forwarding an empty value.
+docker_args=(
+    --rm
+    --security-opt seccomp=unconfined
+    --network "${MAILPIT_NET}"
+    -v "$PWD":/work -w /work
+    -e CARGO_TARGET_DIR=/tmp/lt
+    -e CAPRUN_SMTP_HOST="${MAILPIT_IP}"
+    -e CAPRUN_SMTP_PORT=1025
+    -e OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+)
+if [ -n "${CAPRUN_PLANNER_MODEL:-}" ]; then
+    docker_args+=(-e "CAPRUN_PLANNER_MODEL=${CAPRUN_PLANNER_MODEL}")
+fi
+docker run "${docker_args[@]}" \
     rust:1 \
     bash -c "apt-get update && apt-get install -y libssl-dev pkg-config && ${MAILPIT_VERIFY_CMD}"
 
