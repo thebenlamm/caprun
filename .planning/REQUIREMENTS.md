@@ -12,15 +12,15 @@ weakening assertions.
 
 ### Trust Coherence (Phase 0 — the fix)
 
-- [ ] **TRUST-01**: Broker rejects a second connection to an already-active
+- [x] **TRUST-01**: Broker rejects a second connection to an already-active
       session, closing the cross-connection `ProvideIntent` bypass (the
       smaller hammer — a confined worker only ever needs one connection)
 
-- [ ] **TRUST-02**: `two_connection_intent_bypass_repro`'s `#[ignore]` is
+- [x] **TRUST-02**: `two_connection_intent_bypass_repro`'s `#[ignore]` is
       removed and the test is green — fixed by the broker's behavior, never
       by weakening the test's safe-outcome assertions
 
-- [ ] **TRUST-03**: Existing v1.3 live acceptance
+- [x] **TRUST-03**: Existing v1.3 live acceptance
       (`scripts/mailpit-verify.sh`) stays green — independently re-run, not
       assumed from a prior pass
 
@@ -56,7 +56,7 @@ weakening assertions.
 
 ### Documentation Honesty (Phase 0)
 
-- [ ] **DOC-02**: PROJECT.md correction recording that v1.3's guard(a) was
+- [x] **DOC-02**: PROJECT.md correction recording that v1.3's guard(a) was
       cross-connection-bypassable and that v1.4 Phase 0 fixes it (scoping-
       time draft already landed in PROJECT.md's v1.3 `<details>` block;
       Phase 0 finalizes it against the shipped fix)
@@ -124,16 +124,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TRUST-01 | Phase 19 | Pending |
-| TRUST-02 | Phase 19 | Pending |
-| TRUST-03 | Phase 19 | Pending |
+| TRUST-01 | Phase 19 | Complete |
+| TRUST-02 | Phase 19 | Complete |
+| TRUST-03 | Phase 19 | Complete |
 | DESIGN-01 | Phase 18 | Complete |
 | DESIGN-02 | Phase 18 | Complete |
 | DESIGN-03 | Phase 18 | Complete |
 | DESIGN-04 | Phase 18 | Complete |
 | DESIGN-05 | Phase 18 | Complete |
 | DESIGN-06 | Phase 18 | Complete |
-| DOC-02 | Phase 19 | Pending |
+| DOC-02 | Phase 19 | Complete |
 | PLANNER-01 | Phase 20 | Pending |
 | PLANNER-02 | Phase 20 | Pending |
 | PLANNER-03 | Phase 21 | Pending |
