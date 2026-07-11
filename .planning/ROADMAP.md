@@ -120,7 +120,15 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   3. `scripts/mailpit-verify.sh`'s full existing test suite (the v1.3 live acceptance) is independently re-run on real Linux and still passes — no regression, not assumed from a prior pass.
   4. PROJECT.md's DOC-02 correction is finalized against the shipped fix (the scoping-time draft disclosure is confirmed accurate against the actual fix, not left aspirational).
 
-**Plans**: TBD
+**Plans**: 2 plans
+
+**Wave 1**
+
+- [ ] 19-01-PLAN.md — One-way accept-loop occupancy latch in `server.rs` + restructure `two_connection_intent_bypass.rs` into 3 fresh-broker variants (guard-a control, overlapping, new sequential-reconnect), un-ignore (TRUST-01, TRUST-02)
+
+**Wave 2** *(depends on Wave 1)*
+
+- [ ] 19-02-PLAN.md — Live Linux `mailpit-verify.sh` rerun with captured pass/fail counts (RED→GREEN proof + no-regression) + finalize PROJECT.md's DOC-02 disclosure against the shipped fix (TRUST-03, DOC-02)
 
 ### Phase 20: Planner Seam & Capability Split
 
