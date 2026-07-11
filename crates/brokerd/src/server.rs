@@ -472,6 +472,45 @@ async fn handle_connection(
             continue;
         }
 
+        // Phase 20 (PLANNER-04, `DESIGN-session-trust-coherence.md` §7): a
+        // `ConnectionRole::Planner` connection's `SubmitPlanNode` is handled
+        // HERE, entirely bypassing `dispatch_request`'s
+        // `BrokerResponse::PlanNodeDecision` full-decision arm, so a planner
+        // connection can NEVER receive `anchors`/`literal_sha256`/`literal`.
+        // The `role.permits` gate immediately above guarantees `request` is
+        // `SubmitPlanNode` here (Planner's ONLY permitted verb) — this branch
+        // reuses `evaluate_plan_node_and_record`, the SAME executor-
+        // evaluation-and-durable-recording entry point the worker's
+        // `dispatch_request` arm calls below, then projects the decision to
+        // the reduced `blocked` boolean itself. `Allowed` -> `false`; every
+        // non-`Allowed` outcome (`BlockedPendingConfirmation`, `Denied`,
+        // `NotImplemented`) -> `true`.
+        if role == ConnectionRole::Planner {
+            let BrokerRequest::SubmitPlanNode { plan_node } = &request else {
+                unreachable!(
+                    "ConnectionRole::Planner.permits() admits only SubmitPlanNode"
+                );
+            };
+            let decision = evaluate_plan_node_and_record(
+                plan_node,
+                &conn,
+                session_id,
+                &mut value_store,
+                &workspace_root,
+                &mut session_status,
+                &mut last_event_id,
+                &mut last_event_hash,
+            )
+            .await?;
+            let blocked = !matches!(decision, runtime_core::ExecutorDecision::Allowed);
+            send_response(
+                &mut stream,
+                &BrokerResponse::PlanNodeDecisionReduced { blocked },
+            )
+            .await?;
+            continue;
+        }
+
         dispatch_request(
             request,
             &mut stream,
@@ -488,6 +527,345 @@ async fn handle_connection(
         .await?;
     }
     Ok(())
+}
+
+/// Evaluate a `PlanNode` against the executor and durably record the
+/// resulting decision — the ENTIRE audit-and-effect side of `SubmitPlanNode`
+/// (block-time snapshot, `sink_blocked`/`plan_node_evaluated` event append,
+/// blocked-literal side-table write, pending-confirmation checkpoint, and any
+/// Allowed-decision sink invocation for `file.create`/`email.send`).
+///
+/// Phase 20 (PLANNER-04, `DESIGN-session-trust-coherence.md` §7): shared
+/// VERBATIM by BOTH the worker's full-decision response path
+/// (`dispatch_request`'s `SubmitPlanNode` arm) and the planner-role reduced-
+/// response path (`handle_connection`'s pre-dispatch planner branch) — this
+/// function performs the SAME evaluation and the SAME durable recording
+/// either way; it sends NO response itself and knows nothing about
+/// `ConnectionRole`. Each caller projects the returned `ExecutorDecision`
+/// into its OWN wire shape (`BrokerResponse::PlanNodeDecision` for the
+/// worker, `BrokerResponse::PlanNodeDecisionReduced` for the planner) — the
+/// reduction is a caller-side projection of an identical evaluation, never a
+/// different one.
+#[allow(clippy::too_many_arguments)]
+async fn evaluate_plan_node_and_record(
+    plan_node: &runtime_core::PlanNode,
+    conn: &Arc<Mutex<rusqlite::Connection>>,
+    session_id: Uuid,
+    value_store: &mut ValueStore,
+    workspace_root: &Arc<adapter_fs::workspace::WorkspaceRoot>,
+    session_status: &mut SessionStatus,
+    last_event_id: &mut Uuid,
+    last_event_hash: &mut String,
+) -> anyhow::Result<runtime_core::ExecutorDecision> {
+    // The broker mints the effect identity (HARD-06) and passes it into the
+    // executor — the executor never mints a Uuid (DESIGN §4 rule 2).
+    let effect_id = Uuid::new_v4();
+    // session_id comes from the connection — NEVER from the IPC message (HARD-03).
+    // session_status likewise — broker-owned, per-connection state, NEVER
+    // read from plan_node/IPC (DESIGN §4/§11 condition 0).
+    let decision = executor::submit_plan_node(
+        session_id,
+        effect_id,
+        plan_node,
+        value_store,
+        &*session_status,
+    );
+
+    // Durably record the decision BEFORE returning any response (ACC-02).
+    // Fail-closed: an append error propagates with `?`, so the block is
+    // NEVER reported to the worker as having succeeded.
+    //
+    // On a block, resolve the FULL arg set from the still-live per-
+    // connection ValueStore into a Vec<ResolvedArg> snapshot FIRST —
+    // this is the ONLY moment those literals are recoverable (the
+    // ValueStore does not survive process exit;
+    // DESIGN-confirmation-release.md "The Problem Being Solved"). A
+    // handle that fails to resolve here is a broker-internal invariant
+    // violation (validate_schema already guaranteed presence) — fail
+    // closed, never persist a partial snapshot.
+    //
+    // The CONFIRM-03 combined digest (Phase 16, DESIGN-confirm-binding.md
+    // Round-6 amendment) MUST be computed over this SAME full set —
+    // blocked AND trusted args together, never a subset — so it is
+    // computed HERE, once, and threaded into BOTH the sink_blocked
+    // Event and the PendingConfirmation below (no second computation,
+    // no new lock).
+    let block_snapshot: Option<(
+        Vec<crate::confirmation::ResolvedArg>,
+        String,
+        Vec<String>,
+    )> = if let runtime_core::ExecutorDecision::BlockedPendingConfirmation { anchors } =
+        &decision
+    {
+        let mut resolved_args = Vec::with_capacity(plan_node.args.len());
+        for arg in &plan_node.args {
+            let record = value_store.resolve(&arg.value_id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "block-time snapshot: arg `{}` handle did not resolve",
+                    arg.name
+                )
+            })?;
+            resolved_args.push(crate::confirmation::ResolvedArg {
+                name: arg.name.clone(),
+                value_id: arg.value_id.clone(),
+                literal: record.literal.clone(),
+                taint: record.taint.clone(),
+                provenance_chain: record.provenance_chain.clone(),
+            });
+        }
+        // CONFIRM-03 (Round-6): the digest covers EVERY current
+        // resolved_args element (blocked AND trusted together) — the
+        // primitive sorts by byte-wise ascending arg_name and asserts
+        // name-uniqueness internally, so no manual sort/filter is
+        // needed here.
+        let pairs: Vec<(&str, &str)> = resolved_args
+            .iter()
+            .map(|a| (a.name.as_str(), a.literal.as_str()))
+            .collect();
+        let digest = crate::confirmation::combined_digest(&pairs);
+        // blocked_arg_names is DISPLAY-MARKING metadata ONLY (which of
+        // the full set Plan 16-02 narrates as BLOCKED vs TRUSTED) — the
+        // ordered `anchors` collection IS the ordered blocked subset
+        // from the executor's collect-then-Block loop; never re-filter
+        // resolved_args for this, and it does NOT gate the digest's
+        // domain.
+        let blocked_arg_names: Vec<String> =
+            anchors.iter().map(|b| b.anchor.arg.clone()).collect();
+        Some((resolved_args, digest, blocked_arg_names))
+    } else {
+        None
+    };
+
+    // A block persists ALL durable anchors via the broker-owned
+    // Event::sink_blocked constructor (sets Event.taint by merging every
+    // anchor's taint, anchors = the full collection). The causal parent
+    // stays the chain head — NOT read_event_id (two graphs are never
+    // equated, DESIGN §0/§4 rule 3). On a block, capture EVERY blocked
+    // arg's LIVE literal (name + literal) so each can be written to the
+    // redactable `blocked_literals` side table (keyed by the sink_blocked
+    // event id AND arg name — Phase 14 plural). The literal is NEVER put
+    // in the hashed event payload — the anchor carries only its digest
+    // (`literal_sha256`). `combined_digest`/`blocked_arg_names` (Phase 16)
+    // ride inside this SAME hashed Event payload, computed once above.
+    let (audit_event, blocked_literals) = match &decision {
+        runtime_core::ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+            let (_, digest, blocked_arg_names) = block_snapshot.as_ref().expect(
+                "block_snapshot is Some for every BlockedPendingConfirmation decision",
+            );
+            (
+                Event::sink_blocked(
+                    Uuid::new_v4(),
+                    Some(*last_event_id), // causal head — never read_event_id
+                    session_id,
+                    Utc::now(),
+                    anchors.iter().map(|b| b.anchor.clone()).collect(),
+                    Some(digest.clone()),
+                    blocked_arg_names.clone(),
+                ),
+                anchors
+                    .iter()
+                    .map(|b| (b.anchor.arg.clone(), b.literal.clone()))
+                    .collect::<Vec<(String, String)>>(),
+            )
+        }
+        _ => (
+            Event::new(
+                Uuid::new_v4(),
+                Some(*last_event_id), // causal parent preserved — not None
+                session_id,
+                "executor".into(),
+                "plan_node_evaluated".into(),
+                Utc::now(),
+                vec![],
+            ),
+            Vec::new(),
+        ),
+    };
+    let event_type = audit_event.event_type.clone();
+
+    let pending_confirmation = if let runtime_core::ExecutorDecision::BlockedPendingConfirmation {
+        anchors,
+    } = &decision
+    {
+        let (resolved_args, combined_digest, blocked_arg_names) = block_snapshot.expect(
+            "block_snapshot is Some for every BlockedPendingConfirmation decision",
+        );
+        Some(crate::confirmation::PendingConfirmation {
+            // Every element shares one effect_id — one Block, one
+            // effect_id, N blocked args (Phase 14 plural).
+            effect_id: anchors[0].anchor.effect_id,
+            session_id,
+            blocked_event_id: audit_event.id,
+            sink: plan_node.sink.clone(),
+            resolved_args,
+            blocked_arg_names,
+            combined_digest,
+            workspace_root_path: workspace_root.root_path().to_string_lossy().into_owned(),
+            state: crate::confirmation::PendingConfirmationState::Pending,
+        })
+    } else {
+        None
+    };
+    let new_hash = {
+        let locked = conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+        let hash =
+            append_event(&locked, &audit_event, Some(last_event_hash)).map_err(|e| {
+                eprintln!("[brokerd] {event_type} audit append FAILED (fail-closed): {e}");
+                anyhow::anyhow!("audit append failed: {e}")
+            })?;
+        // Write EVERY blocked arg's raw literal to the redactable side
+        // table under the SAME lock as the event append (fail-closed: a
+        // failure here aborts the block before any response is sent).
+        // Iterates the full blocked_literals collection — Phase 14 plural
+        // — so no blocked value is dropped before the human confirm/deny
+        // decision (T-14-06).
+        for (arg, literal) in &blocked_literals {
+            crate::audit::insert_blocked_literal(
+                &locked,
+                &audit_event.id.to_string(),
+                arg,
+                literal,
+            )
+            .map_err(|e| {
+                eprintln!("[brokerd] blocked-literal side-table write FAILED (fail-closed): {e}");
+                anyhow::anyhow!("blocked-literal write failed: {e}")
+            })?;
+        }
+        // The pending_confirmations checkpoint commits under the SAME
+        // lock as the sink_blocked event append + blocked-literal write
+        // — they succeed or fail together (T-10-02 / DESIGN Persistence
+        // contract): a sink_blocked event can never exist without its
+        // checkpoint, and no orphaned checkpoint without an anchoring
+        // block.
+        if let Some(pc) = &pending_confirmation {
+            crate::confirmation::insert_pending_confirmation(&locked, pc).map_err(|e| {
+                eprintln!("[brokerd] pending_confirmations insert FAILED (fail-closed): {e}");
+                anyhow::anyhow!("pending_confirmations insert failed: {e}")
+            })?;
+        }
+        hash
+    };
+    *last_event_id = audit_event.id;
+    *last_event_hash = new_hash;
+
+    // 07-04b: on an Allowed `file.create` decision, invoke the live sink.
+    // The authorizing `plan_node_evaluated` event is already durably
+    // appended above, so the effect + its audit record follow it
+    // (two-phase ordering: authorize, then effect). The sink event chains
+    // onto the just-advanced (plan_node_evaluated) head. A sink error
+    // propagates with `?` after a durable `sink_execution_failed` record —
+    // no automatic retry (T-07-45). Non-file.create Allowed decisions keep
+    // today's behavior (no sink invocation in v0).
+    if matches!(decision, runtime_core::ExecutorDecision::Allowed)
+        && plan_node.sink.0 == "file.create"
+    {
+        let (sink_event_id, sink_hash) = {
+            let locked = conn
+                .lock()
+                .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+            crate::sinks::file_create::invoke_file_create(
+                &locked,
+                value_store,
+                session_id,
+                effect_id,
+                plan_node,
+                workspace_root,
+                *last_event_id,
+                last_event_hash,
+            )?
+        };
+        *last_event_id = sink_event_id;
+        *last_event_hash = sink_hash;
+    }
+
+    // Phase 16 (CONTROL-01): on an Allowed `email.send` decision,
+    // mirror the file.create Allowed-dispatch above — same locking,
+    // head-advance, and two-phase (authorize, then effect) ordering.
+    // The executor already ran the I2/CONTENT/session-state predicate
+    // and did NOT block, so this fires ONLY on a trusted, never-
+    // blocked send; no PendingConfirmation/combined_digest is ever
+    // created on this path (that shape is exclusive to the Block
+    // path above).
+    if matches!(decision, runtime_core::ExecutorDecision::Allowed)
+        && plan_node.sink.0 == "email.send"
+    {
+        // Resolve the FULL arg set from the live per-connection
+        // ValueStore into a Vec<ResolvedArg> — the SAME resolve-loop
+        // shape as the block-time snapshot above — fail closed if any
+        // handle does not resolve (a broker-internal invariant
+        // violation; validate_schema already guaranteed presence).
+        let mut resolved_args = Vec::with_capacity(plan_node.args.len());
+        for arg in &plan_node.args {
+            let record = value_store.resolve(&arg.value_id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "email.send Allowed-dispatch: arg `{}` handle did not resolve",
+                    arg.name
+                )
+            })?;
+            resolved_args.push(crate::confirmation::ResolvedArg {
+                name: arg.name.clone(),
+                value_id: arg.value_id.clone(),
+                literal: record.literal.clone(),
+                taint: record.taint.clone(),
+                provenance_chain: record.provenance_chain.clone(),
+            });
+        }
+
+        let locked = conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+
+        // MAJOR-4: append a durable, OPAQUE email_send_attempted event
+        // BEFORE the SMTP socket ever opens — parent-chained onto the
+        // just-advanced plan_node_evaluated head, under the SAME lock.
+        // A crash/power-loss between attempt and delivery still leaves
+        // an audit record naming email.send (mirrors confirm()'s
+        // attempt-ledger shape in confirmation.rs, minus the CAS —
+        // there is no PendingConfirmation to CAS on this never-
+        // blocked path).
+        let attempted_event = Event::new(
+            Uuid::new_v4(),
+            Some(*last_event_id),
+            session_id,
+            format!("sink:email.send:{effect_id}"),
+            "email_send_attempted".into(),
+            Utc::now(),
+            vec![],
+        );
+        let attempted_event_id = attempted_event.id;
+        let attempted_hash = append_event(&locked, &attempted_event, Some(last_event_hash))
+            .map_err(|e| {
+                eprintln!(
+                    "[brokerd] email_send_attempted audit append FAILED (fail-closed): {e}"
+                );
+                anyhow::anyhow!("email_send_attempted append failed: {e}")
+            })?;
+        *last_event_id = attempted_event_id;
+        *last_event_hash = attempted_hash.clone();
+
+        // AFTER the durable attempt append succeeded — only now does
+        // an SMTP connection ever open. REPLAY RESIDUAL RISK (named,
+        // not silent): this Allowed path has no CAS/PendingConfirmation
+        // — a replayed SubmitPlanNode mints a fresh effect_id and would
+        // send again (N submissions => N emails). Accepted for v1.3
+        // (the durable per-attempt ledger above makes each send
+        // auditable); v2 obligation tracked in .planning/todos/pending.
+        let (sink_event_id, sink_hash) =
+            crate::sinks::email_smtp::invoke_email_smtp_from_resolved(
+                &locked,
+                session_id,
+                effect_id,
+                &resolved_args,
+                attempted_event_id,
+                &attempted_hash,
+            )?;
+        *last_event_id = sink_event_id;
+        *last_event_hash = sink_hash;
+    }
+
+    Ok(decision)
 }
 
 /// Dispatch a single `BrokerRequest`, writing its response to `stream`.
@@ -757,313 +1135,25 @@ pub async fn dispatch_request(
         }
 
         BrokerRequest::SubmitPlanNode { plan_node } => {
-            // The broker mints the effect identity (HARD-06) and passes it into the
-            // executor — the executor never mints a Uuid (DESIGN §4 rule 2).
-            let effect_id = Uuid::new_v4();
-            // session_id comes from the connection — NEVER from the IPC message (HARD-03).
-            // session_status likewise — broker-owned, per-connection state, NEVER
-            // read from plan_node/IPC (DESIGN §4/§11 condition 0).
-            let decision = executor::submit_plan_node(
-                session_id,
-                effect_id,
+            // Full worker-path response (Phase 20, DESIGN §7 residual #3):
+            // this arm is reachable ONLY on a `ConnectionRole::Worker`
+            // connection — the planner-role path is intercepted in
+            // `handle_connection`'s pre-dispatch planner branch, BEFORE
+            // `dispatch_request` is ever called, and never reaches this arm.
+            // `evaluate_plan_node_and_record` is the SAME evaluation-and-
+            // durable-recording entry point both paths share; only the
+            // RESPONSE shape differs by caller.
+            let decision = evaluate_plan_node_and_record(
                 &plan_node,
+                conn,
+                session_id,
                 value_store,
-                &*session_status,
-            );
-
-            // Durably record the decision BEFORE returning any response (ACC-02).
-            // Fail-closed: an append error propagates with `?`, so the block is
-            // NEVER reported to the worker as having succeeded.
-            //
-            // On a block, resolve the FULL arg set from the still-live per-
-            // connection ValueStore into a Vec<ResolvedArg> snapshot FIRST —
-            // this is the ONLY moment those literals are recoverable (the
-            // ValueStore does not survive process exit;
-            // DESIGN-confirmation-release.md "The Problem Being Solved"). A
-            // handle that fails to resolve here is a broker-internal invariant
-            // violation (validate_schema already guaranteed presence) — fail
-            // closed, never persist a partial snapshot.
-            //
-            // The CONFIRM-03 combined digest (Phase 16, DESIGN-confirm-binding.md
-            // Round-6 amendment) MUST be computed over this SAME full set —
-            // blocked AND trusted args together, never a subset — so it is
-            // computed HERE, once, and threaded into BOTH the sink_blocked
-            // Event and the PendingConfirmation below (no second computation,
-            // no new lock).
-            let block_snapshot: Option<(
-                Vec<crate::confirmation::ResolvedArg>,
-                String,
-                Vec<String>,
-            )> = if let runtime_core::ExecutorDecision::BlockedPendingConfirmation { anchors } =
-                &decision
-            {
-                let mut resolved_args = Vec::with_capacity(plan_node.args.len());
-                for arg in &plan_node.args {
-                    let record = value_store.resolve(&arg.value_id).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "block-time snapshot: arg `{}` handle did not resolve",
-                            arg.name
-                        )
-                    })?;
-                    resolved_args.push(crate::confirmation::ResolvedArg {
-                        name: arg.name.clone(),
-                        value_id: arg.value_id.clone(),
-                        literal: record.literal.clone(),
-                        taint: record.taint.clone(),
-                        provenance_chain: record.provenance_chain.clone(),
-                    });
-                }
-                // CONFIRM-03 (Round-6): the digest covers EVERY current
-                // resolved_args element (blocked AND trusted together) — the
-                // primitive sorts by byte-wise ascending arg_name and asserts
-                // name-uniqueness internally, so no manual sort/filter is
-                // needed here.
-                let pairs: Vec<(&str, &str)> = resolved_args
-                    .iter()
-                    .map(|a| (a.name.as_str(), a.literal.as_str()))
-                    .collect();
-                let digest = crate::confirmation::combined_digest(&pairs);
-                // blocked_arg_names is DISPLAY-MARKING metadata ONLY (which of
-                // the full set Plan 16-02 narrates as BLOCKED vs TRUSTED) — the
-                // ordered `anchors` collection IS the ordered blocked subset
-                // from the executor's collect-then-Block loop; never re-filter
-                // resolved_args for this, and it does NOT gate the digest's
-                // domain.
-                let blocked_arg_names: Vec<String> =
-                    anchors.iter().map(|b| b.anchor.arg.clone()).collect();
-                Some((resolved_args, digest, blocked_arg_names))
-            } else {
-                None
-            };
-
-            // A block persists ALL durable anchors via the broker-owned
-            // Event::sink_blocked constructor (sets Event.taint by merging every
-            // anchor's taint, anchors = the full collection). The causal parent
-            // stays the chain head — NOT read_event_id (two graphs are never
-            // equated, DESIGN §0/§4 rule 3). On a block, capture EVERY blocked
-            // arg's LIVE literal (name + literal) so each can be written to the
-            // redactable `blocked_literals` side table (keyed by the sink_blocked
-            // event id AND arg name — Phase 14 plural). The literal is NEVER put
-            // in the hashed event payload — the anchor carries only its digest
-            // (`literal_sha256`). `combined_digest`/`blocked_arg_names` (Phase 16)
-            // ride inside this SAME hashed Event payload, computed once above.
-            let (audit_event, blocked_literals) = match &decision {
-                runtime_core::ExecutorDecision::BlockedPendingConfirmation { anchors } => {
-                    let (_, digest, blocked_arg_names) = block_snapshot.as_ref().expect(
-                        "block_snapshot is Some for every BlockedPendingConfirmation decision",
-                    );
-                    (
-                        Event::sink_blocked(
-                            Uuid::new_v4(),
-                            Some(*last_event_id), // causal head — never read_event_id
-                            session_id,
-                            Utc::now(),
-                            anchors.iter().map(|b| b.anchor.clone()).collect(),
-                            Some(digest.clone()),
-                            blocked_arg_names.clone(),
-                        ),
-                        anchors
-                            .iter()
-                            .map(|b| (b.anchor.arg.clone(), b.literal.clone()))
-                            .collect::<Vec<(String, String)>>(),
-                    )
-                }
-                _ => (
-                    Event::new(
-                        Uuid::new_v4(),
-                        Some(*last_event_id), // causal parent preserved — not None
-                        session_id,
-                        "executor".into(),
-                        "plan_node_evaluated".into(),
-                        Utc::now(),
-                        vec![],
-                    ),
-                    Vec::new(),
-                ),
-            };
-            let event_type = audit_event.event_type.clone();
-
-            let pending_confirmation = if let runtime_core::ExecutorDecision::BlockedPendingConfirmation {
-                anchors,
-            } = &decision
-            {
-                let (resolved_args, combined_digest, blocked_arg_names) = block_snapshot.expect(
-                    "block_snapshot is Some for every BlockedPendingConfirmation decision",
-                );
-                Some(crate::confirmation::PendingConfirmation {
-                    // Every element shares one effect_id — one Block, one
-                    // effect_id, N blocked args (Phase 14 plural).
-                    effect_id: anchors[0].anchor.effect_id,
-                    session_id,
-                    blocked_event_id: audit_event.id,
-                    sink: plan_node.sink.clone(),
-                    resolved_args,
-                    blocked_arg_names,
-                    combined_digest,
-                    workspace_root_path: workspace_root.root_path().to_string_lossy().into_owned(),
-                    state: crate::confirmation::PendingConfirmationState::Pending,
-                })
-            } else {
-                None
-            };
-            let new_hash = {
-                let locked = conn
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
-                let hash =
-                    append_event(&locked, &audit_event, Some(last_event_hash)).map_err(|e| {
-                        eprintln!("[brokerd] {event_type} audit append FAILED (fail-closed): {e}");
-                        anyhow::anyhow!("audit append failed: {e}")
-                    })?;
-                // Write EVERY blocked arg's raw literal to the redactable side
-                // table under the SAME lock as the event append (fail-closed: a
-                // failure here aborts the block before any response is sent).
-                // Iterates the full blocked_literals collection — Phase 14 plural
-                // — so no blocked value is dropped before the human confirm/deny
-                // decision (T-14-06).
-                for (arg, literal) in &blocked_literals {
-                    crate::audit::insert_blocked_literal(
-                        &locked,
-                        &audit_event.id.to_string(),
-                        arg,
-                        literal,
-                    )
-                    .map_err(|e| {
-                        eprintln!("[brokerd] blocked-literal side-table write FAILED (fail-closed): {e}");
-                        anyhow::anyhow!("blocked-literal write failed: {e}")
-                    })?;
-                }
-                // The pending_confirmations checkpoint commits under the SAME
-                // lock as the sink_blocked event append + blocked-literal write
-                // — they succeed or fail together (T-10-02 / DESIGN Persistence
-                // contract): a sink_blocked event can never exist without its
-                // checkpoint, and no orphaned checkpoint without an anchoring
-                // block.
-                if let Some(pc) = &pending_confirmation {
-                    crate::confirmation::insert_pending_confirmation(&locked, pc).map_err(|e| {
-                        eprintln!("[brokerd] pending_confirmations insert FAILED (fail-closed): {e}");
-                        anyhow::anyhow!("pending_confirmations insert failed: {e}")
-                    })?;
-                }
-                hash
-            };
-            *last_event_id = audit_event.id;
-            *last_event_hash = new_hash;
-
-            // 07-04b: on an Allowed `file.create` decision, invoke the live sink.
-            // The authorizing `plan_node_evaluated` event is already durably
-            // appended above, so the effect + its audit record follow it
-            // (two-phase ordering: authorize, then effect). The sink event chains
-            // onto the just-advanced (plan_node_evaluated) head. A sink error
-            // propagates with `?` after a durable `sink_execution_failed` record —
-            // no automatic retry (T-07-45). Non-file.create Allowed decisions keep
-            // today's behavior (no sink invocation in v0).
-            if matches!(decision, runtime_core::ExecutorDecision::Allowed)
-                && plan_node.sink.0 == "file.create"
-            {
-                let (sink_event_id, sink_hash) = {
-                    let locked = conn
-                        .lock()
-                        .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
-                    crate::sinks::file_create::invoke_file_create(
-                        &locked,
-                        value_store,
-                        session_id,
-                        effect_id,
-                        &plan_node,
-                        workspace_root,
-                        *last_event_id,
-                        last_event_hash,
-                    )?
-                };
-                *last_event_id = sink_event_id;
-                *last_event_hash = sink_hash;
-            }
-
-            // Phase 16 (CONTROL-01): on an Allowed `email.send` decision,
-            // mirror the file.create Allowed-dispatch above — same locking,
-            // head-advance, and two-phase (authorize, then effect) ordering.
-            // The executor already ran the I2/CONTENT/session-state predicate
-            // and did NOT block, so this fires ONLY on a trusted, never-
-            // blocked send; no PendingConfirmation/combined_digest is ever
-            // created on this path (that shape is exclusive to the Block
-            // path above).
-            if matches!(decision, runtime_core::ExecutorDecision::Allowed)
-                && plan_node.sink.0 == "email.send"
-            {
-                // Resolve the FULL arg set from the live per-connection
-                // ValueStore into a Vec<ResolvedArg> — the SAME resolve-loop
-                // shape as the block-time snapshot above — fail closed if any
-                // handle does not resolve (a broker-internal invariant
-                // violation; validate_schema already guaranteed presence).
-                let mut resolved_args = Vec::with_capacity(plan_node.args.len());
-                for arg in &plan_node.args {
-                    let record = value_store.resolve(&arg.value_id).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "email.send Allowed-dispatch: arg `{}` handle did not resolve",
-                            arg.name
-                        )
-                    })?;
-                    resolved_args.push(crate::confirmation::ResolvedArg {
-                        name: arg.name.clone(),
-                        value_id: arg.value_id.clone(),
-                        literal: record.literal.clone(),
-                        taint: record.taint.clone(),
-                        provenance_chain: record.provenance_chain.clone(),
-                    });
-                }
-
-                let locked = conn
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
-
-                // MAJOR-4: append a durable, OPAQUE email_send_attempted event
-                // BEFORE the SMTP socket ever opens — parent-chained onto the
-                // just-advanced plan_node_evaluated head, under the SAME lock.
-                // A crash/power-loss between attempt and delivery still leaves
-                // an audit record naming email.send (mirrors confirm()'s
-                // attempt-ledger shape in confirmation.rs, minus the CAS —
-                // there is no PendingConfirmation to CAS on this never-
-                // blocked path).
-                let attempted_event = Event::new(
-                    Uuid::new_v4(),
-                    Some(*last_event_id),
-                    session_id,
-                    format!("sink:email.send:{effect_id}"),
-                    "email_send_attempted".into(),
-                    Utc::now(),
-                    vec![],
-                );
-                let attempted_event_id = attempted_event.id;
-                let attempted_hash = append_event(&locked, &attempted_event, Some(last_event_hash))
-                    .map_err(|e| {
-                        eprintln!(
-                            "[brokerd] email_send_attempted audit append FAILED (fail-closed): {e}"
-                        );
-                        anyhow::anyhow!("email_send_attempted append failed: {e}")
-                    })?;
-                *last_event_id = attempted_event_id;
-                *last_event_hash = attempted_hash.clone();
-
-                // AFTER the durable attempt append succeeded — only now does
-                // an SMTP connection ever open. REPLAY RESIDUAL RISK (named,
-                // not silent): this Allowed path has no CAS/PendingConfirmation
-                // — a replayed SubmitPlanNode mints a fresh effect_id and would
-                // send again (N submissions => N emails). Accepted for v1.3
-                // (the durable per-attempt ledger above makes each send
-                // auditable); v2 obligation tracked in .planning/todos/pending.
-                let (sink_event_id, sink_hash) =
-                    crate::sinks::email_smtp::invoke_email_smtp_from_resolved(
-                        &locked,
-                        session_id,
-                        effect_id,
-                        &resolved_args,
-                        attempted_event_id,
-                        &attempted_hash,
-                    )?;
-                *last_event_id = sink_event_id;
-                *last_event_hash = sink_hash;
-            }
+                workspace_root,
+                session_status,
+                last_event_id,
+                last_event_hash,
+            )
+            .await?;
 
             // Only send the decision AFTER the durable append (and any sink
             // invocation) succeeded.

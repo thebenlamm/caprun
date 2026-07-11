@@ -209,7 +209,31 @@ pub enum BrokerResponse {
     /// When `decision` is `ExecutorDecision::BlockedPendingConfirmation { .. }`,
     /// the broker constructs a `ConfirmationPrompt` from the Block payload and
     /// delivers it to the human via FAMP before proceeding.
+    ///
+    /// Sent ONLY on a `ConnectionRole::Worker` connection's `SubmitPlanNode`
+    /// (`crates/brokerd/src/server.rs`). The worker already holds every
+    /// literal in its own `ValueStore` (the confirmation UX depends on this,
+    /// `DESIGN-session-trust-coherence.md` §7/§9 residual #3) — never sent to
+    /// a `ConnectionRole::Planner` connection, which receives
+    /// `PlanNodeDecisionReduced` instead.
     PlanNodeDecision { decision: runtime_core::ExecutorDecision },
+    /// Phase 20 (PLANNER-04) reduced decision signal: the ONLY decision shape
+    /// a `ConnectionRole::Planner` connection ever receives for
+    /// `SubmitPlanNode` (`DESIGN-session-trust-coherence.md` §7's ruling,
+    /// closing the decision-oracle for the planner connection).
+    ///
+    /// `blocked` is a straight projection of the full `ExecutorDecision`:
+    /// `Allowed` -> `false`; `BlockedPendingConfirmation { .. }`, `Denied
+    /// { .. }`, and `NotImplemented` (every non-`Allowed` outcome) -> `true`.
+    ///
+    /// Deliberately carries NO `anchors`, NO `literal_sha256` (the offline
+    /// literal-guess confirmer `DESIGN-session-trust-coherence.md` §7 names),
+    /// and NO plaintext `literal` — the planner learns only enough to decide
+    /// whether to proceed or stop for the turn, consistent with PLANNER-04's
+    /// "typed extracts + handle IDs only, never literals" boundary. The
+    /// broker still durably records the full evaluation event in the audit
+    /// DAG exactly as the worker path does — only this RESPONSE is reduced.
+    PlanNodeDecisionReduced { blocked: bool },
     /// Acknowledgement for `ReportDerivedClaim`: the opaque handle to the
     /// minted derived `ValueRecord`. Resolves ONLY within the per-connection
     /// `ValueStore` (same HARD-03 / Pitfall 1 contract as `ClaimsReceived`/
