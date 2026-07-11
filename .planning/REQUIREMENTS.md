@@ -71,7 +71,7 @@ weakening assertions.
       (`ProvideIntent`, `ReportClaims`, `ReportDerivedClaim` unavailable) —
       applies Phase 0's per-verb capability split design
 
-- [ ] **PLANNER-03**: A minimal LLM planner emits only
+- [x] **PLANNER-03**: A minimal LLM planner emits only
       `PlanNode{sink, args: Vec<PlanArg>}` — no literal field to carry;
       cheapest model that reliably follows a tool schema, no model-quality
       claim made
@@ -136,7 +136,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DOC-02 | Phase 19 | Complete |
 | PLANNER-01 | Phase 20 | Complete |
 | PLANNER-02 | Phase 20 | Complete |
-| PLANNER-03 | Phase 21 | Pending |
+| PLANNER-03 | Phase 21 | Complete |
 | PLANNER-04 | Phase 20 | Complete |
 | GATE-01 | Phase 22 | Pending |
 | GATE-02 | Phase 22 | Pending |
