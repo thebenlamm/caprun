@@ -41,6 +41,12 @@
 #                        e.g.
 #                        MAILPIT_VERIFY_CMD='cargo test -p caprun --test s9_live_block s9_control_ab_taint_driven' \
 #                          bash scripts/mailpit-verify.sh
+#   OPENAI_API_KEY / CAPRUN_PLANNER_MODEL — (Phase 21, 21-04) forwarded from
+#                        the host env into the rust:1 container so an
+#                        in-container caprun-planner sidecar (CAPRUN_PLANNER=llm)
+#                        can make a real OpenAI call. Unset/empty is fine for
+#                        any non-LLM run — the container simply receives an
+#                        empty value and the LLM live test skips itself.
 
 set -euo pipefail
 
@@ -104,6 +110,17 @@ fi
 echo "Resolved Mailpit sidecar IP: ${MAILPIT_IP}"
 
 echo "Running Linux verification suite (rust:1, network=${MAILPIT_NET}) ..."
+# Phase 21 (21-04, PLANNER-03): forward OPENAI_API_KEY / CAPRUN_PLANNER_MODEL
+# from the HOST env into the verification container so an in-container
+# caprun-planner sidecar (CAPRUN_PLANNER=llm live tests) can reach
+# api.openai.com over Docker's default (unrestricted) container egress — this
+# recipe does not add any network isolation of its own, so the container can
+# always reach the public internet unless the host's Docker daemon is
+# otherwise configured. Forwarding is UNCONDITIONAL-but-empty-tolerant: a
+# plain non-LLM run works fine with an empty/unset OPENAI_API_KEY (the `-e`
+# flag simply forwards an empty value), and the LLM live test itself is
+# responsible for skipping/xfail-ing when no real key is present — this
+# script does not hard-fail on a missing key.
 docker run --rm \
     --security-opt seccomp=unconfined \
     --network "${MAILPIT_NET}" \
@@ -111,6 +128,8 @@ docker run --rm \
     -e CARGO_TARGET_DIR=/tmp/lt \
     -e CAPRUN_SMTP_HOST="${MAILPIT_IP}" \
     -e CAPRUN_SMTP_PORT=1025 \
+    -e OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+    -e CAPRUN_PLANNER_MODEL="${CAPRUN_PLANNER_MODEL:-}" \
     rust:1 \
     bash -c "apt-get update && apt-get install -y libssl-dev pkg-config && ${MAILPIT_VERIFY_CMD}"
 
