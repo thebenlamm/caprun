@@ -36,11 +36,34 @@
 #   MAILPIT_NET       — Docker network name (default: caprun-mailpit-net)
 #   MAILPIT_NAME      — Mailpit container name (default: caprun-mailpit)
 #   MAILPIT_VERIFY_CMD — the command run inside the rust:1 container (default:
-#                        `cargo test --workspace --no-fail-fast`). Phase 16
-#                        (16-04, BLOCKER-3 3.1): scope a run to a single test,
-#                        e.g.
-#                        MAILPIT_VERIFY_CMD='cargo test -p caprun --test s9_live_block s9_control_ab_taint_driven' \
+#                        `cargo build --workspace && cargo test --workspace
+#                        --no-fail-fast`; the leading `cargo build --workspace`
+#                        is required — see the "why a build precedes the
+#                        test" note below, v1.4 milestone-closure finding).
+#                        Phase 16 (16-04, BLOCKER-3 3.1): scope a run to a
+#                        single test, e.g.
+#                        MAILPIT_VERIFY_CMD='cargo build --workspace && cargo test -p caprun --test s9_live_block s9_control_ab_taint_driven' \
 #                          bash scripts/mailpit-verify.sh
+#                        (keep the leading `cargo build --workspace` in any
+#                        override that exercises `caprun`'s CAPRUN_PLANNER=llm
+#                        path — see the note below for why.)
+#
+#   Why a build precedes the test (v1.4 milestone-closure finding, discovered
+#   independently re-running the full suite after Phase 22 shipped): a bare
+#   `cargo test --workspace --no-fail-fast` compiles `caprun-planner` (a
+#   bin-only crate with no test files of its own and nothing else depending
+#   on it as a lib) but does not reliably place the "nice-named" copy at
+#   `target/<profile>/caprun-planner` the way `cargo build --workspace` does
+#   — confirmed empirically (ls of the target dir showed `caprun`/
+#   `caprun-worker` present but `caprun-planner` absent after a bare `cargo
+#   test --workspace`, and present after `cargo build --workspace`). `caprun`
+#   resolves its sidecar's path via `current_exe().parent().join("caprun-planner")`
+#   (`cli/caprun/src/main.rs`), so every `CAPRUN_PLANNER=llm` live test failed
+#   with "Error: spawn caprun-planner sidecar / No such file or directory"
+#   under the bare `cargo test` invocation. This is a Cargo build-artifact-
+#   placement quirk, not a caprun logic bug — `crates/executor`/`crates/brokerd`
+#   are untouched by this fix. Running `cargo build --workspace` first
+#   guarantees the nice-named copy exists before any test spawns it.
 #   OPENAI_API_KEY / CAPRUN_PLANNER_MODEL — (Phase 21, 21-04) forwarded from
 #                        the host env into the rust:1 container so an
 #                        in-container caprun-planner sidecar (CAPRUN_PLANNER=llm)
@@ -58,7 +81,14 @@ MAILPIT_NAME="${MAILPIT_NAME:-caprun-mailpit}"
 # was a bare hardcoded string at the `docker run` invocation below — any plan
 # text saying `MAILPIT_VERIFY_CMD='...' bash scripts/mailpit-verify.sh` was
 # just a comment, not a real override. Now it is honored.
-MAILPIT_VERIFY_CMD="${MAILPIT_VERIFY_CMD:-cargo test --workspace --no-fail-fast}"
+#
+# The default's leading `cargo build --workspace &&` (v1.4 milestone-closure
+# finding, see the module doc comment above) guarantees `caprun-planner`'s
+# nice-named binary copy exists in target/ before any CAPRUN_PLANNER=llm live
+# test tries to spawn it — a bare `cargo test --workspace` does not reliably
+# produce that copy for a bin-only sibling crate. Any override that exercises
+# the LLM planner path should keep this leading build step.
+MAILPIT_VERIFY_CMD="${MAILPIT_VERIFY_CMD:-cargo build --workspace && cargo test --workspace --no-fail-fast}"
 
 cleanup() {
     echo "Cleaning up Mailpit sidecar (${MAILPIT_NAME}) ..."
