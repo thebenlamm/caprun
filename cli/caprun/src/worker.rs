@@ -283,15 +283,37 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // ── Deterministic planner: map intent + handles → PlanNode (PLAN-02) ─────
-    // Invoked through the `Planner` seam (PLANNER-01): the worker constructs a
-    // `DeterministicPlanner` and calls its `plan()` trait method, which
-    // receives only opaque ValueId handles — never the literal, never taint,
-    // never a ValueRecord (PLAN-03, type-enforced by the trait method's
-    // signature). There is NO early-exit here anymore (finding #4): a benign
+    // ── Planner selection (Phase 21 / PLANNER-03): CAPRUN_PLANNER selects ────
+    // the concrete `Planner` behind the seam (PLANNER-01). Both implementors
+    // receive only opaque ValueId handles — never the literal, never taint,
+    // never a ValueRecord (PLAN-03, type-enforced by the trait method's own
+    // signature) — so this selection cannot widen what either planner sees.
+    // There is NO early-exit here anymore (finding #4): a benign
     // (fragment-free) SendEmailSummary still submits an all-UserTrusted node
     // → Allowed, preserving CONTROL-01's live clean-send-allowed path.
-    let planner = crate::planner::DeterministicPlanner;
+    //
+    // Default (CAPRUN_PLANNER unset or any value other than "llm") stays
+    // `DeterministicPlanner` — byte-for-byte the prior behavior, no
+    // regression to any existing test. When "llm", constructs `LlmPlanner`
+    // reading `PLANNER_SOCK` from env (set by caprun main ONLY when
+    // CAPRUN_PLANNER=llm, see main.rs).
+    //
+    // ORDERING NOTE: `LlmPlanner::plan()`'s sidecar connect happens HERE,
+    // i.e. AFTER `sandbox::apply_confinement()` above — this is legal because
+    // the worker's seccomp filter permits AF_UNIX socket()/connect() (only
+    // AF_INET/AF_INET6 and execve are denied, see
+    // crates/sandbox/src/seccomp.rs); it is the SAME self-confinement-then-
+    // connect pattern this worker already uses for its own broker connection,
+    // just via a blocking std UnixStream instead of tokio (LlmPlanner::plan()
+    // is a synchronous trait method).
+    let planner: Box<dyn Planner> = match std::env::var("CAPRUN_PLANNER").as_deref() {
+        Ok("llm") => {
+            let planner_sock = std::env::var("PLANNER_SOCK")
+                .context("PLANNER_SOCK required when CAPRUN_PLANNER=llm")?;
+            Box::new(crate::planner::LlmPlanner::new(planner_sock))
+        }
+        _ => Box::new(crate::planner::DeterministicPlanner),
+    };
     let plan_node = planner.plan(
         &intent,
         intent_value_id,
