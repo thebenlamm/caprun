@@ -154,53 +154,84 @@ pub async fn run_broker_server(
     let listener = tokio::net::UnixListener::bind(&sock_path)?;
 
     // Cross-connection trust-coherence fix (v1.4 Phase 19, TRUST-01/TRUST-02):
-    // a ONE-WAY, session-lifetime occupancy latch. Set exactly once, the first
-    // time a connection is accepted, and NEVER cleared for the life of this
-    // `run_broker_server` invocation — no release-on-disconnect, no Drop guard,
-    // no reconnect path. A confined worker legitimately holds exactly one
-    // connection to its session for the whole run (DESIGN-session-trust-coherence.md
-    // §2); a 2nd connection (whether overlapping or arriving after the 1st has
-    // cleanly disconnected) would otherwise get pristine per-connection guard(a)
-    // locals (`intent_provided`/`fd_requested` below) and a stale `session_status`,
-    // letting a confined worker mint an attacker-controlled `UserTrusted` literal.
-    // A loop-local `bool` is sufficient here — the accept loop is single-threaded
-    // per session, so no `Arc`/`Mutex`/`AtomicBool` cross-task sharing is needed
-    // (DESIGN §2 line 52). Do NOT reset this to `false` anywhere.
-    let mut session_slot_occupied = false;
+    // a ONE-WAY, session-lifetime occupancy latch for the WORKER slot. Set
+    // exactly once, the first time a connection is accepted, and NEVER
+    // cleared for the life of this `run_broker_server` invocation — no
+    // release-on-disconnect, no Drop guard, no reconnect path. A confined
+    // worker legitimately holds exactly one connection to its session for the
+    // whole run (DESIGN-session-trust-coherence.md §2); a 2nd WORKER-style
+    // connection (whether overlapping or arriving after the 1st has cleanly
+    // disconnected) would otherwise get pristine per-connection guard(a)
+    // locals (`intent_provided`/`fd_requested` below) and a stale
+    // `session_status`, letting a confined worker mint an attacker-controlled
+    // `UserTrusted` literal. A loop-local `bool` is sufficient here — the
+    // accept loop's OWN classification of the first connection is
+    // single-threaded (DESIGN §2 line 52); only the SEPARATE planner-slot
+    // latch below needs cross-task sharing, because Task 3 classifies every
+    // subsequent connection in its own spawned task (T-20-08). Do NOT reset
+    // this to `false` anywhere.
+    let mut worker_slot_occupied = false;
+
+    // Phase 20 (PLANNER-02/04) accept-loop extension, DESIGN §3: a SECOND,
+    // ONE-WAY latch for the single capability-restricted planner connection
+    // this session may admit. Unlike `worker_slot_occupied`, this MUST be a
+    // shared, atomically-claimable flag: every connection accepted after the
+    // worker slot is classified in its OWN spawned task (`classify_second_connection`
+    // below) so a stalled/slow connection can never block the accept loop
+    // (T-20-08) — two such tasks could otherwise race to admit two "single"
+    // planner connections. `compare_exchange` makes the claim atomic. Like
+    // the worker slot, it is NEVER cleared for the life of this invocation —
+    // no release-on-disconnect, no reconnect.
+    let planner_slot_occupied = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     loop {
-        let (mut stream, _addr) = listener.accept().await?;
+        let (stream, _addr) = listener.accept().await?;
 
-        if session_slot_occupied {
-            // Reject every connection after the first, BEFORE any per-connection
-            // trust state (ValueStore, session_status, intent_provided,
-            // fd_requested) is ever constructed for it. Complete the accept (so
-            // the caller gets a diagnosable response, not a bare RST), send a
-            // single framed rejection, then drop the stream and continue the
-            // loop without spawning `handle_connection` (DESIGN §2 line 54).
-            let _ = send_response(
-                &mut stream,
-                &BrokerResponse::Error {
-                    message: "a connection is already established for this session; only one connection per session is permitted".into(),
-                },
-            )
-            .await;
+        if !worker_slot_occupied {
+            // The FIRST accepted connection takes the worker slot exactly as
+            // Phase 19 did — no pre-read of any frame on this path, so the
+            // worker path stays byte-identical to Phase 19 (this is what
+            // keeps the Phase 19 regression tests and uds_ipc/e2e green).
+            worker_slot_occupied = true;
+
+            let conn_clone = conn.clone();
+            // Workspace-root capability — cloned per connection exactly like `conn`.
+            let workspace_root_clone = workspace_root.clone();
+            // Pass connection state by value — each connection owns its own chain state.
+            let initial_hash = initial_last_event_hash.clone();
+            let initial_status = initial_session_status.clone();
+            tokio::spawn(async move {
+                // ConnectionRole::Worker — full capabilities, `permits`
+                // always `true` (Phase 20, PLANNER-02/04).
+                if let Err(e) = handle_connection(
+                    stream,
+                    conn_clone,
+                    session_id_uuid,
+                    initial_last_event_id,
+                    initial_hash,
+                    initial_status,
+                    workspace_root_clone,
+                    ConnectionRole::Worker,
+                )
+                .await
+                {
+                    eprintln!("[brokerd] connection error: {e}");
+                }
+            });
             continue;
         }
-        session_slot_occupied = true;
 
+        // Every SUBSEQUENT accepted connection (Phase 20, PLANNER-02/04,
+        // DESIGN §3): classify it in a spawned task with a bounded first-
+        // frame read timeout, so a stalled connection can never block the
+        // accept loop from servicing later connections (T-20-08).
         let conn_clone = conn.clone();
-        // Workspace-root capability — cloned per connection exactly like `conn`.
         let workspace_root_clone = workspace_root.clone();
-        // Pass connection state by value — each connection owns its own chain state.
         let initial_hash = initial_last_event_hash.clone();
         let initial_status = initial_session_status.clone();
+        let planner_slot_clone = planner_slot_occupied.clone();
         tokio::spawn(async move {
-            // The first connection is the session's worker — full
-            // capabilities, ConnectionRole::Worker (Phase 20, PLANNER-02/04).
-            // `permits` is always `true` for Worker, so this spawn keeps the
-            // worker path byte-identical to pre-Phase-20 behavior.
-            if let Err(e) = handle_connection(
+            classify_second_connection(
                 stream,
                 conn_clone,
                 session_id_uuid,
@@ -208,14 +239,134 @@ pub async fn run_broker_server(
                 initial_hash,
                 initial_status,
                 workspace_root_clone,
-                ConnectionRole::Worker,
+                planner_slot_clone,
             )
-            .await
-            {
-                eprintln!("[brokerd] connection error: {e}");
-            }
+            .await;
         });
     }
+}
+
+/// Bounded time to wait for a subsequent connection's FIRST framed message
+/// during accept-loop classification (T-20-08). Classification runs in its
+/// own spawned task (never inline in the accept loop), so a connection that
+/// never sends anything cannot block the accept loop from servicing later
+/// connections — it simply times out and is rejected like any other
+/// non-`DeclarePlannerRole` first frame.
+const CLASSIFY_FIRST_FRAME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Classify and, if appropriate, service a connection accepted AFTER the
+/// worker slot is already occupied (Phase 20, PLANNER-02/04,
+/// `DESIGN-session-trust-coherence.md` §3). Reads the connection's FIRST
+/// framed message with a bounded timeout:
+///
+///   * `BrokerRequest::DeclarePlannerRole` AND the planner slot is still free
+///     — atomically claim the ONE-WAY planner-slot latch (never released for
+///     the life of this `run_broker_server` invocation, mirroring the worker
+///     slot), send an `Ack` for the handshake, and run `handle_connection`
+///     with `ConnectionRole::Planner`. The `DeclarePlannerRole` message
+///     itself is consumed HERE — it is never replayed into
+///     `dispatch_request`.
+///   * anything else (a different first frame, a timeout, or the planner
+///     slot already claimed) — send the SAME "a connection is already
+///     established for this session; only one connection per session is
+///     permitted" rejection Phase 19 uses, then drop. `handle_connection` is
+///     NEVER constructed for a rejected connection, so no per-connection
+///     trust state (`ValueStore`/`session_status`/`intent_provided`/
+///     `fd_requested`) is ever seeded for it. A plain 2nd worker-style
+///     connection (which sends `ProvideIntent`/`RequestFd`/etc. as its first
+///     frame, not the handshake) is therefore rejected EXACTLY as Phase 19
+///     rejects it.
+#[allow(clippy::too_many_arguments)]
+async fn classify_second_connection(
+    mut stream: tokio::net::UnixStream,
+    conn: Arc<Mutex<rusqlite::Connection>>,
+    session_id: Uuid,
+    last_event_id: Uuid,
+    last_event_hash: String,
+    session_status: SessionStatus,
+    workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
+    planner_slot_occupied: Arc<std::sync::atomic::AtomicBool>,
+) {
+    let first_frame = tokio::time::timeout(
+        CLASSIFY_FIRST_FRAME_TIMEOUT,
+        read_one_frame(&mut stream),
+    )
+    .await;
+
+    let is_planner_declare = matches!(
+        first_frame,
+        Ok(Ok(Some(BrokerRequest::DeclarePlannerRole)))
+    );
+
+    if is_planner_declare
+        && planner_slot_occupied
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_ok()
+    {
+        // Ack the handshake, then hand off to the normal per-connection
+        // request loop with restricted capabilities. The DeclarePlannerRole
+        // message that got us here is NOT re-dispatched.
+        if send_response(&mut stream, &BrokerResponse::Ack).await.is_err() {
+            return;
+        }
+        if let Err(e) = handle_connection(
+            stream,
+            conn,
+            session_id,
+            last_event_id,
+            last_event_hash,
+            session_status,
+            workspace_root,
+            ConnectionRole::Planner,
+        )
+        .await
+        {
+            eprintln!("[brokerd] planner connection error: {e}");
+        }
+        return;
+    }
+
+    // Every other case: reject exactly as Phase 19's occupied-slot rejection
+    // — the caller still gets a diagnosable framed response, not a bare RST.
+    let _ = send_response(
+        &mut stream,
+        &BrokerResponse::Error {
+            message: "a connection is already established for this session; only one connection per session is permitted".into(),
+        },
+    )
+    .await;
+}
+
+/// Read one framed `BrokerRequest` (4-byte LE length prefix + JSON body) from
+/// `stream`, or `Ok(None)` on a clean EOF before any bytes arrive. Mirrors
+/// `handle_connection`'s own per-message framing (length prefix, T-03-08
+/// oversized-message guard, serde deserialize), factored out so
+/// `classify_second_connection` (Task 3) can read exactly one frame without
+/// duplicating that logic inline. NOT used by `handle_connection` itself —
+/// the worker path's own loop is left untouched so it stays byte-identical
+/// to Phase 19.
+async fn read_one_frame(
+    stream: &mut tokio::net::UnixStream,
+) -> anyhow::Result<Option<BrokerRequest>> {
+    let mut len_buf = [0u8; 4];
+    match stream.read_exact(&mut len_buf).await {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e.into()),
+    }
+    let msg_len = u32::from_le_bytes(len_buf) as usize;
+    if msg_len > MAX_MSG_SIZE {
+        return Err(anyhow::anyhow!("message too large"));
+    }
+    let mut body = vec![0u8; msg_len];
+    stream.read_exact(&mut body).await?;
+    let request = serde_json::from_slice::<BrokerRequest>(&body)?;
+    Ok(Some(request))
 }
 
 /// Handle one IPC connection: loop reading framed requests and dispatching them.
