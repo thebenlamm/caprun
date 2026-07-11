@@ -196,6 +196,10 @@ pub async fn run_broker_server(
         let initial_hash = initial_last_event_hash.clone();
         let initial_status = initial_session_status.clone();
         tokio::spawn(async move {
+            // The first connection is the session's worker — full
+            // capabilities, ConnectionRole::Worker (Phase 20, PLANNER-02/04).
+            // `permits` is always `true` for Worker, so this spawn keeps the
+            // worker path byte-identical to pre-Phase-20 behavior.
             if let Err(e) = handle_connection(
                 stream,
                 conn_clone,
@@ -204,6 +208,7 @@ pub async fn run_broker_server(
                 initial_hash,
                 initial_status,
                 workspace_root_clone,
+                ConnectionRole::Worker,
             )
             .await
             {
@@ -223,6 +228,17 @@ pub async fn run_broker_server(
 /// message so each appended event chains causally onto the previous one and
 /// the session's trust state is resolved from broker-owned in-memory state,
 /// never re-derived from IPC (RESEARCH Pitfall 2).
+///
+/// `role` (Phase 20, PLANNER-02/04) is this connection's FIXED capability set,
+/// decided once by the accept loop's classification (`run_broker_server`) —
+/// `ConnectionRole::Worker` for the session's first connection,
+/// `ConnectionRole::Planner` for the one additional connection admitted after
+/// a `DeclarePlannerRole` handshake (Task 3). BEFORE every `dispatch_request`
+/// call, this loop checks `role.permits(&request)`: for `Worker` this is
+/// always `true` (the worker path is byte-identical to pre-Phase-20
+/// behavior); for `Planner` a non-permitted verb is rejected fail-closed
+/// HERE, without ever calling `dispatch_request` and without seeding or
+/// advancing any mint/trust state.
 async fn handle_connection(
     mut stream: tokio::net::UnixStream,
     conn: Arc<Mutex<rusqlite::Connection>>,
@@ -231,6 +247,7 @@ async fn handle_connection(
     mut last_event_hash: String,
     initial_session_status: SessionStatus,
     workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
+    role: ConnectionRole,
 ) -> anyhow::Result<()> {
     // Per-connection ValueStore — scoped to this session ONLY (HARD-03 fix).
     let mut value_store = ValueStore::default();
@@ -285,6 +302,24 @@ async fn handle_connection(
                 break;
             }
         };
+
+        // Phase 20 (PLANNER-02/04) pre-dispatch capability gate: fail-closed,
+        // default-deny, decided once (via `role`, fixed at connection
+        // establishment) and checked on EVERY message — never re-derived
+        // per-message. For `ConnectionRole::Worker`, `permits` is always
+        // `true`, so this is a no-op and the worker path reaches
+        // `dispatch_request` exactly as before Phase 20.
+        if !role.permits(&request) {
+            send_response(
+                &mut stream,
+                &BrokerResponse::Error {
+                    message: "verb not permitted for this connection's capability set"
+                        .into(),
+                },
+            )
+            .await?;
+            continue;
+        }
 
         dispatch_request(
             request,
