@@ -81,7 +81,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 - [x] **Phase 19: Cross-Connection Trust Coherence Fix** - The broker rejects a second connection to an already-active session, closing the cross-connection `ProvideIntent` bypass; the regression test goes green by fixing the broker, never by weakening its assertions (completed 2026-07-11)
 - [x] **Phase 20: Planner Seam & Capability Split** - A designed `Planner` trait/seam exists, a planner-role connection can never hold a mint verb, and the planner is structurally kept out of the worker's raw-bytes path (completed 2026-07-11)
 - [x] **Phase 21: Adversarial LLM Planner** - A minimal LLM-backed planner, running behind the new seam, emits only `PlanNode{sink, args}` — no literal field to carry (completed 2026-07-11)
-- [ ] **Phase 22: Adversarial Gate Proof & Residual Disclosure** - A hostile-doc-primed planner complies and is Blocked deterministically with genuine, live-verified taint propagation; T2 is documented as the accepted v1.4 residual
+- [x] **Phase 22: Adversarial Gate Proof & Residual Disclosure** - A hostile-doc-primed planner complies and is Blocked deterministically with genuine, live-verified taint propagation; T2 is documented as the accepted v1.4 residual (completed 2026-07-11)
 
 ## Phase Details
 
@@ -192,7 +192,7 @@ Plans:
   4. A deterministic construction-site sentinel assertion (feed the prompt constructor a sentinel-tagged tainted record — sentinel each fragment — and assert the sentinel bytes never appear in the constructed prompt) replaces the old context-dump grep, and is unit-level/deterministic, not probabilistic.
   5. PROJECT.md (and/or the DESIGN doc) documents T2 (slot-type binding) as the accepted v1.4 residual risk — safe today only by incidental human-typing of every `UserTrusted` handle — with enforcement explicitly deferred to v1.5.
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 **Wave 1**
 
 - [x] 22-01-PLAN.md — task_instruction injection channel (GATE-01) + GATE-04 deterministic sentinel-leak unit test
@@ -200,7 +200,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 22-02-PLAN.md — composed live HARD GATE proof: hostile leg blocks + clean control delivers once, live via mailpit-verify.sh (GATE-01/02/03)
+- [x] 22-02-PLAN.md — composed live HARD GATE proof: hostile leg blocks + clean control delivers once, live via mailpit-verify.sh (GATE-01/02/03)
 
 ## Progress
 
@@ -227,4 +227,4 @@ Plans:
 | 19. Cross-Connection Trust Coherence Fix | v1.4 | 2/2 | Complete    | 2026-07-11 |
 | 20. Planner Seam & Capability Split | v1.4 | 3/3 | Complete    | 2026-07-11 |
 | 21. Adversarial LLM Planner | v1.4 | 4/4 | Complete    | 2026-07-11 |
-| 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 2/3 | In Progress|  |
+| 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 3/3 | Complete   | 2026-07-11 |
