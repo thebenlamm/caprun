@@ -344,9 +344,24 @@ v1.4 — Trust-Boundary Integrity & the Adversarial Planner (scoped
   `PlanNodeDecisionReduced{blocked}` signal on `SubmitPlanNode` (no
   anchors/literal_sha256/literal). PLANNER-01, PLANNER-02, PLANNER-04
   complete.
-- Phase 21-22 (next): the adversarial LLM planner itself (PLANNER-03) behind
-  this seam, then the HARD GATE composed live proof — hostile-doc-primed
-  planner complies and is Blocked deterministically, `verify_chain` true,
+- ✓ **Phase 21 (Adversarial LLM Planner) SHIPPED (2026-07-11):** a genuine
+  OpenAI-backed `LlmPlanner` (`gpt-4o-mini` by default, `CAPRUN_PLANNER_MODEL`-
+  configurable) implements Phase 20's `Planner` trait exactly like
+  `DeterministicPlanner` — in-process, synchronous, worker submits via its
+  own connection. The actual LLM HTTP call runs in a separate
+  `caprun-planner` sidecar process (spawned by unconfined `caprun` main; the
+  confined worker itself cannot `execve` or open `AF_INET` sockets per
+  seccomp, so this separation was structurally required, not a style
+  choice) and is shown only typed extracts + `ValueId` handle labels, never
+  literal content. Tool schema structurally bars literal emission. Live
+  proof on real Linux: `Chain verification: PASSED`, real Mailpit delivery
+  (count 1), ~$0.00012/request. Along the way, running Wave 2's two
+  independently-built pieces together for the first time surfaced and fixed
+  3 real composition bugs (abstract-socket connect API, sidecar reply wire
+  shape, arg-name canonicalization) — none TCB-touching. PLANNER-03
+  complete.
+- Phase 22 (next, the milestone's HARD GATE): hostile-doc-primed planner
+  complies and is Blocked deterministically, `verify_chain` true,
   Mailpit==0, trusted control Allows+delivers once, deterministic
   construction-site sentinel assertion replacing the context-dump grep, T2
   slot-type binding documented as the accepted v1.4 residual (deferred to
