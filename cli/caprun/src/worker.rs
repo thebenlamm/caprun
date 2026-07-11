@@ -34,10 +34,11 @@
 ///      the result via `ReportDerivedClaim` to obtain a FRESH derived handle.
 ///      For `CreateFileFromReport`: extract root-relative paths, unchanged.
 ///  11. Receive the opaque `ValueId` handles for each report.
-///  12. Call `planner::plan_from_intent(&intent, intent_value_id,
-///      derived_recipient, body, trusted_subject_handle, trusted_body_handle)`
-///      — the planner holds ONLY opaque ValueId handles, never literals or
-///      taint (PLAN-03). Send `BrokerRequest::SubmitPlanNode { plan_node }`
+///  12. Construct a `planner::DeterministicPlanner` and call its `Planner::plan(
+///      &intent, intent_value_id, derived_recipient, body,
+///      trusted_subject_handle, trusted_body_handle)` trait method (PLANNER-01
+///      seam) — the planner holds ONLY opaque ValueId handles, never literals
+///      or taint (PLAN-03). Send `BrokerRequest::SubmitPlanNode { plan_node }`
 ///      (no session_id — HARD-03). A benign (fragment-free) `SendEmailSummary`
 ///      STILL submits an all-UserTrusted plan node (finding #4 — CONTROL-01's
 ///      clean half survives; there is no early-exit here anymore).
@@ -66,6 +67,7 @@
 mod planner;
 
 use anyhow::Context;
+use crate::planner::Planner;
 use brokerd::proto::{BrokerRequest, BrokerResponse, TransformKind, WorkerClaim};
 use brokerd::quarantine::{concat_doc_fragments, extract_doc_fragments, extract_relative_path_claims};
 use runtime_core::intent::CaprunIntent;
@@ -282,12 +284,15 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // ── Deterministic planner: map intent + handles → PlanNode (PLAN-02) ─────
-    // `plan_from_intent` receives only opaque ValueId handles — never the
-    // literal, never taint, never a ValueRecord (PLAN-03, type-enforced by the
+    // Invoked through the `Planner` seam (PLANNER-01): the worker constructs a
+    // `DeterministicPlanner` and calls its `plan()` trait method, which
+    // receives only opaque ValueId handles — never the literal, never taint,
+    // never a ValueRecord (PLAN-03, type-enforced by the trait method's
     // signature). There is NO early-exit here anymore (finding #4): a benign
     // (fragment-free) SendEmailSummary still submits an all-UserTrusted node
     // → Allowed, preserving CONTROL-01's live clean-send-allowed path.
-    let plan_node = crate::planner::plan_from_intent(
+    let planner = crate::planner::DeterministicPlanner;
+    let plan_node = planner.plan(
         &intent,
         intent_value_id,
         derived_recipient,
