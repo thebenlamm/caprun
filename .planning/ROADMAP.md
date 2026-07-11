@@ -193,9 +193,14 @@ Plans:
   5. PROJECT.md (and/or the DESIGN doc) documents T2 (slot-type binding) as the accepted v1.4 residual risk — safe today only by incidental human-typing of every `UserTrusted` handle — with enforcement explicitly deferred to v1.5.
 
 **Plans**: 3 plans
+**Wave 1**
+
 - [ ] 22-01-PLAN.md — task_instruction injection channel (GATE-01) + GATE-04 deterministic sentinel-leak unit test
-- [ ] 22-02-PLAN.md — composed live HARD GATE proof: hostile leg blocks + clean control delivers once, live via mailpit-verify.sh (GATE-01/02/03)
 - [ ] 22-03-PLAN.md — T2 slot-type-binding residual disclosure in PROJECT.md, deferred to v1.5 (T2-01)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 22-02-PLAN.md — composed live HARD GATE proof: hostile leg blocks + clean control delivers once, live via mailpit-verify.sh (GATE-01/02/03)
 
 ## Progress
 
