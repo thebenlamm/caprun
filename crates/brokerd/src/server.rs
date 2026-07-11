@@ -95,8 +95,42 @@ pub async fn run_broker_server(
     let sock_path = format!("\0/agentos/{session_id}");
     let listener = tokio::net::UnixListener::bind(&sock_path)?;
 
+    // Cross-connection trust-coherence fix (v1.4 Phase 19, TRUST-01/TRUST-02):
+    // a ONE-WAY, session-lifetime occupancy latch. Set exactly once, the first
+    // time a connection is accepted, and NEVER cleared for the life of this
+    // `run_broker_server` invocation — no release-on-disconnect, no Drop guard,
+    // no reconnect path. A confined worker legitimately holds exactly one
+    // connection to its session for the whole run (DESIGN-session-trust-coherence.md
+    // §2); a 2nd connection (whether overlapping or arriving after the 1st has
+    // cleanly disconnected) would otherwise get pristine per-connection guard(a)
+    // locals (`intent_provided`/`fd_requested` below) and a stale `session_status`,
+    // letting a confined worker mint an attacker-controlled `UserTrusted` literal.
+    // A loop-local `bool` is sufficient here — the accept loop is single-threaded
+    // per session, so no `Arc`/`Mutex`/`AtomicBool` cross-task sharing is needed
+    // (DESIGN §2 line 52). Do NOT reset this to `false` anywhere.
+    let mut session_slot_occupied = false;
+
     loop {
-        let (stream, _addr) = listener.accept().await?;
+        let (mut stream, _addr) = listener.accept().await?;
+
+        if session_slot_occupied {
+            // Reject every connection after the first, BEFORE any per-connection
+            // trust state (ValueStore, session_status, intent_provided,
+            // fd_requested) is ever constructed for it. Complete the accept (so
+            // the caller gets a diagnosable response, not a bare RST), send a
+            // single framed rejection, then drop the stream and continue the
+            // loop without spawning `handle_connection` (DESIGN §2 line 54).
+            let _ = send_response(
+                &mut stream,
+                &BrokerResponse::Error {
+                    message: "a connection is already established for this session; only one connection per session is permitted".into(),
+                },
+            )
+            .await;
+            continue;
+        }
+        session_slot_occupied = true;
+
         let conn_clone = conn.clone();
         // Workspace-root capability — cloned per connection exactly like `conn`.
         let workspace_root_clone = workspace_root.clone();
