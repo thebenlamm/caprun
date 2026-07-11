@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Trust-Boundary Integrity & the Adversarial Planner
 status: planning
-last_updated: "2026-07-10T23:14:46.329Z"
+last_updated: "2026-07-10T00:00:00.000Z"
 last_activity: 2026-07-10
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,17 +17,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-09)
+See: .planning/PROJECT.md (updated 2026-07-10)
 
-**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, and (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance proving confirm-sends-once/deny-sends-nothing, all proven live on real Linux.
-**Current focus:** Awaiting next milestone — run `/gsd-new-milestone` to scope v1.4.
+**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, and now (v1.4) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence.
+**Current focus:** Phase 18 — Trust-Boundary Coherence Design Gate. A DESIGN doc (`planning-docs/DESIGN-session-trust-coherence.md`) must clear a fresh adversarial panel before any `server.rs` code change. Nothing in Phase 19+ may start until this gate clears.
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 18 (Trust-Boundary Coherence Design Gate) — not yet planned
 Plan: —
-Status: Defining requirements
-Last activity: 2026-07-10 — Milestone v1.4 started
+Status: Roadmapped, awaiting `/gsd-plan-phase 18`
+Last activity: 2026-07-10 — ROADMAP.md created (5 phases: 18-22), REQUIREMENTS.md traceability filled (19/19 mapped)
 
 ## Performance Metrics
 
@@ -49,7 +49,7 @@ Last activity: 2026-07-10 — Milestone v1.4 started
 | 15 | 4 | - | - |
 | 16 | 4 | - | - |
 
-*Updated after each plan completion. v1.3 (phases 12-17) shipped 2026-07-09 — 21/21 plans complete.*
+*Updated after each plan completion. v1.3 (phases 12-17) shipped 2026-07-09 — 21/21 plans complete. v1.4 (phases 18-22) roadmapped 2026-07-10, no plans yet.*
 | Phase 14 P02 | 50min | 3 tasks | 10 files |
 | Phase 15-deterministic-doc-action-extraction P01 | 75min | 3 tasks | 3 files |
 | Phase 15-deterministic-doc-action-extraction P02 | 11min | 3 tasks | 3 files |
@@ -64,12 +64,29 @@ Last activity: 2026-07-10 — Milestone v1.4 started
 
 ### Decisions
 
-v1.3 scoping decisions (CONTENT-01 and the real SMTP adapter reopened; LLM
-planner remains out; live SES downgraded to optional post-milestone) are
-recorded in `.planning/PROJECT.md`'s Key Decisions table and
-`.planning/REQUIREMENTS.md`. Phase 12 is a hard design gate — CONTENT-01,
-SMTP-05, and CONFIRM-03 executor/TCB code may not be written before it
-completes and is adversarially reviewed (mirrors v1.0 Phase 2 / v1.2 Phase 8).
+v1.4 scoping decisions (fix shape = reject 2nd connection, MAJOR-2 replay
+re-earned in writing not new CAS, T2 deferred to v1.5) are recorded in
+`.planning/PROJECT.md`'s Key Decisions table and `.planning/REQUIREMENTS.md`.
+
+**Roadmap phase structure (`/gsd-roadmapper`, 2026-07-10):** 5 phases (18-22),
+19/19 requirements mapped, 0 orphans. Phase 0 (the fix) splits into two
+phases mirroring this project's established design-gate/implementation
+precedent (v1.0 Phase 2, v1.2 Phase 8, v1.3 Phase 12 — each a standalone
+reviewed DESIGN doc before any TCB code): **Phase 18** is the design gate
+(DESIGN-01..06 — `DESIGN-session-trust-coherence.md` + fresh adversarial
+panel), **Phase 19** is the fix itself (TRUST-01..03, DOC-02 — broker rejects
+a 2nd connection, `two_connection_intent_bypass_repro` goes green by fixing
+the broker not weakening the test, `mailpit-verify.sh` independently re-run
+green, PROJECT.md's DOC-02 correction finalized). Phase 1+ (planner) follows
+the "seam design → implementation → adversarial proof" shape named at
+scoping: **Phase 20** designs and introduces the `Planner` trait/seam +
+per-verb capability split + co-location boundary (PLANNER-01/02/04),
+**Phase 21** builds the adversarial LLM planner itself on that seam
+(PLANNER-03), and **Phase 22** is the live HARD GATE proof plus the T2
+residual disclosure (GATE-01..04, T2-01) — mirroring the project's separate
+live-acceptance phases (v1.2 Phase 11, v1.3 Phase 17). Phase 18 is a hard
+gate: no `server.rs` code for the trust-coherence fix may be written before
+its DESIGN doc clears a fresh (non-self) adversarial review.
 
 - [Phase 14]: blocked_literals gained an arg column and composite (event_id, arg) PRIMARY KEY so a plural sink_blocked event can persist every blocked arg's literal, not just the first. — The plan required iterating all anchors and writing every literal; the prior single-column event_id PK would PK-collide on a 2nd insert for a genuinely-plural block.
 - [Phase 14]: render_block_display's plural-block fail-closed guard re-derives the executor's is_routing_sensitive||is_content_sensitive && tainted predicate over PendingConfirmation.resolved_args instead of threading a new field through PendingConfirmation. — Avoids a schema/struct ripple across every PendingConfirmation-constructing test fixture while giving a precise (no false-positive) plurality check, since brokerd already depends on the executor crate.
@@ -89,18 +106,18 @@ completes and is adversarially reviewed (mirrors v1.0 Phase 2 / v1.2 Phase 8).
 - [Phase 16]: CONTROL-02 live fixture models CLEAN_PATH_CONTENT's no-marker recipient side + a Body: marker only, verified against worker.rs's extraction branch directly before writing the test, to guarantee no accidental recipient taint (Pitfall 5).
 - [Phase ?]: 16-04: All three BLOCKER-1 guards (ProvideIntent ordering, non-live-state Deny, CreateSession IPC opt-in) landed in Task 1, strictly before Task 2's email.send Allowed-dispatch, so the dispatch never exists without its guards.
 - [Phase ?]: 16-04: CreateSession IPC arm gated behind CAPRUN_ENABLE_IPC_CREATE_SESSION == exactly "1" (runtime opt-in, fail-closed default-deny) instead of cfg(test), which is unset when brokerd compiles as an integration-test dependency.
-- [Phase ?]: 16-04: MAJOR-4 replay residual risk (no CAS on the Allowed email.send path) accepted for v1.3; durable per-attempt ledger makes each send auditable. Tracked as v2 obligation.
+- [Phase ?]: 16-04: MAJOR-4 replay residual risk (no CAS on the Allowed email.send path) accepted for v1.3; durable per-attempt ledger makes each send auditable. Tracked as v2 obligation. **Superseded by v1.4 DESIGN-02**: this must be RE-EARNED in writing against the adaptive-planner threat model, not silently inherited.
 - [Phase ?]: 16-04: 'Deny sends nothing' send-level proof recorded as an explicit Phase 17/ACCEPT-01 requirement — not yet covered by any test.
 
 ### Pending Todos
 
 - `.planning/todos/pending/2026-07-07-gsd-phases-clear-deletes-all-milestones.md` — GSD tooling bug: `gsd_run query phases.clear --confirm` deletes ALL milestones' phase dirs, not just the previous one's leftovers. Not yet fixed upstream; carries forward to v1.4.
-- `.planning/todos/pending/2026-07-08-gsd-executors-must-not-write-phase-completion-state.md` — GSD tooling bug: the last-wave executor's own doc-completion commit repeatedly flips ROADMAP.md's phase-level checkbox before verification (2-for-2, Phases 15/16). Did NOT recur at Phase 17 (closed manually by the orchestrator after independent verification, per this bug). Not yet fixed upstream; carries forward to v1.4.
-- `.planning/todos/pending/2026-07-08-v1.3-phase16-v2-security-obligations.md` — 5 v2 security obligations (demote-at-RequestFd, verify_chain keyed-MAC, Allowed-path replay CAS, CreateSession build-excluded path, kind-aware Source label). All 5 are already honestly disclosed in PROJECT.md's DOC-01 paragraph and residual-risks clause as of v1.3; this todo tracks the actual v2 fix work. Carries forward to v1.4.
+- `.planning/todos/pending/2026-07-08-gsd-executors-must-not-write-phase-completion-state.md` — GSD tooling bug: the last-wave executor's own doc-completion commit repeatedly flips ROADMAP.md's phase-level checkbox before verification (2-for-2, Phases 15/16). Did NOT recur at Phase 17 (closed manually by the orchestrator after independent verification, per this bug). Not yet fixed upstream; carries forward to v1.4. **Mitigation for v1.4 (per global learned-rules): never let ANY phase-18-22 executor touch ROADMAP.md/STATE.md — the orchestrator updates phase-completion state itself.**
+- `.planning/todos/pending/2026-07-08-v1.3-phase16-v2-security-obligations.md` — 5 v2 security obligations (demote-at-RequestFd, verify_chain keyed-MAC, Allowed-path replay CAS, CreateSession build-excluded path, kind-aware Source label). All 5 are already honestly disclosed in PROJECT.md's DOC-01 paragraph and residual-risks clause as of v1.3; this todo tracks the actual v2 fix work. Carries forward to v1.4 (one of the 5 — Allowed-path replay CAS — is directly addressed by v1.4's DESIGN-02 re-earning exercise, not closed).
 
 ### Blockers/Concerns
 
-None open.
+- Phase 19 (the fix) and everything downstream (Phases 20-22) is hard-blocked on Phase 18's DESIGN doc clearing a fresh adversarial review. No `server.rs` change for the trust-coherence fix before that gate.
 
 ## Deferred Items
 
@@ -112,6 +129,7 @@ Items acknowledged and deferred at prior milestone closes:
 | todo | gsd-phases-clear-deletes-all-milestones (GSD tooling bug) | open | 2026-07-09 |
 | todo | gsd-executors-must-not-write-phase-completion-state (GSD tooling bug) | open | 2026-07-09 |
 | todo | v1.3-phase16-v2-security-obligations (5 v2 security items, already disclosed in DOC-01) | open | 2026-07-09 |
+| requirement | T2 slot-type binding enforcement | deferred to v1.5 | 2026-07-10 |
 
 Re-acknowledged unchanged at v1.2 milestone close on 2026-07-07 (same
 pre-existing item, still benign). Re-acknowledged at v1.3 milestone close on
@@ -120,10 +138,10 @@ accepted as known/benign or already-tracked v2 work; none block v1.3's close.
 
 ## Session Continuity
 
-Last session: 2026-07-09T02:30:34.530Z
-Stopped at: Completed 16-04-PLAN.md
+Last session: 2026-07-10
+Stopped at: ROADMAP.md + REQUIREMENTS.md traceability written for v1.4 (5 phases: 18-22)
 Resume file: None
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Run `/gsd-plan-phase 18` to plan the Trust-Boundary Coherence Design Gate phase.

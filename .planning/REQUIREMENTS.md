@@ -111,31 +111,43 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TRUST-01 | TBD | Pending |
-| TRUST-02 | TBD | Pending |
-| TRUST-03 | TBD | Pending |
-| DESIGN-01 | TBD | Pending |
-| DESIGN-02 | TBD | Pending |
-| DESIGN-03 | TBD | Pending |
-| DESIGN-04 | TBD | Pending |
-| DESIGN-05 | TBD | Pending |
-| DESIGN-06 | TBD | Pending |
-| DOC-02 | TBD | Pending |
-| PLANNER-01 | TBD | Pending |
-| PLANNER-02 | TBD | Pending |
-| PLANNER-03 | TBD | Pending |
-| PLANNER-04 | TBD | Pending |
-| GATE-01 | TBD | Pending |
-| GATE-02 | TBD | Pending |
-| GATE-03 | TBD | Pending |
-| GATE-04 | TBD | Pending |
-| T2-01 | TBD | Pending |
+| TRUST-01 | Phase 19 | Pending |
+| TRUST-02 | Phase 19 | Pending |
+| TRUST-03 | Phase 19 | Pending |
+| DESIGN-01 | Phase 18 | Pending |
+| DESIGN-02 | Phase 18 | Pending |
+| DESIGN-03 | Phase 18 | Pending |
+| DESIGN-04 | Phase 18 | Pending |
+| DESIGN-05 | Phase 18 | Pending |
+| DESIGN-06 | Phase 18 | Pending |
+| DOC-02 | Phase 19 | Pending |
+| PLANNER-01 | Phase 20 | Pending |
+| PLANNER-02 | Phase 20 | Pending |
+| PLANNER-03 | Phase 21 | Pending |
+| PLANNER-04 | Phase 20 | Pending |
+| GATE-01 | Phase 22 | Pending |
+| GATE-02 | Phase 22 | Pending |
+| GATE-03 | Phase 22 | Pending |
+| GATE-04 | Phase 22 | Pending |
+| T2-01 | Phase 22 | Pending |
 
 **Coverage:**
 - v1 requirements: 19 total
-- Mapped to phases: 0 (roadmapper fills in)
-- Unmapped: 19 ⚠️ (expected — filled by `/gsd-roadmapper` next)
+- Mapped to phases: 19
+- Unmapped: 0 ✓
+
+**Phase structure rationale:** Phase 0 (fix) splits into two phases mirroring
+this project's established design-gate/implementation precedent (v1.0 Phase
+2, v1.2 Phase 8, v1.3 Phase 12 — each a standalone reviewed DESIGN doc before
+any TCB code): Phase 18 is the design gate (DESIGN-01..06), Phase 19 is the
+fix + regression-green + doc-honesty (TRUST-01..03, DOC-02). Phase 1+
+(planner) follows the "seam design → implementation → adversarial proof"
+shape named at scoping: Phase 20 designs and introduces the `Planner`
+seam/capability split (PLANNER-01/02/04), Phase 21 builds the adversarial LLM
+planner itself on that seam (PLANNER-03), and Phase 22 is the live HARD GATE
+proof plus the T2 residual disclosure (GATE-01..04, T2-01) — mirroring the
+project's separate live-acceptance phases (v1.2 Phase 11, v1.3 Phase 17).
 
 ---
 *Requirements defined: 2026-07-10*
-*Last updated: 2026-07-10 after v1.4 scoping*
+*Last updated: 2026-07-10 after roadmap creation (`/gsd-roadmapper`) — 5 phases (18-22), 19/19 requirements mapped, 0 orphans.*

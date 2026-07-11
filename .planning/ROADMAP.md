@@ -6,6 +6,7 @@
 - ✅ **v1.1 — Usable Runtime (Live §9 from the CLI)** — Phases 5-7 (shipped 2026-07-01)
 - ✅ **v1.2 — Tainted Session, Human Gate** — Phases 8-11 (shipped 2026-07-07)
 - ✅ **v1.3 — Doc → Action Assistant** — Phases 12-17 (shipped 2026-07-09)
+- 🚧 **v1.4 — Trust-Boundary Integrity & the Adversarial Planner** — Phases 18-22 (in progress)
 
 ## Phases
 
@@ -72,6 +73,90 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 
 </details>
 
+### 🚧 v1.4 — Trust-Boundary Integrity & the Adversarial Planner (Phases 18-22) — IN PROGRESS
+
+**Milestone goal:** Fix a confirmed live cross-connection trust bypass in the broker (Phase 0 — a security fix, gated by an already-red regression test), then prove the trust boundary is indifferent to planner intelligence by putting an adversarial LLM planner behind it (Phase 1+) — a hostile injected document makes the planner *comply* and try to route a tainted value to `email.send`, and the executor **Blocks deterministically** anyway, with genuine taint propagation re-verified live (the §9 standard: `verify_chain` true, Mailpit == 0), because the value flows around the planner through the worker's own mint sites, never through the planner's tokens.
+
+- [ ] **Phase 18: Trust-Boundary Coherence Design Gate** - A DESIGN doc resolving the cross-connection fix shape, the replay-risk re-earning, the three-mint-site audit, the decision-oracle question, the forward-looking per-verb capability split, and guard-(c)'s status exists and clears a fresh adversarial review, before any `server.rs` change
+- [ ] **Phase 19: Cross-Connection Trust Coherence Fix** - The broker rejects a second connection to an already-active session, closing the cross-connection `ProvideIntent` bypass; the regression test goes green by fixing the broker, never by weakening its assertions
+- [ ] **Phase 20: Planner Seam & Capability Split** - A designed `Planner` trait/seam exists, a planner-role connection can never hold a mint verb, and the planner is structurally kept out of the worker's raw-bytes path
+- [ ] **Phase 21: Adversarial LLM Planner** - A minimal LLM-backed planner, running behind the new seam, emits only `PlanNode{sink, args}` — no literal field to carry
+- [ ] **Phase 22: Adversarial Gate Proof & Residual Disclosure** - A hostile-doc-primed planner complies and is Blocked deterministically with genuine, live-verified taint propagation; T2 is documented as the accepted v1.4 residual
+
+## Phase Details
+
+### Phase 18: Trust-Boundary Coherence Design Gate
+
+**Goal**: A DESIGN doc resolving the cross-connection trust-coherence fix shape, the replay-risk framing under an adaptive-planner threat model, a full three-mint-site audit, the decision-oracle question, the forward-looking per-verb capability split, and guard-(c)'s status exists and clears a fresh adversarial review — before any `server.rs` code change (mirrors the v1.0 Phase 2 / v1.2 Phase 8 / v1.3 Phase 12 design-gate discipline).
+**Depends on**: Phase 17 (v1.3 shipped; this is the first v1.4 phase)
+**Requirements**: DESIGN-01, DESIGN-02, DESIGN-03, DESIGN-04, DESIGN-05, DESIGN-06
+**Success Criteria** (what must be TRUE):
+
+  1. `planning-docs/DESIGN-session-trust-coherence.md` exists, specifies the fix shape (reject a 2nd connection to an already-active session) as the chosen approach over shared coherent multi-connection state, and a fresh adversarial panel (not the authoring session — per `DEC-ai-review-satisfies-human-gate`) has reviewed it with every raised issue resolved before any `server.rs` change begins.
+  2. The doc rules on MAJOR-2 (replay risk), re-earning "accepted" in writing against the new adaptive-planner threat model — amplification stays bounded to trusted/human-typed recipients (untrusted still Blocks), no new CAS added this milestone.
+  3. The doc audits all three mint sites (`mint_from_read`, `mint_from_intent`, `mint_from_derivation`) and states the corrected, narrower claim: only `ProvideIntent` yields a TRUSTED handle from a supplied string.
+  4. The doc rules on MEDIUM-1 (the decision oracle) — whether Phase 1's planner connection sees the full `Allowed`/`BlockedPendingConfirmation{anchors, literal_sha256}` decision or a reduced signal.
+  5. The doc specifies the per-verb capability split (a connection may hold NO mint verb: `ProvideIntent`/`ReportClaims`/`ReportDerivedClaim`) that Phase 1's planner connection will rely on.
+  6. The doc re-confirms guard-(c) (`CAPRUN_ENABLE_IPC_CREATE_SESSION`) is not widened by the Phase-0 fix and re-states whether it should finally be compile-excluded.
+
+**Plans**: TBD
+
+### Phase 19: Cross-Connection Trust Coherence Fix
+
+**Goal**: The broker rejects a second connection to an already-active session, closing the cross-connection `ProvideIntent` bypass that let a worker mint an attacker-controlled `UserTrusted` literal and route it to `email.send` as `Allowed`.
+**Depends on**: Phase 18
+**Requirements**: TRUST-01, TRUST-02, TRUST-03, DOC-02
+**Success Criteria** (what must be TRUE):
+
+  1. A second connection attempt to an already-active session is rejected by the broker — the "smaller hammer" fix specified in Phase 18's DESIGN doc, implemented in `server.rs`.
+  2. `crates/brokerd/tests/two_connection_intent_bypass.rs`'s `#[ignore]` is removed and the test passes green, with its safe-outcome assertions completely unchanged from what was written pre-fix.
+  3. `scripts/mailpit-verify.sh`'s full existing test suite (the v1.3 live acceptance) is independently re-run on real Linux and still passes — no regression, not assumed from a prior pass.
+  4. PROJECT.md's DOC-02 correction is finalized against the shipped fix (the scoping-time draft disclosure is confirmed accurate against the actual fix, not left aspirational).
+
+**Plans**: TBD
+
+### Phase 20: Planner Seam & Capability Split
+
+**Goal**: A designed `Planner` seam exists in code, a connection identifying itself in the planner role can never hold a mint verb, and the planner is structurally kept out of the process/context that touches the worker's raw untrusted bytes.
+**Depends on**: Phase 19
+**Requirements**: PLANNER-01, PLANNER-02, PLANNER-04
+**Success Criteria** (what must be TRUE):
+
+  1. A `Planner` trait exists, and the existing deterministic intent→PlanNode logic (today a bare `plan_from_intent` fn) is refactored to implement it — the seam is a real abstraction, not a rename.
+  2. A connection operating in the planner role is rejected by the broker if it sends `ProvideIntent`, `ReportClaims`, or `ReportDerivedClaim` — proven by a test that attempts each verb on that connection and observes rejection.
+  3. The planner never receives the worker's raw-bytes fd or raw untrusted content — it is given only typed extracts and handle IDs, with no filesystem capability and no network reachability beyond its own inference endpoint.
+  4. All pre-existing deterministic-planner-based tests/behavior from v1.0-v1.3 continue to pass unchanged through the new seam — no regression from the refactor.
+
+**Plans**: TBD
+
+### Phase 21: Adversarial LLM Planner
+
+**Goal**: A minimal LLM-backed planner, running behind Phase 20's seam, drives a real intent end-to-end using only `PlanNode{sink, args}` — no literal field to carry.
+**Depends on**: Phase 20
+**Requirements**: PLANNER-03
+**Success Criteria** (what must be TRUE):
+
+  1. An LLM-backed implementation of the `Planner` trait exists and is selectable in place of the deterministic planner.
+  2. Given a clean, trusted intent, the LLM planner emits a syntactically valid `PlanNode{sink, args}` referencing handle IDs only (never a literal value), and the executor Allows it, delivering a real send.
+  3. The LLM planner's own prompt/tool-call construction is built only from typed extracts and handle IDs — never raw untrusted bytes — consistent with Phase 20's co-location boundary.
+
+**Plans**: TBD
+
+### Phase 22: Adversarial Gate Proof & Residual Disclosure
+
+**Goal**: The trust boundary is proven indifferent to planner intelligence — a hostile-doc-primed LLM planner complies and tries to route a tainted value to `email.send`, and the executor Blocks it deterministically with genuine, live-verified taint propagation; the one remaining unenforced degree of freedom (T2) is honestly documented rather than silently left implicit.
+**Depends on**: Phase 21
+**Requirements**: GATE-01, GATE-02, GATE-03, GATE-04, T2-01
+**Success Criteria** (what must be TRUE):
+
+  1. A hostile document whose embedded injection instructs the LLM planner to email `attacker@evil.com` causes the planner to comply, emitting a syntactically valid `PlanNode` that routes the tainted handle to `to`.
+  2. The executor Blocks that PlanNode deterministically; `verify_chain` is true; Mailpit's captured-message count is 0 — proven live on real Linux via `scripts/mailpit-verify.sh`, not asserted from code alone.
+  3. In the SAME run, a trusted-intent control on the same sink Allows and delivers exactly once.
+  4. A deterministic construction-site sentinel assertion (feed the prompt constructor a sentinel-tagged tainted record — sentinel each fragment — and assert the sentinel bytes never appear in the constructed prompt) replaces the old context-dump grep, and is unit-level/deterministic, not probabilistic.
+  5. PROJECT.md (and/or the DESIGN doc) documents T2 (slot-type binding) as the accepted v1.4 residual risk — safe today only by incidental human-typing of every `UserTrusted` handle — with enforcement explicitly deferred to v1.5.
+
+**Plans**: TBD
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -93,3 +178,8 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 15. Deterministic Doc→Action Extraction | v1.3 | 4/4 | Complete    | 2026-07-08 |
 | 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 4/4 | Complete    | 2026-07-09 |
 | 17. Live Acceptance & Framing Honesty | v1.3 | 4/4 | Complete | 2026-07-09 |
+| 18. Trust-Boundary Coherence Design Gate | v1.4 | 0/TBD | Not started | - |
+| 19. Cross-Connection Trust Coherence Fix | v1.4 | 0/TBD | Not started | - |
+| 20. Planner Seam & Capability Split | v1.4 | 0/TBD | Not started | - |
+| 21. Adversarial LLM Planner | v1.4 | 0/TBD | Not started | - |
+| 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 0/TBD | Not started | - |
