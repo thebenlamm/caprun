@@ -142,11 +142,11 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   3. The planner never receives the worker's raw-bytes fd or raw untrusted content — it is given only typed extracts and handle IDs, with no filesystem capability and no network reachability beyond its own inference endpoint.
   4. All pre-existing deterministic-planner-based tests/behavior from v1.0-v1.3 continue to pass unchanged through the new seam — no regression from the refactor.
 
-**Plans**: 3 plans
+**Plans**: 2/3 plans executed
 **Wave 1**
 
-- [ ] 20-01-PLAN.md — Introduce the `Planner` trait seam; refactor the deterministic `plan_from_intent` to implement it; worker calls via the trait (PLANNER-01, PLANNER-04)
-- [ ] 20-02-PLAN.md — Per-connection capability split + accept-loop extension: planner-role connection holds no mint verb and no fd, fail-closed default-deny; Phase 19 latch extended + regression tests unmodified (PLANNER-02, PLANNER-04)
+- [x] 20-01-PLAN.md — Introduce the `Planner` trait seam; refactor the deterministic `plan_from_intent` to implement it; worker calls via the trait (PLANNER-01, PLANNER-04)
+- [x] 20-02-PLAN.md — Per-connection capability split + accept-loop extension: planner-role connection holds no mint verb and no fd, fail-closed default-deny; Phase 19 latch extended + regression tests unmodified (PLANNER-02, PLANNER-04)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -203,6 +203,6 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 17. Live Acceptance & Framing Honesty | v1.3 | 4/4 | Complete | 2026-07-09 |
 | 18. Trust-Boundary Coherence Design Gate | v1.4 | 2/2 | Complete    | 2026-07-11 |
 | 19. Cross-Connection Trust Coherence Fix | v1.4 | 2/2 | Complete    | 2026-07-11 |
-| 20. Planner Seam & Capability Split | v1.4 | 0/TBD | Not started | - |
+| 20. Planner Seam & Capability Split | v1.4 | 2/3 | In Progress|  |
 | 21. Adversarial LLM Planner | v1.4 | 0/TBD | Not started | - |
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 0/TBD | Not started | - |
