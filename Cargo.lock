@@ -138,6 +138,7 @@ dependencies = [
  "chrono",
  "executor",
  "hex",
+ "llm-planner",
  "runtime-core",
  "rusqlite",
  "sandbox",

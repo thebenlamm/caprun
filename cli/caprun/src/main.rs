@@ -251,6 +251,40 @@ async fn main() -> anyhow::Result<()> {
     // makes the ordering explicit.)
     tokio::task::yield_now().await;
 
+    // ── 3b. Spawn the LLM planner sidecar when CAPRUN_PLANNER=llm (Phase 21) ─
+    // Only when explicitly selected — CAPRUN_PLANNER unset (or any other
+    // value) spawns NO sidecar and passes NOTHING new into the worker's env,
+    // so the default deterministic path is byte-for-byte unchanged (no
+    // regression). Resolved via current_exe().parent() exactly like the
+    // worker binary below (step 4) — caprun-planner lives alongside
+    // caprun/caprun-worker. Spawned BEFORE the worker (step 4) so the sidecar
+    // has a head start on its own bind(); the worker-side `LlmPlanner` proxy
+    // still carries its own bounded connect-retry (cli/caprun/src/planner.rs)
+    // to cover any residual scheduling race. `OPENAI_API_KEY` is forwarded to
+    // the sidecar ONLY — the worker's env never receives it (T-21-10).
+    let mut planner_sidecar: Option<std::process::Child> = None;
+    let mut worker_planner_env: Vec<(&'static str, String)> = Vec::new();
+    if std::env::var("CAPRUN_PLANNER").as_deref() == Ok("llm") {
+        let planner_sock = format!("/agentos/planner/{session_id}");
+        let planner_binary = std::env::current_exe()
+            .context("current_exe")?
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("caprun has no parent dir"))?
+            .join("caprun-planner");
+        let mut cmd = std::process::Command::new(&planner_binary);
+        cmd.env("PLANNER_SOCK", &planner_sock);
+        if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+            cmd.env("OPENAI_API_KEY", key);
+        }
+        if let Ok(model) = std::env::var("CAPRUN_PLANNER_MODEL") {
+            cmd.env("CAPRUN_PLANNER_MODEL", model);
+        }
+        let child = cmd.spawn().context("spawn caprun-planner sidecar")?;
+        planner_sidecar = Some(child);
+        worker_planner_env.push(("PLANNER_SOCK", planner_sock));
+        worker_planner_env.push(("CAPRUN_PLANNER", "llm".to_string()));
+    }
+
     // ── 4. Spawn caprun-worker (NORMAL spawn — worker self-confines after connecting)
     let worker_binary = std::env::current_exe()
         .context("current_exe")?
@@ -269,6 +303,10 @@ async fn main() -> anyhow::Result<()> {
         // to the broker, which mints it authoritatively in the per-connection
         // ValueStore. Never passed raw bytes here; always the typed intent enum.
         .env("INTENT", serde_json::to_string(&intent).context("serialise intent")?)
+        // Propagates PLANNER_SOCK + CAPRUN_PLANNER=llm ONLY when the sidecar
+        // was spawned above (step 3b) — empty otherwise, so the default path
+        // sees this call site add nothing (no regression).
+        .envs(worker_planner_env)
         .spawn()
         .context("spawn caprun-worker")?;
 
@@ -281,6 +319,17 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("spawn_blocking child.wait")?
         .context("child.wait")?;
+
+    // ── 5b. Tear down the planner sidecar (mirrors broker_task.abort() below) ─
+    // The worker has exited; the sidecar (if spawned) is no longer needed.
+    // spawn_blocking so the blocking kill()/wait() doesn't stall the reactor.
+    if let Some(mut planner_child) = planner_sidecar {
+        let _ = tokio::task::spawn_blocking(move || {
+            let _ = planner_child.kill();
+            let _ = planner_child.wait();
+        })
+        .await;
+    }
 
     // ── 6. Stop the broker accept loop ───────────────────────────────────────
     // run_broker_server loops forever accepting connections; the worker is done,

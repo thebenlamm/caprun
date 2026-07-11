@@ -40,10 +40,15 @@
 /// label. This is enforced at compile time by the trait method's own
 /// signature, exactly as it is for the free fn.
 
+use anyhow::Context;
+use llm_planner::{HandleLabel, PlannerRequest, PlannerResponse};
 use runtime_core::{
     intent::CaprunIntent,
     plan_node::{PlanArg, PlanNode, SinkId, ValueId},
 };
+use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
+use std::time::{Duration, Instant};
 
 /// The `Planner` seam (PLANNER-01): maps a typed intent + opaque `ValueId`
 /// handles to a `PlanNode`. See the module doc above for the PLANNER-04
@@ -191,4 +196,235 @@ pub fn plan_from_intent(
             }
         }
     }
+}
+
+/// # LlmPlanner — the adversarial LLM-backed planner (Phase 21 / PLANNER-03)
+///
+/// Implements the SAME `Planner` trait as `DeterministicPlanner` above — the
+/// worker constructs whichever concrete planner `CAPRUN_PLANNER` selects and
+/// calls `.plan()` through the trait object identically either way. There is
+/// no cross-connection handle resolution and no change to the worker's own
+/// broker connection or submission path: `LlmPlanner::plan()` only computes
+/// and returns a `PlanNode`; the worker still submits it via
+/// `BrokerRequest::SubmitPlanNode` on its own existing connection, exactly as
+/// it does today with `DeterministicPlanner`.
+///
+/// `LlmPlanner` is a thin, non-network shim INSIDE the confined worker: it
+/// forwards only the opaque `ValueId` handles it was given (tagged with a
+/// human-readable slot hint) to the off-process `caprun-planner` sidecar over
+/// an abstract-namespace UDS, and maps the sidecar's tool-call reply back to
+/// a `PlanNode` via the pure, unit-testable `response_to_plan_node`
+/// validator. It NEVER holds a literal, a `ValueRecord`, or a taint label
+/// (PLAN-03) — the same compile-time boundary `Planner::plan`'s signature
+/// already enforces for `DeterministicPlanner`.
+///
+/// # Fail-closed (T-21-08)
+///
+/// Any sidecar/transport/validation failure — connect failure, a malformed
+/// or unparseable reply, an unknown sink, or a `value_id` the sidecar was
+/// never offered — causes `plan()` to print a clear message to stderr and
+/// `std::process::exit(1)` immediately. No `PlanNode` is ever returned or
+/// submitted on that path, and therefore no effect can run (mirrors the
+/// worker's existing fail-closed exit on a §9 block, see `worker.rs`).
+pub struct LlmPlanner {
+    planner_sock: String,
+}
+
+impl LlmPlanner {
+    /// `planner_sock` is the abstract-socket name WITHOUT the leading NUL
+    /// (mirrors `BROKER_SOCK`'s convention, see `worker.rs`) — `LlmPlanner`
+    /// prepends the NUL itself when connecting.
+    pub fn new(planner_sock: String) -> Self {
+        LlmPlanner { planner_sock }
+    }
+
+    /// Connect to `\0` + `self.planner_sock`, send the framed `PlannerRequest`,
+    /// and receive the framed reply. Any connect/read/parse failure surfaces
+    /// as an `Err` — `plan()` treats that identically to any other sidecar
+    /// failure: fail closed, submit no `PlanNode`.
+    fn request_plan_from_sidecar(&self, request: &PlannerRequest) -> anyhow::Result<PlannerResponse> {
+        let stream = connect_to_sidecar(&self.planner_sock)?;
+        send_framed(&stream, request).context("send PlannerRequest to sidecar")?;
+        recv_framed(&stream).context("receive PlannerResponse from sidecar")
+    }
+}
+
+impl Planner for LlmPlanner {
+    fn plan(
+        &self,
+        intent: &CaprunIntent,
+        intent_value_id: ValueId,
+        derived_recipient: Option<ValueId>,
+        body: Option<ValueId>,
+        trusted_subject_handle: ValueId,
+        trusted_body_handle: ValueId,
+    ) -> PlanNode {
+        let (request, offered, known_sinks) = build_planner_request(
+            intent,
+            &intent_value_id,
+            derived_recipient.as_ref(),
+            body.as_ref(),
+            &trusted_subject_handle,
+            &trusted_body_handle,
+        );
+
+        let response = match self.request_plan_from_sidecar(&request) {
+            Ok(resp) => resp,
+            Err(e) => {
+                eprintln!(
+                    "[llm-planner] sidecar request failed: {e} — failing closed, no PlanNode submitted"
+                );
+                std::process::exit(1);
+            }
+        };
+
+        match response_to_plan_node(&response, &offered, &known_sinks) {
+            Ok(plan_node) => plan_node,
+            Err(e) => {
+                eprintln!(
+                    "[llm-planner] response validation failed: {e} — failing closed, no PlanNode submitted"
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+/// Build the `PlannerRequest` for `intent` from the SAME six routing params
+/// `Planner::plan` receives, choosing the effective handle for each of the
+/// three offered slots (`recipient`/`subject`/`body`) via the IDENTICAL
+/// override rule `plan_from_intent` above already uses:
+///   - `recipient` = `derived_recipient` when `Some`, else `intent_value_id`.
+///   - `subject`   = `trusted_subject_handle` (never overridden — matches
+///                   `plan_from_intent`'s unconditional use).
+///   - `body`      = `body` when `Some`, else `trusted_body_handle`.
+///
+/// Returns the request alongside the `offered` handle set and `known_sinks`
+/// list so the caller can pass them, UNCHANGED, into `response_to_plan_node`
+/// — the validator's allowlists are always exactly what this function put on
+/// the wire, never re-derived or guessed. Carries only `ValueId` handles +
+/// slot hints and a typed `intent_kind`/`available_sinks` label — no other
+/// value-bearing field (the `PlannerRequest`/`HandleLabel` types themselves
+/// are structurally incapable of carrying a literal, per `llm-planner`'s own
+/// key-set tests).
+pub fn build_planner_request(
+    intent: &CaprunIntent,
+    intent_value_id: &ValueId,
+    derived_recipient: Option<&ValueId>,
+    body: Option<&ValueId>,
+    trusted_subject_handle: &ValueId,
+    trusted_body_handle: &ValueId,
+) -> (PlannerRequest, Vec<ValueId>, Vec<String>) {
+    let recipient = derived_recipient
+        .cloned()
+        .unwrap_or_else(|| intent_value_id.clone());
+    let subject = trusted_subject_handle.clone();
+    let body_handle = body.cloned().unwrap_or_else(|| trusted_body_handle.clone());
+
+    let (intent_kind, available_sinks): (&str, Vec<String>) = match intent {
+        CaprunIntent::SendEmailSummary { .. } => {
+            ("SendEmailSummary", vec!["email.send".to_string()])
+        }
+        CaprunIntent::CreateFileFromReport { .. } => {
+            ("CreateFileFromReport", vec!["file.create".to_string()])
+        }
+    };
+
+    let available_handles = vec![
+        HandleLabel { slot_hint: "recipient".to_string(), value_id: recipient.clone() },
+        HandleLabel { slot_hint: "subject".to_string(), value_id: subject.clone() },
+        HandleLabel { slot_hint: "body".to_string(), value_id: body_handle.clone() },
+    ];
+
+    let offered = vec![recipient, subject, body_handle];
+
+    let request = PlannerRequest {
+        intent_kind: intent_kind.to_string(),
+        available_handles,
+        available_sinks: available_sinks.clone(),
+    };
+
+    (request, offered, available_sinks)
+}
+
+/// Map a validated sidecar `PlannerResponse` to a `PlanNode`, failing closed
+/// (T-21-08): `Ok` ONLY when `resp.sink` is a member of `known_sinks` AND
+/// every `ResponseArg.value_id` is a member of `offered`. Never fabricates or
+/// substitutes a handle — any violation is a hard `Err`. Pure and
+/// unit-testable without a live sidecar.
+pub fn response_to_plan_node(
+    resp: &PlannerResponse,
+    offered: &[ValueId],
+    known_sinks: &[String],
+) -> anyhow::Result<PlanNode> {
+    if !known_sinks.iter().any(|s| s == &resp.sink) {
+        anyhow::bail!("llm planner response named unknown sink: {}", resp.sink);
+    }
+
+    let mut args = Vec::with_capacity(resp.args.len());
+    for response_arg in &resp.args {
+        if !offered.iter().any(|v| v == &response_arg.value_id) {
+            anyhow::bail!(
+                "llm planner response referenced an unoffered handle: {:?}",
+                response_arg.value_id
+            );
+        }
+        args.push(PlanArg {
+            name: response_arg.name.clone(),
+            value_id: response_arg.value_id.clone(),
+        });
+    }
+
+    Ok(PlanNode { sink: SinkId(resp.sink.clone()), args })
+}
+
+/// Connect to `\0` + `planner_sock` with a bounded connect-retry, mirroring
+/// the worker's own broker-connect loop (`cli/caprun/src/worker.rs`) — the
+/// sidecar (spawned by `caprun` main just before the worker) may not have
+/// reached its synchronous `bind()` yet when the worker calls `plan()`.
+fn connect_to_sidecar(planner_sock: &str) -> anyhow::Result<UnixStream> {
+    const CONNECT_BUDGET: Duration = Duration::from_secs(2);
+    const RETRY_DELAY: Duration = Duration::from_millis(25);
+    let sock_path = format!("\0{planner_sock}");
+    let deadline = Instant::now() + CONNECT_BUDGET;
+    loop {
+        match UnixStream::connect(&sock_path) {
+            Ok(stream) => return Ok(stream),
+            // Transient: the sidecar subprocess has not reached bind() yet.
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
+                ) && Instant::now() < deadline =>
+            {
+                std::thread::sleep(RETRY_DELAY);
+            }
+            Err(e) => return Err(e).context("connect to LLM planner sidecar abstract UDS"),
+        }
+    }
+}
+
+/// Write a framed message (4-byte LE length prefix + JSON body) — same wire
+/// format as the worker's broker helpers of the same name
+/// (`cli/caprun/src/worker.rs`); duplicated here (not imported) because this
+/// module is ALSO compiled standalone by `tests/planner.rs` via `#[path]`,
+/// which has no access to `worker.rs`'s private items.
+fn send_framed(stream: &UnixStream, msg: &impl serde::Serialize) -> anyhow::Result<()> {
+    let body = serde_json::to_vec(msg)?;
+    let len = (body.len() as u32).to_le_bytes();
+    (&*stream).write_all(&len)?;
+    (&*stream).write_all(&body)?;
+    Ok(())
+}
+
+/// Read a framed message (4-byte LE length prefix + JSON body) — see
+/// `send_framed`'s doc for why this duplicates (rather than imports)
+/// `worker.rs`'s helper of the same name.
+fn recv_framed<T: serde::de::DeserializeOwned>(stream: &UnixStream) -> anyhow::Result<T> {
+    let mut len_buf = [0u8; 4];
+    (&*stream).read_exact(&mut len_buf)?;
+    let msg_len = u32::from_le_bytes(len_buf) as usize;
+    let mut body = vec![0u8; msg_len];
+    (&*stream).read_exact(&mut body)?;
+    Ok(serde_json::from_slice(&body)?)
 }
