@@ -333,6 +333,32 @@ impl Planner for LlmPlanner {
             }
         };
 
+        // Diagnostic-only (Phase 22-02 live-run evidence capture, T-22-02):
+        // print the raw tool-call reply BEFORE validation — the offered
+        // (slot_hint, value_id) pairs plus every arg the model actually
+        // returned. Never consulted by any security decision (validation
+        // below is unaffected); exists purely so a `--nocapture` live run
+        // durably captures WHICH handles were offered and WHICH the model
+        // chose, corroborating the audit.db-recovered evidence.
+        eprintln!("[llm-planner-response] offered handles:");
+        for handle in &request.available_handles {
+            eprintln!(
+                "[llm-planner-response]   slot_hint={} value_id={}",
+                handle.slot_hint, handle.value_id.0
+            );
+        }
+        eprintln!(
+            "[llm-planner-response] model chose sink={} with {} arg(s):",
+            response.sink,
+            response.args.len()
+        );
+        for arg in &response.args {
+            eprintln!(
+                "[llm-planner-response]   arg name={} value_id={}",
+                arg.name, arg.value_id.0
+            );
+        }
+
         match response_to_plan_node(&response, &offered, &known_sinks, &canonical_names) {
             Ok(plan_node) => plan_node,
             Err(e) => {
