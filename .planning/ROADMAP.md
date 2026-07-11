@@ -192,11 +192,11 @@ Plans:
   4. A deterministic construction-site sentinel assertion (feed the prompt constructor a sentinel-tagged tainted record — sentinel each fragment — and assert the sentinel bytes never appear in the constructed prompt) replaces the old context-dump grep, and is unit-level/deterministic, not probabilistic.
   5. PROJECT.md (and/or the DESIGN doc) documents T2 (slot-type binding) as the accepted v1.4 residual risk — safe today only by incidental human-typing of every `UserTrusted` handle — with enforcement explicitly deferred to v1.5.
 
-**Plans**: 3 plans
+**Plans**: 2/3 plans executed
 **Wave 1**
 
-- [ ] 22-01-PLAN.md — task_instruction injection channel (GATE-01) + GATE-04 deterministic sentinel-leak unit test
-- [ ] 22-03-PLAN.md — T2 slot-type-binding residual disclosure in PROJECT.md, deferred to v1.5 (T2-01)
+- [x] 22-01-PLAN.md — task_instruction injection channel (GATE-01) + GATE-04 deterministic sentinel-leak unit test
+- [x] 22-03-PLAN.md — T2 slot-type-binding residual disclosure in PROJECT.md, deferred to v1.5 (T2-01)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -227,4 +227,4 @@ Plans:
 | 19. Cross-Connection Trust Coherence Fix | v1.4 | 2/2 | Complete    | 2026-07-11 |
 | 20. Planner Seam & Capability Split | v1.4 | 3/3 | Complete    | 2026-07-11 |
 | 21. Adversarial LLM Planner | v1.4 | 4/4 | Complete    | 2026-07-11 |
-| 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 0/TBD | Not started | - |
+| 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 2/3 | In Progress|  |
