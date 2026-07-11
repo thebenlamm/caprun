@@ -137,4 +137,23 @@ mod tests {
              field, got keys {keys:?}"
         );
     }
+
+    // ── Task 2 (RED): build_planner_prompt / build_tool_schema /
+    //    parse_planner_response / PlannerError do not exist yet — this
+    //    module will not compile until Task 2's action step adds them.
+
+    #[test]
+    fn placeholder_task2_red() {
+        let req = PlannerRequest {
+            intent_kind: "SendEmailSummary".to_string(),
+            available_handles: vec![sample_handle()],
+            available_sinks: vec!["email.send".to_string()],
+        };
+        let _prompt: String = build_planner_prompt(&req);
+        let _schema: serde_json::Value = build_tool_schema(&req);
+        let offered: Vec<ValueId> = vec![];
+        let known_sinks: Vec<String> = vec![];
+        let _parsed: Result<PlannerResponse, PlannerError> =
+            parse_planner_response("{}", &offered, &known_sinks);
+    }
 }
