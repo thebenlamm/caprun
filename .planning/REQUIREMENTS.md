@@ -1,110 +1,88 @@
-# Requirements: AgentOS (caprun) — v1.4
+# Requirements: AgentOS (caprun) — v1.5
 
-**Defined:** 2026-07-10
-**Core Value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended with session-level draft-only demotion (I1/I0), single-shot human confirmation, content-sensitive blocking, and (v1.4) coherent cross-connection trust state, so that the boundary holds regardless of who or what sits in the planner seat.
+**Defined:** 2026-07-11
+**Core Value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended with session-level draft-only demotion (I1/I0), single-shot human confirmation, content-sensitive blocking, coherent cross-connection trust state, a boundary proven indifferent to planner intelligence, and (v1.5) a structural check that a value's semantic origin matches the semantic role of the slot it's routed into — closing the last unenforced degree of freedom named in v1.4's residual disclosure (T2).
 
 ## v1 Requirements
 
-Phase 0 blocks everything else — non-negotiable ordering. It is a security
-fix gated by an already-red regression test
-(`crates/brokerd/tests/two_connection_intent_bypass.rs`), never green by
-weakening assertions.
+Phase order is non-negotiable: the Design Gate blocks all TCB code
+(`crates/executor`, `crates/brokerd`'s mint sites) exactly as v1.0 Phase 2,
+v1.2 Phase 8, v1.3 Phase 12, and v1.4 Phase 18 did before it.
 
-### Trust Coherence (Phase 0 — the fix)
+### Design Gate (blocks all TCB code)
 
-- [x] **TRUST-01**: Broker rejects a second connection to an already-active
-      session, closing the cross-connection `ProvideIntent` bypass (the
-      smaller hammer — a confined worker only ever needs one connection)
+- [ ] **DESIGN-07**: `planning-docs/DESIGN-slot-type-binding.md` authored and
+      clears a fresh (non-self) adversarial review — no `crates/executor` or
+      `crates/brokerd` mint-site code before it clears. Specifies: the
+      origin-role tagging mechanism, the new `DenyReason` variant's shape and
+      its full exhaustive-match blast radius, and the collect-vs-deny-
+      immediately ordering ruling (whether a slot-type mismatch joins the
+      collect-then-Block `BlockedPendingConfirmation` set or returns a hard
+      `Denied`).
 
-- [x] **TRUST-02**: `two_connection_intent_bypass_repro`'s `#[ignore]` is
-      removed and the test is green — fixed by the broker's behavior, never
-      by weakening the test's safe-outcome assertions
+- [ ] **DESIGN-08**: DESIGN doc unifies with the EXISTING `claim_type`
+      taxonomy already present in `crates/brokerd/src/quarantine.rs`
+      (`"email_address"`/`"relative_path"`/`"doc_fragment"`, currently
+      consumed only at `mint_from_read` time to derive taint labels, then
+      discarded) rather than inventing a parallel role taxonomy for
+      untrusted-origin values. For `ProvideIntent`-minted `UserTrusted`
+      values (recipient/subject/body — no existing claim_type equivalent),
+      the doc defines the analogous role tags from scratch.
 
-- [x] **TRUST-03**: Existing v1.3 live acceptance
-      (`scripts/mailpit-verify.sh`) stays green — independently re-run, not
-      assumed from a prior pass
+- [ ] **DESIGN-09**: DESIGN doc explicitly resolves role propagation through
+      `mint_from_derivation` (e.g. `ReportDerivedClaim`'s `Concat` transform
+      over a Reply-To/Domain pair) — what role, if any, a derived/composite
+      value carries. Not left implicit.
 
-### Design Gate (Phase 0 — blocks all TCB code)
+- [ ] **DESIGN-10**: DESIGN doc pins the fail-closed default: a value with
+      no assigned role, or a role that isn't in the expected-role table for
+      the target slot, hitting a role-checked slot is a `Deny` — never a
+      silent pass-through to `Allowed`.
 
-- [x] **DESIGN-01**: `planning-docs/DESIGN-session-trust-coherence.md`
-      authored and clears a fresh adversarial panel (no self-review, per
-      `DEC-ai-review-satisfies-human-gate`) before any `server.rs` change
+### Slot-Type Binding (implementation — unblocked by the Design Gate)
 
-- [x] **DESIGN-02**: DESIGN doc rules on MAJOR-2 (replay) — re-earns
-      "accepted" in writing against the adaptive-planner threat model
-      (bounded to trusted/human-typed recipients = DoS/duplication, not new
-      exfil); no new CAS this milestone
+- [ ] **T2-02**: Each minted value carries a semantic origin-role tag,
+      populated at the three mint call sites (`mint_from_intent`,
+      `mint_from_read`, `mint_from_derivation`) via an additive, mechanical
+      change to their signatures/call sites. This does NOT change I0/I1
+      trust classification — which values become `UserTrusted` vs untrusted
+      is unaffected; only a new field is threaded through.
 
-- [x] **DESIGN-03**: DESIGN doc audits all three mint sites (`mint_from_read`,
-      `mint_from_intent`, `mint_from_derivation`) and states the correct,
-      narrower claim: only `ProvideIntent` yields a TRUSTED handle from a
-      supplied string
+- [ ] **T2-03**: A hardcoded per-sink-arg "expected role" table exists in
+      `crates/executor` (mirrors the `sink_sensitivity.rs` CONTENT-01/02
+      precedent — hardcoded match arms scoped to the two live sinks
+      `email.send`/`file.create`, not a general framework).
 
-- [x] **DESIGN-04**: DESIGN doc documents the decision oracle (MEDIUM-1) —
-      `Allowed` vs `BlockedPendingConfirmation{anchors}` plus
-      `literal_sha256` leak per-handle taint state and enable offline
-      literal-guessing; rules whether Phase 1's planner connection sees full
-      decisions or a reduced signal
+- [ ] **T2-04**: A new `DenyReason` variant is added to the exhaustive
+      taxonomy in `runtime_core::executor_decision` (no wildcard arm, per
+      the project's §10 discipline). Every existing exhaustive match over
+      `DenyReason` across the workspace (CLI rendering, audit
+      serialization/`code()`/`Display`, existing tests) is updated for the
+      new arm — not just the match inside `submit_plan_node`.
 
-- [x] **DESIGN-05**: DESIGN doc specifies the per-verb capability split (a
-      connection may hold NO mint verb — `ProvideIntent`, `ReportClaims`,
-      `ReportDerivedClaim`) forward-looking for Phase 1's planner connection
+- [ ] **T2-05**: `submit_plan_node` denies (or blocks, per DESIGN-07's
+      ordering ruling) a plan node when a resolved value's origin role
+      doesn't match its slot's expected role, evaluated per-arg in the same
+      pass as the existing routing/content-sensitivity check — without
+      weakening or reordering the existing I0 (Step 0.5 class-deny) / I2
+      (per-arg Block) precedence.
 
-- [x] **DESIGN-06**: DESIGN doc re-confirms guard-(c)
-      (`CAPRUN_ENABLE_IPC_CREATE_SESSION`) is not widened by the Phase-0 fix
-      and re-states whether it should finally be compile-excluded
+### Regression & Live Proof (the DONE gate)
 
-### Documentation Honesty (Phase 0)
+- [ ] **T2-06**: A held-out acceptance test proves the gap is closed: a plan
+      node with a deliberately swapped subject↔recipient handle pair (both
+      `UserTrusted`, both otherwise valid) produces the new deny, with a
+      corresponding audit-DAG event recorded and `verify_chain` still true.
 
-- [x] **DOC-02**: PROJECT.md correction recording that v1.3's guard(a) was
-      cross-connection-bypassable and that v1.4 Phase 0 fixes it (scoping-
-      time draft already landed in PROJECT.md's v1.3 `<details>` block;
-      Phase 0 finalizes it against the shipped fix)
+- [ ] **T2-07**: Existing tests that currently rely on permissive
+      `UserTrusted`-in-any-slot behavior are identified (regression audit)
+      and updated so the new check doesn't silently break existing coverage
+      or get bypassed by a fixture that never assigns a role.
 
-### Planner Seam & Capability Split (Phase 1+ — unblocked by Phase 0)
-
-- [x] **PLANNER-01**: Design and introduce the planner seam — there is no
-      `Planner` trait today (`planner.rs`'s `plan_from_intent` is a bare fn);
-      the seam must be designed, not dropped into
-
-- [x] **PLANNER-02**: The planner's connection holds NO mint verb
-      (`ProvideIntent`, `ReportClaims`, `ReportDerivedClaim` unavailable) —
-      applies Phase 0's per-verb capability split design
-
-- [x] **PLANNER-03**: A minimal LLM planner emits only
-      `PlanNode{sink, args: Vec<PlanArg>}` — no literal field to carry;
-      cheapest model that reliably follows a tool schema, no model-quality
-      claim made
-
-- [x] **PLANNER-04**: The planner is NOT co-located in-process with the
-      worker's raw-bytes fd (would breach "typed extracts only" and
-      reintroduce token-stream laundering); it sees typed extracts + handle
-      IDs only, no caps, no net beyond its own inference endpoint
-
-### Adversarial Gate Proof (Phase 1+ — the HARD GATE)
-
-- [x] **GATE-01**: An LLM planner, handed a doc whose injection instructs it
-      to email `attacker@evil.com`, complies — emits a syntactically valid
-      `PlanNode` routing the tainted handle to `to`
-
-- [x] **GATE-02**: The executor Blocks deterministically, `verify_chain` is
-      true, and Mailpit == 0 — genuine propagation, per the §9 standard
-
-- [x] **GATE-03**: A trusted-intent control on the same sink Allows and
-      delivers exactly once, in the same run
-
-- [x] **GATE-04**: A deterministic construction-site sentinel assertion
-      replaces the context-dump grep — feed the planner-prompt constructor a
-      tainted record with a sentinel literal (sentinel each fragment), assert
-      the sentinel bytes never appear in the constructed prompt (unit-level,
-      not probabilistic)
-
-### Residual Risk Documentation (Phase 1+)
-
-- [x] **T2-01**: T2 (slot-type binding — no `DenyReason` exists for a
-      handle's semantic origin mismatching its slot) is documented as the
-      accepted v1.4 residual, safe today only by incidental human-typing of
-      every `UserTrusted` handle; enforcement deferred to v1.5
+- [ ] **T2-08**: Full workspace regression via `scripts/mailpit-verify.sh`
+      is independently re-run green (0 failures) after the change lands —
+      not assumed from a prior pass, per this project's standing milestone-
+      close discipline.
 
 ## Out of Scope
 
@@ -112,56 +90,37 @@ Explicitly excluded. Documented to prevent scope creep.
 
 | Feature | Reason |
 |---------|--------|
-| T2 slot-type binding enforcement | Deferred to v1.5 (Ben's choice, 2026-07-10) — keeps v1.4 to one milestone; new `DenyReason` + TCB logic is real scope, not wiring |
-| CAS/idempotency token on the Allowed email.send path | Replay risk re-earned in writing against the new adaptive-planner threat model instead (Ben's choice, 2026-07-10) — amplification stays bounded to trusted/human-typed recipients, not new exfil |
-| Shared coherent multi-connection trust state | Rejected in favor of the smaller hammer — reject a 2nd connection outright (Ben's choice, 2026-07-10); a confined worker only ever needs one connection |
-| Guard-(c) compile-time exclusion | Re-confirmed, not re-scoped — DESIGN-06 only re-states whether it should happen, doesn't commit to doing it in v1.4 |
-| Git/GitHub adapters, Cedar policy engine, cross-host delegation/Biscuit crypto, gVisor/Firecracker, web UI, marketplace, long-term memory | Reaffirmed non-goals through v1.3, unaffected by this milestone |
+| Mint-time TRUST CLASSIFICATION changes (I0/I1) | T2 adds an origin-role tag; it does not change which values become `UserTrusted` vs untrusted (Ben's choice, 2026-07-11 scoping — confirmed reading of "no changes to mint sites") |
+| Connection/capability model changes | Already shipped in v1.4 (Phase 20's `ConnectionRole` split); unaffected by this milestone |
+| General content-classification taxonomy/framework | T2's expected-role table stays hardcoded per-sink-arg, matching the `CONTENT-01/02` precedent — not a reusable framework |
+| CAS/idempotency token on the Allowed `email.send` path | Already re-earned in writing at v1.4 (`DESIGN-session-trust-coherence.md` §6); untouched by T2 |
+| Role-tagging for sinks beyond `email.send`/`file.create` | v0 sink scope stays the same two live sinks; consistent with `sink_sensitivity.rs`'s documented v0 scope |
+| Git/GitHub adapters, Cedar policy engine, cross-host delegation/Biscuit crypto, gVisor/Firecracker, web UI, marketplace, long-term memory | Reaffirmed non-goals through v1.4, unaffected by this milestone |
 
 ## Traceability
 
-Which phases cover which requirements. Updated during roadmap creation.
+Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TRUST-01 | Phase 19 | Complete |
-| TRUST-02 | Phase 19 | Complete |
-| TRUST-03 | Phase 19 | Complete |
-| DESIGN-01 | Phase 18 | Complete |
-| DESIGN-02 | Phase 18 | Complete |
-| DESIGN-03 | Phase 18 | Complete |
-| DESIGN-04 | Phase 18 | Complete |
-| DESIGN-05 | Phase 18 | Complete |
-| DESIGN-06 | Phase 18 | Complete |
-| DOC-02 | Phase 19 | Complete |
-| PLANNER-01 | Phase 20 | Complete |
-| PLANNER-02 | Phase 20 | Complete |
-| PLANNER-03 | Phase 21 | Complete |
-| PLANNER-04 | Phase 20 | Complete |
-| GATE-01 | Phase 22 | Complete |
-| GATE-02 | Phase 22 | Complete |
-| GATE-03 | Phase 22 | Complete |
-| GATE-04 | Phase 22 | Complete |
-| T2-01 | Phase 22 | Complete |
+| DESIGN-07 | TBD | Pending |
+| DESIGN-08 | TBD | Pending |
+| DESIGN-09 | TBD | Pending |
+| DESIGN-10 | TBD | Pending |
+| T2-02 | TBD | Pending |
+| T2-03 | TBD | Pending |
+| T2-04 | TBD | Pending |
+| T2-05 | TBD | Pending |
+| T2-06 | TBD | Pending |
+| T2-07 | TBD | Pending |
+| T2-08 | TBD | Pending |
 
 **Coverage:**
 
-- v1 requirements: 19 total
-- Mapped to phases: 19
-- Unmapped: 0 ✓
-
-**Phase structure rationale:** Phase 0 (fix) splits into two phases mirroring
-this project's established design-gate/implementation precedent (v1.0 Phase
-2, v1.2 Phase 8, v1.3 Phase 12 — each a standalone reviewed DESIGN doc before
-any TCB code): Phase 18 is the design gate (DESIGN-01..06), Phase 19 is the
-fix + regression-green + doc-honesty (TRUST-01..03, DOC-02). Phase 1+
-(planner) follows the "seam design → implementation → adversarial proof"
-shape named at scoping: Phase 20 designs and introduces the `Planner`
-seam/capability split (PLANNER-01/02/04), Phase 21 builds the adversarial LLM
-planner itself on that seam (PLANNER-03), and Phase 22 is the live HARD GATE
-proof plus the T2 residual disclosure (GATE-01..04, T2-01) — mirroring the
-project's separate live-acceptance phases (v1.2 Phase 11, v1.3 Phase 17).
+- v1 requirements: 11 total
+- Mapped to phases: 0
+- Unmapped: 11 ⚠️ (roadmap not yet created)
 
 ---
-*Requirements defined: 2026-07-10*
-*Last updated: 2026-07-10 after roadmap creation (`/gsd-roadmapper`) — 5 phases (18-22), 19/19 requirements mapped, 0 orphans.*
+*Requirements defined: 2026-07-11*
+*Last updated: 2026-07-11 after milestone v1.5 scoping.*

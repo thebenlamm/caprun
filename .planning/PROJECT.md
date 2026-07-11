@@ -16,10 +16,47 @@ Event → ValueNode → sensitive sink argument) deterministically blocks
 value-injection at the sink. If everything else fails, **I2 enforcement on a
 genuine taint chain must hold.**
 
-## Current Milestone
+## Current Milestone: v1.5 — Slot-Type Binding Enforcement (T2)
 
-Unscoped — v1.4 is the most recently shipped milestone. Run
-`/gsd-new-milestone` to scope v1.5.
+**Goal:** Close v1.4's accepted residual #5 (T2) — the executor gains a
+structural check that a resolved value's semantic origin matches the
+semantic role of the plan-node slot it's routed into, so a misrouted
+`UserTrusted` handle (e.g. a subject-typed string landed in `to`) is caught
+even though it is neither untrusted (I2 doesn't fire) nor a class-level deny
+(I0/I1 don't apply). Today `ValueRecord` carries no origin/role tag at all —
+`ProvideIntent`'s three `mint_from_intent` calls (recipient/subject/body) all
+mint `[TaintLabel::UserTrusted]` with nothing distinguishing them from one
+another once minted. T2 is safe today only *incidentally* (every
+`UserTrusted` handle is human-typed and, by convention, routed correctly by
+the planner) — nothing structural enforces it.
+
+**Target features:**
+- New DESIGN doc (`planning-docs/DESIGN-slot-type-binding.md`) + fresh
+  (non-self) adversarial review gate, mirroring v1.4 Phase 18's shape — no
+  executor/TCB code before it clears
+- A mechanism to tag each minted value's semantic origin role — an additive,
+  mechanical touch to the `mint_from_intent`/`mint_from_read`/
+  `mint_from_derivation` call sites (NOT a change to I0/I1 trust
+  classification — which values become `UserTrusted` vs untrusted is
+  unaffected)
+- A hardcoded per-sink-arg "expected role" table in the executor, mirroring
+  the `sink_sensitivity.rs` precedent (CONTENT-01/02) — not a general
+  framework
+- A new exhaustive `DenyReason` variant (no wildcard arm) for a slot-type
+  mismatch
+- Regression audit of existing tests that currently assume permissive
+  `UserTrusted`-in-any-slot behavior
+- Live re-verification via `scripts/mailpit-verify.sh` before close
+
+**Key context:** TCB is Rust; this is `crates/executor` code, so it needs
+its own DESIGN doc + adversarial review gate per the project's standing "no
+TCB code without a reviewed DESIGN doc" discipline. Out of scope: mint
+*classification* changes (I0/I1), connection/capability model changes
+(already shipped in v1.4), a general content-classification taxonomy, and
+CAS/replay work (already re-earned in writing at v1.4). Whether a slot-type
+mismatch becomes a hard `Denied` or joins the collect-then-Block
+`BlockedPendingConfirmation` set is left to the Phase design-gate doc, not
+locked at scoping time.
 
 <details>
 <summary>✅ v1.4 — Trust-Boundary Integrity & the Adversarial Planner — SHIPPED 2026-07-11</summary>

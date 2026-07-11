@@ -1,20 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.4
-milestone_name: — Trust-Boundary Integrity & the Adversarial Planner
-current_phase: 22
-status: Awaiting next milestone
-stopped_at: Completed 22-VERIFICATION.md; milestone closed
-last_updated: "2026-07-11T19:15:00.000Z"
+milestone: v1.5
+milestone_name: — Slot-Type Binding Enforcement (T2)
+status: planning
+last_updated: "2026-07-11T19:34:00.595Z"
 last_activity: 2026-07-11
-last_activity_desc: Milestone v1.4 completed and closed
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 15
-  completed_plans: 15
-  percent: 100
-current_phase_name: Adversarial Gate Proof & Residual Disclosure
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -28,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-07-11)
 
 ## Current Position
 
-Phase: Milestone v1.4 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-07-11 — Milestone v1.4 completed and closed
+Status: Defining requirements
+Last activity: 2026-07-11 — Milestone v1.5 started
 
 ## Performance Metrics
 
