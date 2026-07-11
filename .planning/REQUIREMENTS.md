@@ -63,11 +63,11 @@ weakening assertions.
 
 ### Planner Seam & Capability Split (Phase 1+ — unblocked by Phase 0)
 
-- [ ] **PLANNER-01**: Design and introduce the planner seam — there is no
+- [x] **PLANNER-01**: Design and introduce the planner seam — there is no
       `Planner` trait today (`planner.rs`'s `plan_from_intent` is a bare fn);
       the seam must be designed, not dropped into
 
-- [ ] **PLANNER-02**: The planner's connection holds NO mint verb
+- [x] **PLANNER-02**: The planner's connection holds NO mint verb
       (`ProvideIntent`, `ReportClaims`, `ReportDerivedClaim` unavailable) —
       applies Phase 0's per-verb capability split design
 
@@ -76,7 +76,7 @@ weakening assertions.
       cheapest model that reliably follows a tool schema, no model-quality
       claim made
 
-- [ ] **PLANNER-04**: The planner is NOT co-located in-process with the
+- [x] **PLANNER-04**: The planner is NOT co-located in-process with the
       worker's raw-bytes fd (would breach "typed extracts only" and
       reintroduce token-stream laundering); it sees typed extracts + handle
       IDs only, no caps, no net beyond its own inference endpoint
@@ -134,10 +134,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DESIGN-05 | Phase 18 | Complete |
 | DESIGN-06 | Phase 18 | Complete |
 | DOC-02 | Phase 19 | Complete |
-| PLANNER-01 | Phase 20 | Pending |
-| PLANNER-02 | Phase 20 | Pending |
+| PLANNER-01 | Phase 20 | Complete |
+| PLANNER-02 | Phase 20 | Complete |
 | PLANNER-03 | Phase 21 | Pending |
-| PLANNER-04 | Phase 20 | Pending |
+| PLANNER-04 | Phase 20 | Complete |
 | GATE-01 | Phase 22 | Pending |
 | GATE-02 | Phase 22 | Pending |
 | GATE-03 | Phase 22 | Pending |

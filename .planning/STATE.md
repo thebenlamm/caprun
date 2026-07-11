@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Trust-Boundary Integrity & the Adversarial Planner
-current_phase: 20
-current_phase_name: Planner Seam & Capability Split
+current_phase: 21
+current_phase_name: Adversarial LLM Planner
 status: executing
 stopped_at: "ROADMAP.md + REQUIREMENTS.md traceability written for v1.4 (5 phases: 18-22)"
-last_updated: "2026-07-11T11:23:34.052Z"
+last_updated: "2026-07-11T12:35:14.359Z"
 last_activity: 2026-07-11
-last_activity_desc: Phase 19 complete, transitioned to Phase 20
+last_activity_desc: Phase 20 complete, transitioned to Phase 21
 progress:
   total_phases: 5
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
-  percent: 40
+  completed_phases: 3
+  total_plans: 7
+  completed_plans: 7
+  percent: 60
 ---
 
 # Project State
@@ -28,16 +28,16 @@ See: .planning/PROJECT.md (updated 2026-07-10)
 
 ## Current Position
 
-Phase: 20 — Planner Seam & Capability Split
+Phase: 21 — Adversarial LLM Planner
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-07-11 — Phase 19 complete, transitioned to Phase 20
+Last activity: 2026-07-11 — Phase 20 complete, transitioned to Phase 21
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 29 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 [Phases 12-17])
+- Total plans completed: 32 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 [Phases 12-17])
 - Average duration: — min
 
 **By Phase (v1.2):**
@@ -54,6 +54,7 @@ Last activity: 2026-07-11 — Phase 19 complete, transitioned to Phase 20
 | 16 | 4 | - | - |
 | 18 | 2 | - | - |
 | 19 | 2 | - | - |
+| 20 | 3 | - | - |
 
 *Updated after each plan completion. v1.3 (phases 12-17) shipped 2026-07-09 — 21/21 plans complete. v1.4 (phases 18-22) roadmapped 2026-07-10, no plans yet.*
 | Phase 14 P02 | 50min | 3 tasks | 10 files |
