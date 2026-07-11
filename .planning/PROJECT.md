@@ -332,10 +332,25 @@ v1.4 — Trust-Boundary Integrity & the Adversarial Planner (scoped
   `scripts/mailpit-verify.sh` independently re-run, full workspace suite
   green (253 passed / 0 failed / 37 binaries, no regression from v1.3's
   250/0/36 baseline). TRUST-01, TRUST-02, TRUST-03, and DOC-02 complete.
-- Phase 1+ (20-22): adversarial LLM planner behind the existing trust boundary,
-  per-verb capability split (planner connection holds no mint verb),
-  deterministic construction-site sentinel assertion replacing the
-  context-dump grep, T2 slot-type binding deferred to v1.5
+- ✓ **Phase 20 (Planner Seam & Capability Split) SHIPPED (2026-07-11):** a real
+  `Planner` trait introduced (`cli/caprun/src/planner.rs`), existing
+  deterministic logic now implements it unchanged; broker gained a
+  `ConnectionRole` capability model (`crates/brokerd/src/server.rs`) —
+  Phase 19's one-way worker-slot latch extended (not weakened — empty diff
+  on its regression test) to admit exactly one additional, capability-
+  restricted planner-role connection via a `DeclarePlannerRole` handshake;
+  a planner-role connection is fail-closed default-deny on all 4 mint verbs
+  plus `RequestFd`/`ReportRead`, and receives only a reduced
+  `PlanNodeDecisionReduced{blocked}` signal on `SubmitPlanNode` (no
+  anchors/literal_sha256/literal). PLANNER-01, PLANNER-02, PLANNER-04
+  complete.
+- Phase 21-22 (next): the adversarial LLM planner itself (PLANNER-03) behind
+  this seam, then the HARD GATE composed live proof — hostile-doc-primed
+  planner complies and is Blocked deterministically, `verify_chain` true,
+  Mailpit==0, trusted control Allows+delivers once, deterministic
+  construction-site sentinel assertion replacing the context-dump grep, T2
+  slot-type binding documented as the accepted v1.4 residual (deferred to
+  v1.5).
 
 ### Out of Scope
 
