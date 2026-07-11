@@ -6,7 +6,8 @@
 - ✅ **v1.1 — Usable Runtime (Live §9 from the CLI)** — Phases 5-7 (shipped 2026-07-01)
 - ✅ **v1.2 — Tainted Session, Human Gate** — Phases 8-11 (shipped 2026-07-07)
 - ✅ **v1.3 — Doc → Action Assistant** — Phases 12-17 (shipped 2026-07-09)
-- 🚧 **v1.4 — Trust-Boundary Integrity & the Adversarial Planner** — Phases 18-22 (in progress)
+- ✅ **v1.4 — Trust-Boundary Integrity & the Adversarial Planner** — Phases 18-22 (shipped 2026-07-11)
+- 🚧 **v1.5 — Slot-Type Binding Enforcement (T2)** — Phases 23-25 (in progress)
 
 ## Phases
 
@@ -73,7 +74,8 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 
 </details>
 
-### 🚧 v1.4 — Trust-Boundary Integrity & the Adversarial Planner (Phases 18-22) — IN PROGRESS
+<details>
+<summary>✅ v1.4 — Trust-Boundary Integrity & the Adversarial Planner (Phases 18-22) — SHIPPED 2026-07-11</summary>
 
 **Milestone goal:** Fix a confirmed live cross-connection trust bypass in the broker (Phase 0 — a security fix, gated by an already-red regression test), then prove the trust boundary is indifferent to planner intelligence by putting an adversarial LLM planner behind it (Phase 1+) — a hostile injected document makes the planner *comply* and try to route a tainted value to `email.send`, and the executor **Blocks deterministically** anyway, with genuine taint propagation re-verified live (the §9 standard: `verify_chain` true, Mailpit == 0), because the value flows around the planner through the worker's own mint sites, never through the planner's tokens.
 
@@ -83,124 +85,61 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 - [x] **Phase 21: Adversarial LLM Planner** - A minimal LLM-backed planner, running behind the new seam, emits only `PlanNode{sink, args}` — no literal field to carry (completed 2026-07-11)
 - [x] **Phase 22: Adversarial Gate Proof & Residual Disclosure** - A hostile-doc-primed planner complies and is Blocked deterministically with genuine, live-verified taint propagation; T2 is documented as the accepted v1.4 residual (completed 2026-07-11)
 
+**v1.4 DONE gate cleared:** live on real Linux, a hostile document's injection reaches a genuine OpenAI-backed `LlmPlanner` via a taint-tracked `task_instruction` channel (never itself a sink-arg value); the model complies and routes the tainted handle to `to`; the executor Blocks it deterministically (`verify_chain` true, Mailpit==0 for the attacker); a trusted-intent control in the SAME composed run Allows and delivers exactly once. Full default `scripts/mailpit-verify.sh` recipe: 46 test groups, 0 failed, real exit 0. T2 (slot-type binding) documented as the accepted residual, deferred to v1.5. All v1.4 requirement IDs Complete. No git tag, not pushed (Ben's call).
+
+</details>
+
+### 🚧 v1.5 — Slot-Type Binding Enforcement (T2) (Phases 23-25) — IN PROGRESS
+
+**Milestone goal:** Close v1.4's accepted residual #5 (T2) — the executor gains a structural check that a resolved value's semantic origin matches the semantic role of the plan-node slot it's routed into, so a misrouted `UserTrusted` handle (e.g. a subject-typed string landed in `to`) is caught even though it is neither untrusted (I2 doesn't fire) nor a class-level deny (I0/I1 don't apply).
+
+- [ ] **Phase 23: Slot-Type Binding Design Gate** - A DESIGN doc for slot-type binding enforcement exists, unifies with the existing `claim_type` taxonomy, resolves derivation role propagation, and pins the fail-closed default — clearing a fresh (non-self) adversarial review before any TCB code
+- [ ] **Phase 24: Slot-Type Binding Enforcement** - The executor structurally enforces that a resolved value's origin role matches its plan-node slot's expected role, via a new mint-time tag, a hardcoded expected-role table, and a new exhaustive `DenyReason` variant
+- [ ] **Phase 25: Regression & Live Proof** - A deliberately swapped subject/recipient handle pair is proven to produce the new deny with an unbroken audit chain, existing tests are updated for the new check, and the full workspace regression passes green on real Linux
+
 ## Phase Details
 
-### Phase 18: Trust-Boundary Coherence Design Gate
+### Phase 23: Slot-Type Binding Design Gate
 
-**Goal**: A DESIGN doc resolving the cross-connection trust-coherence fix shape, the replay-risk framing under an adaptive-planner threat model, a full three-mint-site audit, the decision-oracle question, the forward-looking per-verb capability split, and guard-(c)'s status exists and clears a fresh adversarial review — before any `server.rs` code change (mirrors the v1.0 Phase 2 / v1.2 Phase 8 / v1.3 Phase 12 design-gate discipline).
-**Depends on**: Phase 17 (v1.3 shipped; this is the first v1.4 phase)
-**Requirements**: DESIGN-01, DESIGN-02, DESIGN-03, DESIGN-04, DESIGN-05, DESIGN-06
+**Goal**: A DESIGN doc for slot-type binding enforcement exists — specifying the origin-role tagging mechanism, unifying with the existing `claim_type` taxonomy, resolving role propagation through derivation, and pinning the fail-closed default — and clears a fresh (non-self) adversarial review before any `crates/executor` or `crates/brokerd` mint-site code is written (mirrors the v1.0 Phase 2 / v1.2 Phase 8 / v1.3 Phase 12 / v1.4 Phase 18 design-gate discipline).
+**Depends on**: Phase 22 (v1.4 shipped; this is the first v1.5 phase)
+**Requirements**: DESIGN-07, DESIGN-08, DESIGN-09, DESIGN-10
 **Success Criteria** (what must be TRUE):
 
-  1. `planning-docs/DESIGN-session-trust-coherence.md` exists, specifies the fix shape (reject a 2nd connection to an already-active session) as the chosen approach over shared coherent multi-connection state, and a fresh adversarial panel (not the authoring session — per `DEC-ai-review-satisfies-human-gate`) has reviewed it with every raised issue resolved before any `server.rs` change begins.
-  2. The doc rules on MAJOR-2 (replay risk), re-earning "accepted" in writing against the new adaptive-planner threat model — amplification stays bounded to trusted/human-typed recipients (untrusted still Blocks), no new CAS added this milestone.
-  3. The doc audits all three mint sites (`mint_from_read`, `mint_from_intent`, `mint_from_derivation`) and states the corrected, narrower claim: only `ProvideIntent` yields a TRUSTED handle from a supplied string.
-  4. The doc rules on MEDIUM-1 (the decision oracle) — whether Phase 1's planner connection sees the full `Allowed`/`BlockedPendingConfirmation{anchors, literal_sha256}` decision or a reduced signal.
-  5. The doc specifies the per-verb capability split (a connection may hold NO mint verb: `ProvideIntent`/`ReportClaims`/`ReportDerivedClaim`) that Phase 1's planner connection will rely on.
-  6. The doc re-confirms guard-(c) (`CAPRUN_ENABLE_IPC_CREATE_SESSION`) is not widened by the Phase-0 fix and re-states whether it should finally be compile-excluded.
+  1. `planning-docs/DESIGN-slot-type-binding.md` exists and specifies the origin-role tagging mechanism, the new `DenyReason` variant's shape and its full exhaustive-match blast radius, and the collect-vs-deny-immediately ordering ruling (whether a slot-type mismatch joins the collect-then-Block `BlockedPendingConfirmation` set or returns a hard `Denied`).
+  2. The doc unifies with the existing `claim_type` taxonomy in `crates/brokerd/src/quarantine.rs` for untrusted-origin values, and defines analogous role tags from scratch for `ProvideIntent`-minted `UserTrusted` values (recipient/subject/body).
+  3. The doc explicitly resolves role propagation through `mint_from_derivation` (e.g. `ReportDerivedClaim`'s `Concat` transform over a Reply-To/Domain pair) — what role, if any, a derived/composite value carries — not left implicit.
+  4. The doc pins the fail-closed default: a value with no assigned role, or a role that isn't in the expected-role table for the target slot, hitting a role-checked slot is a `Deny` — never a silent pass-through to `Allowed`.
+  5. The doc has cleared a fresh (non-self) adversarial review with every raised finding resolved, and no `crates/executor` or `crates/brokerd` mint-site code exists yet.
 
-**Plans**: 2/2 plans complete
-**Wave 1**
+**Plans**: TBD
 
-- [x] 18-01-PLAN.md — Author `DESIGN-session-trust-coherence.md` resolving DESIGN-01..06 (fix shape, replay re-earning, three-mint-site audit, decision oracle, per-verb capability split, guard-(c) status)
+### Phase 24: Slot-Type Binding Enforcement
 
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 18-02-PLAN.md — Fresh adversarial gate: independent code-tracing review → `DESIGN-GATE-RECORD-v1.4.md`, resolve every finding, gate CLEARED before Phase 19
-
-### Phase 19: Cross-Connection Trust Coherence Fix
-
-**Goal**: The broker rejects a second connection to an already-active session, closing the cross-connection `ProvideIntent` bypass that let a worker mint an attacker-controlled `UserTrusted` literal and route it to `email.send` as `Allowed`.
-**Depends on**: Phase 18
-**Requirements**: TRUST-01, TRUST-02, TRUST-03, DOC-02
+**Goal**: The executor structurally enforces that a resolved value's semantic origin role matches its plan-node slot's expected role, per Phase 23's design ruling — closing the v1.4 T2 residual (a misrouted `UserTrusted` handle is now caught even though it is neither untrusted nor a class-level deny).
+**Depends on**: Phase 23 (design gate must clear first — no TCB code before it)
+**Requirements**: T2-02, T2-03, T2-04, T2-05
 **Success Criteria** (what must be TRUE):
 
-  1. A second connection attempt to an already-active session is rejected by the broker — the "smaller hammer" fix specified in Phase 18's DESIGN doc, implemented in `server.rs`.
-  2. `crates/brokerd/tests/two_connection_intent_bypass.rs`'s `#[ignore]` is removed and the test passes green, with its safe-outcome assertions completely unchanged from what was written pre-fix.
-  3. `scripts/mailpit-verify.sh`'s full existing test suite (the v1.3 live acceptance) is independently re-run on real Linux and still passes — no regression, not assumed from a prior pass.
-  4. PROJECT.md's DOC-02 correction is finalized against the shipped fix (the scoping-time draft disclosure is confirmed accurate against the actual fix, not left aspirational).
+  1. Every minted value (via `mint_from_intent`, `mint_from_read`, `mint_from_derivation`) carries a semantic origin-role tag, added as an additive, mechanical change to the three mint call sites' signatures; I0/I1 trust classification (which values become `UserTrusted` vs untrusted) is unaffected.
+  2. A hardcoded per-sink-arg "expected role" table exists in `crates/executor`, scoped to the two live sinks (`email.send`, `file.create`), mirroring the `sink_sensitivity.rs` CONTENT-01/02 precedent — not a general framework.
+  3. A new exhaustive `DenyReason` variant exists for a slot-type mismatch (no wildcard arm), and every existing exhaustive match over `DenyReason` across the workspace (CLI rendering, audit serialization/`code()`/`Display`, existing tests) is updated for the new arm — not just the match inside `submit_plan_node`.
+  4. `submit_plan_node` denies (or blocks, per Phase 23's ordering ruling) a plan node when a resolved value's origin role doesn't match its slot's expected role, evaluated per-arg in the same pass as the existing routing/content-sensitivity check, without weakening or reordering the existing I0 (Step 0.5 class-deny) / I2 (per-arg Block) precedence.
 
-**Plans**: 2/2 plans complete
+**Plans**: TBD
 
-**Wave 1**
+### Phase 25: Regression & Live Proof
 
-- [x] 19-01-PLAN.md — One-way accept-loop occupancy latch in `server.rs` + restructure `two_connection_intent_bypass.rs` into 3 fresh-broker variants (guard-a control, overlapping, new sequential-reconnect), un-ignore (TRUST-01, TRUST-02)
-
-**Wave 2** *(depends on Wave 1)*
-
-- [x] 19-02-PLAN.md — Live Linux `mailpit-verify.sh` rerun with captured pass/fail counts (RED→GREEN proof + no-regression) + finalize PROJECT.md's DOC-02 disclosure against the shipped fix (TRUST-03, DOC-02)
-
-### Phase 20: Planner Seam & Capability Split
-
-**Goal**: A designed `Planner` seam exists in code, a connection identifying itself in the planner role can never hold a mint verb, and the planner is structurally kept out of the process/context that touches the worker's raw untrusted bytes.
-**Depends on**: Phase 19
-**Requirements**: PLANNER-01, PLANNER-02, PLANNER-04
+**Goal**: The T2 gap is demonstrably closed on real Linux — a deliberately swapped subject/recipient handle pair produces the new deny with an unbroken audited chain, existing tests no longer rely on permissive `UserTrusted`-in-any-slot behavior, and the full workspace regression is independently re-verified green (the v1.5 DONE gate).
+**Depends on**: Phase 24
+**Requirements**: T2-06, T2-07, T2-08
 **Success Criteria** (what must be TRUE):
 
-  1. A `Planner` trait exists, and the existing deterministic intent→PlanNode logic (today a bare `plan_from_intent` fn) is refactored to implement it — the seam is a real abstraction, not a rename.
-  2. A connection operating in the planner role is rejected by the broker if it sends `ProvideIntent`, `ReportClaims`, or `ReportDerivedClaim` — proven by a test that attempts each verb on that connection and observes rejection.
-  3. The planner never receives the worker's raw-bytes fd or raw untrusted content — it is given only typed extracts and handle IDs, with no filesystem capability and no network reachability beyond its own inference endpoint.
-  4. All pre-existing deterministic-planner-based tests/behavior from v1.0-v1.3 continue to pass unchanged through the new seam — no regression from the refactor.
+  1. A held-out acceptance test proves a plan node with a deliberately swapped subject↔recipient handle pair (both `UserTrusted`, both otherwise valid) produces the new deny, with a corresponding audit-DAG event recorded and `verify_chain` still true.
+  2. Existing tests that currently rely on permissive `UserTrusted`-in-any-slot behavior are identified via a regression audit and updated so the new check isn't silently bypassed or broken by a fixture that never assigns a role.
+  3. `scripts/mailpit-verify.sh` is independently re-run green (0 failures) after the change lands — not assumed from a prior pass, per this project's standing milestone-close discipline.
 
-**Plans**: 3/3 plans complete
-**Wave 1**
-
-- [x] 20-01-PLAN.md — Introduce the `Planner` trait seam; refactor the deterministic `plan_from_intent` to implement it; worker calls via the trait (PLANNER-01, PLANNER-04)
-- [x] 20-02-PLAN.md — Per-connection capability split + accept-loop extension: planner-role connection holds no mint verb and no fd, fail-closed default-deny; Phase 19 latch extended + regression tests unmodified (PLANNER-02, PLANNER-04)
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 20-03-PLAN.md — Reduce the `SubmitPlanNode` decision oracle for the planner role (no anchors/digest/literal), per DESIGN §7 (PLANNER-04)
-
-### Phase 21: Adversarial LLM Planner
-
-**Goal**: A minimal LLM-backed planner, running behind Phase 20's seam, drives a real intent end-to-end using only `PlanNode{sink, args}` — no literal field to carry.
-**Depends on**: Phase 20
-**Requirements**: PLANNER-03
-**Success Criteria** (what must be TRUE):
-
-  1. An LLM-backed implementation of the `Planner` trait exists and is selectable in place of the deterministic planner.
-  2. Given a clean, trusted intent, the LLM planner emits a syntactically valid `PlanNode{sink, args}` referencing handle IDs only (never a literal value), and the executor Allows it, delivering a real send.
-  3. The LLM planner's own prompt/tool-call construction is built only from typed extracts and handle IDs — never raw untrusted bytes — consistent with Phase 20's co-location boundary.
-
-**Plans**: 4/4 plans complete
-
-Plans:
-**Wave 1**
-
-- [x] 21-01-PLAN.md — `llm-planner` pure lib: wire types + `build_planner_prompt` + tool schema + fail-closed `parse_planner_response` (Wave 1)
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 21-02-PLAN.md — `caprun-planner` out-of-process OpenAI sidecar (real tool-calling call; reqwest isolated here) + reqwest legitimacy gate (Wave 2)
-- [x] 21-03-PLAN.md — worker-side `LlmPlanner` proxy behind the Phase-20 seam + caprun main/worker sidecar wiring, no TCB changes (Wave 2)
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 21-04-PLAN.md — live clean-path acceptance: real OpenAI call → Allowed → Mailpit-verified delivery; cost documented (Wave 3)
-
-### Phase 22: Adversarial Gate Proof & Residual Disclosure
-
-**Goal**: The trust boundary is proven indifferent to planner intelligence — a hostile-doc-primed LLM planner complies and tries to route a tainted value to `email.send`, and the executor Blocks it deterministically with genuine, live-verified taint propagation; the one remaining unenforced degree of freedom (T2) is honestly documented rather than silently left implicit.
-**Depends on**: Phase 21
-**Requirements**: GATE-01, GATE-02, GATE-03, GATE-04, T2-01
-**Success Criteria** (what must be TRUE):
-
-  1. A hostile document whose embedded injection instructs the LLM planner to email `attacker@evil.com` causes the planner to comply, emitting a syntactically valid `PlanNode` that routes the tainted handle to `to`.
-  2. The executor Blocks that PlanNode deterministically; `verify_chain` is true; Mailpit's captured-message count is 0 — proven live on real Linux via `scripts/mailpit-verify.sh`, not asserted from code alone.
-  3. In the SAME run, a trusted-intent control on the same sink Allows and delivers exactly once.
-  4. A deterministic construction-site sentinel assertion (feed the prompt constructor a sentinel-tagged tainted record — sentinel each fragment — and assert the sentinel bytes never appear in the constructed prompt) replaces the old context-dump grep, and is unit-level/deterministic, not probabilistic.
-  5. PROJECT.md (and/or the DESIGN doc) documents T2 (slot-type binding) as the accepted v1.4 residual risk — safe today only by incidental human-typing of every `UserTrusted` handle — with enforcement explicitly deferred to v1.5.
-
-**Plans**: 3/3 plans complete
-**Wave 1**
-
-- [x] 22-01-PLAN.md — task_instruction injection channel (GATE-01) + GATE-04 deterministic sentinel-leak unit test
-- [x] 22-03-PLAN.md — T2 slot-type-binding residual disclosure in PROJECT.md, deferred to v1.5 (T2-01)
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 22-02-PLAN.md — composed live HARD GATE proof: hostile leg blocks + clean control delivers once, live via mailpit-verify.sh (GATE-01/02/03)
+**Plans**: TBD
 
 ## Progress
 
@@ -228,3 +167,6 @@ Plans:
 | 20. Planner Seam & Capability Split | v1.4 | 3/3 | Complete    | 2026-07-11 |
 | 21. Adversarial LLM Planner | v1.4 | 4/4 | Complete    | 2026-07-11 |
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 3/3 | Complete    | 2026-07-11 |
+| 23. Slot-Type Binding Design Gate | v1.5 | 0/TBD | Not started | - |
+| 24. Slot-Type Binding Enforcement | v1.5 | 0/TBD | Not started | - |
+| 25. Regression & Live Proof | v1.5 | 0/TBD | Not started | - |

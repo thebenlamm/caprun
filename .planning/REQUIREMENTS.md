@@ -63,7 +63,7 @@ v1.2 Phase 8, v1.3 Phase 12, and v1.4 Phase 18 did before it.
 - [ ] **T2-05**: `submit_plan_node` denies (or blocks, per DESIGN-07's
       ordering ruling) a plan node when a resolved value's origin role
       doesn't match its slot's expected role, evaluated per-arg in the same
-      pass as the existing routing/content-sensitivity check — without
+      pass as the existing routing/content-sensitivity check, without
       weakening or reordering the existing I0 (Step 0.5 class-deny) / I2
       (per-arg Block) precedence.
 
@@ -103,24 +103,24 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DESIGN-07 | TBD | Pending |
-| DESIGN-08 | TBD | Pending |
-| DESIGN-09 | TBD | Pending |
-| DESIGN-10 | TBD | Pending |
-| T2-02 | TBD | Pending |
-| T2-03 | TBD | Pending |
-| T2-04 | TBD | Pending |
-| T2-05 | TBD | Pending |
-| T2-06 | TBD | Pending |
-| T2-07 | TBD | Pending |
-| T2-08 | TBD | Pending |
+| DESIGN-07 | Phase 23 | Pending |
+| DESIGN-08 | Phase 23 | Pending |
+| DESIGN-09 | Phase 23 | Pending |
+| DESIGN-10 | Phase 23 | Pending |
+| T2-02 | Phase 24 | Pending |
+| T2-03 | Phase 24 | Pending |
+| T2-04 | Phase 24 | Pending |
+| T2-05 | Phase 24 | Pending |
+| T2-06 | Phase 25 | Pending |
+| T2-07 | Phase 25 | Pending |
+| T2-08 | Phase 25 | Pending |
 
 **Coverage:**
 
 - v1 requirements: 11 total
-- Mapped to phases: 0
-- Unmapped: 11 ⚠️ (roadmap not yet created)
+- Mapped to phases: 11
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-07-11*
-*Last updated: 2026-07-11 after milestone v1.5 scoping.*
+*Last updated: 2026-07-11 after v1.5 roadmap created (3 phases: 23-25), 11/11 requirements mapped, 0 orphans.*
