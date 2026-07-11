@@ -163,7 +163,13 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   2. Given a clean, trusted intent, the LLM planner emits a syntactically valid `PlanNode{sink, args}` referencing handle IDs only (never a literal value), and the executor Allows it, delivering a real send.
   3. The LLM planner's own prompt/tool-call construction is built only from typed extracts and handle IDs — never raw untrusted bytes — consistent with Phase 20's co-location boundary.
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 21-01-PLAN.md — `llm-planner` pure lib: wire types + `build_planner_prompt` + tool schema + fail-closed `parse_planner_response` (Wave 1)
+- [ ] 21-02-PLAN.md — `caprun-planner` out-of-process OpenAI sidecar (real tool-calling call; reqwest isolated here) + reqwest legitimacy gate (Wave 2)
+- [ ] 21-03-PLAN.md — worker-side `LlmPlanner` proxy behind the Phase-20 seam + caprun main/worker sidecar wiring, no TCB changes (Wave 2)
+- [ ] 21-04-PLAN.md — live clean-path acceptance: real OpenAI call → Allowed → Mailpit-verified delivery; cost documented (Wave 3)
 
 ### Phase 22: Adversarial Gate Proof & Residual Disclosure
 
