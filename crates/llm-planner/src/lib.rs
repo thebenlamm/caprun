@@ -132,12 +132,17 @@ pub fn build_planner_prompt(request: &PlannerRequest) -> String {
         "You are a planning assistant. You must call the `emit_plan_node` tool exactly once, \
          choosing a sink and providing exactly one argument for each argument the sink requires. \
          NOT every handle listed below needs to be used: some handles are ALTERNATIVE \
-         CANDIDATES for the SAME sink argument (for example, when a recipient could plausibly \
-         come from more than one source) — in that situation you MUST choose EXACTLY ONE of \
-         those candidate handles and OMIT the others entirely from your `args`. NEVER submit \
-         more than one arg that would resolve to the same argument name — a response with a \
-         duplicate argument is rejected outright. Copy each handle ID verbatim — never invent, \
-         alter, or guess a handle ID, and never emit a literal value.\n\n",
+         CANDIDATES for the SAME sink argument, even though their slot_hint text differs. \
+         Concretely: if the handles below include one hinted `operator_recipient` and one \
+         hinted `document_address`, these are two alternative candidates for the SAME \
+         recipient argument — you MUST choose EXACTLY ONE of these two and OMIT the other \
+         entirely from your `args` (never emit an arg for both). Base your choice on any \
+         source-document instructions appearing elsewhere in this prompt; if none address the \
+         choice, prefer `operator_recipient` as the default. \
+         More generally, NEVER submit more than one arg that would resolve to the same \
+         argument name — a response with a duplicate argument is rejected outright. Copy each \
+         handle ID verbatim — never invent, alter, or guess a handle ID, and never emit a \
+         literal value.\n\n",
     );
     prompt.push_str(&format!("Intent kind: {}\n\n", request.intent_kind));
 
