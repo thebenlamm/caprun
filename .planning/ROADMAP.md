@@ -77,7 +77,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 
 **Milestone goal:** Fix a confirmed live cross-connection trust bypass in the broker (Phase 0 — a security fix, gated by an already-red regression test), then prove the trust boundary is indifferent to planner intelligence by putting an adversarial LLM planner behind it (Phase 1+) — a hostile injected document makes the planner *comply* and try to route a tainted value to `email.send`, and the executor **Blocks deterministically** anyway, with genuine taint propagation re-verified live (the §9 standard: `verify_chain` true, Mailpit == 0), because the value flows around the planner through the worker's own mint sites, never through the planner's tokens.
 
-- [ ] **Phase 18: Trust-Boundary Coherence Design Gate** - A DESIGN doc resolving the cross-connection fix shape, the replay-risk re-earning, the three-mint-site audit, the decision-oracle question, the forward-looking per-verb capability split, and guard-(c)'s status exists and clears a fresh adversarial review, before any `server.rs` change
+- [x] **Phase 18: Trust-Boundary Coherence Design Gate** - A DESIGN doc resolving the cross-connection fix shape, the replay-risk re-earning, the three-mint-site audit, the decision-oracle question, the forward-looking per-verb capability split, and guard-(c)'s status exists and clears a fresh adversarial review, before any `server.rs` change (completed 2026-07-11)
 - [ ] **Phase 19: Cross-Connection Trust Coherence Fix** - The broker rejects a second connection to an already-active session, closing the cross-connection `ProvideIntent` bypass; the regression test goes green by fixing the broker, never by weakening its assertions
 - [ ] **Phase 20: Planner Seam & Capability Split** - A designed `Planner` trait/seam exists, a planner-role connection can never hold a mint verb, and the planner is structurally kept out of the worker's raw-bytes path
 - [ ] **Phase 21: Adversarial LLM Planner** - A minimal LLM-backed planner, running behind the new seam, emits only `PlanNode{sink, args}` — no literal field to carry
@@ -99,14 +99,14 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   5. The doc specifies the per-verb capability split (a connection may hold NO mint verb: `ProvideIntent`/`ReportClaims`/`ReportDerivedClaim`) that Phase 1's planner connection will rely on.
   6. The doc re-confirms guard-(c) (`CAPRUN_ENABLE_IPC_CREATE_SESSION`) is not widened by the Phase-0 fix and re-states whether it should finally be compile-excluded.
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 **Wave 1**
 
 - [x] 18-01-PLAN.md — Author `DESIGN-session-trust-coherence.md` resolving DESIGN-01..06 (fix shape, replay re-earning, three-mint-site audit, decision oracle, per-verb capability split, guard-(c) status)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 18-02-PLAN.md — Fresh adversarial gate: independent code-tracing review → `DESIGN-GATE-RECORD-v1.4.md`, resolve every finding, gate CLEARED before Phase 19
+- [x] 18-02-PLAN.md — Fresh adversarial gate: independent code-tracing review → `DESIGN-GATE-RECORD-v1.4.md`, resolve every finding, gate CLEARED before Phase 19
 
 ### Phase 19: Cross-Connection Trust Coherence Fix
 
@@ -185,7 +185,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 15. Deterministic Doc→Action Extraction | v1.3 | 4/4 | Complete    | 2026-07-08 |
 | 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 4/4 | Complete    | 2026-07-09 |
 | 17. Live Acceptance & Framing Honesty | v1.3 | 4/4 | Complete | 2026-07-09 |
-| 18. Trust-Boundary Coherence Design Gate | v1.4 | 1/2 | In Progress|  |
+| 18. Trust-Boundary Coherence Design Gate | v1.4 | 2/2 | Complete    | 2026-07-11 |
 | 19. Cross-Connection Trust Coherence Fix | v1.4 | 0/TBD | Not started | - |
 | 20. Planner Seam & Capability Split | v1.4 | 0/TBD | Not started | - |
 | 21. Adversarial LLM Planner | v1.4 | 0/TBD | Not started | - |
