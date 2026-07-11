@@ -100,8 +100,12 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   6. The doc re-confirms guard-(c) (`CAPRUN_ENABLE_IPC_CREATE_SESSION`) is not widened by the Phase-0 fix and re-states whether it should finally be compile-excluded.
 
 **Plans**: 2 plans
+**Wave 1**
 
 - [ ] 18-01-PLAN.md — Author `DESIGN-session-trust-coherence.md` resolving DESIGN-01..06 (fix shape, replay re-earning, three-mint-site audit, decision oracle, per-verb capability split, guard-(c) status)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 18-02-PLAN.md — Fresh adversarial gate: independent code-tracing review → `DESIGN-GATE-RECORD-v1.4.md`, resolve every finding, gate CLEARED before Phase 19
 
 ### Phase 19: Cross-Connection Trust Coherence Fix
