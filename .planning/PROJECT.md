@@ -93,16 +93,34 @@ doc→action extraction with genuine provenance threading
 (CONFIRM-01..04, CONTROL-01/02); ACCEPT-01 composed live acceptance (3
 sessions, one shared audit.db, all `verify_chain`-true).
 
-**⚠️ Superseded finding (v1.4 Phase 0):** an adversarial review after v1.3
-shipped found, and a Linux repro CONFIRMED, that guard(a) (`ProvideIntent`
-sealed after `RequestFd`) is **per-connection state only** — a second
-`AF_UNIX` connection to the same session socket bypasses it entirely,
-minting an attacker-controlled `UserTrusted` literal that routes to
-`email.send` as `Allowed`. This means the `UserTrusted == human-typed`
-invariant, which v1.3's whole confirm/deny narrative rests on, did **not**
-hold across connections as shipped. Not a production incident (nothing
-deployed; repo unpushed). See `crates/brokerd/tests/two_connection_intent_bypass.rs`
-(the regression gate) and v1.4 Phase 0 (the fix).
+**⚠️ Superseded finding (v1.4 Phase 0) — FIXED, SHIPPED 2026-07-11:** an
+adversarial review after v1.3 shipped found, and a Linux repro CONFIRMED,
+that guard(a) (`ProvideIntent` sealed after `RequestFd`) was
+**per-connection state only** — a second `AF_UNIX` connection to the same
+session socket bypassed it entirely, minting an attacker-controlled
+`UserTrusted` literal that routed to `email.send` as `Allowed`. This meant
+the `UserTrusted == human-typed` invariant, which v1.3's whole confirm/deny
+narrative rests on, did **not** hold across connections as shipped. Not a
+production incident (nothing deployed; repo unpushed).
+
+**The fix, as shipped:** a one-way, session-lifetime occupancy latch was
+added to `run_broker_server`'s accept loop (`crates/brokerd/src/server.rs`)
+that rejects any second connection to an already-active session — set once
+on first accept, never cleared for the life of the broker invocation, and
+checked *before* any per-connection `session_status`/`intent_provided`/
+`fd_requested` state is ever seeded for the rejected stream. This restores
+the `UserTrusted == human-typed` invariant across connections, not just
+within one. Test evidence: `crates/brokerd/tests/two_connection_intent_bypass.rs`'s
+three independent fresh-broker variants (`guard_a_intra_connection_control`,
+`overlapping_connection_bypass_repro`, `sequential_reconnect_bypass_repro`)
+all pass green on real Linux (`test result: ok. 3 passed; 0 failed; 0
+ignored`), and the full `scripts/mailpit-verify.sh` (`cargo test --workspace
+--no-fail-fast`) live-Linux rerun is green with no regression: 253 passed, 0
+failed, across 37 binaries — exactly v1.3's 250/0/36 baseline plus the 3
+newly-un-ignored tests and their 1 new test binary. See
+`.planning/phases/19-cross-connection-trust-coherence-fix/19-01-SUMMARY.md`
+(the fix mechanism) and `19-02-SUMMARY.md` (the live-Linux proof, verbatim
+counts).
 
 **What v1.3's live proof does and does not claim (DOC-01):** CONTROL-01
 proves that a send built from TRUSTED intent is Allowed and delivers, and that
@@ -306,11 +324,14 @@ v1.4 — Trust-Boundary Integrity & the Adversarial Planner (scoped
   shared state" decision. Round 2 (independent, no memory of round 1)
   confirmed the fix closes both variants with no residual race. DESIGN-01
   through DESIGN-06 all resolved; Phase 19 may begin the `server.rs` change.
-- Phase 19 (next): implement the one-way latch in `server.rs`'s accept
-  loop; un-ignore `two_connection_intent_bypass_repro` AND add a new
-  sequential-reconnect regression test variant, each against its own fresh
-  `run_broker_server` instance; independently re-run
-  `scripts/mailpit-verify.sh`; finalize DOC-02's PROJECT.md correction.
+- ✓ **Phase 19 (Cross-Connection Trust Coherence Fix) SHIPPED (2026-07-11):**
+  one-way occupancy latch implemented in `server.rs`'s accept loop;
+  `two_connection_intent_bypass_repro`'s `#[ignore]` removed and the test
+  restructured into 3 independent fresh-broker variants (guard-a control,
+  overlapping, sequential-reconnect) — all green on real Linux;
+  `scripts/mailpit-verify.sh` independently re-run, full workspace suite
+  green (253 passed / 0 failed / 37 binaries, no regression from v1.3's
+  250/0/36 baseline). TRUST-01, TRUST-02, TRUST-03, and DOC-02 complete.
 - Phase 1+ (20-22): adversarial LLM planner behind the existing trust boundary,
   per-verb capability split (planner connection holds no mint verb),
   deterministic construction-site sentinel assertion replacing the
