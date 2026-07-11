@@ -120,11 +120,11 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   3. `scripts/mailpit-verify.sh`'s full existing test suite (the v1.3 live acceptance) is independently re-run on real Linux and still passes — no regression, not assumed from a prior pass.
   4. PROJECT.md's DOC-02 correction is finalized against the shipped fix (the scoping-time draft disclosure is confirmed accurate against the actual fix, not left aspirational).
 
-**Plans**: 2 plans
+**Plans**: 1/2 plans executed
 
 **Wave 1**
 
-- [ ] 19-01-PLAN.md — One-way accept-loop occupancy latch in `server.rs` + restructure `two_connection_intent_bypass.rs` into 3 fresh-broker variants (guard-a control, overlapping, new sequential-reconnect), un-ignore (TRUST-01, TRUST-02)
+- [x] 19-01-PLAN.md — One-way accept-loop occupancy latch in `server.rs` + restructure `two_connection_intent_bypass.rs` into 3 fresh-broker variants (guard-a control, overlapping, new sequential-reconnect), un-ignore (TRUST-01, TRUST-02)
 
 **Wave 2** *(depends on Wave 1)*
 
@@ -194,7 +194,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 4/4 | Complete    | 2026-07-09 |
 | 17. Live Acceptance & Framing Honesty | v1.3 | 4/4 | Complete | 2026-07-09 |
 | 18. Trust-Boundary Coherence Design Gate | v1.4 | 2/2 | Complete    | 2026-07-11 |
-| 19. Cross-Connection Trust Coherence Fix | v1.4 | 0/TBD | Not started | - |
+| 19. Cross-Connection Trust Coherence Fix | v1.4 | 1/2 | In Progress|  |
 | 20. Planner Seam & Capability Split | v1.4 | 0/TBD | Not started | - |
 | 21. Adversarial LLM Planner | v1.4 | 0/TBD | Not started | - |
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 0/TBD | Not started | - |
