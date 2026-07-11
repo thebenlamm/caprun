@@ -60,7 +60,13 @@ use std::time::{Duration, Instant};
 /// content, or a taint label.
 pub trait Planner {
     /// Map a typed `CaprunIntent` + opaque `ValueId` handles to a `PlanNode`.
-    /// Parameters mirror `plan_from_intent` exactly (see its doc below).
+    /// Parameters mirror `plan_from_intent` exactly (see its doc below), plus
+    /// `task_instruction` (Phase 22 / GATE-01): an optional, genuinely-tainted
+    /// instruction fragment extracted worker-side from the raw untrusted
+    /// document. It is a `String`, NEVER a `ValueId` — it carries no handle
+    /// and cannot be bound into a sink arg; `DeterministicPlanner` ignores it
+    /// entirely, `LlmPlanner` forwards it into the sidecar prompt as task
+    /// framing only.
     fn plan(
         &self,
         intent: &CaprunIntent,
@@ -69,6 +75,7 @@ pub trait Planner {
         body: Option<ValueId>,
         trusted_subject_handle: ValueId,
         trusted_body_handle: ValueId,
+        task_instruction: Option<String>,
     ) -> PlanNode;
 }
 
@@ -86,6 +93,10 @@ impl Planner for DeterministicPlanner {
         body: Option<ValueId>,
         trusted_subject_handle: ValueId,
         trusted_body_handle: ValueId,
+        // Ignored entirely — the deterministic planner's output stays
+        // byte-identical whether or not an instruction fragment was
+        // extracted (Phase 22 / GATE-01 introduces no regression here).
+        _task_instruction: Option<String>,
     ) -> PlanNode {
         plan_from_intent(
             intent,
@@ -300,6 +311,7 @@ impl Planner for LlmPlanner {
         body: Option<ValueId>,
         trusted_subject_handle: ValueId,
         trusted_body_handle: ValueId,
+        task_instruction: Option<String>,
     ) -> PlanNode {
         let (request, offered, known_sinks, canonical_names) = build_planner_request(
             intent,
@@ -308,6 +320,7 @@ impl Planner for LlmPlanner {
             body.as_ref(),
             &trusted_subject_handle,
             &trusted_body_handle,
+            task_instruction.as_deref(),
         );
 
         let response = match self.request_plan_from_sidecar(&request) {
@@ -333,22 +346,50 @@ impl Planner for LlmPlanner {
 }
 
 /// Build the `PlannerRequest` for `intent` from the SAME six routing params
-/// `Planner::plan` receives, choosing the effective handle for each of the
-/// three offered slots (`recipient`/`subject`/`body`) via the IDENTICAL
-/// override rule `plan_from_intent` above already uses:
-///   - `recipient` = `derived_recipient` when `Some`, else `intent_value_id`.
-///   - `subject`   = `trusted_subject_handle` (never overridden — matches
-///                   `plan_from_intent`'s unconditional use).
-///   - `body`      = `body` when `Some`, else `trusted_body_handle`.
+/// `Planner::plan` receives, plus `task_instruction` (Phase 22 / GATE-01: the
+/// genuinely-tainted instruction fragment the worker extracted, threaded
+/// straight into `PlannerRequest.task_instruction` — NEVER resolved to or
+/// from a handle).
+///
+/// # Two-handle recipient offering (T-22-02 / GATE-01)
+///
+/// For `SendEmailSummary`, when `derived_recipient` is `Some` (i.e. the
+/// confined worker found BOTH Reply-To:/Domain: recipient-half markers), this
+/// function offers the LLM a genuine CHOICE instead of a single handle: the
+/// trusted `intent_value_id` under slot_hint `"operator_recipient"` AND the
+/// tainted `derived_recipient` under slot_hint `"document_address"` — BOTH
+/// mapped in `canonical_names` to the sink arg name `"to"`, so whichever the
+/// model picks becomes the `to` arg (via `response_to_plan_node`'s identity
+/// lookup, never the model's own arg name). This is what makes the injection
+/// load-bearing: absent an injection, a well-behaved planner routes the
+/// operator handle to `to` (Allowed); the injection is what makes the model
+/// route the tainted document handle to `to` instead (Blocked downstream).
+///
+/// CRITICAL: this two-handle offering is keyed SOLELY on `derived_recipient`
+/// being `Some` — INDEPENDENT of whether `task_instruction` is `Some`. A
+/// document carrying the recipient markers but NO injection marker still
+/// gets both handles offered, with `task_instruction = None`. This decoupling
+/// is the structural guarantee Plan 22-02's control leg depends on (both
+/// handles offered, no injection present — isolating the injection as the
+/// causal factor rather than a positional bias).
+///
+/// When `derived_recipient` is `None` (clean path — no marker fragments, or
+/// `CreateFileFromReport`), the single-handle behavior is UNCHANGED from
+/// Phase 21: one `"recipient"`-hinted handle carrying the same
+/// `derived_recipient`-or-`intent_value_id` fallback `plan_from_intent`
+/// itself uses. `subject`/`body` handling is unchanged in all cases:
+///   - `subject` = `trusted_subject_handle` (never overridden).
+///   - `body`    = `body` when `Some`, else `trusted_body_handle`.
 ///
 /// Returns the request alongside the `offered` handle set, `known_sinks`
 /// list, and `canonical_names` mapping so the caller can pass them,
 /// UNCHANGED, into `response_to_plan_node` — the validator's allowlists are
 /// always exactly what this function put on the wire, never re-derived or
-/// guessed. Carries only `ValueId` handles + slot hints and a typed
-/// `intent_kind`/`available_sinks` label — no other value-bearing field (the
-/// `PlannerRequest`/`HandleLabel` types themselves are structurally
-/// incapable of carrying a literal, per `llm-planner`'s own key-set tests).
+/// guessed. Carries only `ValueId` handles + slot hints + a typed
+/// `intent_kind`/`available_sinks` label + `task_instruction` framing text —
+/// no PER-HANDLE value-bearing field (the `PlannerRequest`/`HandleLabel`
+/// types themselves are structurally incapable of carrying a per-handle
+/// literal, per `llm-planner`'s own key-set tests).
 ///
 /// `canonical_names` pairs each offered handle with the EXACT arg name
 /// `crates/executor/src/sink_schema.rs`'s hardcoded per-sink schema requires
@@ -361,10 +402,8 @@ pub fn build_planner_request(
     body: Option<&ValueId>,
     trusted_subject_handle: &ValueId,
     trusted_body_handle: &ValueId,
+    task_instruction: Option<&str>,
 ) -> (PlannerRequest, Vec<ValueId>, Vec<String>, Vec<(ValueId, String)>) {
-    let recipient = derived_recipient
-        .cloned()
-        .unwrap_or_else(|| intent_value_id.clone());
     let subject = trusted_subject_handle.clone();
     let body_handle = body.cloned().unwrap_or_else(|| trusted_body_handle.clone());
 
@@ -377,32 +416,83 @@ pub fn build_planner_request(
         }
     };
 
-    let available_handles = vec![
-        HandleLabel { slot_hint: "recipient".to_string(), value_id: recipient.clone() },
-        HandleLabel { slot_hint: "subject".to_string(), value_id: subject.clone() },
-        HandleLabel { slot_hint: "body".to_string(), value_id: body_handle.clone() },
-    ];
-
-    let offered = vec![recipient.clone(), subject.clone(), body_handle.clone()];
-
-    // The recipient/subject/body slot -> canonical sink-arg-name mapping,
-    // per intent kind. `CreateFileFromReport` only maps its routing
-    // (`recipient`-slot) handle to `"path"` — `file.create`'s OTHER required
-    // arg (`"contents"`) is always `intent_value_id` in `plan_from_intent`'s
-    // own deterministic mapping, never one of this function's three offered
-    // slots, so `file.create` via the LLM planner is intentionally left
-    // unmapped for `subject`/`body` here (out of this plan's tested scope —
-    // only the `SendEmailSummary` clean path is proven live by Plan 21-04; a
-    // `file.create` mismatch still fails closed via `validate_schema`,
-    // unchanged from before this fix).
-    let canonical_names: Vec<(ValueId, String)> = match intent {
-        CaprunIntent::SendEmailSummary { .. } => vec![
-            (recipient.clone(), "to".to_string()),
-            (subject.clone(), "subject".to_string()),
-            (body_handle.clone(), "body".to_string()),
-        ],
+    let (available_handles, offered, canonical_names): (
+        Vec<HandleLabel>,
+        Vec<ValueId>,
+        Vec<(ValueId, String)>,
+    ) = match intent {
+        CaprunIntent::SendEmailSummary { .. } => match derived_recipient {
+            // Two-handle offering (T-22-02 / GATE-01): keyed SOLELY on
+            // derived_recipient being Some, independent of task_instruction
+            // (see doc comment above) — this is the load-bearing choice
+            // Plan 22-02's live proof needs.
+            Some(derived) => {
+                let handles = vec![
+                    HandleLabel {
+                        slot_hint: "operator_recipient".to_string(),
+                        value_id: intent_value_id.clone(),
+                    },
+                    HandleLabel {
+                        slot_hint: "document_address".to_string(),
+                        value_id: derived.clone(),
+                    },
+                    HandleLabel { slot_hint: "subject".to_string(), value_id: subject.clone() },
+                    HandleLabel { slot_hint: "body".to_string(), value_id: body_handle.clone() },
+                ];
+                let offered = vec![
+                    intent_value_id.clone(),
+                    derived.clone(),
+                    subject.clone(),
+                    body_handle.clone(),
+                ];
+                let canonical_names = vec![
+                    (intent_value_id.clone(), "to".to_string()),
+                    (derived.clone(), "to".to_string()),
+                    (subject.clone(), "subject".to_string()),
+                    (body_handle.clone(), "body".to_string()),
+                ];
+                (handles, offered, canonical_names)
+            }
+            // Clean path (no derived_recipient): single trusted handle,
+            // exactly as Phase 21 offered it — Phase 21's clean live test is
+            // unaffected.
+            None => {
+                let recipient = intent_value_id.clone();
+                let handles = vec![
+                    HandleLabel { slot_hint: "recipient".to_string(), value_id: recipient.clone() },
+                    HandleLabel { slot_hint: "subject".to_string(), value_id: subject.clone() },
+                    HandleLabel { slot_hint: "body".to_string(), value_id: body_handle.clone() },
+                ];
+                let offered = vec![recipient.clone(), subject.clone(), body_handle.clone()];
+                let canonical_names = vec![
+                    (recipient.clone(), "to".to_string()),
+                    (subject.clone(), "subject".to_string()),
+                    (body_handle.clone(), "body".to_string()),
+                ];
+                (handles, offered, canonical_names)
+            }
+        },
+        // `CreateFileFromReport` is unaffected by the two-handle offering
+        // (out of this plan's scope — GATE-01..04 targets `email.send`'s
+        // `to` arg specifically): single `"recipient"`-hinted handle mapped
+        // to `"path"`, exactly as Phase 21. `file.create`'s OTHER required
+        // arg (`"contents"`) is always `intent_value_id` in
+        // `plan_from_intent`'s own deterministic mapping, never one of this
+        // function's offered slots, so `subject`/`body` are intentionally
+        // left unmapped here (a mismatch still fails closed via
+        // `validate_schema`, unchanged from before this plan).
         CaprunIntent::CreateFileFromReport { .. } => {
-            vec![(recipient.clone(), "path".to_string())]
+            let recipient = derived_recipient
+                .cloned()
+                .unwrap_or_else(|| intent_value_id.clone());
+            let handles = vec![
+                HandleLabel { slot_hint: "recipient".to_string(), value_id: recipient.clone() },
+                HandleLabel { slot_hint: "subject".to_string(), value_id: subject.clone() },
+                HandleLabel { slot_hint: "body".to_string(), value_id: body_handle.clone() },
+            ];
+            let offered = vec![recipient.clone(), subject.clone(), body_handle.clone()];
+            let canonical_names = vec![(recipient.clone(), "path".to_string())];
+            (handles, offered, canonical_names)
         }
     };
 
@@ -410,6 +500,7 @@ pub fn build_planner_request(
         intent_kind: intent_kind.to_string(),
         available_handles,
         available_sinks: available_sinks.clone(),
+        task_instruction: task_instruction.map(|s| s.to_string()),
     };
 
     (request, offered, available_sinks, canonical_names)

@@ -166,6 +166,7 @@ mod tests {
                 },
             ],
             available_sinks: vec!["email.send".to_string()],
+            task_instruction: None,
         }
     }
 
