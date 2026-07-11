@@ -243,3 +243,7 @@ None beyond what the plan's own `<threat_model>` already covers (the sidecar's `
 ---
 *Phase: 21-adversarial-llm-planner*
 *Completed: 2026-07-11*
+
+## Self-Check: PASSED
+
+All created/modified files verified present (`scripts/mailpit-verify.sh`, `cli/caprun/tests/llm_planner_live_accept.rs`, `cli/caprun/src/planner.rs`, `cli/caprun/src/worker.rs`, `cli/caprun/tests/planner.rs`, this SUMMARY.md); all 4 commit hashes (`69a3155`, `067c080`, `63c12cc`, `7c2e0ac`) verified present in git log; the live acceptance test was re-run against the exact committed state on real Linux (`scripts/mailpit-verify.sh`) and confirmed passing with captured real output (see above); `cargo test --workspace --no-fail-fast` (macOS) and `./scripts/check-invariants.sh` both re-confirmed clean.
