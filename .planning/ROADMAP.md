@@ -80,7 +80,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 - [x] **Phase 18: Trust-Boundary Coherence Design Gate** - A DESIGN doc resolving the cross-connection fix shape, the replay-risk re-earning, the three-mint-site audit, the decision-oracle question, the forward-looking per-verb capability split, and guard-(c)'s status exists and clears a fresh adversarial review, before any `server.rs` change (completed 2026-07-11)
 - [x] **Phase 19: Cross-Connection Trust Coherence Fix** - The broker rejects a second connection to an already-active session, closing the cross-connection `ProvideIntent` bypass; the regression test goes green by fixing the broker, never by weakening its assertions (completed 2026-07-11)
 - [x] **Phase 20: Planner Seam & Capability Split** - A designed `Planner` trait/seam exists, a planner-role connection can never hold a mint verb, and the planner is structurally kept out of the worker's raw-bytes path (completed 2026-07-11)
-- [ ] **Phase 21: Adversarial LLM Planner** - A minimal LLM-backed planner, running behind the new seam, emits only `PlanNode{sink, args}` — no literal field to carry
+- [x] **Phase 21: Adversarial LLM Planner** - A minimal LLM-backed planner, running behind the new seam, emits only `PlanNode{sink, args}` — no literal field to carry (completed 2026-07-11)
 - [ ] **Phase 22: Adversarial Gate Proof & Residual Disclosure** - A hostile-doc-primed planner complies and is Blocked deterministically with genuine, live-verified taint propagation; T2 is documented as the accepted v1.4 residual
 
 ## Phase Details
@@ -163,7 +163,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   2. Given a clean, trusted intent, the LLM planner emits a syntactically valid `PlanNode{sink, args}` referencing handle IDs only (never a literal value), and the executor Allows it, delivering a real send.
   3. The LLM planner's own prompt/tool-call construction is built only from typed extracts and handle IDs — never raw untrusted bytes — consistent with Phase 20's co-location boundary.
 
-**Plans**: 3/4 plans executed
+**Plans**: 4/4 plans complete
 
 Plans:
 **Wave 1**
@@ -177,7 +177,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 21-04-PLAN.md — live clean-path acceptance: real OpenAI call → Allowed → Mailpit-verified delivery; cost documented (Wave 3)
+- [x] 21-04-PLAN.md — live clean-path acceptance: real OpenAI call → Allowed → Mailpit-verified delivery; cost documented (Wave 3)
 
 ### Phase 22: Adversarial Gate Proof & Residual Disclosure
 
@@ -218,5 +218,5 @@ Plans:
 | 18. Trust-Boundary Coherence Design Gate | v1.4 | 2/2 | Complete    | 2026-07-11 |
 | 19. Cross-Connection Trust Coherence Fix | v1.4 | 2/2 | Complete    | 2026-07-11 |
 | 20. Planner Seam & Capability Split | v1.4 | 3/3 | Complete    | 2026-07-11 |
-| 21. Adversarial LLM Planner | v1.4 | 3/4 | In Progress|  |
+| 21. Adversarial LLM Planner | v1.4 | 4/4 | Complete   | 2026-07-11 |
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 0/TBD | Not started | - |
