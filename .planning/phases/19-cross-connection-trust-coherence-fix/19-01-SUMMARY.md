@@ -145,3 +145,12 @@ None - no external service configuration required. Actual Linux-side GREEN obser
 ---
 *Phase: 19-cross-connection-trust-coherence-fix*
 *Completed: 2026-07-11*
+
+## Self-Check: PASSED
+
+- FOUND: crates/brokerd/src/server.rs
+- FOUND: crates/brokerd/tests/two_connection_intent_bypass.rs
+- FOUND: .planning/phases/19-cross-connection-trust-coherence-fix/19-01-SUMMARY.md
+- FOUND commit: 4843dfc (Task 1)
+- FOUND commit: 9467e2a (Task 2)
+- FOUND commit: 95e8103 (SUMMARY.md)
