@@ -227,4 +227,4 @@ Plans:
 | 19. Cross-Connection Trust Coherence Fix | v1.4 | 2/2 | Complete    | 2026-07-11 |
 | 20. Planner Seam & Capability Split | v1.4 | 3/3 | Complete    | 2026-07-11 |
 | 21. Adversarial LLM Planner | v1.4 | 4/4 | Complete    | 2026-07-11 |
-| 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 3/3 | Complete   | 2026-07-11 |
+| 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 3/3 | Complete    | 2026-07-11 |
