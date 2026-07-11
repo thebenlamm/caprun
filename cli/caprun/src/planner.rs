@@ -25,11 +25,70 @@
 /// structurally CANNOT see provenance or taint (PLAN-03), so it never makes a
 /// "which handle is tainted" decision itself; it only places named handles by
 /// convention. The executor (not the planner) makes the trust decision.
+///
+/// # The `Planner` seam (PLANNER-01 / PLANNER-04, Phase 20)
+///
+/// `pub trait Planner` below is the swappable seam: `DeterministicPlanner`
+/// (this module) implements it today by delegating to `plan_from_intent`
+/// unchanged; Phase 21's adversarial `LlmPlanner` will implement the SAME
+/// trait, letting the worker call site (`cli/caprun/src/worker.rs`) swap
+/// planners without any change to its own code. The trait method carries the
+/// identical PLANNER-04 structural guarantee `plan_from_intent` already
+/// documents above: its only value-typed parameters are `&CaprunIntent`
+/// (typed, user-trusted) and opaque `ValueId` handles — never a
+/// `ValueRecord`, a raw byte slice/string from untrusted content, or a taint
+/// label. This is enforced at compile time by the trait method's own
+/// signature, exactly as it is for the free fn.
 
 use runtime_core::{
     intent::CaprunIntent,
     plan_node::{PlanArg, PlanNode, SinkId, ValueId},
 };
+
+/// The `Planner` seam (PLANNER-01): maps a typed intent + opaque `ValueId`
+/// handles to a `PlanNode`. See the module doc above for the PLANNER-04
+/// compile-time boundary this trait method preserves — implementors may
+/// never accept a `ValueRecord`, a raw byte slice/string from untrusted
+/// content, or a taint label.
+pub trait Planner {
+    /// Map a typed `CaprunIntent` + opaque `ValueId` handles to a `PlanNode`.
+    /// Parameters mirror `plan_from_intent` exactly (see its doc below).
+    fn plan(
+        &self,
+        intent: &CaprunIntent,
+        intent_value_id: ValueId,
+        derived_recipient: Option<ValueId>,
+        body: Option<ValueId>,
+        trusted_subject_handle: ValueId,
+        trusted_body_handle: ValueId,
+    ) -> PlanNode;
+}
+
+/// The deterministic planner implementation (PLAN-02): delegates to
+/// `plan_from_intent` unchanged. This is the concrete `Planner` the worker
+/// constructs today; Phase 21's `LlmPlanner` will implement the same trait.
+pub struct DeterministicPlanner;
+
+impl Planner for DeterministicPlanner {
+    fn plan(
+        &self,
+        intent: &CaprunIntent,
+        intent_value_id: ValueId,
+        derived_recipient: Option<ValueId>,
+        body: Option<ValueId>,
+        trusted_subject_handle: ValueId,
+        trusted_body_handle: ValueId,
+    ) -> PlanNode {
+        plan_from_intent(
+            intent,
+            intent_value_id,
+            derived_recipient,
+            body,
+            trusted_subject_handle,
+            trusted_body_handle,
+        )
+    }
+}
 
 /// Map a typed `CaprunIntent` to a single `PlanNode`.
 ///
