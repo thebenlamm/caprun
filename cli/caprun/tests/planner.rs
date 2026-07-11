@@ -22,6 +22,7 @@
 #[path = "../src/planner.rs"]
 mod planner;
 
+use llm_planner::{PlannerResponse, ResponseArg};
 use runtime_core::{
     intent::CaprunIntent,
     plan_node::{PlanArg, PlanNode, SinkId, ValueId},
@@ -265,4 +266,150 @@ fn plan_from_intent_recipient_literal_is_not_visible_to_planner() {
         plan_a.args[0].value_id, plan_b.args[0].value_id,
         "different callers provide different handles; planner does not derive them from the literal"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// LlmPlanner support — unit tests for the pure `build_planner_request` and
+// `response_to_plan_node` helpers (Phase 21 Plan 03 / PLANNER-03). These do
+// NOT require a live sidecar: both functions are pure, so the fail-closed
+// decisions they make are directly testable.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// `build_planner_request` offers exactly {recipient, subject, body} handles,
+/// tagged with the correct slot hints, using the SAME override rule
+/// `plan_from_intent` uses (derived_recipient/body win when Some; otherwise
+/// the trusted fallbacks). The constructed `PlannerRequest` carries only
+/// `ValueId` handles + slot hints — no other value-bearing field (the type
+/// itself is structurally incapable of carrying a literal, per llm-planner's
+/// own key-set tests; this test additionally proves OUR builder places the
+/// right handle behind the right hint).
+#[test]
+fn build_planner_request_offers_recipient_subject_body_handles() {
+    let intent_vid = ValueId::new();
+    let derived_vid = ValueId::new();
+    let trusted_subject = ValueId::new();
+    let trusted_body = ValueId::new();
+    let intent = email_intent("boss@company.com");
+
+    let (request, offered, known_sinks) = planner::build_planner_request(
+        &intent,
+        &intent_vid,
+        Some(&derived_vid),
+        None,
+        &trusted_subject,
+        &trusted_body,
+    );
+
+    assert_eq!(request.intent_kind, "SendEmailSummary");
+    assert_eq!(request.available_sinks, vec!["email.send".to_string()]);
+    assert_eq!(known_sinks, vec!["email.send".to_string()]);
+
+    assert_eq!(request.available_handles.len(), 3);
+    let by_hint = |hint: &str| {
+        request
+            .available_handles
+            .iter()
+            .find(|h| h.slot_hint == hint)
+            .unwrap_or_else(|| panic!("must offer a `{hint}` handle"))
+            .value_id
+            .clone()
+    };
+    assert_eq!(
+        by_hint("recipient"),
+        derived_vid,
+        "recipient must carry derived_recipient when Some (matches plan_from_intent's override)"
+    );
+    assert_eq!(by_hint("subject"), trusted_subject);
+    assert_eq!(
+        by_hint("body"),
+        trusted_body,
+        "body must fall back to trusted_body_handle when body is None"
+    );
+
+    assert_eq!(offered.len(), 3);
+    assert!(offered.contains(&derived_vid));
+    assert!(offered.contains(&trusted_subject));
+    assert!(offered.contains(&trusted_body));
+}
+
+/// `build_planner_request` for `CreateFileFromReport` offers `file.create` as
+/// the only sink.
+#[test]
+fn build_planner_request_create_file_offers_file_create_sink() {
+    let intent_vid = ValueId::new();
+    let trusted_subject = ValueId::new();
+    let trusted_body = ValueId::new();
+    let intent = CaprunIntent::CreateFileFromReport { path: "report.txt".into() };
+
+    let (request, _offered, known_sinks) = planner::build_planner_request(
+        &intent,
+        &intent_vid,
+        None,
+        None,
+        &trusted_subject,
+        &trusted_body,
+    );
+
+    assert_eq!(request.intent_kind, "CreateFileFromReport");
+    assert_eq!(request.available_sinks, vec!["file.create".to_string()]);
+    assert_eq!(known_sinks, vec!["file.create".to_string()]);
+}
+
+/// `response_to_plan_node`: Ok with the expected PlanNode for a valid
+/// response whose sink and every arg value_id are in the caller-supplied
+/// offered/known sets.
+#[test]
+fn response_to_plan_node_ok_for_valid_response() {
+    let offered = vec![ValueId::new(), ValueId::new()];
+    let known_sinks = vec!["email.send".to_string()];
+
+    let resp = PlannerResponse {
+        sink: "email.send".to_string(),
+        args: vec![
+            ResponseArg { name: "to".to_string(), value_id: offered[0].clone() },
+            ResponseArg { name: "subject".to_string(), value_id: offered[1].clone() },
+        ],
+    };
+
+    let plan = planner::response_to_plan_node(&resp, &offered, &known_sinks)
+        .expect("valid response must map to a PlanNode");
+
+    assert_eq!(plan.sink, SinkId("email.send".into()));
+    assert_eq!(plan.args.len(), 2);
+    assert_eq!(arg(&plan, "to").value_id, offered[0]);
+    assert_eq!(arg(&plan, "subject").value_id, offered[1]);
+}
+
+/// `response_to_plan_node`: Err when the response names a sink not in
+/// `known_sinks` — fails closed, never fabricates or substitutes.
+#[test]
+fn response_to_plan_node_err_for_unknown_sink() {
+    let offered = vec![ValueId::new()];
+    let known_sinks = vec!["email.send".to_string()];
+
+    let resp = PlannerResponse {
+        sink: "git.push".to_string(),
+        args: vec![],
+    };
+
+    let result = planner::response_to_plan_node(&resp, &offered, &known_sinks);
+    assert!(result.is_err(), "unknown sink must be rejected");
+}
+
+/// `response_to_plan_node`: Err when a response arg's value_id is not a
+/// member of `offered` — the sidecar referenced a handle it was never shown
+/// (or fabricated one); never substituted with a fallback.
+#[test]
+fn response_to_plan_node_err_for_unoffered_handle() {
+    let offered = vec![ValueId::new()];
+    let known_sinks = vec!["email.send".to_string()];
+    let fabricated = ValueId::new();
+
+    let resp = PlannerResponse {
+        sink: "email.send".to_string(),
+        args: vec![ResponseArg { name: "to".to_string(), value_id: fabricated }],
+    };
+
+    let result = planner::response_to_plan_node(&resp, &offered, &known_sinks);
+    assert!(result.is_err(), "unoffered handle must be rejected");
 }

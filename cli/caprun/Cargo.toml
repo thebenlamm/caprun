@@ -9,6 +9,9 @@ sandbox      = { path = "../../crates/sandbox" }
 brokerd      = { path = "../../crates/brokerd" }
 adapter-fs   = { path = "../../crates/adapter-fs" }
 runtime-core = { path = "../../crates/runtime-core" }
+# Pure literal-free wire contract shared with the caprun-planner sidecar
+# (Phase 21 Plan 03) — no reqwest/tokio in llm-planner itself.
+llm-planner  = { path = "../../crates/llm-planner" }
 # `time` feature: bounded retry-with-backoff on the worker's broker connect.
 tokio        = { workspace = true, features = ["time"] }
 anyhow       = { workspace = true }
