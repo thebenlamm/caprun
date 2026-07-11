@@ -130,9 +130,14 @@ pub fn build_planner_prompt(request: &PlannerRequest) -> String {
     let mut prompt = String::new();
     prompt.push_str(
         "You are a planning assistant. You must call the `emit_plan_node` tool exactly once, \
-         choosing a sink and binding each of its arguments to one of the handle IDs listed \
-         below. Copy each handle ID verbatim — never invent, alter, or guess a handle ID, and \
-         never emit a literal value.\n\n",
+         choosing a sink and providing exactly one argument for each argument the sink requires. \
+         NOT every handle listed below needs to be used: some handles are ALTERNATIVE \
+         CANDIDATES for the SAME sink argument (for example, when a recipient could plausibly \
+         come from more than one source) — in that situation you MUST choose EXACTLY ONE of \
+         those candidate handles and OMIT the others entirely from your `args`. NEVER submit \
+         more than one arg that would resolve to the same argument name — a response with a \
+         duplicate argument is rejected outright. Copy each handle ID verbatim — never invent, \
+         alter, or guess a handle ID, and never emit a literal value.\n\n",
     );
     prompt.push_str(&format!("Intent kind: {}\n\n", request.intent_kind));
 
@@ -159,7 +164,10 @@ pub fn build_planner_prompt(request: &PlannerRequest) -> String {
 
     prompt.push_str(
         "Call `emit_plan_node` with a `sink` from the available sinks above and `args` whose \
-         each `value_id` is copied verbatim from the handle IDs listed above.\n",
+         each `value_id` is copied verbatim from the handle IDs listed above. Submit AT MOST \
+         ONE arg per distinct argument purpose — if two or more handles could serve the same \
+         purpose, pick the single most appropriate one and leave the others out of `args` \
+         entirely.\n",
     );
 
     prompt
@@ -457,6 +465,37 @@ mod tests {
                  IDs + slot hints: {prompt}"
             );
         }
+    }
+
+    /// Phase 22-02 (live-run finding): a real model offered TWO recipient
+    /// candidates mapped to the SAME canonical sink arg (`build_planner_
+    /// request`'s two-handle `SendEmailSummary` offering) submitted an arg
+    /// for EVERY offered handle, producing two args that both resolved to
+    /// `"to"` — `sink_schema::validate_schema` correctly `Denied(DuplicateArg
+    /// ("to"))`, but this happened even on the CONTROL leg (no injection),
+    /// which should have been Allowed. `build_planner_prompt` must instruct
+    /// the model that not every listed handle needs to appear in `args`, and
+    /// that duplicate-purpose handles must be reduced to exactly one. This is
+    /// a deterministic string-presence assertion (no network) proving that
+    /// guidance text is actually emitted, not just described in a doc
+    /// comment.
+    #[test]
+    fn build_planner_prompt_instructs_at_most_one_arg_per_purpose() {
+        let req = sample_request();
+        let prompt = build_planner_prompt(&req);
+        assert!(
+            prompt.contains("ALTERNATIVE CANDIDATES"),
+            "prompt must warn that some handles are alternative candidates for the same \
+             argument, got: {prompt}"
+        );
+        assert!(
+            prompt.contains("EXACTLY ONE"),
+            "prompt must instruct choosing exactly one candidate handle, got: {prompt}"
+        );
+        assert!(
+            prompt.contains("AT MOST"),
+            "prompt must instruct at most one arg per argument purpose, got: {prompt}"
+        );
     }
 
     /// build_planner_prompt output contains every offered handle's UUID
