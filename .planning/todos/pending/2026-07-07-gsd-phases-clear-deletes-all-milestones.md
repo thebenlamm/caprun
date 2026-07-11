@@ -44,3 +44,23 @@ TBD — options to consider when picking this up:
   phases that are NOT part of the milestone just closed, and ideally should
   refuse to run (or no-op) when nothing is stale rather than clearing
   everything found.
+
+## Recurrence 2 (2026-07-10, v1.4 scoping)
+
+Reproduced identically: `gsd_run query phases.clear --confirm` during
+`/gsd-new-milestone` for v1.4 deleted all 187 git-tracked files across
+`.planning/phases/01-*` through `17-*` (v1.0 through v1.3's full phase
+history) from disk. `phase_archive_path` in the init JSON pointed at
+`.planning/milestones/v1.3-phases`, but that directory was never created —
+only the terse `v1.3-ROADMAP.md`/`v1.3-REQUIREMENTS.md` summaries already
+present in `.planning/milestones/` exist; no actual archive of the per-phase
+PLAN/SUMMARY/VERIFICATION files happened. Caught again before any commit
+(deletion was unstaged, discovered mid-Phase-18-execution while checking
+`git status --porcelain crates/ cli/` for an unrelated verification) and
+reverted via `git restore .planning/phases/`. Still unfixed upstream as of
+this recurrence — two-for-two now. Given the GSD executor
+self-marks-phase-complete bug was also two-for-two before its fix landed,
+treat this the same way: after every future `/gsd-new-milestone` run,
+immediately `git status .planning/phases/` before doing anything else, and
+do not trust that `phases.clear --confirm`'s reported archive path was
+actually populated on disk.
