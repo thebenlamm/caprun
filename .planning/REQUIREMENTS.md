@@ -15,35 +15,42 @@ weakening assertions.
 - [ ] **TRUST-01**: Broker rejects a second connection to an already-active
       session, closing the cross-connection `ProvideIntent` bypass (the
       smaller hammer — a confined worker only ever needs one connection)
+
 - [ ] **TRUST-02**: `two_connection_intent_bypass_repro`'s `#[ignore]` is
       removed and the test is green — fixed by the broker's behavior, never
       by weakening the test's safe-outcome assertions
+
 - [ ] **TRUST-03**: Existing v1.3 live acceptance
       (`scripts/mailpit-verify.sh`) stays green — independently re-run, not
       assumed from a prior pass
 
 ### Design Gate (Phase 0 — blocks all TCB code)
 
-- [ ] **DESIGN-01**: `planning-docs/DESIGN-session-trust-coherence.md`
+- [x] **DESIGN-01**: `planning-docs/DESIGN-session-trust-coherence.md`
       authored and clears a fresh adversarial panel (no self-review, per
       `DEC-ai-review-satisfies-human-gate`) before any `server.rs` change
-- [ ] **DESIGN-02**: DESIGN doc rules on MAJOR-2 (replay) — re-earns
+
+- [x] **DESIGN-02**: DESIGN doc rules on MAJOR-2 (replay) — re-earns
       "accepted" in writing against the adaptive-planner threat model
       (bounded to trusted/human-typed recipients = DoS/duplication, not new
       exfil); no new CAS this milestone
-- [ ] **DESIGN-03**: DESIGN doc audits all three mint sites (`mint_from_read`,
+
+- [x] **DESIGN-03**: DESIGN doc audits all three mint sites (`mint_from_read`,
       `mint_from_intent`, `mint_from_derivation`) and states the correct,
       narrower claim: only `ProvideIntent` yields a TRUSTED handle from a
       supplied string
-- [ ] **DESIGN-04**: DESIGN doc documents the decision oracle (MEDIUM-1) —
+
+- [x] **DESIGN-04**: DESIGN doc documents the decision oracle (MEDIUM-1) —
       `Allowed` vs `BlockedPendingConfirmation{anchors}` plus
       `literal_sha256` leak per-handle taint state and enable offline
       literal-guessing; rules whether Phase 1's planner connection sees full
       decisions or a reduced signal
-- [ ] **DESIGN-05**: DESIGN doc specifies the per-verb capability split (a
+
+- [x] **DESIGN-05**: DESIGN doc specifies the per-verb capability split (a
       connection may hold NO mint verb — `ProvideIntent`, `ReportClaims`,
       `ReportDerivedClaim`) forward-looking for Phase 1's planner connection
-- [ ] **DESIGN-06**: DESIGN doc re-confirms guard-(c)
+
+- [x] **DESIGN-06**: DESIGN doc re-confirms guard-(c)
       (`CAPRUN_ENABLE_IPC_CREATE_SESSION`) is not widened by the Phase-0 fix
       and re-states whether it should finally be compile-excluded
 
@@ -59,13 +66,16 @@ weakening assertions.
 - [ ] **PLANNER-01**: Design and introduce the planner seam — there is no
       `Planner` trait today (`planner.rs`'s `plan_from_intent` is a bare fn);
       the seam must be designed, not dropped into
+
 - [ ] **PLANNER-02**: The planner's connection holds NO mint verb
       (`ProvideIntent`, `ReportClaims`, `ReportDerivedClaim` unavailable) —
       applies Phase 0's per-verb capability split design
+
 - [ ] **PLANNER-03**: A minimal LLM planner emits only
       `PlanNode{sink, args: Vec<PlanArg>}` — no literal field to carry;
       cheapest model that reliably follows a tool schema, no model-quality
       claim made
+
 - [ ] **PLANNER-04**: The planner is NOT co-located in-process with the
       worker's raw-bytes fd (would breach "typed extracts only" and
       reintroduce token-stream laundering); it sees typed extracts + handle
@@ -76,10 +86,13 @@ weakening assertions.
 - [ ] **GATE-01**: An LLM planner, handed a doc whose injection instructs it
       to email `attacker@evil.com`, complies — emits a syntactically valid
       `PlanNode` routing the tainted handle to `to`
+
 - [ ] **GATE-02**: The executor Blocks deterministically, `verify_chain` is
       true, and Mailpit == 0 — genuine propagation, per the §9 standard
+
 - [ ] **GATE-03**: A trusted-intent control on the same sink Allows and
       delivers exactly once, in the same run
+
 - [ ] **GATE-04**: A deterministic construction-site sentinel assertion
       replaces the context-dump grep — feed the planner-prompt constructor a
       tainted record with a sentinel literal (sentinel each fragment), assert
@@ -114,12 +127,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TRUST-01 | Phase 19 | Pending |
 | TRUST-02 | Phase 19 | Pending |
 | TRUST-03 | Phase 19 | Pending |
-| DESIGN-01 | Phase 18 | Pending |
-| DESIGN-02 | Phase 18 | Pending |
-| DESIGN-03 | Phase 18 | Pending |
-| DESIGN-04 | Phase 18 | Pending |
-| DESIGN-05 | Phase 18 | Pending |
-| DESIGN-06 | Phase 18 | Pending |
+| DESIGN-01 | Phase 18 | Complete |
+| DESIGN-02 | Phase 18 | Complete |
+| DESIGN-03 | Phase 18 | Complete |
+| DESIGN-04 | Phase 18 | Complete |
+| DESIGN-05 | Phase 18 | Complete |
+| DESIGN-06 | Phase 18 | Complete |
 | DOC-02 | Phase 19 | Pending |
 | PLANNER-01 | Phase 20 | Pending |
 | PLANNER-02 | Phase 20 | Pending |
@@ -132,6 +145,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | T2-01 | Phase 22 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 19 total
 - Mapped to phases: 19
 - Unmapped: 0 ✓
