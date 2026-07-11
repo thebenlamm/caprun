@@ -59,6 +59,64 @@ use uuid::Uuid;
 /// (T-03-08 DoS mitigate: guard before vec allocation, not after).
 const MAX_MSG_SIZE: usize = 64 * 1024;
 
+/// A connection's fixed capability set (Phase 20, PLANNER-02/04).
+///
+/// Decided ONCE at connection establishment — the accept loop's
+/// classification of the first vs. every subsequent connection
+/// (`run_broker_server`) — and threaded immutably through `handle_connection`
+/// for the life of that connection. NEVER re-derived per-message, mirroring
+/// the `session_status`/guard(a) discipline's own "resolved once, trusted-
+/// path-only" principle (`DESIGN-session-trust-coherence.md` §3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionRole {
+    /// The session's single worker connection — Phase 19's one-way
+    /// occupancy-latch slot. Full capabilities; `permits` always returns
+    /// `true`, so the worker path is byte-identical to pre-Phase-20 behavior.
+    Worker,
+    /// A capability-restricted second connection (Phase 20's forward-looking
+    /// planner seam, PLANNER-02/04). Holds NO mint verb
+    /// (`ProvideIntent`/`ReportClaims`/`ReportDerivedClaim`/`CreateSession`)
+    /// and no raw-bytes verb (`RequestFd`/`ReportRead`) — `permits` returns
+    /// `true` ONLY for `SubmitPlanNode`.
+    Planner,
+}
+
+impl ConnectionRole {
+    /// Pure, fail-closed, default-deny capability decision: does this role
+    /// permit dispatching `req`?
+    ///
+    /// `Worker` permits every verb (no behavior change to the worker path —
+    /// DESIGN §2's one-way latch is untouched).
+    ///
+    /// `Planner` permits ONLY `SubmitPlanNode`. Every other verb is denied by
+    /// an EXPLICIT named arm — never a catch-all `_ => false` — mirroring
+    /// `BrokerRequest`'s own exhaustive-match discipline so a future verb
+    /// addition forces this match to be revisited rather than silently
+    /// falling through to a default. This includes denying a mid-stream
+    /// `DeclarePlannerRole` re-handshake (role is decided once, at
+    /// establishment, never re-derived per message — T-20-02) and denying
+    /// `CreateSession` even though it is already gated fail-closed behind
+    /// guard-(c)'s `CAPRUN_ENABLE_IPC_CREATE_SESSION` opt-in
+    /// (`DESIGN-session-trust-coherence.md` §3: the capability set's
+    /// default-deny reasoning must not implicitly assume guard-(c) is the
+    /// only thing standing between a planner connection and that arm).
+    pub fn permits(&self, req: &BrokerRequest) -> bool {
+        match self {
+            ConnectionRole::Worker => true,
+            ConnectionRole::Planner => match req {
+                BrokerRequest::SubmitPlanNode { .. } => true,
+                BrokerRequest::ProvideIntent { .. } => false,
+                BrokerRequest::ReportClaims { .. } => false,
+                BrokerRequest::ReportDerivedClaim { .. } => false,
+                BrokerRequest::CreateSession { .. } => false,
+                BrokerRequest::RequestFd { .. } => false,
+                BrokerRequest::ReportRead { .. } => false,
+                BrokerRequest::DeclarePlannerRole => false,
+            },
+        }
+    }
+}
+
 /// Start the broker IPC server on an abstract-namespace UDS socket.
 ///
 /// Binds `\0/agentos/{session_id}` using tokio's native abstract-path support
@@ -1052,6 +1110,28 @@ pub async fn dispatch_request(
                 stream,
                 &BrokerResponse::Error {
                     message: "ReportRead is deprecated — use ReportClaims".into(),
+                },
+            )
+            .await?;
+        }
+
+        BrokerRequest::DeclarePlannerRole => {
+            // Phase 20 (PLANNER-02/04): this variant is only meaningful as a
+            // SUBSEQUENT connection's FIRST framed message, and is consumed
+            // directly by the accept-loop classification in
+            // `run_broker_server` — a newly-classified planner connection
+            // never replays it into this dispatch loop. If it ever arrives
+            // HERE, the connection's role is already fixed (established,
+            // one way or another); role is decided once, never re-derived
+            // per message (T-20-02). Reject fail-closed rather than silently
+            // no-op, so a stray or malicious mid-stream re-declaration never
+            // appears to succeed. Mints nothing, advances no chain head.
+            send_response(
+                stream,
+                &BrokerResponse::Error {
+                    message: "DeclarePlannerRole is only valid as a connection's first \
+                              framed message; role is decided once at establishment"
+                        .into(),
                 },
             )
             .await?;
