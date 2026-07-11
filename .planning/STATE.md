@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Trust-Boundary Integrity & the Adversarial Planner
 current_phase: 22
-status: executing
-stopped_at: "ROADMAP.md + REQUIREMENTS.md traceability written for v1.4 (5 phases: 18-22)"
-last_updated: "2026-07-11T18:38:50.139Z"
+status: Awaiting next milestone
+stopped_at: Completed 22-VERIFICATION.md; milestone closed
+last_updated: "2026-07-11T19:15:00.000Z"
 last_activity: 2026-07-11
-last_activity_desc: Phase 22 complete
+last_activity_desc: Milestone v1.4 completed and closed
 progress:
   total_phases: 5
   completed_phases: 5
-  total_plans: 14
-  completed_plans: 14
+  total_plans: 15
+  completed_plans: 15
   percent: 100
 current_phase_name: Adversarial Gate Proof & Residual Disclosure
 ---
@@ -21,17 +21,17 @@ current_phase_name: Adversarial Gate Proof & Residual Disclosure
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-10)
+See: .planning/PROJECT.md (updated 2026-07-11)
 
-**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, and now (v1.4) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence.
-**Current focus:** Phase 18 — Trust-Boundary Coherence Design Gate
+**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, and (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence — a genuine adversarial LLM planner complies with an injected instruction and is still Blocked deterministically, live on real Linux.
+**Current focus:** Awaiting next milestone — run `/gsd-new-milestone` to scope v1.5.
 
 ## Current Position
 
-Phase: 22
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-11 — Phase 22 complete
+Phase: Milestone v1.4 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-11 — Milestone v1.4 completed and closed
 
 ## Performance Metrics
 
@@ -153,4 +153,4 @@ Resume file: None
 
 ## Operator Next Steps
 
-- Run `/gsd-plan-phase 18` to plan the Trust-Boundary Coherence Design Gate phase.
+- Start the next milestone with `/gsd-new-milestone`. v1.5 candidate already identified: T2 slot-type binding enforcement (deferred at v1.4 scoping).

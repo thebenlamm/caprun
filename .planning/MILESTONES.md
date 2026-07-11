@@ -1,5 +1,25 @@
 # Milestones
 
+## v1.4 Trust-Boundary Integrity & the Adversarial Planner (Shipped: 2026-07-11)
+
+**Phases completed:** 5 phases (18-22), 15 plans, 32 tasks
+
+**Key accomplishments:**
+
+- Authored `planning-docs/DESIGN-session-trust-coherence.md`, cleared a 2-round fresh adversarial review that caught and fixed a genuine BLOCKER before any TCB code was written — round 1's original fix design (release the occupancy latch on disconnect, permit reconnect) would have left the exact cross-connection bypass reachable via a sequential close-then-reconnect sequence; remediated to a ONE-WAY, session-lifetime latch, confirmed sound by an independent round-2 reviewer with no memory of round 1.
+- Shipped the one-way occupancy latch in `run_broker_server`'s accept loop (`crates/brokerd/src/server.rs`) — rejects any 2nd connection to an already-active session, closing the confirmed live cross-connection `ProvideIntent` bypass that let a worker mint an attacker-controlled `UserTrusted` literal and route it to `email.send` as `Allowed`.
+- Restructured `two_connection_intent_bypass.rs` into 3 independent fresh-broker regression variants (guard-a intra-connection control, overlapping-connection repro, sequential-reconnect repro) — all green on real Linux, full workspace suite 253 passed / 0 failed / 37 binaries (v1.3's 250/0/36 baseline plus the 3 newly-un-ignored tests), no regression.
+- Introduced a real `Planner` trait (`cli/caprun/src/planner.rs`) — the existing deterministic intent→PlanNode logic (previously a bare fn) now implements it as `DeterministicPlanner`, unchanged behavior, all existing tests pass.
+- Extended the broker with a `ConnectionRole` capability model — a session may now admit exactly one additional, capability-restricted planner-role connection via a `DeclarePlannerRole` handshake, fail-closed default-deny on all 4 mint verbs (`ProvideIntent`/`ReportClaims`/`ReportDerivedClaim`/`CreateSession`) plus `RequestFd`/`ReportRead`, receiving only a reduced `PlanNodeDecisionReduced{blocked}` signal on `SubmitPlanNode` (no anchors/literal_sha256/literal) — all without weakening Phase 19's one-way worker-slot latch (empty diff on its regression test).
+- Built a genuine OpenAI-backed `LlmPlanner` (`gpt-4o-mini` default, `CAPRUN_PLANNER_MODEL`-configurable) implementing the `Planner` trait exactly like `DeterministicPlanner` — in-process, synchronous, worker submits via its own connection. The actual LLM HTTP call runs in a separate `caprun-planner` sidecar process, spawned by unconfined `caprun` main specifically because the confined worker itself cannot `execve` or open `AF_INET` sockets per seccomp — a structural requirement, not a style choice.
+- Proved live on real Linux the milestone's HARD GATE: a hostile document's embedded injection reaches the LLM planner via a genuinely taint-tracked `task_instruction` channel (mint_from_read-rooted, structurally incapable of becoming a sink-arg value); offered both a trusted and a tainted recipient handle, the model complies with the injection and routes the tainted one to `to`; the executor Blocks it deterministically via I2 (`verify_chain` true, Mailpit==0 for the attacker); a separate trusted-intent control in the SAME composed run Allows and delivers exactly once.
+- Found, during Phase 22 execution, a genuine architectural conflict between the originally-planned 3-leg proof design and a locked v1.2 invariant (Draft sessions unconditionally deny `CommitIrreversible` sinks) — resolved by redefining the control leg's expected outcome to `Denied` (proven via diagnostic-log evidence that the model still chose the trusted handle) rather than weakening any TCB code, surfacing a stronger defense-in-depth finding than originally anticipated (two independent layers, I0 and I2, both correctly firing depending on the model's actual choice).
+- Replaced the theater-grade context-dump grep with a deterministic, non-network unit test (GATE-04) that feeds the real prompt-construction function a sentinel-tagged tainted record and asserts the sentinel bytes never appear in the constructed prompt.
+- Documented T2 (slot-type binding) as v1.4's accepted residual risk in PROJECT.md, deferred to v1.5, without designing or implementing any enforcement.
+- Independently re-verified the entire milestone end-to-end as a closing gate — re-running the full default `scripts/mailpit-verify.sh` recipe from scratch caught and fixed a real Cargo build-artifact-placement bug (a bare `cargo test --workspace` doesn't reliably place a bin-only sibling crate's binary copy, intermittently breaking the LLM live tests) before declaring the milestone done: real exit 0, 46 test groups, 0 failures.
+
+---
+
 ## v1.3 Doc → Action Assistant (Shipped: 2026-07-09)
 
 **Phases completed:** 6 phases, 21 plans, 49 tasks
