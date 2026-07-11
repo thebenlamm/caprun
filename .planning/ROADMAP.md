@@ -99,10 +99,10 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   5. The doc specifies the per-verb capability split (a connection may hold NO mint verb: `ProvideIntent`/`ReportClaims`/`ReportDerivedClaim`) that Phase 1's planner connection will rely on.
   6. The doc re-confirms guard-(c) (`CAPRUN_ENABLE_IPC_CREATE_SESSION`) is not widened by the Phase-0 fix and re-states whether it should finally be compile-excluded.
 
-**Plans**: 2 plans
+**Plans**: 1/2 plans executed
 **Wave 1**
 
-- [ ] 18-01-PLAN.md — Author `DESIGN-session-trust-coherence.md` resolving DESIGN-01..06 (fix shape, replay re-earning, three-mint-site audit, decision oracle, per-verb capability split, guard-(c) status)
+- [x] 18-01-PLAN.md — Author `DESIGN-session-trust-coherence.md` resolving DESIGN-01..06 (fix shape, replay re-earning, three-mint-site audit, decision oracle, per-verb capability split, guard-(c) status)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -185,7 +185,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 15. Deterministic Doc→Action Extraction | v1.3 | 4/4 | Complete    | 2026-07-08 |
 | 16. Confirm UX, Literal Binding & Negative Controls | v1.3 | 4/4 | Complete    | 2026-07-09 |
 | 17. Live Acceptance & Framing Honesty | v1.3 | 4/4 | Complete | 2026-07-09 |
-| 18. Trust-Boundary Coherence Design Gate | v1.4 | 0/TBD | Not started | - |
+| 18. Trust-Boundary Coherence Design Gate | v1.4 | 1/2 | In Progress|  |
 | 19. Cross-Connection Trust Coherence Fix | v1.4 | 0/TBD | Not started | - |
 | 20. Planner Seam & Capability Split | v1.4 | 0/TBD | Not started | - |
 | 21. Adversarial LLM Planner | v1.4 | 0/TBD | Not started | - |

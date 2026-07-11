@@ -1,14 +1,18 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.4
-milestone_name: Trust-Boundary Integrity & the Adversarial Planner
-status: planning
-last_updated: "2026-07-10T00:00:00.000Z"
-last_activity: 2026-07-10
+milestone_name: — Trust-Boundary Integrity & the Adversarial Planner
+current_phase: 18
+current_phase_name: Trust-Boundary Coherence Design Gate
+status: executing
+stopped_at: "ROADMAP.md + REQUIREMENTS.md traceability written for v1.4 (5 phases: 18-22)"
+last_updated: "2026-07-11T02:20:18.659Z"
+last_activity: 2026-07-11
+last_activity_desc: Phase 18 execution started
 progress:
   total_phases: 5
   completed_phases: 0
-  total_plans: 0
+  total_plans: 2
   completed_plans: 0
   percent: 0
 ---
@@ -20,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-10)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, and now (v1.4) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence.
-**Current focus:** Phase 18 — Trust-Boundary Coherence Design Gate. A DESIGN doc (`planning-docs/DESIGN-session-trust-coherence.md`) must clear a fresh adversarial panel before any `server.rs` code change. Nothing in Phase 19+ may start until this gate clears.
+**Current focus:** Phase 18 — Trust-Boundary Coherence Design Gate
 
 ## Current Position
 
-Phase: 18 (Trust-Boundary Coherence Design Gate) — not yet planned
-Plan: —
-Status: Roadmapped, awaiting `/gsd-plan-phase 18`
-Last activity: 2026-07-10 — ROADMAP.md created (5 phases: 18-22), REQUIREMENTS.md traceability filled (19/19 mapped)
+Phase: 18 (Trust-Boundary Coherence Design Gate) — EXECUTING
+Plan: 1 of 2
+Status: Executing Phase 18
+Last activity: 2026-07-11 — Phase 18 execution started
 
 ## Performance Metrics
 
