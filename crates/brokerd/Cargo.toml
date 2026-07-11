@@ -10,7 +10,15 @@ executor     = { path = "../executor" }
 adapter-fs   = { path = "../adapter-fs" }
 uuid         = { workspace = true }
 anyhow       = { workspace = true }
-tokio        = { workspace = true }
+# `time` feature (Phase 20, PLANNER-02/04): `classify_second_connection`'s
+# `tokio::time::timeout` bounds a subsequent connection's first-frame read
+# (T-20-08 DoS mitigate). Declared here explicitly rather than relying on
+# incidental workspace-wide feature unification with cli/caprun's own
+# `features = ["time"]` — `cargo build --workspace` unifies features across
+# every member and would mask this crate's real requirement, but a scoped
+# `cargo test -p brokerd` (the exact command this plan's own verification
+# steps use) does not, and would fail to compile without this.
+tokio        = { workspace = true, features = ["time"] }
 rusqlite     = { workspace = true }
 sha2         = { workspace = true }
 hex          = { workspace = true }

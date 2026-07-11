@@ -146,6 +146,29 @@ pub enum BrokerRequest {
         /// closed (`Error`, mints nothing — Pitfall 1).
         input_value_ids: Vec<runtime_core::plan_node::ValueId>,
     },
+    /// Phase 20 (PLANNER-02/04) establishment handshake: a connection sends
+    /// this as its FIRST framed message to request planner-role capabilities.
+    ///
+    /// Only meaningful at connection establishment — it carries no
+    /// operational effect and mints nothing. `crates/brokerd/src/server.rs`'s
+    /// accept-loop classification (`DESIGN-session-trust-coherence.md` §3)
+    /// reads a SUBSEQUENT connection's first frame; if it deserializes to
+    /// this variant AND the one-way planner slot is still free, that
+    /// connection is admitted as the session's single capability-restricted
+    /// planner connection (`ConnectionRole::Planner`), which `permits` only
+    /// `SubmitPlanNode` — never `ProvideIntent`/`ReportClaims`/
+    /// `ReportDerivedClaim`/`CreateSession` (no mint verb) and never
+    /// `RequestFd`/`ReportRead` (no raw-bytes fd).
+    ///
+    /// Additive: existing clients (the worker, `uds_ipc` tests, Phase 19's
+    /// regression tests) never send it, so they are classified as the
+    /// worker-role first connection exactly as before — no behavior change
+    /// to the existing exhaustive serde derive or any prior round-trip.
+    /// Sending it AGAIN mid-stream on an already-classified connection is
+    /// itself a non-permitted verb for a planner connection (denied by
+    /// `ConnectionRole::permits`) — role is decided ONCE, never re-derived
+    /// per-message.
+    DeclarePlannerRole,
 }
 
 /// Response from the broker to a worker.
