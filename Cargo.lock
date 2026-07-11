@@ -156,6 +156,7 @@ dependencies = [
  "llm-planner",
  "reqwest",
  "runtime-core",
+ "serde",
  "serde_json",
  "tokio",
 ]
