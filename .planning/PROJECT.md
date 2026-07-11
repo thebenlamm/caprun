@@ -476,6 +476,25 @@ as of 2026-07-07 unless noted:
   (`CAPRUN_ENABLE_IPC_CREATE_SESSION`) is a runtime default-deny flag, not a
   compile-time exclusion — the forced-Active mint code ships in the
   production binary. v2: build-exclude it.
+- **v1.4 residual risks (Phase 22, T2-01):** Phase 22's live gate proved the
+  trust boundary Blocks deterministically regardless of planner
+  intelligence — a real, adversarial, OpenAI-backed LLM planner complying
+  with an injected instruction still routes into a fail-closed executor.
+  T2 (slot-type binding) is the one remaining unenforced degree of freedom
+  in that boundary, disclosed here rather than left implicit: the executor
+  does not check that a handle's semantic origin (its taint/trust label)
+  matches the semantic role of the slot it is routed into (e.g. a
+  `UserTrusted` handle placed in a `to` slot is neither sensitive-untrusted
+  nor slot-checked, so I2 does not fire on that basis alone). This is safe
+  today only *incidentally* — every `UserTrusted` handle is human-typed (via
+  `ProvideIntent`, and coherently guarded across connections since the
+  Phase 19 fix), so a misrouted handle carries the human's own string, not
+  an attacker's. Enforcement is explicitly deferred to v1.5 — a new
+  `DenyReason` variant plus slot/taint-matching logic is real TCB scope,
+  not wiring (Locked, Ben 2026-07-10 scoping). Authoritative ruling:
+  `planning-docs/DESIGN-session-trust-coherence.md` §9 residual #5 (NOT
+  designed there either); tracked in `.planning/REQUIREMENTS.md`'s Out of
+  Scope table and `T2-01`.
 - **Post-v0 roadmap:** v1 — Git/GitHub/test adapters, patch/PR, workspace
   snapshots, rich approval. v2 — multi-worker decomposition, parallel execution.
   v3 — cross-machine Sessions, Ed25519 export, broker federation. v4 — general
