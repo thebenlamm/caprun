@@ -142,7 +142,10 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   3. The planner never receives the worker's raw-bytes fd or raw untrusted content — it is given only typed extracts and handle IDs, with no filesystem capability and no network reachability beyond its own inference endpoint.
   4. All pre-existing deterministic-planner-based tests/behavior from v1.0-v1.3 continue to pass unchanged through the new seam — no regression from the refactor.
 
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 20-01-PLAN.md — Introduce the `Planner` trait seam; refactor the deterministic `plan_from_intent` to implement it; worker calls via the trait (PLANNER-01, PLANNER-04)
+- [ ] 20-02-PLAN.md — Per-connection capability split + accept-loop extension: planner-role connection holds no mint verb and no fd, fail-closed default-deny; Phase 19 latch extended + regression tests unmodified (PLANNER-02, PLANNER-04)
+- [ ] 20-03-PLAN.md — Reduce the `SubmitPlanNode` decision oracle for the planner role (no anchors/digest/literal), per DESIGN §7 (PLANNER-04)
 
 ### Phase 21: Adversarial LLM Planner
 
