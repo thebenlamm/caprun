@@ -26,22 +26,29 @@
 ///  10. Extract typed claims LOCALLY (lossy guarantee — the raw sentence is
 ///      discarded here; only the extracted typed value crosses the IPC boundary).
 ///      For `SendEmailSummary`: extract the recipient-half doc fragments
-///      (`Reply-To:`/`Domain:` markers, EXTRACT-01/Phase 15) AND the tainted
-///      `Body:` fragment, report them via `ReportClaims { claims }`, and — ONLY
-///      when BOTH recipient-half fragments were found (finding #8's resolved
-///      fork) — apply the concat transform to the worker's OWN already-
-///      extracted fragment values (never a resolved broker literal) and report
-///      the result via `ReportDerivedClaim` to obtain a FRESH derived handle.
-///      For `CreateFileFromReport`: extract root-relative paths, unchanged.
+///      (`Reply-To:`/`Domain:` markers, EXTRACT-01/Phase 15), the tainted
+///      `Body:` fragment, AND the tainted `Instruction:` fragment (Phase 22 /
+///      GATE-01 — the injection instruction kept worker-side and threaded to
+///      the planner seam as `task_instruction`, never resolved from a broker
+///      handle back to a literal), report them via `ReportClaims { claims }`,
+///      and — ONLY when BOTH recipient-half fragments were found (finding
+///      #8's resolved fork) — apply the concat transform to the worker's OWN
+///      already-extracted fragment values (never a resolved broker literal)
+///      and report the result via `ReportDerivedClaim` to obtain a FRESH
+///      derived handle. For `CreateFileFromReport`: extract root-relative
+///      paths, unchanged (no instruction extraction for this intent kind).
 ///  11. Receive the opaque `ValueId` handles for each report.
-///  12. Construct a `planner::DeterministicPlanner` and call its `Planner::plan(
-///      &intent, intent_value_id, derived_recipient, body,
-///      trusted_subject_handle, trusted_body_handle)` trait method (PLANNER-01
-///      seam) — the planner holds ONLY opaque ValueId handles, never literals
-///      or taint (PLAN-03). Send `BrokerRequest::SubmitPlanNode { plan_node }`
-///      (no session_id — HARD-03). A benign (fragment-free) `SendEmailSummary`
-///      STILL submits an all-UserTrusted plan node (finding #4 — CONTROL-01's
-///      clean half survives; there is no early-exit here anymore).
+///  12. Construct a `planner::DeterministicPlanner` (or, when
+///      `CAPRUN_PLANNER=llm`, `planner::LlmPlanner`) and call its
+///      `Planner::plan(&intent, intent_value_id, derived_recipient, body,
+///      trusted_subject_handle, trusted_body_handle, task_instruction)` trait
+///      method (PLANNER-01 seam) — the planner holds ONLY opaque ValueId
+///      handles + the task_instruction `String` (never a `ValueId`, never
+///      bindable to a sink arg), never literals or taint (PLAN-03). Send
+///      `BrokerRequest::SubmitPlanNode { plan_node }` (no session_id —
+///      HARD-03). A benign (fragment-free) `SendEmailSummary` STILL submits
+///      an all-UserTrusted plan node (finding #4 — CONTROL-01's clean half
+///      survives; there is no early-exit here anymore).
 ///  13. Receive `BrokerResponse::PlanNodeDecision { decision }`. If it is
 ///      `BlockedPendingConfirmation`, exit 1 (non-success BEFORE any effect runs).
 ///  14. Otherwise exit 0.
@@ -193,25 +200,44 @@ async fn main() -> anyhow::Result<()> {
     // is chosen by INTENT KIND; the broker independently taints whatever the
     // worker emits (mint_from_read / mint_from_derivation) — the worker cannot
     // launder trust by choosing a variant.
-    let (derived_recipient, body): (Option<ValueId>, Option<ValueId>) = match &intent {
+    let (derived_recipient, body, task_instruction): (
+        Option<ValueId>,
+        Option<ValueId>,
+        Option<String>,
+    ) = match &intent {
         CaprunIntent::SendEmailSummary { .. } => {
             // Marker-anchored recipient-half fragments (Reply-To:/Domain:) —
             // extracted worker-side, never re-read, never resolved-then-
             // reused. `extract_body_fragment` (below) mirrors the same
             // marker-anchored, lossy-extraction shape for the `Body:` marker.
+            // `extract_instruction_fragment` (Phase 22 / GATE-01) mirrors the
+            // same shape for a DISTINCT `Instruction:` marker — the injected
+            // instruction text threaded to the LLM planner as task framing.
             let doc_fragments = extract_doc_fragments(&raw_str);
             let body_fragment = extract_body_fragment(&raw_str);
+            let instruction_fragment = extract_instruction_fragment(&raw_str);
 
-            // Report ALL raw fragments (recipient-halves + body, if present)
-            // in one ReportClaims batch — the broker mints one genuinely-
-            // tainted ValueRecord per claim via mint_from_read, in the same
-            // order submitted.
+            // Report ALL raw fragments (recipient-halves + body + injection
+            // instruction, if present) in one ReportClaims batch — the
+            // broker mints one genuinely-tainted ValueRecord per claim via
+            // mint_from_read, in the same order submitted. The instruction
+            // fragment's returned ValueId is intentionally never resolved
+            // back to a literal or reused below — it exists ONLY so the
+            // injection instruction is honestly recorded in the audit DAG as
+            // ExternalUntrusted (T-22-03); the literal that actually reaches
+            // the planner is the worker's OWN already-extracted
+            // `instruction_fragment` string, kept worker-side (same pattern
+            // the recipient-concat path already uses: transform/keep
+            // worker-side, mint for provenance only).
             let mut fragment_claims: Vec<WorkerClaim> = doc_fragments
                 .iter()
                 .map(|c| WorkerClaim::DocFragment(c.value.clone()))
                 .collect();
             if let Some(b) = &body_fragment {
                 fragment_claims.push(WorkerClaim::DocFragment(b.clone()));
+            }
+            if let Some(instr) = &instruction_fragment {
+                fragment_claims.push(WorkerClaim::DocFragment(instr.clone()));
             }
             send_framed(&std_stream, &BrokerRequest::ReportClaims { claims: fragment_claims })?;
             let fragment_value_ids = match recv_framed::<BrokerResponse>(&std_stream)? {
@@ -262,7 +288,7 @@ async fn main() -> anyhow::Result<()> {
                 None
             };
 
-            (derived_recipient, body)
+            (derived_recipient, body, instruction_fragment)
         }
         CaprunIntent::CreateFileFromReport { .. } => {
             let claims: Vec<WorkerClaim> = extract_relative_path_claims(&raw_str)
@@ -279,7 +305,10 @@ async fn main() -> anyhow::Result<()> {
             // now threaded through the shared `derived_recipient` slot
             // (call-site convention, finding #7 — the planner never sees
             // provenance; it just places whichever handle the caller hands it).
-            (value_ids.into_iter().next(), None)
+            // No injection-instruction extraction for this intent kind
+            // (Phase 22 / GATE-01 targets `SendEmailSummary`'s `email.send`
+            // sink only).
+            (value_ids.into_iter().next(), None, None)
         }
     };
 
@@ -321,6 +350,7 @@ async fn main() -> anyhow::Result<()> {
         body,
         trusted_subject_handle,
         trusted_body_handle,
+        task_instruction,
     );
 
     // ── Submit for I2 evaluation (no session_id field — HARD-03) ─────────────
@@ -368,6 +398,38 @@ async fn main() -> anyhow::Result<()> {
 /// extracted token (never the surrounding sentence) is reported to the broker.
 fn extract_body_fragment(raw: &str) -> Option<String> {
     let marker = "Body:";
+    let idx = raw.find(marker)?;
+    let after = &raw[idx + marker.len()..];
+    let line_end = after.find('\n').unwrap_or(after.len());
+    let value = after[..line_end].trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+/// Extract the `Instruction:` marker-anchored line's content from raw
+/// untrusted bytes — the genuinely-tainted (mint_from_read-rooted) injection
+/// instruction GATE-01 threads to the LLM planner as task framing (Phase 22 /
+/// T-22-03).
+///
+/// Hand-rolled, dependency-free, mirrors `extract_body_fragment`'s
+/// marker-anchored, lossy-extraction shape exactly — runs CONFINED
+/// worker-side, over the bytes already read via the passed fd; never
+/// broker-side (EXTRACT-01). Returns everything after the `Instruction:`
+/// marker up to end-of-line, trimmed; `None` if the marker is absent or the
+/// remainder is empty. Only this extracted token (never the surrounding
+/// prose) is reported to the broker and kept worker-side as task framing.
+///
+/// Uses a marker DISTINCT from `Reply-To:`/`Domain:`/`Body:` so the
+/// two-handle recipient offering (`build_planner_request`, keyed solely on
+/// `derived_recipient` being `Some`) can be exercised WITHOUT an injection
+/// present — a document carrying the recipient markers but no `Instruction:`
+/// marker still offers both handles, with `task_instruction = None`. This is
+/// the structural guarantee Plan 22-02's control leg depends on.
+fn extract_instruction_fragment(raw: &str) -> Option<String> {
+    let marker = "Instruction:";
     let idx = raw.find(marker)?;
     let after = &raw[idx + marker.len()..];
     let line_end = after.find('\n').unwrap_or(after.len());
