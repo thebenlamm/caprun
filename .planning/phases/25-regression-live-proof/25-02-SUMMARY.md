@@ -117,3 +117,11 @@ None - no external service configuration required.
 ---
 *Phase: 25-regression-live-proof*
 *Completed: 2026-07-12*
+
+## Self-Check: PASSED
+
+- FOUND: .planning/phases/25-regression-live-proof/25-REGRESSION-AUDIT.md
+- FOUND: .planning/phases/25-regression-live-proof/25-02-SUMMARY.md
+- FOUND commit: be9e91d (Task 1)
+- FOUND commit: a481069 (Task 2)
+- FOUND commit: ac831a5 (SUMMARY.md)
