@@ -22,7 +22,7 @@ use brokerd::audit::{find_event_by_type, open_audit_db, verify_chain};
 use brokerd::quarantine::{extract_email_claims, mint_from_intent, mint_from_read};
 use executor::value_store::ValueStore;
 use runtime_core::plan_node::{PlanArg, PlanNode, SinkId, TaintLabel};
-use runtime_core::{ExecutorDecision, SessionStatus};
+use runtime_core::{DenyReason, ExecutorDecision, SessionStatus};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -535,5 +535,221 @@ fn s9_acceptance_file_create_path_block() {
     assert!(
         verify_chain(&conn, &session_id.to_string()),
         "verify_chain must return true — the audit DAG hash chain must be unbroken"
+    );
+}
+
+/// T2-06 — the held-out genuine-chain proof of Phase 24's Step 1c slot-type
+/// binding enforcement, driven through the REAL broker path (not the
+/// `store.mint()` unit tests in `crates/executor/tests/executor_decision.rs`,
+/// which bypass the audit DAG entirely).
+///
+/// Mints two legitimately-tagged `UserTrusted` values via `mint_from_intent`
+/// (genuine mint-time `origin_role`, never a hand-set field), then SWAPS their
+/// handles into each other's slot in the `PlanNode`: the subject-tagged value
+/// goes into `to`, and the recipient-tagged value goes into `subject`. Both
+/// values are `UserTrusted` and untainted, so neither I0 (Step 0.5 class-deny —
+/// the session is `Active`) nor I2 (untrusted per-arg Block — no taint present)
+/// can fire; ONLY Step 1c's role↔slot check can produce a `Denied`. The
+/// sibling `slot_type_binding_correctly_routed_allows` test below is the
+/// mechanical control that proves this isolation claim.
+#[test]
+fn slot_type_binding_swapped_subject_recipient_denies() {
+    // -----------------------------------------------------------------------
+    // Step 1: Open in-memory audit DB and set up state.
+    // -----------------------------------------------------------------------
+    let conn = open_audit_db(":memory:").expect("open_audit_db");
+    let mut store = ValueStore::default();
+    let session_id = Uuid::new_v4();
+
+    // -----------------------------------------------------------------------
+    // Step 2: Mint two UserTrusted ValueRecords via mint_from_intent, each with
+    // a GENUINE origin_role tag assigned at mint time — never a hand-set field
+    // at the sink. The second mint's parent_id/parent_hash chain onto the
+    // first mint's returned (event_id, hash), so both intent_received events
+    // form one real single-session causal chain (mirrors server.rs's
+    // sequential SendEmailSummary mint calls), not unrelated siblings.
+    // -----------------------------------------------------------------------
+    let (subject_event_id, subject_hash, subject_value_id) = mint_from_intent(
+        &conn,
+        &mut store,
+        session_id,
+        "Re: quarterly report".to_string(),
+        None,
+        None,
+        Some("subject".to_string()),
+    )
+    .expect("mint_from_intent (subject) failed");
+
+    let (recipient_event_id, recipient_hash, recipient_value_id) = mint_from_intent(
+        &conn,
+        &mut store,
+        session_id,
+        "boss@company.com".to_string(),
+        Some(subject_event_id),
+        Some(&subject_hash),
+        Some("recipient".to_string()),
+    )
+    .expect("mint_from_intent (recipient) failed");
+
+    // -----------------------------------------------------------------------
+    // Step 3: Build a PlanNode that SWAPS the handles — the subject-tagged
+    // value routed into "to", the recipient-tagged value routed into
+    // "subject". Both are UserTrusted and untainted; only Step 1c's role
+    // check can catch this.
+    // -----------------------------------------------------------------------
+    let plan_node = PlanNode {
+        sink: SinkId("email.send".into()),
+        args: vec![
+            PlanArg {
+                name: "to".into(),
+                value_id: subject_value_id,
+            },
+            PlanArg {
+                name: "subject".into(),
+                value_id: recipient_value_id,
+            },
+        ],
+    };
+
+    // -----------------------------------------------------------------------
+    // Step 4: Evaluate via the deterministic executor. Expect Denied with
+    // DenyReason::SlotTypeMismatch — never construct this variant by hand.
+    // -----------------------------------------------------------------------
+    let decision = executor::submit_plan_node(
+        session_id,
+        Uuid::new_v4(),
+        &plan_node,
+        &store,
+        &SessionStatus::Active,
+    );
+
+    let (sink, arg, expected, found) = match decision {
+        ExecutorDecision::Denied {
+            reason:
+                DenyReason::SlotTypeMismatch {
+                    sink,
+                    arg,
+                    expected,
+                    found,
+                },
+        } => (sink, arg, expected, found),
+        other => panic!("expected Denied(SlotTypeMismatch), got {other:?}"),
+    };
+    assert_eq!(sink, "email.send");
+    assert_eq!(arg, "to");
+    assert_eq!(
+        expected,
+        vec!["recipient".to_string(), "email_address".to_string()]
+    );
+    assert_eq!(found, Some("subject".to_string()));
+
+    // -----------------------------------------------------------------------
+    // Step 5: Durably record the Denied evaluation exactly as the broker's
+    // private `evaluate_plan_node_and_record` catch-all `_` arm does for any
+    // non-Blocked decision (server.rs:670-682) — a `plan_node_evaluated`
+    // event, causally parented on the last mint's event id. That fn is a
+    // private async fn, unreachable from crates/brokerd/tests/, so this
+    // hand-mirror is the ONLY option.
+    // -----------------------------------------------------------------------
+    use brokerd::audit::append_event;
+    use runtime_core::Event;
+
+    let eval_event = Event::new(
+        Uuid::new_v4(),
+        Some(recipient_event_id),
+        session_id,
+        "executor".into(),
+        "plan_node_evaluated".into(),
+        chrono::Utc::now(),
+        vec![],
+    );
+    append_event(&conn, &eval_event, Some(&recipient_hash)).expect("append plan_node_evaluated");
+
+    // -----------------------------------------------------------------------
+    // Step 6: Assert the durable record and hash-chain integrity across it.
+    // -----------------------------------------------------------------------
+    let eval_evt = find_event_by_type(&conn, &session_id.to_string(), "plan_node_evaluated")
+        .expect("find_event_by_type")
+        .expect("plan_node_evaluated event must be present in the audit DAG (Denied path)");
+    assert_eq!(
+        eval_evt.parent_id,
+        Some(recipient_event_id),
+        "plan_node_evaluated must be causally parented onto the second (recipient) mint's event"
+    );
+
+    assert!(
+        verify_chain(&conn, &session_id.to_string()),
+        "verify_chain must return true — the audit DAG hash chain must be unbroken \
+         across the Denied evaluation"
+    );
+}
+
+/// T2-06 isolation control: the SAME two `UserTrusted` values minted in
+/// `slot_type_binding_swapped_subject_recipient_denies` above, but routed into
+/// their CORRECT slots (subject-tagged -> "subject", recipient-tagged ->
+/// "to"). This must evaluate to `Allowed`.
+///
+/// This is the MECHANICAL (not comment-only) proof of T2-06's isolation
+/// claim: because these same two values, when correctly routed, are Allowed,
+/// they are demonstrably valid and untainted — so I2 (untrusted per-arg
+/// Block) cannot fire on them, and the session being `Active` means I0
+/// (class-deny) cannot fire either. Therefore the sibling test's Denied
+/// outcome is attributable to Step 1c (the slot-type role check) ALONE, and
+/// to nothing else.
+#[test]
+fn slot_type_binding_correctly_routed_allows() {
+    let conn = open_audit_db(":memory:").expect("open_audit_db");
+    let mut store = ValueStore::default();
+    let session_id = Uuid::new_v4();
+
+    let (subject_event_id, subject_hash, subject_value_id) = mint_from_intent(
+        &conn,
+        &mut store,
+        session_id,
+        "Re: quarterly report".to_string(),
+        None,
+        None,
+        Some("subject".to_string()),
+    )
+    .expect("mint_from_intent (subject) failed");
+
+    let (_recipient_event_id, _recipient_hash, recipient_value_id) = mint_from_intent(
+        &conn,
+        &mut store,
+        session_id,
+        "boss@company.com".to_string(),
+        Some(subject_event_id),
+        Some(&subject_hash),
+        Some("recipient".to_string()),
+    )
+    .expect("mint_from_intent (recipient) failed");
+
+    // CORRECT routing this time: subject-tagged -> "subject", recipient-tagged -> "to".
+    let plan_node = PlanNode {
+        sink: SinkId("email.send".into()),
+        args: vec![
+            PlanArg {
+                name: "subject".into(),
+                value_id: subject_value_id,
+            },
+            PlanArg {
+                name: "to".into(),
+                value_id: recipient_value_id,
+            },
+        ],
+    };
+
+    let decision = executor::submit_plan_node(
+        session_id,
+        Uuid::new_v4(),
+        &plan_node,
+        &store,
+        &SessionStatus::Active,
+    );
+
+    assert!(
+        matches!(decision, ExecutorDecision::Allowed),
+        "correctly-routed UserTrusted values must evaluate to Allowed, got {:?}",
+        decision
     );
 }
