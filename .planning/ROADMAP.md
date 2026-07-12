@@ -133,10 +133,10 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   3. A new exhaustive `DenyReason` variant exists for a slot-type mismatch (no wildcard arm), and every existing exhaustive match over `DenyReason` across the workspace (CLI rendering, audit serialization/`code()`/`Display`, existing tests) is updated for the new arm — not just the match inside `submit_plan_node`.
   4. `submit_plan_node` denies (or blocks, per Phase 23's ordering ruling) a plan node when a resolved value's origin role doesn't match its slot's expected role, evaluated per-arg in the same pass as the existing routing/content-sensitivity check, without weakening or reordering the existing I0 (Step 0.5 class-deny) / I2 (per-arg Block) precedence.
 
-**Plans**: 3 plans (2 waves)
+**Plans**: 1/3 plans executed
 **Wave 1**
 
-- [ ] 24-01-PLAN.md — T2-02: origin-role tag on ValueRecord + threading through ValueStore::mint, the 3 mint_from_* wrappers, and 5 server.rs dispatch sites, plus the ~63 compilation-forced test-fixture updates (Wave 1)
+- [x] 24-01-PLAN.md — T2-02: origin-role tag on ValueRecord + threading through ValueStore::mint, the 3 mint_from_* wrappers, and 5 server.rs dispatch sites, plus the ~63 compilation-forced test-fixture updates (Wave 1)
 - [ ] 24-02-PLAN.md — T2-04: new exhaustive DenyReason::SlotTypeMismatch variant + both code()/Display matches (Wave 1, parallel)
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -183,5 +183,5 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 21. Adversarial LLM Planner | v1.4 | 4/4 | Complete    | 2026-07-11 |
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 3/3 | Complete    | 2026-07-11 |
 | 23. Slot-Type Binding Design Gate | v1.5 | 2/2 | Complete    | 2026-07-12 |
-| 24. Slot-Type Binding Enforcement | v1.5 | 0/TBD | Not started | - |
+| 24. Slot-Type Binding Enforcement | v1.5 | 1/3 | In Progress|  |
 | 25. Regression & Live Proof | v1.5 | 0/TBD | Not started | - |

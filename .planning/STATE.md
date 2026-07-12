@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: — Slot-Type Binding Enforcement
 current_phase: 24
-current_phase_name: Slot-Type Binding Enforcement
+current_phase_name: slot-type-binding-enforcement
 status: executing
-stopped_at: "ROADMAP.md + REQUIREMENTS.md traceability written for v1.5 (3 phases: 23-25)"
-last_updated: "2026-07-12T02:15:29.280Z"
+stopped_at: Phase 24 Plan 01 complete — origin_role tag threaded through ValueRecord/mint_from_*/server.rs, full workspace green
+last_updated: "2026-07-12T02:47:37.714Z"
 last_activity: 2026-07-12
-last_activity_desc: Phase 23 complete, transitioned to Phase 24
+last_activity_desc: Phase 24 execution started
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  total_plans: 5
+  completed_plans: 3
   percent: 33
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-11)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, and now (v1.5) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into — closing the v1.4 T2 residual.
-**Current focus:** Phase 23 — Slot-Type Binding Design Gate
+**Current focus:** Phase 24 — slot-type-binding-enforcement
 
 ## Current Position
 
-Phase: 24 — Slot-Type Binding Enforcement
-Plan: Not started
+Phase: 24 (slot-type-binding-enforcement) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-07-12 — Phase 23 complete, transitioned to Phase 24
+Last activity: 2026-07-12 — Phase 24 execution started
 
 ## Performance Metrics
 
@@ -69,6 +69,7 @@ Last activity: 2026-07-12 — Phase 23 complete, transitioned to Phase 24
 | Phase 16 P02 | 50min | 2 tasks | 3 files |
 | Phase 16 P03 | 25min | 1 tasks | 1 files |
 | Phase 16 P04 | 3h | 3 tasks | 16 files |
+| Phase 24 P01 | 25min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -128,6 +129,8 @@ its DESIGN doc clears a fresh (non-self) adversarial review.
 - [Phase ?]: 16-04: 'Deny sends nothing' send-level proof recorded as an explicit Phase 17/ACCEPT-01 requirement — not yet covered by any test. Closed in v1.3 Phase 17.
 - [Phase 18]: v1.4's cross-connection trust-coherence fix used a one-way, session-lifetime occupancy latch (not release-on-disconnect) after a fresh adversarial round caught the weaker design was still bypassable via sequential reconnect.
 - [Phase 22]: v1.4's T2 (slot-type binding) residual is now this milestone's scope — see Roadmap phase structure above.
+- [Phase ?]: 24-01: mint_from_derivation's concat arm guards inputs.len() == 2 before assigning origin_role Some(recipient) — any other arity gets None, I2 remains the backstop
+- [Phase ?]: 24-01: server.rs selects primary_role inside the :1294 intent-variant match (same arm as primary_literal), never hardcoded at the shared mint_from_intent call — avoids mistagging a file.create path as recipient
 
 ### Pending Todos
 
@@ -160,8 +163,8 @@ T2 slot-type binding moved from "deferred" to "in scope" as v1.5's roadmap.
 
 ## Session Continuity
 
-Last session: 2026-07-11
-Stopped at: ROADMAP.md + REQUIREMENTS.md traceability written for v1.5 (3 phases: 23-25)
+Last session: 2026-07-12T02:47:29.126Z
+Stopped at: Phase 24 Plan 01 complete — origin_role tag threaded through ValueRecord/mint_from_*/server.rs, full workspace green
 Resume file: None
 
 ## Operator Next Steps

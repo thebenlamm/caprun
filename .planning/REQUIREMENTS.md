@@ -41,7 +41,7 @@ v1.2 Phase 8, v1.3 Phase 12, and v1.4 Phase 18 did before it.
 
 ### Slot-Type Binding (implementation — unblocked by the Design Gate)
 
-- [ ] **T2-02**: Each minted value carries a semantic origin-role tag,
+- [x] **T2-02**: Each minted value carries a semantic origin-role tag,
       populated at the three mint call sites (`mint_from_intent`,
       `mint_from_read`, `mint_from_derivation`) via an additive, mechanical
       change to their signatures/call sites. This does NOT change I0/I1
@@ -107,7 +107,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | DESIGN-08 | Phase 23 | Complete |
 | DESIGN-09 | Phase 23 | Complete |
 | DESIGN-10 | Phase 23 | Complete |
-| T2-02 | Phase 24 | Pending |
+| T2-02 | Phase 24 | Complete |
 | T2-03 | Phase 24 | Pending |
 | T2-04 | Phase 24 | Pending |
 | T2-05 | Phase 24 | Pending |
