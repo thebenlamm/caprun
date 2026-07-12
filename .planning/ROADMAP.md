@@ -227,7 +227,7 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 | 24. Slot-Type Binding Enforcement | v1.5 | 3/3 | Complete    | 2026-07-12 |
 | 25. Regression & Live Proof | v1.5 | 3/3 | Complete    | 2026-07-12 |
 | 26. Security Hardening Design Gate | v1.6 | 2/2 | Complete    | 2026-07-12 |
-| 27. Session & Connection Integrity Hardening | v1.6 | 2/2 | Complete   | 2026-07-12 |
+| 27. Session & Connection Integrity Hardening | v1.6 | 2/2 | Complete    | 2026-07-12 |
 | 28. Authenticated Audit Chain | v1.6 | 0/? | Not started | - |
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 0/? | Not started | - |
 | 30. Regression & Live Proof | v1.6 | 0/? | Not started | - |
