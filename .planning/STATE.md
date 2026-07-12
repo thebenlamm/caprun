@@ -1,10 +1,14 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.6
-milestone_name: Security Hardening
+milestone_name: — Security Hardening
+current_phase: 26
+current_phase_name: Security Hardening Design Gate
 status: planning
-last_updated: "2026-07-12T15:14:56.129Z"
+stopped_at: Phase 26 context gathered
+last_updated: "2026-07-12T15:52:10.755Z"
 last_activity: 2026-07-12
+last_activity_desc: Roadmap created for v1.6 (Phases 26-30), 8/8 requirements mapped, 0 unmapped
 progress:
   total_phases: 5
   completed_phases: 0
@@ -89,7 +93,9 @@ design-gate/implementation/live-proof precedent (v1.0 P2, v1.2 P8, v1.3 P12,
 v1.4 P18, v1.5 P23 — each a standalone reviewed DESIGN doc before any TCB
 code, followed by implementation, followed by a separate live-proof phase):
 **Phase 26** is the design gate (DESIGN-11/12 — `DESIGN-security-hardening.md`
+
 + fresh non-self adversarial review covering all five residuals' mechanisms
+
 and fail-closed defaults) — hard-blocks Phases 27-29. The five HARDEN items
 split into **3 implementation phases by blast radius** rather than one
 bundled phase (keeps each phase's success criteria independently verifiable)
@@ -172,9 +178,9 @@ moved from "open" to "in progress" as its 5 items became v1.6's HARDEN-01..05.
 
 ## Session Continuity
 
-Last session: 2026-07-12T15:14:56.129Z
-Stopped at: v1.6 ROADMAP.md created (Phases 26-30, 8/8 requirements mapped, 0 unmapped); REQUIREMENTS.md traceability updated
-Resume file: None
+Last session: 2026-07-12T15:52:10.746Z
+Stopped at: Phase 26 context gathered
+Resume file: .planning/phases/26-security-hardening-design-gate/26-CONTEXT.md
 
 ## Operator Next Steps
 
