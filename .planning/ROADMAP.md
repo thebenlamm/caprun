@@ -120,58 +120,78 @@ Full detail archived in [`milestones/v1.5-ROADMAP.md`](milestones/v1.5-ROADMAP.m
 _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases (26-30) below are in progress._
 
 ### Phase 26: Security Hardening Design Gate
+
 **Goal**: A DESIGN doc (`planning-docs/DESIGN-security-hardening.md`) specifies the approach and fail-closed default for all five hardening residuals, and clears a fresh (non-self) adversarial review before any `crates/executor`, `crates/brokerd`, or `crates/runtime-core` hardening code is written.
 **Depends on**: Nothing (first phase of v1.6; builds on v1.5's shipped Phase 25 baseline)
 **Requirements**: DESIGN-11, DESIGN-12
 **Success Criteria** (what must be TRUE):
+
   1. `planning-docs/DESIGN-security-hardening.md` exists and specifies, for each of the five residuals, the mechanism and fail-closed default: (a) demote-at-RequestFd reconciled with the CONTROL-01 clean path; (b) `verify_chain` keyed-MAC/externally-anchored-head mechanism including key/anchor custody and threat model; (c) the Allowed-path idempotency/CAS shape; (d) the `CreateSession` forced-Active compile-exclusion mechanism; (e) the `file.create` `contents` expected-role/sensitivity treatment.
   2. The DESIGN doc clears a fresh (non-self) adversarial review with every finding resolved, recorded in a GATE-RECORD — mirroring v1.0 P2, v1.2 P8, v1.3 P12, v1.4 P18, v1.5 P23.
   3. No hardening code exists yet in `crates/executor`, `crates/brokerd`, or `crates/runtime-core` — the gate hard-blocks Phases 27-29 until it clears.
+
 **Plans**: 2 plans
+**Wave 1**
+
 - [ ] 26-01-PLAN.md — Author `DESIGN-security-hardening.md`: §a-§e (five residual mechanisms + fail-closed defaults), §f cross-cutting (X-01/X-02/X-03 + X-04 ruling), Adversarial-Review-Preemption, Accepted Residuals, Phase 27-30 impl map (DESIGN-11)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 26-02-PLAN.md — Fresh non-self Fable code-tracing review, fold amendments, amend DESIGN-session-trust-state.md (D-02), write DESIGN-GATE-RECORD-v1.6.md, hard-gate re-confirmation (DESIGN-12)
 
 ### Phase 27: Session & Connection Integrity Hardening
+
 **Goal**: fd release to the confined worker (`RequestFd`) itself demotes the session to draft-only for the I1 reason, and the `CreateSession`-IPC forced-`Active` mint arm is physically excluded from the production binary at compile time — both changes land in the same session/connection-lifecycle surface of `server.rs`.
 **Depends on**: Phase 26
 **Requirements**: HARDEN-01, HARDEN-04
 **Success Criteria** (what must be TRUE):
+
   1. Requesting an fd (`RequestFd`) for a workspace file demotes the session to `Draft` for the I1 reason, even if the worker never reports reading it back.
   2. A benign, fragment-free document read still leaves the session `Active`, and the CONTROL-01 clean-send path still completes ungated — no regression to the existing clean path.
   3. The `CreateSession`-IPC forced-`Active` mint arm is excluded from a default production build via a compile-time feature/cfg — grep/build evidence shows it absent from a default release build, not merely gated behind `CAPRUN_ENABLE_IPC_CREATE_SESSION` at runtime.
   4. Existing test fixtures that previously relied on the runtime env-flag opt-in still exercise the forced-Active behavior, now under an explicit test-only compile feature, so coverage isn't silently lost.
+
 **Plans**: TBD
 
 ### Phase 28: Authenticated Audit Chain
+
 **Goal**: `verify_chain` becomes an authenticated-integrity check rather than a corruption detector — an actor with `events`-table write access can no longer produce a chain that `verify_chain` accepts.
 **Depends on**: Phase 26
 **Requirements**: HARDEN-02
 **Success Criteria** (what must be TRUE):
+
   1. `verify_chain` rejects a chain where an event row has been rewritten and every descendant hash/parent_hash recomputed to be internally self-consistent — the exact forgery that previously passed.
   2. The chain's authenticity depends on a secret key or an out-of-store anchor that a bare `events`-table writer cannot derive or reproduce.
   3. An untampered chain continues to verify true — no false positives; existing confirm-path and live-acceptance callers of `verify_chain` are unaffected.
+
 **Plans**: TBD
 
 ### Phase 29: Sink-Path Hardening — Replay CAS & contents Slot
+
 **Goal**: the trusted `email.send` path is replay-safe (at-most-once, matching the confirm path's transaction discipline), and `file.create`'s `contents` arg is no longer an unconstrained slot.
 **Depends on**: Phase 26
 **Requirements**: HARDEN-03, HARDEN-05
 **Success Criteria** (what must be TRUE):
+
   1. A replayed `SubmitPlanNode` on the Allowed (trusted) `email.send` path sends at most once, enforced via an idempotency key/CAS in the same atomic-transaction discipline as the existing confirm path.
   2. A tainted value routed into `file.create`'s `contents` arg is now handled under the same I2/slot-type discipline as other sensitive args (blocked or slot-type-mismatched as appropriate), closing the previously-unconstrained gap.
   3. Existing trusted-content `file.create` flows continue to succeed unchanged — no false-positive block on legitimate `contents` values.
+
 **Plans**: TBD
 
 ### Phase 30: Regression & Live Proof
+
 **Goal**: All v1.6 hardening is proven live on real Linux with no regression, and each closed residual has a dedicated negative test.
 **Depends on**: Phase 27, Phase 28, Phase 29
 **Requirements**: HARDEN-06
 **Success Criteria** (what must be TRUE):
+
   1. The full workspace regression is independently re-run green on real Linux via the bare `scripts/mailpit-verify.sh` recipe, with no regression to v1.1–v1.5 behavior.
   2. A negative test proves a forged/tampered audit chain is rejected by `verify_chain`.
   3. A negative test proves a replayed Allowed `email.send` delivers exactly once (not N times).
   4. A test/build check proves the forced-Active `CreateSession` path is absent from the built production binary.
   5. A test proves fd release (`RequestFd`) demotes the session, while the CONTROL-01 clean path still succeeds.
+
 **Plans**: TBD
 
 ## Progress

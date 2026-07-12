@@ -404,7 +404,9 @@ Every connection `run_broker_server` accepts — the Worker connection AND every
 
 **If this table is empty:** N/A — see A1/A2/A3/A4 above; A5 is included for confidence-transparency only and is not actually an assumption.
 
-## Open Questions
+## Open Questions (RESOLVED — both delegated to the DESIGN doc; see plan 26-01)
+
+> **RESOLVED:** Both questions are explicitly delegated to `planning-docs/DESIGN-security-hardening.md` and covered by concrete plan instructions — Q1 (X-04 fold-vs-residual) by 26-01 Task 2's mandatory X-04 ruling subsection; Q2 (HARDEN-02 key custody across the confirm/deny process boundary) by 26-01 Task 1 §b. Retained here for the audit trail.
 
 1. **Should the §f NEW finding (Planner-connection `session_status` staleness) be folded into HARDEN-01's Phase-27 scope, or treated as a sixth named residual requiring its own HARDEN-0X requirement?**
    - What we know: the code trace is solid (direct read, not inference); the fix (a shared `Arc<Mutex<SessionStatus>>` re-read per-dispatch, mirroring the existing `planner_slot_occupied: Arc<AtomicBool>` pattern) is small and low-risk.
