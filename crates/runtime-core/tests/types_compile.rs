@@ -44,6 +44,7 @@ fn value_record_carries_literal_taint_provenance_chain() {
         literal: "attacker@evil.example".to_string(),
         taint: vec![TaintLabel::EmailRaw, TaintLabel::ExternalUntrusted],
         provenance_chain: vec![event_id],
+        origin_role: None,
     };
     assert_eq!(record.taint.len(), 2);
     assert_eq!(record.provenance_chain[0], event_id);
@@ -53,6 +54,43 @@ fn value_record_carries_literal_taint_provenance_chain() {
     assert_eq!(record, restored, "ValueRecord serde round-trip must be lossless");
     // provenance_chain[0] MUST equal the originating file_read Event id.
     assert_eq!(restored.provenance_chain[0], event_id);
+}
+
+#[test]
+fn value_record_origin_role_serde_round_trip() {
+    // origin_role (T2, DESIGN-slot-type-binding.md §1) round-trips through serde
+    // when populated.
+    let event_id = Uuid::new_v4();
+    let record = ValueRecord {
+        id: ValueId::new(),
+        literal: "recipient@example.com".to_string(),
+        taint: vec![TaintLabel::UserTrusted],
+        provenance_chain: vec![event_id],
+        origin_role: Some("recipient".to_string()),
+    };
+    let json = serde_json::to_string(&record).expect("ValueRecord serializes");
+    let restored: ValueRecord = serde_json::from_str(&json).expect("ValueRecord deserializes");
+    assert_eq!(restored.origin_role, Some("recipient".to_string()));
+    assert_eq!(record, restored);
+}
+
+#[test]
+fn value_record_origin_role_defaults_to_none_for_pre_field_json() {
+    // A ValueRecord serialized BEFORE origin_role existed (no key in the JSON
+    // object) must still deserialize successfully, yielding origin_role == None
+    // — the #[serde(default)] guarantee (DESIGN F6).
+    let event_id = Uuid::new_v4();
+    let vid = ValueId::new();
+    let vid_json = serde_json::to_string(&vid).expect("ValueId serializes");
+    let pre_field_json = format!(
+        r#"{{"id":{vid_json},"literal":"legacy@example.com","taint":["UserTrusted"],"provenance_chain":["{event_id}"]}}"#,
+    );
+    let restored: ValueRecord =
+        serde_json::from_str(&pre_field_json).expect("pre-field ValueRecord JSON still deserializes");
+    assert_eq!(
+        restored.origin_role, None,
+        "missing origin_role key must default to None"
+    );
 }
 
 #[test]

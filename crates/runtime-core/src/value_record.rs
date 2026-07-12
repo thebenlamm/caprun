@@ -28,4 +28,11 @@ pub struct ValueRecord {
     /// Ordered derivation edges from the originating read Event;
     /// `provenance_chain[0]` MUST equal the file_read Event id.
     pub provenance_chain: Vec<uuid::Uuid>,
+    /// Semantic origin-role tag (T2, DESIGN-slot-type-binding.md §1) — additive,
+    /// orthogonal to `taint`. `None` is a state distinct from every valid role
+    /// tag; the Wave-2 fail-closed default keys off exactly that bit.
+    /// `#[serde(default)]` (DESIGN F6) so a record serialized before this field
+    /// existed still deserializes as `None`.
+    #[serde(default)]
+    pub origin_role: Option<String>,
 }

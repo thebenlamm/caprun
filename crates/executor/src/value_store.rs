@@ -63,6 +63,7 @@ impl ValueStore {
         literal: String,
         taint: Vec<TaintLabel>,
         provenance_chain: Vec<uuid::Uuid>,
+        origin_role: Option<String>,
     ) -> Result<ValueId, MintInvariantError> {
         if taint.is_empty() {
             return Err(MintInvariantError::EmptyTaint);
@@ -76,6 +77,7 @@ impl ValueStore {
             literal,
             taint,
             provenance_chain,
+            origin_role,
         };
         self.inner.insert(id.clone(), record);
         Ok(id)
@@ -108,7 +110,7 @@ mod tests {
         let chain = vec![event_id];
 
         let id = store
-            .mint(literal.clone(), taint.clone(), chain.clone())
+            .mint(literal.clone(), taint.clone(), chain.clone(), None)
             .expect("valid mint");
         let record = store.resolve(&id).expect("minted id must resolve");
 
@@ -119,6 +121,41 @@ mod tests {
             record.provenance_chain, chain,
             "provenance_chain[0] must equal the file_read Event id"
         );
+    }
+
+    /// origin_role is threaded verbatim onto the record: mint(..., Some(role))
+    /// then resolve() returns the same role unchanged (T2, DESIGN-slot-type-binding.md §1).
+    #[test]
+    fn mint_threads_origin_role_verbatim() {
+        let mut store = ValueStore::default();
+        let event_id = Uuid::new_v4();
+        let id = store
+            .mint(
+                "user@example.com".to_string(),
+                vec![TaintLabel::UserTrusted],
+                vec![event_id],
+                Some("recipient".to_string()),
+            )
+            .expect("valid mint");
+        let record = store.resolve(&id).expect("minted id must resolve");
+        assert_eq!(record.origin_role, Some("recipient".to_string()));
+    }
+
+    /// origin_role is optional: mint(..., None) round-trips to None on resolve.
+    #[test]
+    fn mint_with_no_origin_role_resolves_to_none() {
+        let mut store = ValueStore::default();
+        let event_id = Uuid::new_v4();
+        let id = store
+            .mint(
+                "doc fragment text".to_string(),
+                vec![TaintLabel::WorkerExtracted],
+                vec![event_id],
+                None,
+            )
+            .expect("valid mint");
+        let record = store.resolve(&id).expect("minted id must resolve");
+        assert_eq!(record.origin_role, None);
     }
 
     /// resolve of a random ValueId returns None — no forgery possible.
@@ -143,7 +180,7 @@ mod tests {
     fn mint_rejects_empty_taint() {
         let mut store = ValueStore::default();
         let event_id = Uuid::new_v4();
-        let result = store.mint("boss@company.com".to_string(), vec![], vec![event_id]);
+        let result = store.mint("boss@company.com".to_string(), vec![], vec![event_id], None);
         assert_eq!(
             result,
             Err(MintInvariantError::EmptyTaint),
@@ -159,6 +196,7 @@ mod tests {
             "boss@company.com".to_string(),
             vec![TaintLabel::UserTrusted],
             vec![],
+            None,
         );
         assert_eq!(
             result,
@@ -176,7 +214,12 @@ mod tests {
         let taint = vec![TaintLabel::UserTrusted];
         let chain = vec![event_id];
         let id = store
-            .mint("boss@company.com".to_string(), taint.clone(), chain.clone())
+            .mint(
+                "boss@company.com".to_string(),
+                taint.clone(),
+                chain.clone(),
+                None,
+            )
             .expect("non-empty taint + provenance must mint Ok");
         let record = store.resolve(&id).expect("minted id must resolve");
         assert_eq!(record.taint, taint);
