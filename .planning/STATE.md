@@ -4,9 +4,9 @@ milestone: v1.5
 milestone_name: — Slot-Type Binding Enforcement
 current_phase: 25
 current_phase_name: Regression & Live Proof
-status: verifying
+status: executing
 stopped_at: Phase 24 Plan 03 complete — Step 1c wired, expected_role table added (with body/doc_fragment correction), full workspace green, ready for verification
-last_updated: "2026-07-12T03:14:58.244Z"
+last_updated: "2026-07-12T04:24:12.534Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 24 complete, transitioned to Phase 25
 progress:
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-11)
 
 Phase: 25 — Regression & Live Proof
 Plan: Not started
-Status: Phase complete — ready for verification
+Status: Ready to execute
 Last activity: 2026-07-12 — Phase 24 complete, transitioned to Phase 25
 
 ## Performance Metrics
