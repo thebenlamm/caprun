@@ -146,12 +146,15 @@ impl ConnectionRole {
 ///   Phase 27, HARDEN-01/X-04 fold, `DESIGN-security-hardening.md` §a/§f) —
 ///   every connection clones the ARC HANDLE, never a fresh owned snapshot.
 /// * `trusted_workspace_path` — the CLI-designated `<workspace-file>` (v1.6
-///   Phase 27, HARDEN-01, `DESIGN-security-hardening.md` §a): the broker's
-///   only in-memory notion of "the ONE file the CLI designated as this
-///   session's intent document," threaded through so the `RequestFd` arm's
-///   `fstat` inode-identity compare has a trusted target to compare against.
-///   An OWNED `PathBuf` (not a borrowed `&OsStr`) so it can cross into
-///   `tokio::spawn`ed `'static` futures exactly like `ws_root_for_broker` does.
+///   Phase 27, HARDEN-01, `DESIGN-security-hardening.md` §a). Resolved to a
+///   `(dev, ino)` pair EXACTLY ONCE, HERE, at function entry (review Fix 2:
+///   the locked design text pins this identity as "resolved once … at
+///   broker startup") — the resulting `trusted_inode: Option<(u64, u64)>`
+///   is the value actually threaded through `handle_connection` /
+///   `classify_second_connection` / `dispatch_request` for the `RequestFd`
+///   arm's `fstat` inode-identity compare; the raw `PathBuf` itself is never
+///   passed below this point, so no per-grant `std::fs::metadata` call can
+///   ever re-resolve (and potentially re-target) "trusted" mid-session.
 ///
 /// The `value_store` is NO LONGER a parameter — it is created fresh per
 /// connection inside `handle_connection` to enforce session-scoped resolution.
@@ -185,6 +188,25 @@ pub async fn run_broker_server(
     // (`Active` -> `Draft` only): no connection-setup path below may EVER
     // write `Active` back into it.
     let session_status = Arc::new(Mutex::new(initial_session_status));
+
+    // v1.6 Phase 27 review Fix 2 (Finding 2, design-pin deviation): the
+    // CLI-designated `<workspace-file>` identity is resolved ONCE, HERE, at
+    // `run_broker_server` entry — mirroring the `session_status` cell's own
+    // construct-once precedent immediately above. `DESIGN-security-hardening.md`
+    // §a (locked) pins this identity as "resolved once … at broker startup";
+    // the PRIOR implementation instead called `std::fs::metadata(trusted_path)`
+    // on EVERY `RequestFd` (an ambient, ONGOING, symlink-following
+    // resolution), so a post-startup swap/symlink at `trusted_path` could
+    // redefine "trusted" mid-session. `trusted_inode` is `Copy` and threaded
+    // by value from here down through `handle_connection` /
+    // `classify_second_connection` / `dispatch_request` — no call site below
+    // ever calls `std::fs::metadata` on the path again. `None` means the
+    // file was unresolvable at startup, which fails closed: every RequestFd
+    // grant demotes, because no grant can ever match an unresolvable trusted
+    // identity.
+    let trusted_inode: Option<(u64, u64)> = std::fs::metadata(&trusted_workspace_path)
+        .ok()
+        .map(|m| (m.dev(), m.ino()));
 
     // Cross-connection trust-coherence fix (v1.4 Phase 19, TRUST-01/TRUST-02):
     // a ONE-WAY, session-lifetime occupancy latch for the WORKER slot. Set
@@ -236,7 +258,6 @@ pub async fn run_broker_server(
             // clone) — this is a READ of the shared cell, never a fresh
             // owned re-seed. Never write `Active` into the cell here.
             let session_status_clone = session_status.clone();
-            let trusted_path_clone = trusted_workspace_path.clone();
             tokio::spawn(async move {
                 // ConnectionRole::Worker — full capabilities, `permits`
                 // always `true` (Phase 20, PLANNER-02/04).
@@ -248,7 +269,7 @@ pub async fn run_broker_server(
                     initial_hash,
                     session_status_clone,
                     workspace_root_clone,
-                    trusted_path_clone,
+                    trusted_inode,
                     ConnectionRole::Worker,
                 )
                 .await
@@ -270,7 +291,6 @@ pub async fn run_broker_server(
         // a Worker-connection demotion committed before this Planner
         // connection is accepted is observed immediately via this handle.
         let session_status_clone = session_status.clone();
-        let trusted_path_clone = trusted_workspace_path.clone();
         let planner_slot_clone = planner_slot_occupied.clone();
         tokio::spawn(async move {
             classify_second_connection(
@@ -281,7 +301,7 @@ pub async fn run_broker_server(
                 initial_hash,
                 session_status_clone,
                 workspace_root_clone,
-                trusted_path_clone,
+                trusted_inode,
                 planner_slot_clone,
             )
             .await;
@@ -328,7 +348,7 @@ async fn classify_second_connection(
     last_event_hash: String,
     session_status: Arc<Mutex<SessionStatus>>,
     workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
-    trusted_path: PathBuf,
+    trusted_inode: Option<(u64, u64)>,
     planner_slot_occupied: Arc<std::sync::atomic::AtomicBool>,
 ) {
     let first_frame = tokio::time::timeout(
@@ -366,7 +386,7 @@ async fn classify_second_connection(
             last_event_hash,
             session_status,
             workspace_root,
-            trusted_path,
+            trusted_inode,
             ConnectionRole::Planner,
         )
         .await
@@ -447,7 +467,7 @@ async fn handle_connection(
     mut last_event_hash: String,
     session_status: Arc<Mutex<SessionStatus>>,
     workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
-    trusted_path: PathBuf,
+    trusted_inode: Option<(u64, u64)>,
     role: ConnectionRole,
 ) -> anyhow::Result<()> {
     // Per-connection ValueStore — scoped to this session ONLY (HARD-03 fix).
@@ -569,8 +589,9 @@ async fn handle_connection(
         // THE PRODUCTION dispatch_request call site (v1.6 Phase 27): passes
         // the SHARED Arc<Mutex<SessionStatus>> handle this connection holds
         // — NOT a fresh clone, NOT a re-seeded owned value — plus the
-        // trusted-path this connection received. Either substitution would
-        // silently reintroduce the X-04 stale-snapshot bug this plan closes.
+        // trusted identity this connection received, FROZEN once at
+        // `run_broker_server` entry (Fix 2). Either substitution would
+        // silently reintroduce a stale-snapshot bug this plan closes.
         dispatch_request(
             request,
             &mut stream,
@@ -581,7 +602,7 @@ async fn handle_connection(
             &mut value_store,
             &workspace_root,
             &session_status,
-            &trusted_path,
+            trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
         )
@@ -1079,9 +1100,14 @@ async fn create_session_arm(
 /// function (never trusted as a stale per-connection snapshot), and any
 /// arm that demotes (`ReportClaims`, and the `RequestFd` fstat-mismatch
 /// demotion) writes `Draft` back through the SAME lock — monotonic
-/// `Active -> Draft` only, never re-seeded `Active`. `trusted_path` is the
-/// CLI-designated `<workspace-file>` identity the `RequestFd` arm's fstat
-/// compare uses to decide whether a granted fd stays trusted (HARDEN-01).
+/// `Active -> Draft` only, never re-seeded `Active`. `trusted_inode` is the
+/// CLI-designated `<workspace-file>`'s `(dev, ino)` identity, FROZEN ONCE at
+/// `run_broker_server` entry (v1.6 Phase 27 review Fix 2, design-pin
+/// deviation fix) — the `RequestFd` arm's fstat compare matches the
+/// currently-granted file's inode against this frozen pair, NEVER by
+/// re-resolving `trusted_path` via `std::fs::metadata` per grant. `None`
+/// means the file was unresolvable at startup and fails closed (every grant
+/// demotes).
 ///
 /// `intent_provided` / `fd_requested` (Phase 16, BLOCKER-1 guard a) are the
 /// broker-enforced, per-connection ordering state for `ProvideIntent`: it is
@@ -1099,7 +1125,7 @@ pub async fn dispatch_request(
     value_store: &mut ValueStore,
     workspace_root: &Arc<adapter_fs::workspace::WorkspaceRoot>,
     session_status: &Arc<Mutex<SessionStatus>>,
-    trusted_path: &std::path::Path,
+    trusted_inode: Option<(u64, u64)>,
     intent_provided: &mut bool,
     fd_requested: &mut bool,
 ) -> anyhow::Result<()> {
@@ -1156,22 +1182,29 @@ pub async fn dispatch_request(
             };
 
             // HARDEN-01 (v1.6 Phase 27, DESIGN-security-hardening.md §a,
-            // corrected ordering per DESIGN-GATE-RECORD-v1.6.md finding F2):
-            // a broker-derived fstat (st_dev, st_ino) inode-identity compare
-            // — NEVER a path-string compare (permissive normalization risk:
-            // `./x` vs `x` could be treated as trusted) — decides whether
-            // this fd-grant stays Active. Computed on the SAME already-open
-            // `file` about to be passed to the worker (no re-open, no
-            // TOCTOU window) against the CLI-designated `<workspace-file>`
-            // (`trusted_path`). Fail-closed default: any mismatch, or any
-            // `metadata()` error on either side, demotes.
-            let is_trusted_labeled = (|| -> std::io::Result<bool> {
-                let granted_meta = file.metadata()?;
-                let trusted_meta = std::fs::metadata(trusted_path)?;
-                Ok(granted_meta.dev() == trusted_meta.dev()
-                    && granted_meta.ino() == trusted_meta.ino())
-            })()
-            .unwrap_or(false);
+            // corrected ordering per DESIGN-GATE-RECORD-v1.6.md finding F2;
+            // identity FROZEN per review Fix 2): a broker-derived fstat
+            // (st_dev, st_ino) inode-identity compare — NEVER a path-string
+            // compare (permissive normalization risk: `./x` vs `x` could be
+            // treated as trusted) — decides whether this fd-grant stays
+            // Active. Computed on the SAME already-open `file` about to be
+            // passed to the worker (no re-open, no TOCTOU window) against
+            // `trusted_inode`, the CLI-designated `<workspace-file>`'s
+            // identity resolved ONCE at `run_broker_server` entry — NEVER
+            // by re-resolving the path via `std::fs::metadata` on every
+            // grant (that would be an ambient, ongoing, symlink-following
+            // resolution letting a post-startup swap/symlink redefine
+            // "trusted" mid-session, a deviation from the locked "resolved
+            // once … at broker startup" design text). Fail-closed default:
+            // any mismatch, any `metadata()` error on the granted file, or
+            // an unresolvable `trusted_inode` (`None`), demotes.
+            let is_trusted_labeled = match trusted_inode {
+                Some((d, i)) => file
+                    .metadata()
+                    .map(|m| m.dev() == d && m.ino() == i)
+                    .unwrap_or(false),
+                None => false,
+            };
 
             // Corrected ordering (F2, locked): open -> fstat compare ->
             // commit demotion if untrusted -> THEN pass_fd. The demotion
@@ -1711,9 +1744,10 @@ mod tests {
     ///
     /// `session_status` is a fresh, test-local `Arc<Mutex<SessionStatus>>`
     /// cell (v1.6 Phase 27, X-04/F3 fold) — NOT the production shared cell,
-    /// but the same shape `dispatch_request` now requires. `trusted_path` is
-    /// a placeholder (none of these guard-(a)-ordering tests exercise the
-    /// HARDEN-01 fstat identity compare — that is Task 4's own harness).
+    /// but the same shape `dispatch_request` now requires. `trusted_inode`
+    /// is `None` — a placeholder (none of these guard-(a)-ordering tests
+    /// exercise the HARDEN-01 fstat identity compare — that is Task 4's own
+    /// harness / `crates/brokerd/tests/harden01_session_integrity.rs`).
     fn harness() -> (
         Arc<Mutex<rusqlite::Connection>>,
         Uuid,
@@ -1722,7 +1756,7 @@ mod tests {
         String,
         Arc<Mutex<SessionStatus>>,
         Arc<adapter_fs::workspace::WorkspaceRoot>,
-        std::path::PathBuf,
+        Option<(u64, u64)>,
     ) {
         let conn = Arc::new(Mutex::new(open_audit_db(":memory:").expect("open_audit_db")));
         let session_id = Uuid::new_v4();
@@ -1734,7 +1768,7 @@ mod tests {
             adapter_fs::workspace::WorkspaceRoot::open(std::env::temp_dir().as_path())
                 .expect("open ws root"),
         );
-        let trusted_path = std::env::temp_dir().join("__harness_no_trusted_path__");
+        let trusted_inode: Option<(u64, u64)> = None;
         (
             conn,
             session_id,
@@ -1743,7 +1777,7 @@ mod tests {
             last_event_hash,
             session_status,
             ws_root,
-            trusted_path,
+            trusted_inode,
         )
     }
 
@@ -1751,7 +1785,7 @@ mod tests {
     /// still succeeds — the happy path is unchanged.
     #[tokio::test]
     async fn provide_intent_before_any_request_fd_succeeds() {
-        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, session_status, ws_root, trusted_path) =
+        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, session_status, ws_root, trusted_inode) =
             harness();
         let mut intent_provided = false;
         let mut fd_requested = false;
@@ -1768,7 +1802,7 @@ mod tests {
             &mut store,
             &ws_root,
             &session_status,
-            &trusted_path,
+            trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
         )
@@ -1789,7 +1823,7 @@ mod tests {
     /// EXACTLY ONCE.
     #[tokio::test]
     async fn second_provide_intent_is_rejected() {
-        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, session_status, ws_root, trusted_path) =
+        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, session_status, ws_root, trusted_inode) =
             harness();
         let mut intent_provided = false;
         let mut fd_requested = false;
@@ -1806,7 +1840,7 @@ mod tests {
             &mut store,
             &ws_root,
             &session_status,
-            &trusted_path,
+            trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
         )
@@ -1827,7 +1861,7 @@ mod tests {
             &mut store,
             &ws_root,
             &session_status,
-            &trusted_path,
+            trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
         )
@@ -1851,7 +1885,7 @@ mod tests {
     /// no ProvideIntent has ever succeeded on this connection.
     #[tokio::test]
     async fn provide_intent_after_request_fd_is_rejected() {
-        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, session_status, _ws_root, _trusted_path) =
+        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, session_status, _ws_root, _trusted_inode) =
             harness();
         // A real workspace dir + file so RequestFd's read_within succeeds
         // (the arm sets fd_requested at ENTRY regardless, but a real target
@@ -1863,10 +1897,14 @@ mod tests {
         let ws_root = Arc::new(
             adapter_fs::workspace::WorkspaceRoot::open(&ws_dir).expect("open ws root"),
         );
-        // Trusted path == the SAME file being RequestFd'd, so this guard-(a)
-        // ordering test's assertions (unrelated to HARDEN-01) are unaffected
-        // by the Task-2 fstat identity compare landing later in this plan.
+        // Trusted inode == the SAME file being RequestFd'd (fstat'd here,
+        // mirroring the frozen-at-startup pattern review Fix 2 requires),
+        // so this guard-(a) ordering test's assertions (unrelated to
+        // HARDEN-01) are unaffected by the fstat identity compare.
         let trusted_path = ws_dir.join("workspace.txt");
+        let trusted_inode: Option<(u64, u64)> = std::fs::metadata(&trusted_path)
+            .ok()
+            .map(|m| (m.dev(), m.ino()));
 
         let mut intent_provided = false;
         let mut fd_requested = false;
@@ -1883,7 +1921,7 @@ mod tests {
             &mut store,
             &ws_root,
             &session_status,
-            &trusted_path,
+            trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
         )
@@ -1913,7 +1951,7 @@ mod tests {
             &mut store,
             &ws_root,
             &session_status,
-            &trusted_path,
+            trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
         )

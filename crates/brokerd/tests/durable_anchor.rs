@@ -118,9 +118,9 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
     // v1.6 Phase 27 (X-04/F3): dispatch_request now takes the shared
     // Arc<Mutex<SessionStatus>> shape — a fresh test-local cell here.
     let session_status = Arc::new(Mutex::new(SessionStatus::Active));
-    // Trusted-path placeholder (HARDEN-01) — this harness never drives
-    // RequestFd, so the fstat identity compare is never reached.
-    let trusted_path = std::env::temp_dir().join("__durable_anchor_no_trusted_path__");
+    // Trusted-inode placeholder (HARDEN-01, review Fix 2) — this harness
+    // never drives RequestFd, so the fstat identity compare is never reached.
+    let trusted_inode: Option<(u64, u64)> = None;
 
     // `path` is FIRST so the executor blocks on the tainted routing-sensitive arg
     // before it ever resolves `contents` for the ALLOW/DENY decision itself (a
@@ -168,7 +168,7 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
         &mut store,
         &ws_root(),
         &session_status,
-        &trusted_path,
+        trusted_inode,
         &mut intent_provided,
         &mut fd_requested,
     )

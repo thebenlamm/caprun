@@ -90,6 +90,17 @@ fn fresh_workspace(tag: &str) -> (std::path::PathBuf, Arc<adapter_fs::workspace:
     (ws_dir, ws_root, trusted_path)
 }
 
+/// fstat a path to the `(dev, ino)` pair `dispatch_request`'s `trusted_inode`
+/// parameter now expects (v1.6 Phase 27 review Fix 2: the broker itself
+/// freezes this identity exactly once, at `run_broker_server` entry, rather
+/// than re-resolving the path on every `RequestFd`; these tests mirror that
+/// same freeze-once-per-scope discipline by stat'ing `trusted_path` a single
+/// time up front, not once per `RequestFd` call).
+fn trusted_inode_of(path: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
+}
+
 /// Seed a `sessions` row for `session_id` so `update_session_status`'s
 /// `UPDATE ... WHERE id = ?` has a real row to affect, and so the persisted
 /// status is queryable afterward — mirrors `planner_reduced_signal.rs`'s
@@ -131,7 +142,7 @@ async fn request_fd_via_dispatch(
     store: &mut ValueStore,
     ws_root: &Arc<adapter_fs::workspace::WorkspaceRoot>,
     session_status: &Arc<Mutex<SessionStatus>>,
-    trusted_path: &std::path::Path,
+    trusted_inode: Option<(u64, u64)>,
     path: &str,
 ) -> BrokerResponse {
     let mut intent_provided = false;
@@ -149,7 +160,7 @@ async fn request_fd_via_dispatch(
         store,
         ws_root,
         session_status,
-        trusted_path,
+        trusted_inode,
         &mut intent_provided,
         &mut fd_requested,
     )
@@ -180,6 +191,7 @@ async fn request_fd_via_dispatch(
 #[tokio::test]
 async fn fd_grant_on_untrusted_path_demotes_without_report_claims() {
     let (_ws_dir, ws_root, trusted_path) = fresh_workspace("test_a");
+    let trusted_inode = trusted_inode_of(&trusted_path);
     let conn = Arc::new(Mutex::new(open_audit_db(":memory:").expect("open_audit_db")));
     let session_id = Uuid::new_v4();
     seed_session_row(&conn.lock().unwrap(), session_id);
@@ -189,7 +201,7 @@ async fn fd_grant_on_untrusted_path_demotes_without_report_claims() {
     let mut last_event_id = Uuid::new_v4();
     let mut last_event_hash = "genesis-hash".to_string();
 
-    // RequestFd the HOSTILE (untrusted) path — NOT the trusted_path.
+    // RequestFd the HOSTILE (untrusted) path — NOT the trusted inode.
     let resp = request_fd_via_dispatch(
         &conn,
         session_id,
@@ -198,7 +210,7 @@ async fn fd_grant_on_untrusted_path_demotes_without_report_claims() {
         &mut store,
         &ws_root,
         &session_status,
-        &trusted_path,
+        trusted_inode,
         "hostile.txt",
     )
     .await;
@@ -249,6 +261,7 @@ async fn fd_grant_on_untrusted_path_demotes_without_report_claims() {
 #[tokio::test]
 async fn second_dispatch_call_after_demotion_observes_draft_not_stale_active() {
     let (_ws_dir, ws_root, trusted_path) = fresh_workspace("test_b");
+    let trusted_inode = trusted_inode_of(&trusted_path);
     let conn = Arc::new(Mutex::new(open_audit_db(":memory:").expect("open_audit_db")));
     let session_id = Uuid::new_v4();
     seed_session_row(&conn.lock().unwrap(), session_id);
@@ -268,7 +281,7 @@ async fn second_dispatch_call_after_demotion_observes_draft_not_stale_active() {
         &mut conn1_store,
         &ws_root,
         &session_status,
-        &trusted_path,
+        trusted_inode,
         "hostile.txt",
     )
     .await;
@@ -330,7 +343,7 @@ async fn second_dispatch_call_after_demotion_observes_draft_not_stale_active() {
         // THE SAME shared Arc<Mutex<SessionStatus>> handle conn1 used —
         // never a fresh clone of an owned SessionStatus.
         &session_status,
-        &trusted_path,
+        trusted_inode,
         &mut conn2_intent_provided,
         &mut conn2_fd_requested,
     )
@@ -374,6 +387,7 @@ async fn second_dispatch_call_after_demotion_observes_draft_not_stale_active() {
 #[tokio::test]
 async fn fd_grant_on_trusted_path_stays_active() {
     let (_ws_dir, ws_root, trusted_path) = fresh_workspace("test_c");
+    let trusted_inode = trusted_inode_of(&trusted_path);
     let conn = Arc::new(Mutex::new(open_audit_db(":memory:").expect("open_audit_db")));
     let session_id = Uuid::new_v4();
     seed_session_row(&conn.lock().unwrap(), session_id);
@@ -384,7 +398,10 @@ async fn fd_grant_on_trusted_path_stays_active() {
     let mut last_event_hash = "genesis-hash".to_string();
 
     // RequestFd the TRUSTED path itself — "trusted.txt", the same file
-    // `trusted_path` points to (inode-identical).
+    // `trusted_path` points to (inode-identical). `trusted_inode` is stat'd
+    // ONCE, above, mirroring the broker's own freeze-at-startup pattern
+    // (review Fix 2) — this is the Test-C stay-Active case: the inodes
+    // match, so the fd-grant demotion arm's compare succeeds.
     let resp = request_fd_via_dispatch(
         &conn,
         session_id,
@@ -393,7 +410,7 @@ async fn fd_grant_on_trusted_path_stays_active() {
         &mut store,
         &ws_root,
         &session_status,
-        &trusted_path,
+        trusted_inode,
         "trusted.txt",
     )
     .await;

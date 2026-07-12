@@ -189,9 +189,9 @@ async fn block_appends_durable_causal_sink_blocked() {
     // v1.6 Phase 27 (X-04/F3): dispatch_request now takes the shared
     // Arc<Mutex<SessionStatus>> shape — a fresh test-local cell here.
     let session_status = Arc::new(Mutex::new(SessionStatus::Active));
-    // Trusted-path placeholder (HARDEN-01) — this harness never drives
-    // RequestFd, so the fstat identity compare is never reached.
-    let trusted_path = std::env::temp_dir().join("__phase5_dispatch_no_trusted_path_1__");
+    // Trusted-inode placeholder (HARDEN-01, review Fix 2) — this harness
+    // never drives RequestFd, so the fstat identity compare is never reached.
+    let trusted_inode: Option<(u64, u64)> = None;
 
     // Drive the real dispatch_request SubmitPlanNode arm over a UnixStream pair.
     let (mut server_end, _client_end) =
@@ -213,7 +213,7 @@ async fn block_appends_durable_causal_sink_blocked() {
         &mut store,
         &ws_root(),
         &session_status,
-        &trusted_path,
+        trusted_inode,
         &mut intent_provided,
         &mut fd_requested,
     )
@@ -285,9 +285,9 @@ async fn append_failure_is_fail_closed() {
     // v1.6 Phase 27 (X-04/F3): dispatch_request now takes the shared
     // Arc<Mutex<SessionStatus>> shape — a fresh test-local cell here.
     let session_status = Arc::new(Mutex::new(SessionStatus::Active));
-    // Trusted-path placeholder (HARDEN-01) — this harness never drives
-    // RequestFd, so the fstat identity compare is never reached.
-    let trusted_path = std::env::temp_dir().join("__phase5_dispatch_no_trusted_path_2__");
+    // Trusted-inode placeholder (HARDEN-01, review Fix 2) — this harness
+    // never drives RequestFd, so the fstat identity compare is never reached.
+    let trusted_inode: Option<(u64, u64)> = None;
 
     let (mut server_end, _client_end) =
         tokio::net::UnixStream::pair().expect("UnixStream::pair");
@@ -308,7 +308,7 @@ async fn append_failure_is_fail_closed() {
         &mut store,
         &ws_root(),
         &session_status,
-        &trusted_path,
+        trusted_inode,
         &mut intent_provided,
         &mut fd_requested,
     )
