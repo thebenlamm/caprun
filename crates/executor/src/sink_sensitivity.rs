@@ -106,6 +106,43 @@ pub fn is_content_sensitive(sink: &SinkId, arg_name: &str) -> bool {
     }
 }
 
+/// Returns the hardcoded expected-role set for `(sink, arg_name)`, or `None`
+/// if the slot is UNCONSTRAINED (v1.5, DESIGN-slot-type-binding.md §3/§7).
+///
+/// Contract (load-bearing — the `Option` vs empty-slice distinction is the
+/// fail-closed default itself; callers must match this `Option` explicitly
+/// and must never collapse the `None` and `Some(&[])` states via an
+/// unwrap-with-empty-default):
+///   `None`           => this slot is unconstrained — the role check is a
+///                        no-op for this arg. NOT fail-open: a deliberately
+///                        scoped-out slot (DESIGN §7 item 3, Assumption A2).
+///   `Some(&[roles])` => this slot IS role-checked — the resolved value's
+///                        `origin_role` MUST be `Some` and MUST be one of
+///                        `roles`, or the caller denies (DESIGN §7 items 1/2).
+///   `Some(&[])`      => MUST NEVER be constructed by this function — a
+///                        zero-valid-role slot is a design bug, not a runtime
+///                        state.
+///
+/// v1.5 scope: hardcoded per-sink-arg table, mirroring `is_routing_sensitive`
+/// / `is_content_sensitive` above — a security property, not a configuration
+/// knob (CON-i2-non-bypassable). Scoped to the two live sinks only.
+pub fn expected_role(sink: &SinkId, arg_name: &str) -> Option<&'static [&'static str]> {
+    match sink.0.as_str() {
+        "email.send" => match arg_name {
+            "to" | "cc" | "bcc" => Some(&["recipient", "email_address"]),
+            "subject" => Some(&["subject"]),
+            "body" => Some(&["body"]),
+            _ => None,
+        },
+        "file.create" => match arg_name {
+            "path" => Some(&["path", "relative_path"]),
+            "contents" => None, // unconstrained for v1.5 — Assumption A2 (DESIGN §3/§10)
+            _ => None,
+        },
+        _ => None, // any other sink: unconstrained, out of v1.5 scope
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,5 +243,63 @@ mod tests {
             sink_effect_class(&SinkId("test.observe".to_string())),
             EffectClass::Observe
         );
+    }
+
+    // -----------------------------------------------------------------
+    // expected_role (T2-03, DESIGN-slot-type-binding.md §3)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn email_send_to_cc_bcc_expect_recipient_or_email_address() {
+        for arg in ["to", "cc", "bcc"] {
+            assert_eq!(
+                expected_role(&email(), arg),
+                Some(&["recipient", "email_address"][..]),
+                "email.send `{arg}` must expect [recipient, email_address]"
+            );
+        }
+    }
+
+    #[test]
+    fn email_send_subject_expects_subject_only() {
+        assert_eq!(expected_role(&email(), "subject"), Some(&["subject"][..]));
+    }
+
+    #[test]
+    fn email_send_body_expects_body_only() {
+        assert_eq!(expected_role(&email(), "body"), Some(&["body"][..]));
+    }
+
+    #[test]
+    fn email_send_unknown_arg_is_unconstrained() {
+        assert_eq!(expected_role(&email(), "attachment"), None);
+    }
+
+    #[test]
+    fn file_create_path_expects_path_or_relative_path() {
+        assert_eq!(
+            expected_role(&file_create(), "path"),
+            Some(&["path", "relative_path"][..])
+        );
+    }
+
+    #[test]
+    fn file_create_contents_is_unconstrained() {
+        assert_eq!(
+            expected_role(&file_create(), "contents"),
+            None,
+            "file.create `contents` stays unconstrained for v1.5 (Assumption A2)"
+        );
+    }
+
+    #[test]
+    fn file_create_unknown_arg_is_unconstrained() {
+        assert_eq!(expected_role(&file_create(), "mode"), None);
+    }
+
+    #[test]
+    fn unknown_sink_expected_role_is_unconstrained() {
+        assert_eq!(expected_role(&other(), "to"), None);
+        assert_eq!(expected_role(&other(), "url"), None);
     }
 }
