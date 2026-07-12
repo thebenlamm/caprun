@@ -134,8 +134,13 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   4. `submit_plan_node` denies (or blocks, per Phase 23's ordering ruling) a plan node when a resolved value's origin role doesn't match its slot's expected role, evaluated per-arg in the same pass as the existing routing/content-sensitivity check, without weakening or reordering the existing I0 (Step 0.5 class-deny) / I2 (per-arg Block) precedence.
 
 **Plans**: 3 plans (2 waves)
+**Wave 1**
+
 - [ ] 24-01-PLAN.md — T2-02: origin-role tag on ValueRecord + threading through ValueStore::mint, the 3 mint_from_* wrappers, and 5 server.rs dispatch sites, plus the ~63 compilation-forced test-fixture updates (Wave 1)
 - [ ] 24-02-PLAN.md — T2-04: new exhaustive DenyReason::SlotTypeMismatch variant + both code()/Display matches (Wave 1, parallel)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 24-03-PLAN.md — T2-03 + T2-05: hardcoded expected-role table + Step 1c fail-closed enforcement in submit_plan_node (Wave 2)
 
 ### Phase 25: Regression & Live Proof
