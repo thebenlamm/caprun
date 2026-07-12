@@ -48,6 +48,7 @@ use anyhow::Context;
 use chrono::Utc;
 use executor::value_store::ValueStore;
 use runtime_core::{Event, SeedProvenance, SessionStatus};
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -971,9 +972,6 @@ pub async fn dispatch_request(
         .lock()
         .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?
         .clone();
-    // `trusted_path` is threaded but not yet consumed — Task 2 (the
-    // RequestFd fstat identity compare) is the first reader.
-    let _ = trusted_path;
 
     match request {
         BrokerRequest::CreateSession { intent_id } => {
@@ -1104,7 +1102,96 @@ pub async fn dispatch_request(
                     .context("append fd_granted")?
             };
 
+            // HARDEN-01 (v1.6 Phase 27, DESIGN-security-hardening.md §a,
+            // corrected ordering per DESIGN-GATE-RECORD-v1.6.md finding F2):
+            // a broker-derived fstat (st_dev, st_ino) inode-identity compare
+            // — NEVER a path-string compare (permissive normalization risk:
+            // `./x` vs `x` could be treated as trusted) — decides whether
+            // this fd-grant stays Active. Computed on the SAME already-open
+            // `file` about to be passed to the worker (no re-open, no
+            // TOCTOU window) against the CLI-designated `<workspace-file>`
+            // (`trusted_path`). Fail-closed default: any mismatch, or any
+            // `metadata()` error on either side, demotes.
+            let is_trusted_labeled = (|| -> std::io::Result<bool> {
+                let granted_meta = file.metadata()?;
+                let trusted_meta = std::fs::metadata(trusted_path)?;
+                Ok(granted_meta.dev() == trusted_meta.dev()
+                    && granted_meta.ino() == trusted_meta.ino())
+            })()
+            .unwrap_or(false);
+
+            // Corrected ordering (F2, locked): open -> fstat compare ->
+            // commit demotion if untrusted -> THEN pass_fd. The demotion
+            // still commits before the fd is released to the worker (D-01),
+            // using the fd `read_within` already opened above.
+            let mut chain_head_id = fd_event_id;
+            let mut chain_head_hash = fd_hash.clone();
+            if !is_trusted_labeled {
+                // Second broker-side I1 demotion site (D-02 amendment,
+                // `quarantine.rs`'s `mint_from_read` is the first) — a
+                // genuinely broker-derived act (never worker-asserted),
+                // exactly like `fd_requested` being flipped at entry above.
+                //
+                // (a) Mutable read-model update: the SAME `update_session_status`
+                // helper `mint_from_read` already uses (no new mint/demotion
+                // call site for check-invariants.sh Gate 3 purposes).
+                {
+                    let locked = conn
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                    crate::session::update_session_status(&locked, session_id, &SessionStatus::Draft)
+                        .context("update_session_status (RequestFd fd-grant demotion)")?;
+                }
+                // (b) SHARED in-memory cell: lock + monotonic write (X-04/F3)
+                // — never a re-seeded Active.
+                {
+                    let mut locked_status = session_status
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                    *locked_status = SessionStatus::Draft;
+                }
+                // Not re-read later in THIS call (RequestFd never calls
+                // evaluate_plan_node_and_record) — kept for symmetry with
+                // the shared-cell write above and any future same-call reader.
+                #[allow(unused_assignments)]
+                {
+                    current_status = SessionStatus::Draft;
+                }
+
+                // (c) Append-only ledger entry: a session_demoted Event
+                // parented on the fd_granted id just appended above — a
+                // GENUINE causal edge (fd_granted -> session_demoted), never
+                // a stapled tag. Reuses the EXACT literal event_type
+                // "session_demoted" mint_from_read already uses
+                // (quarantine.rs) so verify_chain/audit tooling that filters
+                // on that token keeps working.
+                let demoted_event_id = Uuid::new_v4();
+                let demoted_event = Event::new(
+                    demoted_event_id,
+                    Some(fd_event_id),
+                    session_id,
+                    "broker".into(),
+                    "session_demoted".into(),
+                    Utc::now(),
+                    vec![],
+                );
+                let demoted_hash = {
+                    let locked = conn
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                    append_event(&locked, &demoted_event, Some(&fd_hash))
+                        .context("append session_demoted (RequestFd fd-grant demotion)")?
+                };
+                chain_head_id = demoted_event_id;
+                chain_head_hash = demoted_hash;
+            }
+
             // pass_fd is blocking (sendmsg) — MUST use spawn_blocking (RESEARCH Pitfall 2).
+            // Demotion (if any) already committed above — pass_fd never
+            // blocks the read; it only removes the session's authority for
+            // irreversible effects (I1). The benign clean path (trusted
+            // workspace_rel, inode match) skips the demote branch entirely
+            // and stays Active (SC2 — CONTROL-01 must still send).
             let sock_fd = stream.as_raw_fd();
             tokio::task::spawn_blocking(move || {
                 let result = pass_fd(sock_fd, file_fd).map_err(|e| anyhow::anyhow!("pass_fd: {e}"));
@@ -1116,9 +1203,13 @@ pub async fn dispatch_request(
 
             send_response(stream, &BrokerResponse::FdGranted).await?;
 
-            // Advance the chain ONLY after the append + fd-pass succeeded.
-            *last_event_id = fd_event_id;
-            *last_event_hash = fd_hash;
+            // Advance the chain ONLY after the append + fd-pass succeeded —
+            // to fd_granted's id/hash on the trusted path, or to the
+            // fd-grant demotion's session_demoted id/hash on the untrusted
+            // path (never a sibling fork of fd_granted, mirroring
+            // ReportClaims's identical chain-head-advance discipline).
+            *last_event_id = chain_head_id;
+            *last_event_hash = chain_head_hash;
         }
 
         BrokerRequest::ReportClaims { claims } => {
