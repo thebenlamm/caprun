@@ -66,14 +66,22 @@ pub origin_role: Option<String>,   // ADD — additive, no existing shape change
     needs in one call (`crates/executor/src/value_store.rs:89-91`); a second lookup adds a
     can-go-stale surface for no benefit — the field is small and always co-resident with
     taint/provenance.
-  - Not a new `TaintLabel` variant: `TaintLabel` is the I0/I1 trust vocabulary
-    (`ExternalUntrusted`, `EmailRaw`, `PathRaw`, `WorkerExtracted`, `UserTrusted`,
-    `LocalWorkspace`). Folding role into it would conflate "is this value trustworthy" (I0/I1)
+  - Not a new `TaintLabel` variant: `TaintLabel` is the I0/I1 trust vocabulary — the eight
+    variants `ExternalUntrusted`, `EmailRaw`, `PathRaw`, `PdfRaw`, `LlmGenerated`,
+    `WorkerExtracted`, `UserTrusted`, `LocalWorkspace` (`plan_node.rs:13-24`; corrected after
+    DESIGN-GATE-RECORD-v1.5 Round 1 finding F5 — the argument is unaffected by the exact count,
+    and `is_untrusted()`'s no-wildcard match at `plan_node.rs:40` would be polluted by a role
+    variant). Folding role into it would conflate "is this value trustworthy" (I0/I1)
     with "is this value the right shape for this slot" (T2) — and Phase 24's mandate is explicit
     that I0/I1 classification is UNAFFECTED. A parallel field keeps the two concerns orthogonal
     by construction.
 - **Assigned atomically at mint time**, by the broker (sole mint authority, T-04-03), the same
   way taint/provenance are assigned today — never by the planner, never post-hoc.
+- **Serde compatibility (added after DESIGN-GATE-RECORD-v1.5 Round 1, finding F6, NIT):**
+  `ValueRecord` derives `Deserialize`; Phase 24 should annotate the new field
+  `#[serde(default)] pub origin_role: Option<String>` so any record serialized before the field
+  existed still deserializes (`None`). Low stakes — `ValueRecord` is not observed crossing the IPC
+  wire — but free insurance.
 
 The tag is populated at the three mint sites (§4 and §9). This is an additive signature change
 at existing call sites; it does **not** add a new `mint_from_read(` / `mint_from_derivation(` /
@@ -107,10 +115,20 @@ have no `claim_type` today; the role is keyed by which `server.rs` call site min
 
 | Intent field | Mint call site | `origin_role` |
 |---|---|---|
-| recipient | `server.rs:1317` | `"recipient"` |
+| recipient | `server.rs:1317` (`SendEmailSummary` arm) | `"recipient"` |
 | subject | `server.rs:1330` | `"subject"` |
 | body | `server.rs:1347` | `"body"` |
-| path (`CreateFileFromReport`) | `server.rs:1299` arm | `"path"` |
+| path (`CreateFileFromReport`) | `server.rs:1317` (`CreateFileFromReport` arm) | `"path"` |
+
+> **Revised after DESIGN-GATE-RECORD-v1.5 Round 1, finding F3 (MINOR).** The recipient and the
+> path are minted through the SAME `mint_from_intent` call site (`server.rs:1317` mints
+> `primary_literal`), which is the recipient for `SendEmailSummary` but the path for
+> `CreateFileFromReport` — the two are distinguished by the intent-variant `match` at
+> `server.rs:1294-1300`, not by two separate call sites. **Phase 24 MUST select the role inside
+> that intent-variant match and thread it to the `:1317` call — never hardcode `"recipient"` at
+> the call site.** Hardcoding `"recipient"` at `:1317` would tag a legitimate `file.create` path
+> `"recipient"`, and §3's `path => ["path","relative_path"]` slot would then fail-closed-Deny a
+> valid path flow (a fail-closed regression, not a security hole, but a real correctness bug).
 
 **Derivation output (`mint_from_derivation`):** `"recipient"` — see §4.
 
@@ -160,6 +178,23 @@ The `["recipient", "email_address"]` membership is what lets BOTH a human-typed 
 legitimately concat-derived one pass the `to` slot, while still catching a MISROUTED `body`- or
 `subject`-tagged value there.
 
+> **Revised after DESIGN-GATE-RECORD-v1.5 Round 1, finding F4 (MINOR — load-bearing invariant).**
+> Untrusted-origin role tags are **worker-influenced**: the worker picks the `WorkerClaim` variant
+> (`proto.rs:24-43`), and `mint_from_read` shape-validates only `doc_fragment`
+> (`quarantine.rs:327`) — so a hostile worker can mint an arbitrary string tagged
+> `"email_address"` or `"relative_path"`. The role tag is therefore NOT a trust signal on the
+> untrusted side. This design is safe only because of a **table-construction invariant** that must
+> hold and is hereby pinned:
+>
+> **An untrusted-origin role tag (`"email_address"`, `"relative_path"`, `"doc_fragment"`) may
+> appear in a slot's expected-role list ONLY if that slot is also routing- or content-sensitive**
+> (`is_routing_sensitive || is_content_sensitive`, `sink_sensitivity.rs`). Because such a value
+> carries untrusted taint, I2's per-arg Block (Step 2/3) fires there regardless of role — so the
+> role check never becomes the *sole* gate for an attacker-controllable value. The role check's
+> job is to catch a misrouted **`UserTrusted`** value (the T2 gap); untrusted values remain
+> governed by I2. Every untrusted role in §3's table (`email_address`@`to/cc/bcc`,
+> `relative_path`@`path`) satisfies this — `to/cc/bcc` and `path` are all routing-sensitive.
+
 ---
 
 ## §4. Derivation Role Propagation (DESIGN-09)
@@ -172,8 +207,21 @@ legitimately concat-derived one pass the `to` slot, while still catching a MISRO
 **Grounding.** `TransformKind` (`crates/brokerd/src/proto.rs:57-61`) has exactly ONE variant
 today: `Concat` — a fixed `'@'`-join over doc fragments, mapped via `as_mint_tag()` to the tag
 `"concat"`. Its byte-verify guard proves the output literal is exactly `join(inputs, '@')`
-(`quarantine.rs:672-684`) — so **the only shape `Concat` can ever produce is `local@domain`, a
-syntactic email address.** In the live flow this is the Reply-To/Domain doc-fragment pair being
+(`quarantine.rs:671-685`).
+
+> **Revised after DESIGN-GATE-RECORD-v1.5 Round 1, finding F2 (MINOR).** Precisely: `Concat`
+> joins N inputs on `'@'` and rejects only the zero-input case (`quarantine.rs:588-593`) — so 1
+> input yields the input verbatim (no `@`), 2 inputs yield `local@domain`, 3+ yield `a@b@c`. The
+> `local@domain` email shape is guaranteed only for the **2-input** case (the live Reply-To/Domain
+> flow). Phase 24 MUST therefore either (a) enforce `inputs.len() == 2` for the `"concat"` arm
+> before assigning `"recipient"`, or (b) rely on the residual cover that the derived value is
+> unconditionally `WorkerExtracted`/untrusted (`quarantine.rs:611-613`), so I2's per-arg Block
+> fires at any routing/content-sensitive slot regardless of role — meaning a degenerate-arity
+> concat can never reach a sensitive sink as `Allowed` even if mis-shaped. (a) is preferred as the
+> tighter guarantee. The `"recipient"` role assignment below is grounded in the intended 2-input
+> flow with I2 as the backstop for anything else.
+
+In the live flow this is the Reply-To/Domain doc-fragment pair being
 assembled into a recipient candidate — literally the v1.4 T2 scenario this milestone closes. The
 derived value's taint is unconditionally untrusted (`WorkerExtracted` forced in, `UserTrusted`
 dropped — `quarantine.rs:595-624`), so I2's per-arg Block already fires whenever it lands in a
@@ -206,13 +254,23 @@ a named v2 obligation, not something to design for now.
 exhaustive-match discipline):
 
 ```rust
-SlotTypeMismatch { sink: String, arg: String, expected: &'static [&'static str], found: Option<String> },
+SlotTypeMismatch { sink: String, arg: String, expected: Vec<String>, found: Option<String> },
 ```
+
+> **Revised after DESIGN-GATE-RECORD-v1.5 Round 1, finding F1 (MAJOR).** The field types MUST be
+> owned (`Vec<String>`, not `&'static [&'static str]`). `DenyReason` derives
+> `serde::Deserialize` (`executor_decision.rs:14`) and the decision crosses the IPC wire (the
+> worker deserializes the decision, `worker.rs:370-381`) — serde cannot deserialize into
+> `&'static` references. The `expected` list is *populated from* the static expected-role table
+> (§3) into an owned `Vec<String>` at construction time; the table itself stays `&'static`. This
+> is a doc-level correction to the pinned shape, not a design change.
 
 Name `SlotTypeMismatch` to match `ROADMAP.md` / `REQUIREMENTS.md` vocabulary verbatim (reduces
 doc-to-requirement traceability friction). The recommendation reuses the EXISTING
 `ExecutorDecision::Denied { reason }` carrier — it does NOT add a new `ExecutorDecision` variant,
-so the outer enum's match sites are untouched.
+so the outer enum's match sites are untouched. (Confirmed at review: the only non-test match over
+`ExecutorDecision` is `server.rs:650-683`, which carries a `_ =>` wildcard arm, so a reused
+`Denied { reason }` needs no update there — Assumption A3 discharged.)
 
 **Full exhaustive-match blast radius.** A workspace-wide `grep -rn "DenyReason" crates/ cli/`
 (all non-`/target/` hits reviewed; independently re-confirmed during this authoring) found
@@ -436,5 +494,25 @@ Phase 23's gate is cleared when ALL are true:
 
 ## Amendments (post-review)
 
-*(Round-tagged amendments from the fresh adversarial review are folded into the relevant §above
-and noted here, per `DESIGN-session-trust-coherence.md`'s convention. None yet — pending review.)*
+Round-tagged amendments from the fresh adversarial review are folded into the relevant §above,
+per `DESIGN-session-trust-coherence.md`'s convention. See `DESIGN-GATE-RECORD-v1.5.md` for the full
+review.
+
+**Round 1 (DESIGN-GATE-RECORD-v1.5, fresh independent Fable-5 reviewer, 2026-07-11):**
+- **F1 (MAJOR) → §5:** `SlotTypeMismatch` field types changed from `&'static [&'static str]` to
+  owned `Vec<String>` — `DenyReason` derives `Deserialize` and crosses the IPC wire; `&'static`
+  refs are not deserializable. Also folded the A3 discharge (`server.rs:650-683` has a `_ =>` arm).
+- **F2 (MINOR) → §4:** corrected the "`Concat` only produces `local@domain`" overstatement —
+  `Concat` joins N inputs; the email shape holds for the 2-input case; Phase 24 enforces
+  `inputs.len()==2` or relies on I2 as the residual cover for degenerate arities.
+- **F3 (MINOR) → §2:** clarified recipient and path share the `server.rs:1317` mint call site
+  (distinguished by the intent-variant match at `:1294-1300`); the role must be selected in that
+  match and threaded, never hardcoded at the call site.
+- **F4 (MINOR, load-bearing) → §3:** pinned the table-construction invariant — an untrusted-origin
+  role may appear in a slot's expected-role list only if that slot is also I2-sensitive.
+- **F5 (NIT) → §1:** corrected the `TaintLabel` variant list (eight, incl. `PdfRaw`/`LlmGenerated`).
+- **F6 (NIT) → §1:** Phase 24 should add `#[serde(default)]` to `origin_role`.
+
+No finding was resolved by weakening a ruling or by designing a locked-out mechanism. The
+load-bearing rulings (additive tag, hard-`Denied` Step-1c ordering, `Concat`→`recipient`,
+fail-closed `None`-vs-`Some(&[])` contract) survived remediation unchanged.
