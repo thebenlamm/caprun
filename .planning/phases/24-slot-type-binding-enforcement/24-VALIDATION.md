@@ -2,7 +2,7 @@
 phase: 24
 slug: slot-type-binding-enforcement
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-07-11
 ---
@@ -44,14 +44,22 @@ created: 2026-07-11
 > Populated by the planner from PLAN.md tasks. Each task's `<verify>` must map to an automated
 > `cargo test`/`cargo build` command or `./scripts/check-invariants.sh` assertion.
 
+> Finalized to a 3-plan / 2-wave structure. Rationale: T2-02's mint-signature change atomically
+> breaks ~63 test call sites across 8 files (workspace cannot reach green mid-split), so it is an
+> irreducible heavy unit and owns Plan 01 alone. T2-04 (DenyReason variant) is a tiny, additive,
+> disjoint-file change → Plan 02, parallel in Wave 1. T2-03 (table) + T2-05 (the Step 1c gate that
+> consumes it) form a coherent enforcement unit → Plan 03, Wave 2 (depends on 01 + 02).
+
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 24-01-01 | 01 | 1 | T2-02 | — | minted value carries origin-role tag; trust classification unchanged | unit | `cargo test -p executor` | ❌ W0 | ⬜ pending |
-| 24-01-02 | 01 | 1 | T2-04 | — | new exhaustive `DenyReason::SlotTypeMismatch` arm; no wildcard | unit | `cargo test --workspace` | ❌ W0 | ⬜ pending |
-| 24-02-01 | 02 | 2 | T2-03 | — | hardcoded expected-role table for `email.send` + `file.create` | unit | `cargo test -p executor` | ❌ W0 | ⬜ pending |
-| 24-02-02 | 02 | 2 | T2-05 | — | `submit_plan_node` Denies on role↔slot mismatch, per-arg, precedence intact | unit | `cargo test -p brokerd` | ❌ W0 | ⬜ pending |
+| 24-01-01 | 01 | 1 | T2-02 | — | ValueRecord carries origin_role; ValueStore::mint threads it | unit | `cargo test -p executor value_store` / `cargo test -p runtime-core` | ✅ existing files | ⬜ pending |
+| 24-01-02 | 01 | 1 | T2-02 | T-24-01/02 | role threaded through 3 mint_from_* + 5 server.rs sites; concat arity guard; F3 role selection | unit | `cargo test -p brokerd quarantine` / `cargo build --workspace` | ✅ existing files | ⬜ pending |
+| 24-01-03 | 01 | 1 | T2-02 | — | ~63 compilation-forced test fixtures updated; workspace green; no test weakened | unit | `cargo test --workspace --no-fail-fast` / `./scripts/check-invariants.sh` | ✅ existing files | ⬜ pending |
+| 24-02-01 | 02 | 1 | T2-04 | T-24-04/05 | new exhaustive `DenyReason::SlotTypeMismatch` (owned types, no wildcard); code()+Display; grep coverage | unit | `cargo test -p runtime-core` / `cargo build --workspace` | ➕ new test module | ⬜ pending |
+| 24-03-01 | 03 | 2 | T2-03 | — | hardcoded expected-role table for `email.send` + `file.create`; Option-not-empty-slice contract | unit | `cargo test -p executor sink_sensitivity` | ➕ new tests in existing module | ⬜ pending |
+| 24-03-02 | 03 | 2 | T2-05 | T-24-06/07/08/09 | `submit_plan_node` Step 1c hard-Denies role↔slot mismatch, per-arg, fail-closed, I0/I2 precedence intact | unit | `cargo test -p executor executor_decision` / `cargo test --workspace` | ➕ 3 new test cases | ⬜ pending |
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky · IDs illustrative — planner finalizes.*
+*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky · IDs final (3-plan / 2-wave).*
 
 ---
 
