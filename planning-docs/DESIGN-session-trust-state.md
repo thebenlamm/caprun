@@ -99,11 +99,15 @@ never from any claim the (possibly compromised) worker asserts about itself.
 > `SessionStatus::Draft` for the I1 reason" letter above is hereby **amended to permit exactly that one
 > additional site** — both sites remain **broker-only**, so the anti-self-declaration invariant (the
 > load-bearing spirit of this clause) is *strengthened, not weakened*: the status quo already let a
-> silent/injected worker skip demotion entirely by not sending `ReportClaims`, leaving the session
-> falsely `Active`, which is exactly the spoofing this clause exists to prevent. Demoting at fd-grant is
-> the broker's own act (precedent: `fd_requested` is flipped broker-side at `RequestFd` entry), never a
-> worker-asserted flag. The fd-grant demotion is **trusted-path-gated** (demote unless the requested
-> path is inode-identical, via a broker `fstat` `(st_dev, st_ino)` compare, to the CLI-designated
+> silent/injected worker `RequestFd` a **NON-designated (untrusted-inode)** path and skip demotion
+> entirely by not sending `ReportClaims`, leaving the session falsely `Active` for that untrusted read
+> — exactly the spoofing this clause exists to prevent. This closure is scoped to non-designated reads
+> only: a `RequestFd` of the designated `<workspace-file>` itself intentionally stays `Active` — the
+> clean SC2/CONTROL-01 path this milestone must not regress — with I2 plus `mint_from_read` as the
+> backstop on any claims later derived from that trusted read. Demoting at fd-grant is the broker's own
+> act (precedent: `fd_requested` is flipped broker-side at `RequestFd` entry), never a worker-asserted
+> flag. The fd-grant demotion is **trusted-path-gated** (demote unless the requested path is
+> inode-identical, via a broker `fstat` `(st_dev, st_ino)` compare, to the CLI-designated
 > `<workspace-file>` — see the DESIGN doc §a as amended by F2), and its `session_demoted` Event parents
 > on the `fd_granted` id (the second causal shape §5 now documents below). **The code landed in Phase
 > 27** (`crates/brokerd/src/server.rs`'s `RequestFd` arm), which also corrected `quarantine.rs`'s

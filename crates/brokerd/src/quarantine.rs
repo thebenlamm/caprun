@@ -257,8 +257,14 @@ fn looks_like_email(s: &str) -> bool {
 /// `RequestFd` arm, which demotes at fd-GRANT time via a broker-derived
 /// `fstat` inode-identity compare against the CLI-designated
 /// `<workspace-file>`, closing the gap where a silent/injected worker that
-/// never sends `ReportClaims` kept the session falsely `Active`. Both sites
-/// remain broker-only (never worker-asserted) and both reuse the identical
+/// `RequestFd`s a NON-designated (untrusted-inode) path and never sends
+/// `ReportClaims` kept the session falsely `Active` for that read. This
+/// closure is SCOPED to non-designated reads only: a `RequestFd` of the
+/// designated `<workspace-file>` itself intentionally stays `Active` — the
+/// clean SC2/CONTROL-01 path this milestone must not regress — with I2 plus
+/// this function's own `mint_from_read` backstop covering whatever claims a
+/// worker later derives from that trusted read. Both demotion sites remain
+/// broker-only (never worker-asserted) and both reuse the identical
 /// `"session_demoted"` event_type literal, so `verify_chain`/audit tooling
 /// that filters on that token covers both. No function OTHER than these two
 /// may set `Draft` for the I1 reason; `mint_from_intent` (the sibling
