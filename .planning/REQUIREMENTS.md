@@ -55,20 +55,37 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DESIGN-11 | Phase ? | Pending |
-| DESIGN-12 | Phase ? | Pending |
-| HARDEN-01 | Phase ? | Pending |
-| HARDEN-02 | Phase ? | Pending |
-| HARDEN-03 | Phase ? | Pending |
-| HARDEN-04 | Phase ? | Pending |
-| HARDEN-05 | Phase ? | Pending |
-| HARDEN-06 | Phase ? | Pending |
+| DESIGN-11 | Phase 26 | Pending |
+| DESIGN-12 | Phase 26 | Pending |
+| HARDEN-01 | Phase 27 | Pending |
+| HARDEN-04 | Phase 27 | Pending |
+| HARDEN-02 | Phase 28 | Pending |
+| HARDEN-03 | Phase 29 | Pending |
+| HARDEN-05 | Phase 29 | Pending |
+| HARDEN-06 | Phase 30 | Pending |
 
 **Coverage:**
 - v1 requirements: 8 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 8 ⚠️
+- Mapped to phases: 8 (roadmap created — Phases 26-30)
+- Unmapped: 0
+
+**Phase grouping rationale (`/gsd-roadmapper`, 2026-07-12):** Phase 26 is a standalone
+design-gate phase (DESIGN-11/12), mirroring this project's standing precedent (v1.0 P2,
+v1.2 P8, v1.3 P12, v1.4 P18, v1.5 P23) — no `crates/executor`/`crates/brokerd`/
+`crates/runtime-core` hardening code may be written before it clears a fresh adversarial
+review. The five HARDEN items split into 3 implementation phases by blast radius rather
+than one bundled phase (so each phase's success criteria stay independently verifiable)
+or five separate phases (avoiding trivial-single-requirement phases): Phase 27 groups
+HARDEN-01 + HARDEN-04 (both land in `server.rs`'s session/connection-lifecycle surface —
+demote-at-RequestFd and the CreateSession forced-Active compile-exclusion); Phase 28 is
+HARDEN-02 alone (audit-chain keyed-MAC/anchoring is a self-contained, substantial
+mechanism — key/anchor custody + threat model — distinct from the other four); Phase 29
+groups HARDEN-03 + HARDEN-05 (both are sink-dispatch-level hardening — Allowed-path CAS
+and the `file.create` `contents` expected-role table entry — even though the mechanisms
+differ, both close a specific sink-level gap rather than a session/connection-level one).
+Phase 30 (HARDEN-06) is the dedicated regression/live-proof phase, mirroring v1.2 P11,
+v1.3 P17, v1.4 P22, v1.5 P25 — depends on Phases 27, 28, and 29 all landing first.
 
 ---
 *Requirements defined: 2026-07-12*
-*Last updated: 2026-07-12 after v1.6 milestone definition*
+*Last updated: 2026-07-12 after v1.6 roadmap creation — 8/8 requirements mapped to Phases 26-30, 0 unmapped*
