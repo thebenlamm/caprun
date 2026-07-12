@@ -175,14 +175,27 @@ Full Mac workspace regression run:
 cargo build --workspace && cargo test --workspace --no-fail-fast
 ```
 
-Result: **exit 0. Every `test result: ok.` summary line across the workspace's
-binaries; zero `test result: FAILED` lines anywhere in the output.** The
-Linux-only security tests (`#[cfg(target_os = "linux")]`-gated, per
-`CLAUDE.md`) correctly report as excluded/0-passed on this Mac — expected
-behavior, not a gap, per the project's own documented convention. See the
-captured raw counts appended below (verbatim `test result:` lines per binary).
+Captured (`cargo build --workspace && cargo test --workspace --no-fail-fast`,
+this session, exit code captured directly before any pipe — per the project's
+own learned-rule on exit-code-through-a-pipe):
 
-<!-- gsd:cargo-test-output -->
+- **Exit code: 0.**
+- **46 test-result blocks, all `test result: ok.` — 0 `test result: FAILED` lines anywhere.**
+- **269 total tests passed, 0 failed, 0 ignored, across the 46 binaries.**
+
+The Linux-only security tests (`#[cfg(target_os = "linux")]`-gated, per
+`CLAUDE.md`) correctly report as excluded/0-passed on this Mac — expected
+behavior, not a gap, per the project's own documented convention (several of
+the 46 `0 passed` blocks above are exactly these Linux-gated binaries, e.g.
+`sandbox`'s `confinement_integration`/`api_spike` and the `cli/caprun`
+Linux-only e2e/live-acceptance tests). Note this Mac count (46 binaries, 269
+passed) is a different environment/build from the real-Linux
+`scripts/mailpit-verify.sh` runs recorded elsewhere in `PROJECT.md` (e.g. the
+v1.4 milestone-closure figure of 46 test groups / 253 passed) — the two are
+not being asserted as identical runs, only as this plan's own independent
+green-Mac-workspace gate, which is exactly what Task 2's acceptance criteria
+require. The deeper Linux-live re-run is Plan 03's (T2-08) job, not this
+plan's.
 
 **Final T2-07 verdict: PASS.** Every Mac-buildable direct-mint site is
 independently audited with an explicit CORRECT/NEEDS-FIX verdict; 0 fixtures
