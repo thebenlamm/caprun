@@ -27,7 +27,37 @@ nor a class-level deny (I0/I1 don't apply). Proven live on real Linux with a gen
 audit chain (v1.4's accepted residual #5 is closed). Milestone audit PASSED (11/11
 requirements, 5/5 integration hops wired).
 
-**Next milestone:** TBD — run `/gsd-new-milestone` to scope v1.6.
+## Current Milestone: v1.6 — Security Hardening (close the residuals)
+
+**Goal:** Close the standing TCB-local security residuals that v1.1–v1.5 accumulated and
+documented as accepted caveats — turning each DOC-01 honesty qualifier into an enforced
+guarantee, without adding any new external-effect surface.
+
+**Target features:**
+- **Demote-at-RequestFd (I1 honest scope):** fd release itself carries an I1 consequence, so
+  "reading raw untrusted bytes → draft-only" becomes literally true (not just on a reported
+  read), reconciled with the CONTROL-01 clean path.
+- **`verify_chain` authentication:** a keyed MAC over the audit chain and/or an
+  externally-anchored chain head, so an actor with `events` write access can no longer forge
+  an internally-consistent chain — upgrading it from a corruption detector to authenticated
+  integrity.
+- **Allowed-path replay CAS:** an idempotency key / compare-and-swap on the trusted
+  (Allowed) `email.send` path, so a replayed `SubmitPlanNode` can no longer send N emails —
+  mirroring the confirm path's at-most-once transaction.
+- **Compile-out the forced-Active mint:** the `CreateSession`-IPC forced-`Active` mint arm
+  (guard-(c), currently gated behind the `CAPRUN_ENABLE_IPC_CREATE_SESSION` runtime
+  default-deny flag) becomes a build-excluded path, so the code is absent from the production
+  binary, not merely disabled at runtime.
+- **Constrain the `file.create` `contents` slot:** give the currently-unconstrained
+  `contents` arg an expected-role / sensitivity treatment so it isn't a latent gap if
+  `file.create` ever gains egress.
+
+**Key context:** All five are TCB-local hardening on the existing design — no new adapters,
+no new external effects. Per this project's standing precedent (every TCB milestone opens with
+a reviewed DESIGN doc before any executor/brokerd change — v1.0 P2, v1.2 P8, v1.3 P12, v1.4
+P18, v1.5 P23), v1.6 should open with a design-gate phase. Breadth (Git/GitHub adapter, test
+adapter, patch/PR, workspace snapshots) is deliberately deferred to **v1.7** to keep this
+milestone coherent and right-sized. Source detail: `.planning/todos/pending/2026-07-08-v1.3-phase16-v2-security-obligations.md`.
 
 <details>
 <summary>v1.5 milestone planning detail (shipped — historical)</summary>
@@ -461,16 +491,32 @@ traceability archived in `.planning/milestones/v1.5-REQUIREMENTS.md`.
 
 ### Active
 
-Unscoped — v1.5 is the most recently shipped milestone. Run
-`/gsd-new-milestone` to scope v1.6. (Full v1.5 detail: the "Current State"
-section above and Validated Requirements above.)
+**v1.6 — Security Hardening (close the residuals).** Five TCB-local hardening
+items, each closing a standing DOC-01 caveat (no new external-effect surface):
+
+- [ ] Demote-at-RequestFd — fd release itself carries the I1 draft-only
+  consequence, reconciled with the CONTROL-01 clean path
+- [ ] `verify_chain` authentication — keyed MAC and/or externally-anchored
+  chain head (forge-resistant, not just corruption-evident)
+- [ ] Allowed-path replay CAS — idempotency key / compare-and-swap on the
+  trusted `email.send` path (at-most-once)
+- [ ] Compile-out the `CreateSession` forced-Active mint — build-excluded
+  path, not a runtime default-deny flag
+- [ ] Constrain the `file.create` `contents` slot — expected-role /
+  sensitivity treatment for the currently-unconstrained arg
+
+Per standing precedent, v1.6 opens with a design-gate phase before any TCB
+change. Breadth (Git/GitHub adapter, test adapter, patch/PR, workspace
+snapshots) deferred to **v1.7** (see Out of Scope).
 
 ### Out of Scope
 
 Non-goals, reviewed at each milestone close (v0/v1.1/v1.2/v1.3) — still valid
 as of 2026-07-07 unless noted:
 
-- Git / GitHub adapters — post-v1.2, no milestone has needed them yet
+- Git / GitHub adapters, test adapter, patch/PR, workspace snapshots — the
+  PLAN.md "v1" breadth bucket; **scoped for v1.7** (deferred out of v1.6 to
+  keep the security-hardening milestone coherent and right-sized, 2026-07-12)
 - Cedar policy engine — simple TOML/rules for sink access is fine; I2 stays in
   Rust (still true through v1.3 — the executor's `sink_effect_class` table
   remains hardcoded, not policy-driven)
