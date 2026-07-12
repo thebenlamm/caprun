@@ -80,7 +80,8 @@ Additional corroboration:
 - Sentinel + 0 FAILED + held-out-test-present asserted on named artifacts, not on a piped exit: ✓
 - No code changed: ✓ (`files_modified: []`)
 
-## Human sign-off
-Task 2 is a **blocking** milestone-close checkpoint — awaiting explicit human "approved" before
-the phase is marked complete and v1.5 is closed. Not self-approved (autonomous:false; the v1.5
-DONE gate is human-only regardless of auto_advance).
+## Human sign-off — OBTAINED
+Task 2 is a **blocking** milestone-close checkpoint. The full Task-1 evidence (four assertions,
+all PASS) was presented to the human, who gave explicit **"approved"** on **2026-07-12**. Not
+self-approved — the v1.5 DONE gate is human-only regardless of auto_advance, and the approval was
+an explicit human response to the presented evidence checkpoint. v1.5 is closeable on this record.
