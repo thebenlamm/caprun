@@ -2,11 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: — Slot-Type Binding Enforcement
-current_phase: 25
-status: executing
+current_phase: 5
+status: Awaiting next milestone
 stopped_at: Phase 24 Plan 03 complete — Step 1c wired, expected_role table added (with body/doc_fragment correction), full workspace green, ready for verification
-last_updated: "2026-07-12T13:44:16.533Z"
+last_updated: "2026-07-12T13:50:16.303Z"
 last_activity: 2026-07-12
+last_activity_desc: Milestone v1.5 completed and archived
 progress:
   total_phases: 3
   completed_phases: 3
@@ -23,14 +24,14 @@ current_phase_name: regression-live-proof
 See: .planning/PROJECT.md (updated 2026-07-11)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, and now (v1.5) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into — closing the v1.4 T2 residual.
-**Current focus:** Phase 25 — regression-live-proof
+**Current focus:** Planning next milestone (v1.5 shipped 2026-07-12; run `/gsd-new-milestone` for v1.6)
 
 ## Current Position
 
-Phase: 25
-Plan: Not started
-Status: Executing Phase 25
-Last activity: 2026-07-12
+Phase: Milestone v1.5 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-12 — Milestone v1.5 completed and archived
 
 ## Performance Metrics
 
@@ -159,7 +160,7 @@ Items acknowledged and deferred at prior milestone closes:
 | todo | gsd-phases-clear-deletes-all-milestones (GSD tooling bug) | open | 2026-07-09 |
 | todo | gsd-executors-must-not-write-phase-completion-state (GSD tooling bug) | open | 2026-07-09 |
 | todo | v1.3-phase16-v2-security-obligations (5 v2 security items, already disclosed in DOC-01) | open | 2026-07-09 |
-| requirement | T2 slot-type binding enforcement | now in scope — v1.5 Phases 23-25 | 2026-07-10 (deferred), 2026-07-11 (scoped) |
+| requirement | T2 slot-type binding enforcement | ✓ DELIVERED — v1.5 Phases 23-25 (enforced in TCB, proven live on Linux) | closed 2026-07-12 |
 
 Re-acknowledged unchanged at v1.2 milestone close on 2026-07-07 (same
 pre-existing item, still benign). Re-acknowledged at v1.3 milestone close on
@@ -167,6 +168,10 @@ pre-existing item, still benign). Re-acknowledged at v1.3 milestone close on
 accepted as known/benign or already-tracked v2 work; none block v1.3's close.
 Re-acknowledged at v1.4 milestone close on 2026-07-11 — no new items opened;
 T2 slot-type binding moved from "deferred" to "in scope" as v1.5's roadmap.
+Re-acknowledged at v1.5 milestone close on 2026-07-12 via `audit-open` — the
+SAME 4 pre-existing cross-milestone items (1 UAT [Phase 03, passed], 3 v1.3-era
+todos), none from v1.5 and none blocking; all v1.5 phases verified passed (11/11
+requirements). T2 slot-type binding now DELIVERED (no longer a deferred item).
 
 ## Session Continuity
 
@@ -176,4 +181,4 @@ Resume file: None
 
 ## Operator Next Steps
 
-- Run `/gsd-plan-phase 23` to plan the Slot-Type Binding Design Gate phase.
+- Start the next milestone with /gsd-new-milestone

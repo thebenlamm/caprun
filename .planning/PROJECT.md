@@ -16,7 +16,21 @@ Event → ValueNode → sensitive sink argument) deterministically blocks
 value-injection at the sink. If everything else fails, **I2 enforcement on a
 genuine taint chain must hold.**
 
-## Current Milestone: v1.5 — Slot-Type Binding Enforcement (T2)
+## Current State
+
+**Shipped v1.5 — Slot-Type Binding Enforcement (T2) on 2026-07-12.** The executor
+now structurally enforces that a resolved value's semantic origin role matches the
+semantic role of the plan-node slot it is routed into: a misrouted `UserTrusted`
+handle (e.g. a subject-typed string landed in `to`) hard-Denies with
+`SlotTypeMismatch` via Step 1c, even though it is neither untrusted (I2 doesn't fire)
+nor a class-level deny (I0/I1 don't apply). Proven live on real Linux with a genuine
+audit chain (v1.4's accepted residual #5 is closed). Milestone audit PASSED (11/11
+requirements, 5/5 integration hops wired).
+
+**Next milestone:** TBD — run `/gsd-new-milestone` to scope v1.6.
+
+<details>
+<summary>v1.5 milestone planning detail (shipped — historical)</summary>
 
 **Goal:** Close v1.4's accepted residual #5 (T2) — the executor gains a
 structural check that a resolved value's semantic origin matches the
@@ -303,6 +317,8 @@ assessment). PLAN.md wins on any conflict.
 
 </details>
 
+</details>
+
 ## Requirements
 
 ### Validated
@@ -419,11 +435,35 @@ Shipped in **v1.4 — Trust-Boundary Integrity & the Adversarial Planner**
   residual — safe today only incidentally (every `UserTrusted` handle is
   human-typed) — enforcement deferred to v1.5.
 
+Shipped in **v1.5 — Slot-Type Binding Enforcement (T2)** (2026-07-12). Full
+traceability archived in `.planning/milestones/v1.5-REQUIREMENTS.md`.
+
+- ✓ DESIGN-07..10: `DESIGN-slot-type-binding.md` pinned the additive
+  `origin_role` tag (no I0/I1 change), unified with the existing `claim_type`
+  taxonomy, resolved `mint_from_derivation` role propagation, and pinned the
+  fail-closed default — cleared a fresh (non-self) adversarial review before
+  any TCB code — v1.5
+- ✓ T2-02..05: `origin_role` mint-time tag threaded through every mint site
+  (`mint_from_read`/`mint_from_intent`/`mint_from_derivation`) and carried on
+  `ValueRecord`; hardcoded `expected_role()` table in `sink_sensitivity.rs`;
+  exhaustive `DenyReason::SlotTypeMismatch` (owned fields, no wildcard arm);
+  fail-closed "Step 1c" per-arg hard-Deny in `submit_plan_node` — I0/I2
+  precedence unchanged — v1.5
+- ✓ **T2-06/07/08 (v1.5 DONE gate):** a deliberately swapped subject↔recipient
+  handle pair (both `UserTrusted`) hard-Denies via Step 1c through the real
+  broker path, with a durable `plan_node_evaluated` audit event and
+  `verify_chain` true; an independent regression audit found 0 fixture
+  bypasses; the full-workspace regression was independently re-run green on
+  real Linux (309 passed/0 failed) via the bare `mailpit-verify.sh` recipe,
+  with human milestone-close sign-off — v1.5. Sound documented deviation:
+  `email.send` body expected-role is `["body","doc_fragment"]` (no `"body"`
+  claim_type exists); recipient exfil slots unchanged.
+
 ### Active
 
-Unscoped — v1.4 is the most recently shipped milestone. Run
-`/gsd-new-milestone` to scope v1.5. (Full v1.4 detail: the "Current
-Milestone" collapsed summary above and Validated Requirements below.)
+Unscoped — v1.5 is the most recently shipped milestone. Run
+`/gsd-new-milestone` to scope v1.6. (Full v1.5 detail: the "Current State"
+section above and Validated Requirements above.)
 
 ### Out of Scope
 
@@ -701,6 +741,9 @@ Python OK for non-TCB experiments only.
 | **v1.4 T2 (slot-type binding): defer to v1.5** | Keeps v1.4 to one milestone (Phase 0 fix + Phase 1 adversarial planner, T2 deferred); enforcing it now would split v1.4 into two milestones per matt-essentialist's right-sizing review | — Locked (Ben, 2026-07-10 scoping). Documented as v1.4's accepted residual: safe today only because every `UserTrusted` handle is human-typed. |
 | **v1.4 Phase 22 Leg-2 outcome: `Denied`, not `Allowed`** (architectural finding, not a corner cut) | A locked v1.2 invariant (Draft sessions unconditionally deny `CommitIrreversible` sinks) meant the original "both handles offered, no injection → Allowed" control leg was structurally unreachable without weakening TCB code. Redefined to assert `Denied` + diagnostic-log proof the model still chose the trusted handle — a stronger defense-in-depth finding (two independent layers both fire correctly) than the original design anticipated | — Locked (orchestrator decision during Phase 22 execution, 2026-07-11, verified directly against `crates/executor/src/lib.rs` Step 0.5 before deciding; `crates/executor` untouched). |
 | **v1.4 "Doc → Action Assistant" successor SHIPPED** (2026-07-11) | The one-way trust-coherence fix (live-verified, no regression), a real `Planner` trait + broker capability split, a genuine OpenAI-backed adversarial planner structurally isolated in its own sidecar process, and the milestone's HARD GATE (hostile-doc injection reaches the LLM, model complies, executor Blocks deterministically with genuine live-verified taint propagation, trusted control still Allows+delivers) — all proven live on real Linux, independently re-verified end-to-end by the orchestrator as the closing gate (which itself caught and fixed a real Cargo build-artifact-placement bug) | — Shipped. No git tag, not pushed (matches v1.3's precedent — Ben's standing call unless told otherwise). |
+| **v1.5 `email.send` body expected-role = `["body","doc_fragment"]`, not DESIGN's `["body"]`** (Phase 24) | No `"body"` claim_type exists anywhere in the code — body content arrives as `doc_fragment` (`WorkerClaim::DocFragment`); the DESIGN's literal `["body"]` would fail-closed-Deny every real body flow (incl. the shipped CONTENT-01 hostile-body-Block path). Sound because body stays content-sensitive so I2 remains the real gate, and the exfil-critical recipient slots (to/cc/bcc) were untouched and still reject doc_fragment | — Locked (Phase 24 execution, 2026-07-11; DESIGN §3 amended in-place, commit 92b9d6f). Confirmed by both the phase verifier and the milestone integration checker. |
+| **v1.5 T2-08 live gate run directly by the orchestrator, not delegated to a subagent** | T2-08's whole purpose is a non-laundered independent re-run with the true exit code captured before any pipe; a subagent relaying "it passed" reintroduces the indirection the gate exists to distrust (mirrors the v1.3 coordinator-gate precedent) | — Locked (Phase 25 execution, 2026-07-12). |
+| **v1.5 "Slot-Type Binding Enforcement (T2)" SHIPPED** (2026-07-12) | v1.4's accepted residual #5 closed: a misrouted `UserTrusted` handle now hard-Denies with `SlotTypeMismatch` via a fail-closed Step 1c, proven live on real Linux with a held-out swapped-handle test (genuine audit chain), a 0-bypass regression audit, and an independent bare `mailpit-verify.sh` re-run (309 passed/0 failed) + human sign-off. The independent verifier caught a real close-time bookkeeping gap (sign-off recorded post-rollup + REQUIREMENTS lag) that was reconciled, not papered over | — Shipped. Milestone audit PASSED (11/11 reqs, 5/5 integration hops). No git push yet (Ben's call). |
 
 ## Evolution
 
@@ -720,7 +763,25 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-11 after v1.4 "Trust-Boundary Integrity & the
+*Last updated: 2026-07-12 after v1.5 "Slot-Type Binding Enforcement (T2)"
+SHIPPED — all 3 phases (23-25) complete, closing v1.4's accepted residual #5.
+Phase 23's DESIGN doc cleared a fresh non-self adversarial review before any
+TCB code. Phase 24 threaded an additive `origin_role` mint-time tag through
+every mint site, added a hardcoded `expected_role()` table and an exhaustive
+`DenyReason::SlotTypeMismatch`, and wired a fail-closed "Step 1c" per-arg
+hard-Deny into `submit_plan_node` (I0/I2 precedence unchanged); a sound
+documented deviation corrected the body slot's expected-role to
+`["body","doc_fragment"]` since no `"body"` claim_type exists. Phase 25 proved
+it: a held-out swapped subject↔recipient deny test through the real broker
+path with a genuine audit chain, an independent regression audit (0 fixture
+bypasses), and an independent bare `scripts/mailpit-verify.sh` re-run green on
+real Linux (309 passed/0 failed) with human milestone-close sign-off. The
+independent phase verifier caught a real bookkeeping gap at close (human
+sign-off recorded to the repo only after the auto-rollup marked the phase
+complete + a REQUIREMENTS traceability lag) — reconciled before the milestone
+was allowed to close, not papered over. Milestone audit PASSED (11/11
+requirements, 5/5 integration hops wired). No git push yet (Ben's call).
+Prior: 2026-07-11 after v1.4 "Trust-Boundary Integrity & the
 Adversarial Planner" SHIPPED — all 5 phases (18-22) complete. Phase 18's
 2-round fresh adversarial review caught and fixed a genuine BLOCKER before
 any TCB code was written (release-on-disconnect would have left a sequential

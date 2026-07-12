@@ -179,6 +179,36 @@ The hero demo: a confined worker deterministically extracts a "send to X" action
 - 6 phases, ~4 adversarial FAMP rounds each (research/plan → coordinator review → revision → re-check), every round found something real — none were rubber-stamps.
 - Notable: Phase 17 alone required 2 full adversarial rounds with the coordinator (1 BLOCKER + 5 MEDIUM + 1 NIT on round 1) before clearance, on top of the orchestrator's own independent gsd-plan-checker pass and a separate fresh-check pass after the revision — 3 independent verification layers before execution began.
 
+## Milestone: v1.5 — Slot-Type Binding Enforcement (T2)
+
+**Shipped:** 2026-07-12
+**Phases:** 3 (23-25) | **Plans:** 8
+
+### What Was Built
+Closed v1.4's accepted residual #5 (T2). Phase 23 authored `DESIGN-slot-type-binding.md` and cleared a fresh non-self adversarial review before any TCB code. Phase 24 threaded an additive `origin_role` mint-time tag through every mint site, added a hardcoded `expected_role()` table and an exhaustive `DenyReason::SlotTypeMismatch`, and wired a fail-closed "Step 1c" per-arg hard-Deny into `submit_plan_node` (I0/I2 precedence unchanged). Phase 25 proved it live: a held-out swapped subject↔recipient deny test through the real broker path with a genuine audit chain, a 0-bypass regression audit, and an independent bare `mailpit-verify.sh` re-run green on real Linux (309 passed/0 failed) with human milestone-close sign-off.
+
+### What Worked
+- **Parallel worktree wave-1** (25-01 + 25-02, disjoint files) merged with zero conflicts — disjoint `files_modified` assignment + one-at-a-time dispatch (avoiding `.git/config.lock` contention) is a reliable recipe.
+- **Orchestrator-run T2-08 gate** (not delegated) kept the live-proof non-laundered — true exit captured before any pipe, asserted on sentinel + named counts + held-out-test presence.
+- **Independent verifier caught a real close-time gap** — the sign-off was recorded to the repo only after the auto-rollup marked the phase complete, and REQUIREMENTS traceability lagged; a fresh verifier (blind to the chat) correctly tripped `gaps_found`, forcing reconciliation before close.
+- **Design-gate-first discipline held** (5th milestone running) — the DESIGN doc's expected_role table matched the shipped `expected_role()` impl exactly (bar one documented sound amendment), confirmed by the integration checker's code trace.
+
+### What Was Inefficient
+- Marking the last plan complete auto-rolled ROADMAP to Complete before verification + before the sign-off was written to the artifact — creating a transient ROADMAP/REQUIREMENTS inconsistency the verifier had to catch. Recording the sign-off into the SUMMARY *before* flipping the last plan would have avoided the extra verifier round.
+
+### Patterns Established
+- **Record human sign-off into the artifact BEFORE flipping the last plan complete** — else the auto-rollup + independent-verifier sequence (correctly) trips on a repo that doesn't yet reflect the approval.
+- **Worktree-run and orchestrator-run plans don't write REQUIREMENTS.md** — only main-tree sequential plans do; expect `phase.complete` to reconcile the traceability lag.
+
+### Key Lessons
+- An independent verifier that traces code (and even runs the tests itself) will catch bookkeeping/record inconsistencies a pure "does the code work" check misses — and that is exactly its value at a milestone-close gate.
+- The Linux vs Mac pass-count delta (309 vs 269) is positive evidence the Linux-only kernel-enforced suite actually ran, not a discrepancy.
+
+### Cost Observations
+- Model mix: orchestrator Opus 4.8 (1M); executors + verifier + integration checker on Sonnet.
+- Wave-1 executors ran in parallel worktrees (~20-22 min each); the live-Linux gate (full-workspace compile in a `rust:1` container) was the long pole.
+- Notable: the independent verifier's initial `gaps_found` → reconcile → re-verify `passed` loop added one round but caught a real record inconsistency — a worthwhile trade, not a rubber-stamp.
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Shipped | Notes |
@@ -187,3 +217,5 @@ The hero demo: a confined worker deterministically extracts a "send to X" action
 | v1.1 Usable Runtime | 3 | 15 | 2026-07-01 | Live §9 from the CLI — real `file.create` sink, DB-durable taint chain, Linux-verified |
 | v1.2 Tainted Session, Human Gate | 4 | 11 | 2026-07-07 | Draft-only session demotion (I1/I0) + single-shot confirmation loop, live-proven on real Linux; independent live-run re-verification now a confirmed 2/2 pattern |
 | v1.3 Doc → Action Assistant | 6 | 21 | 2026-07-09 | Doc→action hero demo: genuine-taint extraction, collect-then-Block, full-set confirm binding, a real live email send, closed exfiltration path, composed confirm/deny/clean live acceptance, honest DOC-01 framing; independent live-run re-verification now 4/4, across two independent parties |
+| v1.4 Trust-Boundary Integrity & Adversarial Planner | 5 | 14 | 2026-07-11 | Fixed a live cross-connection trust bypass (one-way occupancy latch); real `Planner` trait + broker capability split; genuine OpenAI-backed adversarial planner in an isolated sidecar; HARD GATE proved the boundary holds regardless of planner intelligence; closing full-recipe re-run caught a real Cargo artifact-placement bug |
+| v1.5 Slot-Type Binding Enforcement (T2) | 3 | 8 | 2026-07-12 | Closed v1.4's T2 residual: fail-closed Step 1c slot-type check in the TCB; held-out swapped-handle deny test with genuine audit chain; 0-bypass regression audit; independent bare `mailpit-verify.sh` green on real Linux (309/0); independent verifier caught a close-time sign-off/traceability record lag before allowing close |

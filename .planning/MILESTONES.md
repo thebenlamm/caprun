@@ -1,5 +1,20 @@
 # Milestones
 
+## v1.5 Slot-Type Binding Enforcement (Shipped: 2026-07-12)
+
+**Phases completed:** 3 phases, 8 plans, 10 tasks
+
+**Key accomplishments:**
+
+- `planning-docs/DESIGN-slot-type-binding.md` authored (440 lines, §0–§10 + Acceptance
+- `planning-docs/DESIGN-slot-type-binding.md` cleared a fresh, independent,
+- Added the exhaustive `DenyReason::SlotTypeMismatch` variant with owned-type fields (never `&'static`) and updated both exhaustive matches (`code()`, `Display`) with no wildcard arm — a purely additive, self-contained change to `crates/runtime-core/src/executor_decision.rs`.
+- Hardcoded `expected_role()` table + fail-closed Step 1c role check wired into `submit_plan_node` — a misrouted `UserTrusted` value now hard-Denies with `SlotTypeMismatch` before it can reach a sink, closing the v1.4 T2 residual; I0/I2 precedence unchanged.
+- Added two `#[test] fn`s to `s9_acceptance.rs` that drive the real broker path (`mint_from_intent` -> `submit_plan_node`) to prove Phase 24's Step 1c slot-type binding catches a swapped subject/recipient handle pair, with a durable `plan_node_evaluated` audit-DAG event and `verify_chain` true, plus a correctly-routed Allowed control proving the deny is Step-1c-attributable.
+- Independently re-ran both T2-07 search commands from scratch (not citing prior counts), cross-referenced all 31 role-checked-slot direct-mint sites against `sink_sensitivity.rs`'s `expected_role` table, found 0 bypasses, discovered one new Mac-buildable direct-mint file not in the prior session's target list, and confirmed the full Mac workspace green (46 binaries, 269 passed, 0 failed).
+
+---
+
 ## v1.4 Trust-Boundary Integrity & the Adversarial Planner (Shipped: 2026-07-11)
 
 **Phases completed:** 5 phases (18-22), 15 plans, 32 tasks
