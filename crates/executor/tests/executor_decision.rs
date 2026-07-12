@@ -69,7 +69,12 @@ fn tainted_to_arg_blocks_with_verbatim_record_payload() {
 
     // mint: the broker's worker-extraction step
     let id = store
-        .mint(literal.clone(), taint.clone(), provenance.clone())
+        .mint(
+            literal.clone(),
+            taint.clone(),
+            provenance.clone(),
+            Some("email_address".to_string()),
+        )
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
@@ -134,6 +139,7 @@ fn untainted_to_arg_returns_allowed() {
             "boss@company.com".to_string(),
             vec![TaintLabel::UserTrusted],
             vec![event_id],
+            Some("recipient".to_string()),
         )
         .expect("valid mint");
 
@@ -185,6 +191,7 @@ fn tainted_content_sensitive_arg_blocks() {
             "hostile subject line".to_string(),
             vec![TaintLabel::ExternalUntrusted],
             vec![Uuid::new_v4()],
+            Some("subject".to_string()),
         )
         .expect("valid mint");
 
@@ -216,6 +223,7 @@ fn tainted_cc_and_bcc_also_block() {
             "attacker@ev1l.com".to_string(),
             vec![TaintLabel::ExternalUntrusted],
             vec![Uuid::new_v4()],
+            Some("email_address".to_string()),
         )
         .expect("valid mint");
     let bcc_id = store
@@ -223,6 +231,7 @@ fn tainted_cc_and_bcc_also_block() {
             "spy@ev1l.com".to_string(),
             vec![TaintLabel::EmailRaw],
             vec![Uuid::new_v4()],
+            Some("email_address".to_string()),
         )
         .expect("valid mint");
 
@@ -251,6 +260,7 @@ fn tainted_body_blocks() {
             "hostile body content".to_string(),
             vec![TaintLabel::ExternalUntrusted],
             vec![Uuid::new_v4()],
+            Some("body".to_string()),
         )
         .expect("valid mint");
     let plan = email_send_with_arg("body", id);
@@ -287,6 +297,7 @@ fn hard02_usertrusted_only_allows() {
             "boss@company.com".to_string(),
             vec![TaintLabel::UserTrusted],
             vec![event_id],
+            Some("recipient".to_string()),
         )
         .expect("valid mint");
 
@@ -311,7 +322,12 @@ fn hard02_externaltainted_still_blocks() {
     let taint = vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw];
 
     let id = store
-        .mint(literal.clone(), taint.clone(), vec![event_id])
+        .mint(
+            literal.clone(),
+            taint.clone(),
+            vec![event_id],
+            Some("email_address".to_string()),
+        )
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
@@ -341,6 +357,7 @@ fn draft_session_denies_commit_irreversible() {
             "/workspace/out.txt".to_string(),
             vec![TaintLabel::UserTrusted],
             vec![event_id],
+            Some("path".to_string()),
         )
         .expect("valid mint");
     let contents_id = store
@@ -348,6 +365,7 @@ fn draft_session_denies_commit_irreversible() {
             "hello".to_string(),
             vec![TaintLabel::UserTrusted],
             vec![event_id],
+            None,
         )
         .expect("valid mint");
 
@@ -412,7 +430,12 @@ fn draft_session_tainted_routing_arg_still_blocks_not_denied() {
     let literal = "attacker@ev1l.com".to_string();
     let taint = vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw];
     let id = store
-        .mint(literal, taint, vec![event_id])
+        .mint(
+            literal,
+            taint,
+            vec![event_id],
+            Some("email_address".to_string()),
+        )
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
@@ -442,6 +465,7 @@ fn collect_then_block_both_to_and_body() {
             "attacker@ev1l.com".to_string(),
             vec![TaintLabel::ExternalUntrusted],
             vec![Uuid::new_v4()],
+            Some("email_address".to_string()),
         )
         .expect("valid mint");
     let body_id = store
@@ -449,6 +473,7 @@ fn collect_then_block_both_to_and_body() {
             "hostile body content".to_string(),
             vec![TaintLabel::ExternalUntrusted],
             vec![Uuid::new_v4()],
+            Some("body".to_string()),
         )
         .expect("valid mint");
 
@@ -495,6 +520,7 @@ fn body_tainted_recipient_trusted_blocks() {
             "boss@company.com".to_string(),
             vec![TaintLabel::UserTrusted],
             vec![Uuid::new_v4()],
+            Some("recipient".to_string()),
         )
         .expect("valid mint");
     let body_id = store
@@ -502,6 +528,7 @@ fn body_tainted_recipient_trusted_blocks() {
             "hostile body content".to_string(),
             vec![TaintLabel::ExternalUntrusted],
             vec![Uuid::new_v4()],
+            Some("body".to_string()),
         )
         .expect("valid mint");
 
@@ -560,10 +587,16 @@ fn non_live_session_denies_commit_irreversible_in_all_four_states() {
                 "/workspace/out.txt".to_string(),
                 vec![TaintLabel::UserTrusted],
                 vec![event_id],
+                Some("path".to_string()),
             )
             .expect("valid mint");
         let contents_id = store
-            .mint("hello".to_string(), vec![TaintLabel::UserTrusted], vec![event_id])
+            .mint(
+                "hello".to_string(),
+                vec![TaintLabel::UserTrusted],
+                vec![event_id],
+                None,
+            )
             .expect("valid mint");
 
         let plan = PlanNode {

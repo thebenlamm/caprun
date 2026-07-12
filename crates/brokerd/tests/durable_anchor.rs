@@ -129,6 +129,7 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
             "hostile block harness contents".into(),
             vec![TaintLabel::UserTrusted],
             vec![read_event_id],
+            None,
         )
         .expect("mint contents value");
     let plan_node = PlanNode {

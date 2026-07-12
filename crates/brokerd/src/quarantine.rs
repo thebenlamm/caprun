@@ -949,8 +949,16 @@ mod tests {
         let session_id = Uuid::new_v4();
         let literal = "boss@company.com".to_string();
 
-        let (intent_event_id, _intent_hash, value_id) =
-            mint_from_intent(&conn, &mut store, session_id, literal.clone(), None, None).unwrap();
+        let (intent_event_id, _intent_hash, value_id) = mint_from_intent(
+            &conn,
+            &mut store,
+            session_id,
+            literal.clone(),
+            None,
+            None,
+            Some("recipient".to_string()),
+        )
+        .unwrap();
 
         // provenance_chain[0] must equal the returned intent_event_id (anti-stapling)
         let record = store.resolve(&value_id).expect("value_id must resolve");
@@ -977,9 +985,16 @@ mod tests {
         let mut store = ValueStore::default();
         let session_id = Uuid::new_v4();
 
-        let (_intent_event_id, _intent_hash, value_id) =
-            mint_from_intent(&conn, &mut store, session_id, "boss@company.com".into(), None, None)
-                .unwrap();
+        let (_intent_event_id, _intent_hash, value_id) = mint_from_intent(
+            &conn,
+            &mut store,
+            session_id,
+            "boss@company.com".into(),
+            None,
+            None,
+            Some("recipient".to_string()),
+        )
+        .unwrap();
 
         // Record must carry UserTrusted (positive provenance — NOT empty vec, Pitfall 2)
         let record = store.resolve(&value_id).expect("value_id must resolve");
@@ -1010,8 +1025,16 @@ mod tests {
         let session_id = Uuid::new_v4();
         let literal = "recipient@example.com".to_string();
 
-        let (_intent_event_id, _intent_hash, value_id) =
-            mint_from_intent(&conn, &mut store, session_id, literal.clone(), None, None).unwrap();
+        let (_intent_event_id, _intent_hash, value_id) = mint_from_intent(
+            &conn,
+            &mut store,
+            session_id,
+            literal.clone(),
+            None,
+            None,
+            Some("recipient".to_string()),
+        )
+        .unwrap();
 
         let record = store.resolve(&value_id).expect("value_id must resolve");
         assert_eq!(
@@ -1287,6 +1310,7 @@ mod tests {
             "boss@company.com".into(),
             None,
             None,
+            Some("recipient".to_string()),
         )
         .unwrap();
 
@@ -1456,9 +1480,16 @@ mod tests {
         let mut store = ValueStore::default();
         let session_id = Uuid::new_v4();
 
-        let (_, _, value_id_trusted) =
-            mint_from_intent(&conn, &mut store, session_id, "boss@company.com".into(), None, None)
-                .unwrap();
+        let (_, _, value_id_trusted) = mint_from_intent(
+            &conn,
+            &mut store,
+            session_id,
+            "boss@company.com".into(),
+            None,
+            None,
+            Some("recipient".to_string()),
+        )
+        .unwrap();
         let (_, _, value_id_untrusted, _, _) = mint_from_read(
             &conn, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
@@ -1494,9 +1525,16 @@ mod tests {
             &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
             None, None,
         ).unwrap();
-        let (_, _, value_id_trusted) =
-            mint_from_intent(&conn, &mut store, session_id, "boss@company.com".into(), None, None)
-                .unwrap();
+        let (_, _, value_id_trusted) = mint_from_intent(
+            &conn,
+            &mut store,
+            session_id,
+            "boss@company.com".into(),
+            None,
+            None,
+            Some("recipient".to_string()),
+        )
+        .unwrap();
 
         let record_untrusted = store.resolve(&value_id_untrusted).unwrap().clone();
         let record_trusted = store.resolve(&value_id_trusted).unwrap().clone();
@@ -1526,12 +1564,26 @@ mod tests {
         let mut store = ValueStore::default();
         let session_id = Uuid::new_v4();
 
-        let (_, _, value_id_a) =
-            mint_from_intent(&conn, &mut store, session_id, "local-part".into(), None, None)
-                .unwrap();
-        let (_, _, value_id_b) =
-            mint_from_intent(&conn, &mut store, session_id, "domain-part".into(), None, None)
-                .unwrap();
+        let (_, _, value_id_a) = mint_from_intent(
+            &conn,
+            &mut store,
+            session_id,
+            "local-part".into(),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let (_, _, value_id_b) = mint_from_intent(
+            &conn,
+            &mut store,
+            session_id,
+            "domain-part".into(),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let record_a = store.resolve(&value_id_a).unwrap().clone();
         let record_b = store.resolve(&value_id_b).unwrap().clone();

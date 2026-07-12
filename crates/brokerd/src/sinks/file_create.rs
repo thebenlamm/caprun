@@ -252,10 +252,20 @@ mod tests {
         // Mint path + contents as trusted values (this is the Allowed path).
         let ev = Uuid::new_v4();
         let path_vid = store
-            .mint(path.to_string(), vec![TaintLabel::UserTrusted], vec![ev])
+            .mint(
+                path.to_string(),
+                vec![TaintLabel::UserTrusted],
+                vec![ev],
+                Some("path".to_string()),
+            )
             .unwrap();
         let contents_vid = store
-            .mint(contents.to_string(), vec![TaintLabel::UserTrusted], vec![ev])
+            .mint(
+                contents.to_string(),
+                vec![TaintLabel::UserTrusted],
+                vec![ev],
+                None,
+            )
             .unwrap();
         let plan_node = PlanNode {
             sink: SinkId("file.create".into()),

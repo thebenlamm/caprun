@@ -294,9 +294,16 @@ fn clean_path_intent_value_evaluates_to_allowed() {
     // ValueStore::mint or set any taint field directly (same invariant as §9).
     // -----------------------------------------------------------------------
     let recipient = "boss@company.com";
-    let (intent_event_id, intent_hash, intent_value_id) =
-        mint_from_intent(&conn, &mut store, session_id, recipient.to_string(), None, None)
-            .expect("mint_from_intent failed");
+    let (intent_event_id, intent_hash, intent_value_id) = mint_from_intent(
+        &conn,
+        &mut store,
+        session_id,
+        recipient.to_string(),
+        None,
+        None,
+        Some("recipient".to_string()),
+    )
+    .expect("mint_from_intent failed");
 
     // Genuine-provenance anchor: provenance_chain[0] must equal the intent_event_id.
     let record = store
@@ -434,6 +441,7 @@ fn s9_acceptance_file_create_path_block() {
             "hello world".to_string(),
             vec![TaintLabel::UserTrusted],
             vec![Uuid::new_v4()],
+            None,
         )
         .expect("mint contents value");
     let plan_node = PlanNode {
