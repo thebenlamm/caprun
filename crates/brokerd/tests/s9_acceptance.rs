@@ -683,3 +683,73 @@ fn slot_type_binding_swapped_subject_recipient_denies() {
          across the Denied evaluation"
     );
 }
+
+/// T2-06 isolation control: the SAME two `UserTrusted` values minted in
+/// `slot_type_binding_swapped_subject_recipient_denies` above, but routed into
+/// their CORRECT slots (subject-tagged -> "subject", recipient-tagged ->
+/// "to"). This must evaluate to `Allowed`.
+///
+/// This is the MECHANICAL (not comment-only) proof of T2-06's isolation
+/// claim: because these same two values, when correctly routed, are Allowed,
+/// they are demonstrably valid and untainted — so I2 (untrusted per-arg
+/// Block) cannot fire on them, and the session being `Active` means I0
+/// (class-deny) cannot fire either. Therefore the sibling test's Denied
+/// outcome is attributable to Step 1c (the slot-type role check) ALONE, and
+/// to nothing else.
+#[test]
+fn slot_type_binding_correctly_routed_allows() {
+    let conn = open_audit_db(":memory:").expect("open_audit_db");
+    let mut store = ValueStore::default();
+    let session_id = Uuid::new_v4();
+
+    let (subject_event_id, subject_hash, subject_value_id) = mint_from_intent(
+        &conn,
+        &mut store,
+        session_id,
+        "Re: quarterly report".to_string(),
+        None,
+        None,
+        Some("subject".to_string()),
+    )
+    .expect("mint_from_intent (subject) failed");
+
+    let (_recipient_event_id, _recipient_hash, recipient_value_id) = mint_from_intent(
+        &conn,
+        &mut store,
+        session_id,
+        "boss@company.com".to_string(),
+        Some(subject_event_id),
+        Some(&subject_hash),
+        Some("recipient".to_string()),
+    )
+    .expect("mint_from_intent (recipient) failed");
+
+    // CORRECT routing this time: subject-tagged -> "subject", recipient-tagged -> "to".
+    let plan_node = PlanNode {
+        sink: SinkId("email.send".into()),
+        args: vec![
+            PlanArg {
+                name: "subject".into(),
+                value_id: subject_value_id,
+            },
+            PlanArg {
+                name: "to".into(),
+                value_id: recipient_value_id,
+            },
+        ],
+    };
+
+    let decision = executor::submit_plan_node(
+        session_id,
+        Uuid::new_v4(),
+        &plan_node,
+        &store,
+        &SessionStatus::Active,
+    );
+
+    assert!(
+        matches!(decision, ExecutorDecision::Allowed),
+        "correctly-routed UserTrusted values must evaluate to Allowed, got {:?}",
+        decision
+    );
+}
