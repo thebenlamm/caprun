@@ -49,6 +49,7 @@ use chrono::Utc;
 use executor::value_store::ValueStore;
 use runtime_core::{Event, SeedProvenance, SessionStatus};
 use std::os::unix::io::AsRawFd;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
@@ -132,9 +133,17 @@ impl ConnectionRole {
 /// * `initial_last_event_id` — id of the `session_created` event minted upstream.
 /// * `initial_last_event_hash` — hash of that event row (chain anchor).
 /// * `initial_session_status` — the session's status at creation time (from
-///   `create_session`'s result), seeded into every connection's per-connection
-///   `session_status` local (threaded exactly like `initial_last_event_id`/
-///   `initial_last_event_hash`, RESEARCH Pitfall 2).
+///   `create_session`'s result). Seeds the ONE shared, monotonic
+///   `Arc<Mutex<SessionStatus>>` cell constructed inside this function (v1.6
+///   Phase 27, HARDEN-01/X-04 fold, `DESIGN-security-hardening.md` §a/§f) —
+///   every connection clones the ARC HANDLE, never a fresh owned snapshot.
+/// * `trusted_workspace_path` — the CLI-designated `<workspace-file>` (v1.6
+///   Phase 27, HARDEN-01, `DESIGN-security-hardening.md` §a): the broker's
+///   only in-memory notion of "the ONE file the CLI designated as this
+///   session's intent document," threaded through so the `RequestFd` arm's
+///   `fstat` inode-identity compare has a trusted target to compare against.
+///   An OWNED `PathBuf` (not a borrowed `&OsStr`) so it can cross into
+///   `tokio::spawn`ed `'static` futures exactly like `ws_root_for_broker` does.
 ///
 /// The `value_store` is NO LONGER a parameter — it is created fresh per
 /// connection inside `handle_connection` to enforce session-scoped resolution.
@@ -148,10 +157,26 @@ pub async fn run_broker_server(
     initial_last_event_hash: String,
     initial_session_status: SessionStatus,
     workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
+    trusted_workspace_path: PathBuf,
 ) -> anyhow::Result<()> {
     // Approach A: tokio detects the leading NUL and calls from_abstract_name internally.
     let sock_path = format!("\0/agentos/{session_id}");
     let listener = tokio::net::UnixListener::bind(&sock_path)?;
+
+    // v1.6 Phase 27 (HARDEN-01/X-04 fold, DESIGN-security-hardening.md §a/§f,
+    // DESIGN-GATE-RECORD-v1.6.md finding F3): session_status becomes a
+    // SINGLE shared, monotonic `Arc<Mutex<SessionStatus>>`, constructed
+    // EXACTLY ONCE here from the owned `initial_session_status` param —
+    // mirroring how `planner_slot_occupied: Arc<AtomicBool>` is constructed
+    // inside this function below (never passed in pre-wrapped from
+    // `main.rs`). Every connection below clones the ARC HANDLE (a cheap
+    // pointer clone) and `dispatch_request` re-reads it under lock at the
+    // top of every call — a Worker-connection demotion becomes immediately
+    // visible to a Planner connection accepted afterward (closes the X-04
+    // staleness gap). F3 pins this cell as construct-once and monotonic
+    // (`Active` -> `Draft` only): no connection-setup path below may EVER
+    // write `Active` back into it.
+    let session_status = Arc::new(Mutex::new(initial_session_status));
 
     // Cross-connection trust-coherence fix (v1.4 Phase 19, TRUST-01/TRUST-02):
     // a ONE-WAY, session-lifetime occupancy latch for the WORKER slot. Set
@@ -199,7 +224,11 @@ pub async fn run_broker_server(
             let workspace_root_clone = workspace_root.clone();
             // Pass connection state by value — each connection owns its own chain state.
             let initial_hash = initial_last_event_hash.clone();
-            let initial_status = initial_session_status.clone();
+            // v1.6 Phase 27 (X-04/F3): clone the ARC HANDLE (cheap pointer
+            // clone) — this is a READ of the shared cell, never a fresh
+            // owned re-seed. Never write `Active` into the cell here.
+            let session_status_clone = session_status.clone();
+            let trusted_path_clone = trusted_workspace_path.clone();
             tokio::spawn(async move {
                 // ConnectionRole::Worker — full capabilities, `permits`
                 // always `true` (Phase 20, PLANNER-02/04).
@@ -209,8 +238,9 @@ pub async fn run_broker_server(
                     session_id_uuid,
                     initial_last_event_id,
                     initial_hash,
-                    initial_status,
+                    session_status_clone,
                     workspace_root_clone,
+                    trusted_path_clone,
                     ConnectionRole::Worker,
                 )
                 .await
@@ -228,7 +258,11 @@ pub async fn run_broker_server(
         let conn_clone = conn.clone();
         let workspace_root_clone = workspace_root.clone();
         let initial_hash = initial_last_event_hash.clone();
-        let initial_status = initial_session_status.clone();
+        // v1.6 Phase 27 (X-04/F3): SAME shared cell, cloned as a handle —
+        // a Worker-connection demotion committed before this Planner
+        // connection is accepted is observed immediately via this handle.
+        let session_status_clone = session_status.clone();
+        let trusted_path_clone = trusted_workspace_path.clone();
         let planner_slot_clone = planner_slot_occupied.clone();
         tokio::spawn(async move {
             classify_second_connection(
@@ -237,8 +271,9 @@ pub async fn run_broker_server(
                 session_id_uuid,
                 initial_last_event_id,
                 initial_hash,
-                initial_status,
+                session_status_clone,
                 workspace_root_clone,
+                trusted_path_clone,
                 planner_slot_clone,
             )
             .await;
@@ -283,8 +318,9 @@ async fn classify_second_connection(
     session_id: Uuid,
     last_event_id: Uuid,
     last_event_hash: String,
-    session_status: SessionStatus,
+    session_status: Arc<Mutex<SessionStatus>>,
     workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
+    trusted_path: PathBuf,
     planner_slot_occupied: Arc<std::sync::atomic::AtomicBool>,
 ) {
     let first_frame = tokio::time::timeout(
@@ -322,6 +358,7 @@ async fn classify_second_connection(
             last_event_hash,
             session_status,
             workspace_root,
+            trusted_path,
             ConnectionRole::Planner,
         )
         .await
@@ -375,10 +412,13 @@ async fn read_one_frame(
 /// Guard: length > 64 KiB → reject with Error response, never allocate.
 ///
 /// Owns a per-connection `ValueStore` (HARD-03: session-scoped resolution) and
-/// threads `last_event_id` / `last_event_hash` / `session_status` across every
-/// message so each appended event chains causally onto the previous one and
-/// the session's trust state is resolved from broker-owned in-memory state,
-/// never re-derived from IPC (RESEARCH Pitfall 2).
+/// threads `last_event_id` / `last_event_hash` across every message so each
+/// appended event chains causally onto the previous one. `session_status`
+/// (v1.6 Phase 27, X-04/F3 fold) is the SHARED, monotonic
+/// `Arc<Mutex<SessionStatus>>` handle constructed once in `run_broker_server`
+/// — this connection holds a cheap Arc clone, never a fresh owned snapshot,
+/// and every `dispatch_request` call re-reads it under lock so a demotion
+/// committed on ANY connection is immediately visible here.
 ///
 /// `role` (Phase 20, PLANNER-02/04) is this connection's FIXED capability set,
 /// decided once by the accept loop's classification (`run_broker_server`) —
@@ -390,26 +430,24 @@ async fn read_one_frame(
 /// behavior); for `Planner` a non-permitted verb is rejected fail-closed
 /// HERE, without ever calling `dispatch_request` and without seeding or
 /// advancing any mint/trust state.
+#[allow(clippy::too_many_arguments)]
 async fn handle_connection(
     mut stream: tokio::net::UnixStream,
     conn: Arc<Mutex<rusqlite::Connection>>,
     session_id: Uuid,
     mut last_event_id: Uuid,
     mut last_event_hash: String,
-    initial_session_status: SessionStatus,
+    session_status: Arc<Mutex<SessionStatus>>,
     workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
+    trusted_path: PathBuf,
     role: ConnectionRole,
 ) -> anyhow::Result<()> {
     // Per-connection ValueStore — scoped to this session ONLY (HARD-03 fix).
     let mut value_store = ValueStore::default();
-    // Per-connection session_status local — seeded from create_session's
-    // result, updated in place after mint_from_read demotes (never re-queried
-    // from the DB per call, DESIGN §4, RESEARCH Pitfall 2).
-    let mut session_status = initial_session_status;
     // Phase 16 (BLOCKER-1 guard a): per-connection, broker-enforced ordering
     // state — ProvideIntent is accepted EXACTLY ONCE and ONLY BEFORE any
-    // RequestFd on this connection. Initialized false per connection, exactly
-    // like `session_status` above (never re-derived from IPC).
+    // RequestFd on this connection. Initialized false per connection (never
+    // re-derived from IPC).
     let mut intent_provided = false;
     let mut fd_requested = false;
 
@@ -491,13 +529,22 @@ async fn handle_connection(
                     "ConnectionRole::Planner.permits() admits only SubmitPlanNode"
                 );
             };
+            // v1.6 Phase 27 (X-04/F3): re-read the shared cell HERE, at the
+            // exact point Step 0.5's I0 deny is evaluated — never a stale
+            // snapshot cached at connection setup. This is what lets a
+            // Planner connection accepted AFTER a Worker-connection
+            // demotion observe `Draft` instead of a stale `Active`.
+            let status_snapshot: SessionStatus = session_status
+                .lock()
+                .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?
+                .clone();
             let decision = evaluate_plan_node_and_record(
                 plan_node,
                 &conn,
                 session_id,
                 &mut value_store,
                 &workspace_root,
-                &mut session_status,
+                &status_snapshot,
                 &mut last_event_id,
                 &mut last_event_hash,
             )
@@ -511,6 +558,11 @@ async fn handle_connection(
             continue;
         }
 
+        // THE PRODUCTION dispatch_request call site (v1.6 Phase 27): passes
+        // the SHARED Arc<Mutex<SessionStatus>> handle this connection holds
+        // — NOT a fresh clone, NOT a re-seeded owned value — plus the
+        // trusted-path this connection received. Either substitution would
+        // silently reintroduce the X-04 stale-snapshot bug this plan closes.
         dispatch_request(
             request,
             &mut stream,
@@ -520,7 +572,8 @@ async fn handle_connection(
             &mut last_event_hash,
             &mut value_store,
             &workspace_root,
-            &mut session_status,
+            &session_status,
+            &trusted_path,
             &mut intent_provided,
             &mut fd_requested,
         )
@@ -553,7 +606,7 @@ async fn evaluate_plan_node_and_record(
     session_id: Uuid,
     value_store: &mut ValueStore,
     workspace_root: &Arc<adapter_fs::workspace::WorkspaceRoot>,
-    session_status: &mut SessionStatus,
+    session_status: &SessionStatus,
     last_event_id: &mut Uuid,
     last_event_hash: &mut String,
 ) -> anyhow::Result<runtime_core::ExecutorDecision> {
@@ -561,14 +614,17 @@ async fn evaluate_plan_node_and_record(
     // executor — the executor never mints a Uuid (DESIGN §4 rule 2).
     let effect_id = Uuid::new_v4();
     // session_id comes from the connection — NEVER from the IPC message (HARD-03).
-    // session_status likewise — broker-owned, per-connection state, NEVER
-    // read from plan_node/IPC (DESIGN §4/§11 condition 0).
+    // session_status likewise — broker-owned state, re-read at the top of
+    // dispatch_request / at the point of the Planner branch's Step 0.5 check
+    // (v1.6 Phase 27, X-04/F3) — NEVER read from plan_node/IPC (DESIGN §4/§11
+    // condition 0). This function only READS it (never mutates), so the
+    // caller-side snapshot is passed by shared reference.
     let decision = executor::submit_plan_node(
         session_id,
         effect_id,
         plan_node,
         value_store,
-        &*session_status,
+        session_status,
     );
 
     // Durably record the decision BEFORE returning any response (ACC-02).
@@ -875,17 +931,21 @@ async fn evaluate_plan_node_and_record(
 ///
 /// `last_event_id` / `last_event_hash` are advanced (after a successful append)
 /// by every arm that records an event, preserving the causal chain.
-/// `session_status` is the broker-owned, per-connection trust-state local —
-/// advanced to `Draft` after `ReportClaims` demotes, and passed by reference
-/// (never re-derived from IPC/PlanNode) into `executor::submit_plan_node`
-/// (DESIGN-session-trust-state.md §4/§11 condition 0).
+/// `session_status` (v1.6 Phase 27, X-04/F3 fold, `DESIGN-security-hardening.md`
+/// §a/§f) is the SHARED, monotonic `Arc<Mutex<SessionStatus>>` cell constructed
+/// once in `run_broker_server` — re-read under lock at the TOP of this
+/// function (never trusted as a stale per-connection snapshot), and any
+/// arm that demotes (`ReportClaims`, and the `RequestFd` fstat-mismatch
+/// demotion) writes `Draft` back through the SAME lock — monotonic
+/// `Active -> Draft` only, never re-seeded `Active`. `trusted_path` is the
+/// CLI-designated `<workspace-file>` identity the `RequestFd` arm's fstat
+/// compare uses to decide whether a granted fd stays trusted (HARDEN-01).
 ///
 /// `intent_provided` / `fd_requested` (Phase 16, BLOCKER-1 guard a) are the
 /// broker-enforced, per-connection ordering state for `ProvideIntent`: it is
 /// accepted EXACTLY ONCE and ONLY BEFORE any `RequestFd` on this connection.
-/// Both start `false`, are threaded by `&mut` exactly like `session_status`,
-/// and are set at the RequestFd/ProvideIntent arms below — never reset,
-/// never re-derived from IPC.
+/// Both start `false` and are set at the RequestFd/ProvideIntent arms below
+/// — never reset, never re-derived from IPC.
 #[allow(clippy::too_many_arguments)]
 pub async fn dispatch_request(
     request: BrokerRequest,
@@ -896,10 +956,25 @@ pub async fn dispatch_request(
     last_event_hash: &mut String,
     value_store: &mut ValueStore,
     workspace_root: &Arc<adapter_fs::workspace::WorkspaceRoot>,
-    session_status: &mut SessionStatus,
+    session_status: &Arc<Mutex<SessionStatus>>,
+    trusted_path: &std::path::Path,
     intent_provided: &mut bool,
     fd_requested: &mut bool,
 ) -> anyhow::Result<()> {
+    // v1.6 Phase 27 (X-04/F3): re-read the shared, monotonic cell HERE, at
+    // the top of every dispatch_request call — never trust a value cached
+    // at connection-setup time. Every existing READ of session_status below
+    // now reads this freshly-locked snapshot; every existing WRITE below
+    // locks the shared cell and commits a monotonic Active->Draft write
+    // (never re-seeding Active).
+    let mut current_status: SessionStatus = session_status
+        .lock()
+        .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?
+        .clone();
+    // `trusted_path` is threaded but not yet consumed — Task 2 (the
+    // RequestFd fstat identity compare) is the first reader.
+    let _ = trusted_path;
+
     match request {
         BrokerRequest::CreateSession { intent_id } => {
             // Phase 16 (BLOCKER-1 guard c): this in-broker IPC arm forces a
@@ -1125,10 +1200,22 @@ pub async fn dispatch_request(
                 *last_event_hash = demoted_hash;
                 // mint_from_read already demoted the session's DB row to Draft
                 // (TAINT-01, atomically with the file_read append above). Update
-                // the in-memory per-connection local to match — unconditionally,
-                // since Draft is one-way/idempotent (mirrors how *last_event_id/
-                // *last_event_hash are updated after each append).
-                *session_status = SessionStatus::Draft;
+                // the SHARED in-memory cell to match — unconditionally, since
+                // Draft is one-way/idempotent (v1.6 Phase 27, X-04/F3: lock +
+                // monotonic write, never a re-seeded Active).
+                {
+                    let mut locked = session_status
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                    *locked = SessionStatus::Draft;
+                }
+                // Not re-read later in THIS call (ReportClaims never calls
+                // evaluate_plan_node_and_record) — kept for symmetry with the
+                // shared-cell write above and any future same-call reader.
+                #[allow(unused_assignments)]
+                {
+                    current_status = SessionStatus::Draft;
+                }
                 value_ids.push(value_id);
             }
             send_response(stream, &BrokerResponse::ClaimsReceived { value_ids }).await?;
@@ -1149,7 +1236,7 @@ pub async fn dispatch_request(
                 session_id,
                 value_store,
                 workspace_root,
-                session_status,
+                &current_status,
                 last_event_id,
                 last_event_hash,
             )
@@ -1477,25 +1564,33 @@ mod tests {
 
     /// A fresh in-memory audit DB + per-connection state, mirroring
     /// `proto_claims.rs::DispatchHarness`'s setup shape.
+    ///
+    /// `session_status` is a fresh, test-local `Arc<Mutex<SessionStatus>>`
+    /// cell (v1.6 Phase 27, X-04/F3 fold) — NOT the production shared cell,
+    /// but the same shape `dispatch_request` now requires. `trusted_path` is
+    /// a placeholder (none of these guard-(a)-ordering tests exercise the
+    /// HARDEN-01 fstat identity compare — that is Task 4's own harness).
     fn harness() -> (
         Arc<Mutex<rusqlite::Connection>>,
         Uuid,
         ValueStore,
         Uuid,
         String,
-        SessionStatus,
+        Arc<Mutex<SessionStatus>>,
         Arc<adapter_fs::workspace::WorkspaceRoot>,
+        std::path::PathBuf,
     ) {
         let conn = Arc::new(Mutex::new(open_audit_db(":memory:").expect("open_audit_db")));
         let session_id = Uuid::new_v4();
         let store = ValueStore::default();
         let last_event_id = Uuid::new_v4();
         let last_event_hash = "genesis-hash".to_string();
-        let session_status = SessionStatus::Active;
+        let session_status = Arc::new(Mutex::new(SessionStatus::Active));
         let ws_root = Arc::new(
             adapter_fs::workspace::WorkspaceRoot::open(std::env::temp_dir().as_path())
                 .expect("open ws root"),
         );
+        let trusted_path = std::env::temp_dir().join("__harness_no_trusted_path__");
         (
             conn,
             session_id,
@@ -1504,6 +1599,7 @@ mod tests {
             last_event_hash,
             session_status,
             ws_root,
+            trusted_path,
         )
     }
 
@@ -1511,7 +1607,7 @@ mod tests {
     /// still succeeds — the happy path is unchanged.
     #[tokio::test]
     async fn provide_intent_before_any_request_fd_succeeds() {
-        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, mut session_status, ws_root) =
+        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, session_status, ws_root, trusted_path) =
             harness();
         let mut intent_provided = false;
         let mut fd_requested = false;
@@ -1527,7 +1623,8 @@ mod tests {
             &mut last_event_hash,
             &mut store,
             &ws_root,
-            &mut session_status,
+            &session_status,
+            &trusted_path,
             &mut intent_provided,
             &mut fd_requested,
         )
@@ -1548,7 +1645,7 @@ mod tests {
     /// EXACTLY ONCE.
     #[tokio::test]
     async fn second_provide_intent_is_rejected() {
-        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, mut session_status, ws_root) =
+        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, session_status, ws_root, trusted_path) =
             harness();
         let mut intent_provided = false;
         let mut fd_requested = false;
@@ -1564,7 +1661,8 @@ mod tests {
             &mut last_event_hash,
             &mut store,
             &ws_root,
-            &mut session_status,
+            &session_status,
+            &trusted_path,
             &mut intent_provided,
             &mut fd_requested,
         )
@@ -1584,7 +1682,8 @@ mod tests {
             &mut last_event_hash,
             &mut store,
             &ws_root,
-            &mut session_status,
+            &session_status,
+            &trusted_path,
             &mut intent_provided,
             &mut fd_requested,
         )
@@ -1608,7 +1707,7 @@ mod tests {
     /// no ProvideIntent has ever succeeded on this connection.
     #[tokio::test]
     async fn provide_intent_after_request_fd_is_rejected() {
-        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, mut session_status, _ws_root) =
+        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, session_status, _ws_root, _trusted_path) =
             harness();
         // A real workspace dir + file so RequestFd's read_within succeeds
         // (the arm sets fd_requested at ENTRY regardless, but a real target
@@ -1620,6 +1719,10 @@ mod tests {
         let ws_root = Arc::new(
             adapter_fs::workspace::WorkspaceRoot::open(&ws_dir).expect("open ws root"),
         );
+        // Trusted path == the SAME file being RequestFd'd, so this guard-(a)
+        // ordering test's assertions (unrelated to HARDEN-01) are unaffected
+        // by the Task-2 fstat identity compare landing later in this plan.
+        let trusted_path = ws_dir.join("workspace.txt");
 
         let mut intent_provided = false;
         let mut fd_requested = false;
@@ -1635,7 +1738,8 @@ mod tests {
             &mut last_event_hash,
             &mut store,
             &ws_root,
-            &mut session_status,
+            &session_status,
+            &trusted_path,
             &mut intent_provided,
             &mut fd_requested,
         )
@@ -1664,7 +1768,8 @@ mod tests {
             &mut last_event_hash,
             &mut store,
             &ws_root,
-            &mut session_status,
+            &session_status,
+            &trusted_path,
             &mut intent_provided,
             &mut fd_requested,
         )

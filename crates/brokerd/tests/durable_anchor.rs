@@ -115,7 +115,12 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
     // (TAINT-01); this harness thread mirrors the broker's in-memory local
     // starting from an Active seed and preserves this test's existing
     // Active-session semantics (a block on I2 fires regardless of session_status).
-    let mut session_status = SessionStatus::Active;
+    // v1.6 Phase 27 (X-04/F3): dispatch_request now takes the shared
+    // Arc<Mutex<SessionStatus>> shape — a fresh test-local cell here.
+    let session_status = Arc::new(Mutex::new(SessionStatus::Active));
+    // Trusted-path placeholder (HARDEN-01) — this harness never drives
+    // RequestFd, so the fstat identity compare is never reached.
+    let trusted_path = std::env::temp_dir().join("__durable_anchor_no_trusted_path__");
 
     // `path` is FIRST so the executor blocks on the tainted routing-sensitive arg
     // before it ever resolves `contents` for the ALLOW/DENY decision itself (a
@@ -162,7 +167,8 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
         &mut last_event_hash,
         &mut store,
         &ws_root(),
-        &mut session_status,
+        &session_status,
+        &trusted_path,
         &mut intent_provided,
         &mut fd_requested,
     )

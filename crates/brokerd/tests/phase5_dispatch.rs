@@ -186,7 +186,12 @@ async fn block_appends_durable_causal_sink_blocked() {
     // (see mint_from_read's doc comment).
     let mut last_event_id = demoted_event_id;
     let mut last_event_hash = demoted_hash;
-    let mut session_status = SessionStatus::Active;
+    // v1.6 Phase 27 (X-04/F3): dispatch_request now takes the shared
+    // Arc<Mutex<SessionStatus>> shape — a fresh test-local cell here.
+    let session_status = Arc::new(Mutex::new(SessionStatus::Active));
+    // Trusted-path placeholder (HARDEN-01) — this harness never drives
+    // RequestFd, so the fstat identity compare is never reached.
+    let trusted_path = std::env::temp_dir().join("__phase5_dispatch_no_trusted_path_1__");
 
     // Drive the real dispatch_request SubmitPlanNode arm over a UnixStream pair.
     let (mut server_end, _client_end) =
@@ -207,7 +212,8 @@ async fn block_appends_durable_causal_sink_blocked() {
         &mut last_event_hash,
         &mut store,
         &ws_root(),
-        &mut session_status,
+        &session_status,
+        &trusted_path,
         &mut intent_provided,
         &mut fd_requested,
     )
@@ -276,7 +282,12 @@ async fn append_failure_is_fail_closed() {
     // assertion (the table is already dropped), but kept consistent.
     let mut last_event_id = demoted_event_id;
     let mut last_event_hash = demoted_hash;
-    let mut session_status = SessionStatus::Active;
+    // v1.6 Phase 27 (X-04/F3): dispatch_request now takes the shared
+    // Arc<Mutex<SessionStatus>> shape — a fresh test-local cell here.
+    let session_status = Arc::new(Mutex::new(SessionStatus::Active));
+    // Trusted-path placeholder (HARDEN-01) — this harness never drives
+    // RequestFd, so the fstat identity compare is never reached.
+    let trusted_path = std::env::temp_dir().join("__phase5_dispatch_no_trusted_path_2__");
 
     let (mut server_end, _client_end) =
         tokio::net::UnixStream::pair().expect("UnixStream::pair");
@@ -296,7 +307,8 @@ async fn append_failure_is_fail_closed() {
         &mut last_event_hash,
         &mut store,
         &ws_root(),
-        &mut session_status,
+        &session_status,
+        &trusted_path,
         &mut intent_provided,
         &mut fd_requested,
     )

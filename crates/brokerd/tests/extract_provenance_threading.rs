@@ -231,7 +231,13 @@ async fn build_two_anchor_block_db(tag: &str) -> TwoAnchorFixture {
     // Mirrors durable_anchor.rs: this harness thread starts from an Active
     // seed (a block on I2 fires regardless of session_status); the mints
     // above already demoted the session's DB row to Draft via TAINT-01.
-    let mut session_status = SessionStatus::Active;
+    // v1.6 Phase 27 (X-04/F3): dispatch_request now takes the shared
+    // Arc<Mutex<SessionStatus>> shape — a fresh test-local cell here.
+    let session_status = Arc::new(Mutex::new(SessionStatus::Active));
+    // Trusted-path placeholder (HARDEN-01) — this harness never drives
+    // RequestFd, so the fstat identity compare is never reached.
+    let trusted_path =
+        std::env::temp_dir().join("__extract_provenance_threading_no_trusted_path__");
 
     // Both `to` (routing-sensitive, derived-recipient) and `body`
     // (content-sensitive) are present -- present so the collect-then-Block
@@ -265,7 +271,8 @@ async fn build_two_anchor_block_db(tag: &str) -> TwoAnchorFixture {
         &mut last_event_hash,
         &mut store,
         &ws_root(),
-        &mut session_status,
+        &session_status,
+        &trusted_path,
         &mut intent_provided,
         &mut fd_requested,
     )

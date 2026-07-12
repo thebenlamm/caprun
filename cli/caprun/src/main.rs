@@ -191,6 +191,15 @@ async fn main() -> anyhow::Result<()> {
         adapter_fs::workspace::WorkspaceRoot::open(workspace_root_dir)
             .context("open workspace root")?,
     );
+    // v1.6 Phase 27 (HARDEN-01, DESIGN-security-hardening.md §a): the ONE
+    // trusted-path identity threaded into the broker so its `RequestFd`
+    // arm's fstat inode-identity compare has a trusted target — an OWNED
+    // `PathBuf` derived from the SAME CLI-designated `<workspace-file>` arg
+    // that anchors `workspace_root_dir`/`workspace_rel` above. This is the
+    // second forwarding hop the DESIGN doc's blast-radius note requires
+    // (the first, existing hop is `.env("WORKSPACE_FILE", workspace_rel)`
+    // below, which the worker consumes — this one reaches the broker).
+    let trusted_workspace_path: std::path::PathBuf = ws_path.to_path_buf();
 
     // ── 2. Create session + persist + append session_created event ──────────
     // The CLI decides seed_provenance (above); create_session (broker-side,
@@ -243,6 +252,7 @@ async fn main() -> anyhow::Result<()> {
             session_created_hash,
             initial_session_status,
             ws_root_for_broker,
+            trusted_workspace_path,
         )
         .await
     });

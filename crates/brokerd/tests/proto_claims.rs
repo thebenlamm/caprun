@@ -109,12 +109,17 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
     let mut store = ValueStore::default();
     let mut last_event_id = Uuid::new_v4();
     let mut last_event_hash = "genesis-hash".to_string();
-    let mut session_status = runtime_core::SessionStatus::Active;
+    // v1.6 Phase 27 (X-04/F3): dispatch_request now takes the shared
+    // Arc<Mutex<SessionStatus>> shape — a fresh test-local cell here.
+    let session_status = Arc::new(Mutex::new(runtime_core::SessionStatus::Active));
     // ProvideIntent never exercises RequestFd; any valid dir anchors the root.
     let ws_root = Arc::new(
         adapter_fs::workspace::WorkspaceRoot::open(std::env::temp_dir().as_path())
             .expect("open ws root"),
     );
+    // Trusted-path placeholder (HARDEN-01) — this test never drives
+    // RequestFd, so the fstat identity compare is never reached.
+    let trusted_path = std::env::temp_dir().join("__proto_claims_no_trusted_path__");
 
     let (mut server_end, mut client_end) =
         tokio::net::UnixStream::pair().expect("UnixStream::pair");
@@ -141,7 +146,8 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
         &mut last_event_hash,
         &mut store,
         &ws_root,
-        &mut session_status,
+        &session_status,
+        &trusted_path,
         &mut intent_provided,
         &mut fd_requested,
     )
@@ -304,7 +310,12 @@ struct DispatchHarness {
     store: executor::value_store::ValueStore,
     last_event_id: uuid::Uuid,
     last_event_hash: String,
-    session_status: runtime_core::SessionStatus,
+    // v1.6 Phase 27 (X-04/F3): dispatch_request now takes the shared
+    // Arc<Mutex<SessionStatus>> shape — a fresh test-local cell here.
+    session_status: std::sync::Arc<std::sync::Mutex<runtime_core::SessionStatus>>,
+    // Trusted-path placeholder (HARDEN-01) — this harness never drives
+    // RequestFd, so the fstat identity compare is never reached.
+    trusted_path: std::path::PathBuf,
     // Phase 16 (BLOCKER-1 guard a): threaded across every `.dispatch()` call
     // on this harness instance, exactly like `session_status` — a test that
     // drives multiple requests through the SAME harness sees the guard
@@ -328,7 +339,8 @@ impl DispatchHarness {
         let store = ValueStore::default();
         let last_event_id = Uuid::new_v4();
         let last_event_hash = "genesis-hash".to_string();
-        let session_status = runtime_core::SessionStatus::Active;
+        let session_status = Arc::new(Mutex::new(runtime_core::SessionStatus::Active));
+        let trusted_path = std::env::temp_dir().join("__dispatch_harness_no_trusted_path__");
         let ws_root = Arc::new(
             adapter_fs::workspace::WorkspaceRoot::open(std::env::temp_dir().as_path())
                 .expect("open ws root"),
@@ -343,6 +355,7 @@ impl DispatchHarness {
             last_event_id,
             last_event_hash,
             session_status,
+            trusted_path,
             intent_provided: false,
             fd_requested: false,
             ws_root,
@@ -369,7 +382,8 @@ impl DispatchHarness {
             &mut self.last_event_hash,
             &mut self.store,
             &self.ws_root,
-            &mut self.session_status,
+            &self.session_status,
+            &self.trusted_path,
             &mut self.intent_provided,
             &mut self.fd_requested,
         )
