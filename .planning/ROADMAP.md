@@ -95,7 +95,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 
 - [x] **Phase 23: Slot-Type Binding Design Gate** - A DESIGN doc for slot-type binding enforcement exists, unifies with the existing `claim_type` taxonomy, resolves derivation role propagation, and pins the fail-closed default — clearing a fresh (non-self) adversarial review before any TCB code (completed 2026-07-12)
 - [x] **Phase 24: Slot-Type Binding Enforcement** - The executor structurally enforces that a resolved value's origin role matches its plan-node slot's expected role, via a new mint-time tag, a hardcoded expected-role table, and a new exhaustive `DenyReason` variant (completed 2026-07-12)
-- [ ] **Phase 25: Regression & Live Proof** - A deliberately swapped subject/recipient handle pair is proven to produce the new deny with an unbroken audit chain, existing tests are updated for the new check, and the full workspace regression passes green on real Linux
+- [x] **Phase 25: Regression & Live Proof** - A deliberately swapped subject/recipient handle pair is proven to produce the new deny with an unbroken audit chain, existing tests are updated for the new check, and the full workspace regression passes green on real Linux (completed 2026-07-12)
 
 ## Phase Details
 
@@ -154,7 +154,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   2. Existing tests that currently rely on permissive `UserTrusted`-in-any-slot behavior are identified via a regression audit and updated so the new check isn't silently bypassed or broken by a fixture that never assigns a role.
   3. `scripts/mailpit-verify.sh` is independently re-run green (0 failures) after the change lands — not assumed from a prior pass, per this project's standing milestone-close discipline.
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 **Wave 1**
 
 - [x] 25-01-PLAN.md — T2-06: held-out swapped subject↔recipient deny test (genuine mint-time origin_role chain, plan_node_evaluated audit event, verify_chain true) + correctly-routed Allowed control proving Step-1c isolation
@@ -162,7 +162,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 25-03-PLAN.md — T2-08: independent bare `scripts/mailpit-verify.sh` re-run green on real Linux (true exit code pre-pipe, PASSED sentinel, held-out test ran) + human v1.5 DONE sign-off
+- [x] 25-03-PLAN.md — T2-08: independent bare `scripts/mailpit-verify.sh` re-run green on real Linux (true exit code pre-pipe, PASSED sentinel, held-out test ran) + human v1.5 DONE sign-off
 
 ## Progress
 
@@ -192,4 +192,4 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 3/3 | Complete    | 2026-07-11 |
 | 23. Slot-Type Binding Design Gate | v1.5 | 2/2 | Complete    | 2026-07-12 |
 | 24. Slot-Type Binding Enforcement | v1.5 | 3/3 | Complete    | 2026-07-12 |
-| 25. Regression & Live Proof | v1.5 | 2/3 | In Progress|  |
+| 25. Regression & Live Proof | v1.5 | 3/3 | Complete   | 2026-07-12 |
