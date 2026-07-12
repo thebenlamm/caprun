@@ -2,7 +2,7 @@
 
 **Milestone:** v1.6 — Security Hardening
 **Phase:** 26 (Design Gate) — hard-blocks all `crates/executor` / `crates/brokerd` / `crates/runtime-core` hardening code for this milestone (Phases 27–30)
-**Status:** Draft → pending fresh (non-self) adversarial review (see `DESIGN-GATE-RECORD-v1.6.md`)
+**Status:** CLEARED — passed a fresh (non-self) adversarial review (Round 1, 3 findings folded: F1 BLOCKER, F2 MAJOR, F3 MINOR — all resolved); see `DESIGN-GATE-RECORD-v1.6.md`
 **Author date:** 2026-07-12
 **Requirements gated by this doc:** DESIGN-11 (this doc exists and pins mechanism + fail-closed default for all five residuals), DESIGN-12 (this doc clears a fresh non-self adversarial review with every finding resolved)
 **Grounding:** `.planning/phases/26-security-hardening-design-gate/26-RESEARCH.md` — every file:line below was re-verified against live source at authoring time (greps re-run per the research's "Valid until" clause); re-verify again at Phase 27+ if many commits intervene.
@@ -117,6 +117,30 @@ the SAME atomic pattern `mint_from_read` already uses (`update_session_status` +
   `is_trusted_labeled == false` → **demote**. Availability cost (over-demoting a legitimate read) is
   the safe direction; under-demoting is not.
 
+> **Revised after DESIGN-GATE-RECORD-v1.6 Round 1, finding F2 (MAJOR) — the trusted-label compare
+> must be an implementable broker-derived IDENTITY check, and the ordering corrected.** The original
+> pin ("reuse the SAME `openat2` canonical form already computed for the fd-open") is **not
+> implementable as written**: `WorkspaceRoot::read_within` (`crates/adapter-fs/src/workspace.rs:90`)
+> returns `std::io::Result<std::fs::File>` **only** — it discards the resolved/canonical path, and
+> `root_path()` (`:71`) returns the root, not the per-file resolved target. There is no "canonical
+> form already computed" to reuse, so the only value available to a naive implementer is the raw
+> worker-supplied `rel_path` string — exactly the "ad-hoc string compare" this bullet forbids (and
+> which over/under-demotes). The ordering was also self-contradictory: you cannot both demote
+> *before* `read_within` runs AND reuse `read_within`'s result.
+>
+> **Corrected pin (locked).** The trusted-label test is a broker-derived **inode identity** check:
+> `fstat` the fd the broker opens for the `RequestFd`'d path and compare `(st_dev, st_ino)` against an
+> `fstat` of the CLI-designated `<workspace-file>` (`workspace_rel`, resolved once via the same
+> `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS` discipline at broker startup) — NOT a path-string compare.
+> Equivalently, Phase 27 MAY budget extending `read_within` to also surface the resolved canonical
+> path; the inode compare is preferred (immune to path aliasing and already-open-fd TOCTOU).
+> **Corrected ordering (locked):** open the broker's fd for the path → `fstat` identity-compare →
+> commit the demotion if untrusted → **then** `pass_fd` to the worker. The demotion still commits
+> before the fd is released (D-01), but "before `read_within`" in the original Mechanism prose is
+> superseded by "before `pass_fd`, using the fd `read_within` just opened." This is **additional
+> plumbing beyond** RESEARCH CORRECTION (ii)'s `workspace_rel`-threading budget — Phase 27 budgets
+> both the trusted-path threading AND the per-`RequestFd` `fstat` identity compare.
+
 ### RESEARCH CORRECTION (ii) — new plumbing budget, not a new `if`
 
 The trusted-label signal has **no existing broker-side plumbing**. `workspace_rel` reaches only the
@@ -228,6 +252,37 @@ and **never inside the DB file** the in-host DB-writer can read. Key generation 
 `getrandom`-backed RNG, never a custom PRNG. This custody model is NOT named by CONTEXT.md D-04 and is
 pinned here explicitly rather than left as "the broker holds the key."
 
+> **Revised after DESIGN-GATE-RECORD-v1.6 Round 1, finding F1 (BLOCKER) — a broker-ENFORCED
+> fail-closed path invariant is required; "outside the workspace root" cannot be left as operator
+> convention.** The original text asserted the `<audit_path>.key` sibling "is never inside the
+> workspace root the confined worker's Landlock policy can reach" as a *given*. Traced against code,
+> that is NOT guaranteed: `audit_path` is a **free-form CLI argument** (`cli/caprun/src/main.rs:149`,
+> `caprun … <workspace-file> [audit-db-path]`), wholly independent of the workspace root, which is
+> derived separately as `ws_path.parent()` (`main.rs:183`). `WorkspaceRoot::read_within`
+> (`crates/adapter-fs/src/workspace.rs:90`) opens **any** `rel_path` that resolves
+> `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS` the workspace root and returns an fd, and the `RequestFd` arm
+> (`server.rs:996-1047`) passes that fd to the worker via `SCM_RIGHTS`, gated ONLY by "beneath
+> workspace root." So if an operator co-locates the audit DB under the workspace (e.g.
+> `caprun … ./ws/intent.txt ./ws/audit.db`), the sibling `./ws/audit.db.key` is beneath the root, and
+> the **confined worker** — caprun's PRIMARY adversary, not the D-05 root residual — can
+> `RequestFd("audit.db.key")`, receive the fd, read the MAC key, and forge/truncate the chain. That is
+> a fail-**open** path presented as fail-closed, and it defeats HARDEN-02's headline mechanism.
+>
+> **Corrected pin (locked) — broker-derived startup invariant, fail-closed.** At broker startup, the
+> resolved absolute paths of BOTH the audit DB and its `.key` sibling MUST be checked to lie **outside
+> the `WorkspaceRoot`'s `read_within`-reachable set**, and the broker MUST **refuse to run**
+> (hard error, never silently continue) if either resolves beneath the workspace root. Concretely:
+> resolve the workspace root and the audit/key paths to canonical absolute forms and assert the audit
+> paths are not a prefix-descendant of the root (mirroring the same `RESOLVE_BENEATH` reachability the
+> worker would exploit); equivalently, derive the key path from a location provably outside
+> `read_within`'s reach. This is a **broker-enforced guarantee**, not an operator convention or a doc
+> note — it is the fail-closed default for HARDEN-02's key custody. Phase 28 (and, because the audit DB
+> is opened at every `caprun` and every `confirm`/`deny` invocation, the shared key-load helper) MUST
+> implement and test this refusal path (a negative test: audit path under the workspace root → broker
+> exits fail-closed; a `RequestFd` on the key file in a mis-configured run must never reach an
+> unrefused broker). The `getrandom`/0600/sibling-file custody above stands; F1 adds the missing
+> enforcement that the sibling is genuinely unreachable.
+
 **Anchored/monotonic head (pinned, D-04).** A dedicated single-row table
 `chain_anchor(session_id, head_event_id, head_hash, event_count)`, itself MAC'd with the same broker
 key, updated **atomically with every `append_event`** (same lock/transaction discipline as
@@ -258,7 +313,9 @@ already demonstrates. An old DB with no anchor row is untrusted until re-anchore
 Any of: chain-walk mismatch, computed-leaf ≠ anchor, `event_count` mismatch, missing/absent anchor
 row, MAC-verify failure on a `pending_confirmations` row → `verify_chain`/the confirm gate returns
 **false / DigestMismatch** and `confirm()` refuses to trust the read-back block. Absence of the key
-file is fail-closed (cannot verify → refuse), never fail-open.
+file is fail-closed (cannot verify → refuse), never fail-open. **Per F1 (above): if the audit DB or
+its `.key` sibling resolves beneath the workspace root, the broker refuses to start** — the key must
+be provably outside the worker's `read_within` reach before any MAC has meaning.
 
 ### Risk / false-positive surface
 
@@ -651,6 +708,18 @@ once per connection — mirroring how `planner_slot_occupied: Arc<AtomicBool>` i
 for exactly the same cross-task-visibility reason (`server.rs:185`). A Worker-connection demotion then
 becomes immediately visible to the Planner connection's Step 0.5.
 
+> **Revised after DESIGN-GATE-RECORD-v1.6 Round 1, finding F3 (MINOR) — the shared cell's write is
+> monotonic, construct-once.** The fix is sound ONLY if the shared `Arc<Mutex<SessionStatus>>` is
+> **constructed once** (seeded `Active` at `run_broker_server` entry, from the single
+> `initial_session_status` param) and thereafter only ever transitions **`Active` → `Draft`
+> (demote)**. No per-connection setup path — in particular the Planner connection accepted AFTER a
+> Worker demotion — may write `Active` into the cell during its initialization (today each connection
+> re-seeds its own `initial_status` clone at `server.rs:202`/`:231`; under the fix those clones are
+> replaced by reads of the shared cell, never writes). A connection-setup write of `Active` would
+> clobber a prior `Draft` back to `Active` and re-open exactly the staleness X-04 closes. Phase 27
+> pins this monotonic-write invariant explicitly and adds a test that a Planner connection accepted
+> after demotion observes `Draft`, never a re-seeded `Active`.
+
 **Requirements bookkeeping.** This is ruled **in-scope-by-extension of HARDEN-01** ("fd release itself
 carries the I1 draft-only consequence" — the bug is specifically about `session_status` not being
 consistently visible across connections at the moment ANY deny decision is evaluated), so **no new
@@ -676,6 +745,10 @@ cited code**, not by trusting this doc. Mirrors `DESIGN-slot-type-binding.md` §
    file (the in-host DB-writer never reads it); tail-truncation is caught by the MAC'd `chain_anchor`.
    The reviewer MUST adversarially probe the key-custody path (can the confined worker's Landlock policy
    ever include the key file? does `confirm`/`deny` obtain the SAME key?) — this is THE review focus.
+   **F1 (Round 1) confirmed this probe found real blood:** the key file is reachable via
+   `RequestFd`/`read_within` whenever the audit DB is co-located under the workspace root, so §b now
+   pins a **broker-enforced fail-closed startup refusal** if the audit/key paths lie beneath the
+   workspace root — the key's unreachability is now a broker guarantee, not an operator convention.
 3. **§c — does an `effect_id`-keyed CAS actually stop replay?** No — and the doc says so loudly:
    `effect_id` is minted fresh per `SubmitPlanNode` (`server.rs:562`), so the CAS MUST key on
    `SHA256(sink || sorted(arg_name, value_id))`, not `effect_id`. Reviewer confirms the key derivation
@@ -798,4 +871,24 @@ Round-tagged amendments from the fresh adversarial review (DESIGN-12, Plan 26-02
 relevant §above, per `DESIGN-slot-type-binding.md`'s convention. See `DESIGN-GATE-RECORD-v1.6.md` for
 the full review.
 
-_(none yet — pending Plan 26-02)_
+**Round 1 (DESIGN-GATE-RECORD-v1.6, fresh independent non-self Fable-5 code-tracing reviewer, 2026-07-12):**
+- **F1 (BLOCKER) → §b:** pinned a **broker-enforced fail-closed startup refusal** when the audit DB or
+  its `.key` sibling resolves beneath the workspace root. The prior "key is outside the workspace root"
+  was an operator convention, not a guarantee; traced against code, the confined worker can
+  `RequestFd` a co-located `audit.db.key` (`read_within` opens anything `RESOLVE_BENEATH` the root,
+  `RequestFd` passes the fd) and read the MAC key. Resolution strengthens the mechanism — HARDEN-02's
+  key custody is now a broker guarantee. No ruling weakened.
+- **F2 (MAJOR) → §a:** replaced the non-implementable "reuse the canonical form `read_within` computed"
+  (it returns only a `File`, discarding the resolved path) with a broker-derived **`fstat` `(st_dev,
+  st_ino)` inode-identity** compare against the CLI-designated `<workspace-file>`, and corrected the
+  ordering to open-fd → identity-compare → demote-if-untrusted → `pass_fd`. Additional Phase-27
+  plumbing beyond the `workspace_rel` threading.
+- **F3 (MINOR) → §f/X-04:** pinned the shared `Arc<Mutex<SessionStatus>>` as construct-once /
+  monotonic `Active→Draft`; no connection-setup path may re-seed `Active` after a demotion.
+
+No finding was resolved by weakening a ruling or designing a locked-out mechanism. The load-bearing
+mechanisms (fd-grant demotion, keyed-MAC + anchored head, content-derived replay CAS, compile-out
+feature + featureless negative gate, `contents => Some(&["path"])`, X-04 fold-not-accept) survived
+remediation unchanged; F1/F2 hardened §a/§b's *enforcement*, not their mechanism choice. The full
+review record — every finding, the code traced, and the "verified sound" list — is in
+`planning-docs/DESIGN-GATE-RECORD-v1.6.md`.
