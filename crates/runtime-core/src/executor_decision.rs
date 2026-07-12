@@ -57,6 +57,20 @@ pub enum DenyReason {
     /// two denial codes remain independently matchable for audit/CLI. Carries
     /// the offending `SinkId`, matching the existing convention.
     NonLiveSessionDeniesCommitIrreversible { sink: crate::plan_node::SinkId },
+
+    // ── v1.5 addition (T2-04, DESIGN-slot-type-binding.md §5) ─────────────────
+    /// A resolved value's origin-role tag did not match its slot's
+    /// expected-role set (T2, DESIGN-slot-type-binding.md §5/§7). Structural
+    /// fail-closed — never confirmable, never `BlockedPendingConfirmation`.
+    ///
+    /// Field types are a deliberate deviation from the `SinkId`-typed
+    /// `DraftOnlySessionDeniesCommitIrreversible`/`NonLiveSessionDeniesCommitIrreversible`
+    /// convention above: plain owned `String`/`Vec<String>`/`Option<String>`,
+    /// never static string-slice references — `DenyReason` derives
+    /// `Deserialize` and this decision crosses the IPC wire (worker.rs
+    /// deserializes it); borrowed references are not deserializable
+    /// (DESIGN F1, MAJOR).
+    SlotTypeMismatch { sink: String, arg: String, expected: Vec<String>, found: Option<String> },
 }
 
 impl DenyReason {
@@ -76,6 +90,7 @@ impl DenyReason {
             DenyReason::NonLiveSessionDeniesCommitIrreversible { .. } => {
                 "non_live_session_denies_commit_irreversible"
             }
+            DenyReason::SlotTypeMismatch { .. } => "slot_type_mismatch",
         }
     }
 }
@@ -106,6 +121,15 @@ impl std::fmt::Display for DenyReason {
                 "non-live session (WaitingApproval/Done/Failed/RolledBack) denies \
                  CommitIrreversible sink `{sink}`",
                 sink = sink.0
+            ),
+            DenyReason::SlotTypeMismatch {
+                sink,
+                arg,
+                expected,
+                found,
+            } => write!(
+                f,
+                "value routed into `{arg}` of sink `{sink}` has role {found:?}, expected one of {expected:?}"
             ),
         }
     }
@@ -204,4 +228,26 @@ pub enum ExecutorDecision {
     Denied { reason: DenyReason },
     /// Stub: executor not yet implemented (Phase 1 return value).
     NotImplemented,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slot_type_mismatch_code_and_display() {
+        let reason = DenyReason::SlotTypeMismatch {
+            sink: "email.send".to_string(),
+            arg: "to".to_string(),
+            expected: vec!["recipient".to_string(), "email_address".to_string()],
+            found: Some("body".to_string()),
+        };
+
+        assert_eq!(reason.code(), "slot_type_mismatch");
+
+        let rendered = reason.to_string();
+        assert!(!rendered.is_empty());
+        assert!(rendered.contains("email.send"));
+        assert!(rendered.contains("to"));
+    }
 }
