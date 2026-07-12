@@ -189,3 +189,17 @@ None - no external service configuration required.
 ---
 *Phase: 27-session-connection-integrity-hardening*
 *Completed: 2026-07-12*
+
+## Self-Check: PASSED
+
+- FOUND: crates/brokerd/tests/harden01_session_integrity.rs
+- FOUND: .planning/phases/27-session-connection-integrity-hardening/27-01-SUMMARY.md
+- FOUND: crates/brokerd/src/server.rs
+- FOUND: crates/brokerd/src/quarantine.rs
+- FOUND: cli/caprun/src/main.rs
+- FOUND: planning-docs/DESIGN-session-trust-state.md
+- FOUND commit: 40addc0 (Task 1)
+- FOUND commit: ad402df (Task 2)
+- FOUND commit: 100a6dd (Task 3)
+- FOUND commit: bf38a76 (Task 4)
+- FOUND commit: 8c116c2 (SUMMARY.md)
