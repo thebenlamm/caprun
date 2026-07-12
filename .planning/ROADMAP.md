@@ -109,7 +109,7 @@ Full detail archived in [`milestones/v1.5-ROADMAP.md`](milestones/v1.5-ROADMAP.m
 
 **Milestone goal:** Close the standing TCB-local security residuals that v1.1–v1.5 accumulated and documented as accepted caveats — turning each DOC-01 honesty qualifier into an enforced guarantee, without adding any new external-effect surface. Per this project's standing design-gate precedent (v1.0 P2, v1.2 P8, v1.3 P12, v1.4 P18, v1.5 P23), v1.6 opens with a design-gate phase that hard-blocks all five hardening items until it clears a fresh (non-self) adversarial review, followed by implementation grouped by blast radius, closing with a dedicated regression & live-proof phase.
 
-- [ ] **Phase 26: Security Hardening Design Gate** - A DESIGN doc specifies the mechanism + fail-closed default for all five residuals and clears a fresh adversarial review before any hardening code is written
+- [x] **Phase 26: Security Hardening Design Gate** - A DESIGN doc specifies the mechanism + fail-closed default for all five residuals and clears a fresh adversarial review before any hardening code is written (completed 2026-07-12)
 - [ ] **Phase 27: Session & Connection Integrity Hardening** - fd release itself carries the I1 draft-only consequence, and the CreateSession forced-Active mint arm is compiled out of the production binary
 - [ ] **Phase 28: Authenticated Audit Chain** - `verify_chain` becomes forge-resistant (keyed MAC and/or externally-anchored head), not just a corruption detector
 - [ ] **Phase 29: Sink-Path Hardening — Replay CAS & contents Slot** - the Allowed email.send path is replay-safe (at-most-once), and `file.create`'s `contents` arg is no longer an unconstrained slot
@@ -133,11 +133,11 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 **Plans**: 2 plans
 **Wave 1**
 
-- [ ] 26-01-PLAN.md — Author `DESIGN-security-hardening.md`: §a-§e (five residual mechanisms + fail-closed defaults), §f cross-cutting (X-01/X-02/X-03 + X-04 ruling), Adversarial-Review-Preemption, Accepted Residuals, Phase 27-30 impl map (DESIGN-11)
+- [x] 26-01-PLAN.md — Author `DESIGN-security-hardening.md`: §a-§e (five residual mechanisms + fail-closed defaults), §f cross-cutting (X-01/X-02/X-03 + X-04 ruling), Adversarial-Review-Preemption, Accepted Residuals, Phase 27-30 impl map (DESIGN-11)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 26-02-PLAN.md — Fresh non-self Fable code-tracing review, fold amendments, amend DESIGN-session-trust-state.md (D-02), write DESIGN-GATE-RECORD-v1.6.md, hard-gate re-confirmation (DESIGN-12)
+- [x] 26-02-PLAN.md — Fresh non-self Fable code-tracing review, fold amendments, amend DESIGN-session-trust-state.md (D-02), write DESIGN-GATE-RECORD-v1.6.md, hard-gate re-confirmation (DESIGN-12)
 
 ### Phase 27: Session & Connection Integrity Hardening
 
@@ -223,7 +223,7 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 | 23. Slot-Type Binding Design Gate | v1.5 | 2/2 | Complete    | 2026-07-12 |
 | 24. Slot-Type Binding Enforcement | v1.5 | 3/3 | Complete    | 2026-07-12 |
 | 25. Regression & Live Proof | v1.5 | 3/3 | Complete    | 2026-07-12 |
-| 26. Security Hardening Design Gate | v1.6 | 0/2 | Planned | - |
+| 26. Security Hardening Design Gate | v1.6 | 2/2 | Complete    | 2026-07-12 |
 | 27. Session & Connection Integrity Hardening | v1.6 | 0/? | Not started | - |
 | 28. Authenticated Audit Chain | v1.6 | 0/? | Not started | - |
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 0/? | Not started | - |

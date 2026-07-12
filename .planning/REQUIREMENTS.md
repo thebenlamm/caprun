@@ -10,7 +10,7 @@ Milestone **v1.6 — Security Hardening (close the residuals)**. Five TCB-local 
 ### Design Gate
 
 - [x] **DESIGN-11**: A DESIGN doc (`planning-docs/DESIGN-security-hardening.md`) exists and specifies the approach + fail-closed default for all five residuals: (a) the demote-at-RequestFd model and how it reconciles with the CONTROL-01 benign clean path; (b) the `verify_chain` authentication mechanism (keyed MAC and/or externally-anchored chain head) including key/anchor custody and threat model; (c) the Allowed-path idempotency/CAS shape; (d) the `CreateSession` forced-Active-mint compile-exclusion mechanism; (e) the `file.create` `contents` expected-role / sensitivity treatment.
-- [ ] **DESIGN-12**: The DESIGN doc clears a fresh (non-self) adversarial review with every finding resolved, before any `crates/executor`, `crates/brokerd`, or `crates/runtime-core` hardening code is written (standing design-gate discipline: v1.0 P2, v1.2 P8, v1.3 P12, v1.4 P18, v1.5 P23).
+- [x] **DESIGN-12**: The DESIGN doc clears a fresh (non-self) adversarial review with every finding resolved, before any `crates/executor`, `crates/brokerd`, or `crates/runtime-core` hardening code is written (standing design-gate discipline: v1.0 P2, v1.2 P8, v1.3 P12, v1.4 P18, v1.5 P23).
 
 ### Hardening
 
@@ -56,7 +56,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | DESIGN-11 | Phase 26 | Complete |
-| DESIGN-12 | Phase 26 | Pending |
+| DESIGN-12 | Phase 26 | Complete |
 | HARDEN-01 | Phase 27 | Pending |
 | HARDEN-04 | Phase 27 | Pending |
 | HARDEN-02 | Phase 28 | Pending |
