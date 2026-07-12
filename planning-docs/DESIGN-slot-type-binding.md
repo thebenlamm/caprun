@@ -168,7 +168,7 @@ Slot keys are `arg.name` (`PlanArg { name: String, .. }`, `plan_node.rs:108-115`
 |---|---|---|---|
 | `email.send` | `to`, `cc`, `bcc` | `["recipient", "email_address"]` | trusted recipient OR a legitimately doc-derived one (§4); both spellings enumerated per §2 |
 | `email.send` | `subject` | `["subject"]` | |
-| `email.send` | `body` | `["body"]` | |
+| `email.send` | `body` | `["body", "doc_fragment"]` | trusted `body` OR a doc-derived summary; **corrected in Phase 24** — see amendment note below |
 | `file.create` | `path` | `["path", "relative_path"]` | trusted path OR an extracted relative path |
 | `file.create` | `contents` | `None` (unconstrained, v1.5) | no known-safe role vocabulary for arbitrary file content; Assumption A2 |
 | any | any other arg | `None` (unconstrained) | |
@@ -193,7 +193,24 @@ legitimately concat-derived one pass the `to` slot, while still catching a MISRO
 > role check never becomes the *sole* gate for an attacker-controllable value. The role check's
 > job is to catch a misrouted **`UserTrusted`** value (the T2 gap); untrusted values remain
 > governed by I2. Every untrusted role in §3's table (`email_address`@`to/cc/bcc`,
-> `relative_path`@`path`) satisfies this — `to/cc/bcc` and `path` are all routing-sensitive.
+> `relative_path`@`path`, `doc_fragment`@`body`) satisfies this — `to/cc/bcc` and `path` are
+> routing-sensitive, and `body` is content-sensitive.
+
+> **Amended during Phase 24 execution (2026-07-11) — `body` row corrected `["body"]` → `["body", "doc_fragment"]`.**
+> The Round-1 pin `["body"]` referenced a `"body"` claim_type that **does not exist in the live
+> code**. Body content reaches `email.send` as `WorkerClaim::DocFragment` →
+> `claim_type: "doc_fragment"` → `origin_role: "doc_fragment"` (traced through `worker.rs`
+> `SendEmailSummary` → `server.rs` → `mint_from_read`). The original `["body"]` would have
+> hard-Denied **every** legitimate body flow; three pre-existing tests in
+> `crates/brokerd/tests/extract_provenance_threading.rs` empirically confirmed this once Step 1c
+> landed. The correction is safe under the load-bearing invariant above: `body` is
+> content-sensitive, so a `doc_fragment`-tagged (always-untrusted) value there still fires I2's
+> per-arg Block — the role check is not the sole gate. The exfiltration-critical recipient slots
+> (`to`/`cc`/`bcc`) were **not** touched and still reject `doc_fragment`. Independently
+> re-confirmed by a fresh adversarial code-trace review (no blocker) and the Phase 24
+> gsd-verifier (4/4 must-haves). Pending final independent confirmation in Phase 25's live-Linux
+> proof. See `.planning/phases/24-slot-type-binding-enforcement/24-03-SUMMARY.md` for the full
+> evidence trail.
 
 ---
 
