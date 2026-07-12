@@ -53,7 +53,7 @@ v1.2 Phase 8, v1.3 Phase 12, and v1.4 Phase 18 did before it.
       precedent — hardcoded match arms scoped to the two live sinks
       `email.send`/`file.create`, not a general framework).
 
-- [ ] **T2-04**: A new `DenyReason` variant is added to the exhaustive
+- [x] **T2-04**: A new `DenyReason` variant is added to the exhaustive
       taxonomy in `runtime_core::executor_decision` (no wildcard arm, per
       the project's §10 discipline). Every existing exhaustive match over
       `DenyReason` across the workspace (CLI rendering, audit
@@ -109,7 +109,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | DESIGN-10 | Phase 23 | Complete |
 | T2-02 | Phase 24 | Complete |
 | T2-03 | Phase 24 | Pending |
-| T2-04 | Phase 24 | Pending |
+| T2-04 | Phase 24 | Complete |
 | T2-05 | Phase 24 | Pending |
 | T2-06 | Phase 25 | Pending |
 | T2-07 | Phase 25 | Pending |

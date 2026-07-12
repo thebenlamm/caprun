@@ -6,14 +6,14 @@ current_phase: 24
 current_phase_name: slot-type-binding-enforcement
 status: executing
 stopped_at: Phase 24 Plan 01 complete — origin_role tag threaded through ValueRecord/mint_from_*/server.rs, full workspace green
-last_updated: "2026-07-12T02:47:37.714Z"
+last_updated: "2026-07-12T02:54:39.460Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 24 execution started
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 5
-  completed_plans: 3
+  completed_plans: 4
   percent: 33
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-11)
 ## Current Position
 
 Phase: 24 (slot-type-binding-enforcement) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-07-12 — Phase 24 execution started
 
@@ -70,6 +70,7 @@ Last activity: 2026-07-12 — Phase 24 execution started
 | Phase 16 P03 | 25min | 1 tasks | 1 files |
 | Phase 16 P04 | 3h | 3 tasks | 16 files |
 | Phase 24 P01 | 25min | 3 tasks | 9 files |
+| Phase 24 P02 | 25min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -131,6 +132,8 @@ its DESIGN doc clears a fresh (non-self) adversarial review.
 - [Phase 22]: v1.4's T2 (slot-type binding) residual is now this milestone's scope — see Roadmap phase structure above.
 - [Phase ?]: 24-01: mint_from_derivation's concat arm guards inputs.len() == 2 before assigning origin_role Some(recipient) — any other arity gets None, I2 remains the backstop
 - [Phase ?]: 24-01: server.rs selects primary_role inside the :1294 intent-variant match (same arm as primary_literal), never hardcoded at the shared mint_from_intent call — avoids mistagging a file.create path as recipient
+- [Phase 24]: SlotTypeMismatch fields are owned String/Vec<String>/Option<String>, never &'static — DenyReason crosses the IPC wire via serde Deserialize (DESIGN F1)
+- [Phase 24]: No new ExecutorDecision variant added — reused the existing Denied { reason } carrier (A3)
 
 ### Pending Todos
 
@@ -163,7 +166,7 @@ T2 slot-type binding moved from "deferred" to "in scope" as v1.5's roadmap.
 
 ## Session Continuity
 
-Last session: 2026-07-12T02:47:29.126Z
+Last session: 2026-07-12T02:52:17.945Z
 Stopped at: Phase 24 Plan 01 complete — origin_role tag threaded through ValueRecord/mint_from_*/server.rs, full workspace green
 Resume file: None
 
