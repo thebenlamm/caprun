@@ -127,7 +127,9 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
   1. `planning-docs/DESIGN-security-hardening.md` exists and specifies, for each of the five residuals, the mechanism and fail-closed default: (a) demote-at-RequestFd reconciled with the CONTROL-01 clean path; (b) `verify_chain` keyed-MAC/externally-anchored-head mechanism including key/anchor custody and threat model; (c) the Allowed-path idempotency/CAS shape; (d) the `CreateSession` forced-Active compile-exclusion mechanism; (e) the `file.create` `contents` expected-role/sensitivity treatment.
   2. The DESIGN doc clears a fresh (non-self) adversarial review with every finding resolved, recorded in a GATE-RECORD — mirroring v1.0 P2, v1.2 P8, v1.3 P12, v1.4 P18, v1.5 P23.
   3. No hardening code exists yet in `crates/executor`, `crates/brokerd`, or `crates/runtime-core` — the gate hard-blocks Phases 27-29 until it clears.
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 26-01-PLAN.md — Author `DESIGN-security-hardening.md`: §a-§e (five residual mechanisms + fail-closed defaults), §f cross-cutting (X-01/X-02/X-03 + X-04 ruling), Adversarial-Review-Preemption, Accepted Residuals, Phase 27-30 impl map (DESIGN-11)
+- [ ] 26-02-PLAN.md — Fresh non-self Fable code-tracing review, fold amendments, amend DESIGN-session-trust-state.md (D-02), write DESIGN-GATE-RECORD-v1.6.md, hard-gate re-confirmation (DESIGN-12)
 
 ### Phase 27: Session & Connection Integrity Hardening
 **Goal**: fd release to the confined worker (`RequestFd`) itself demotes the session to draft-only for the I1 reason, and the `CreateSession`-IPC forced-`Active` mint arm is physically excluded from the production binary at compile time — both changes land in the same session/connection-lifecycle surface of `server.rs`.
@@ -201,7 +203,7 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 | 23. Slot-Type Binding Design Gate | v1.5 | 2/2 | Complete    | 2026-07-12 |
 | 24. Slot-Type Binding Enforcement | v1.5 | 3/3 | Complete    | 2026-07-12 |
 | 25. Regression & Live Proof | v1.5 | 3/3 | Complete    | 2026-07-12 |
-| 26. Security Hardening Design Gate | v1.6 | 0/? | Not started | - |
+| 26. Security Hardening Design Gate | v1.6 | 0/2 | Planned | - |
 | 27. Session & Connection Integrity Hardening | v1.6 | 0/? | Not started | - |
 | 28. Authenticated Audit Chain | v1.6 | 0/? | Not started | - |
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 0/? | Not started | - |
