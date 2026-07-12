@@ -62,7 +62,7 @@ not to session creation.
 
 ---
 
-## 2. I1 dynamic demotion — `mint_from_read` is the sole trust-flip site
+## 2. I1 dynamic demotion — two broker-side trust-flip sites (`mint_from_read`, `RequestFd` fd-grant)
 
 **I1 dynamic demotion (MUST):** A session MUST be demoted to `SessionStatus::Draft` at the moment
 `mint_from_read` (in `crates/brokerd/src/quarantine.rs`) mints a tainted `ValueRecord` for that
@@ -74,38 +74,41 @@ best-effort step.
 **Trusted-path-only / anti-self-declaration (MUST — near-verbatim extension of
 `DESIGN-taint-model.md`'s I0 phrasing to I1):** The session's `Draft` transition on `mint_from_read`
 MUST be set by the same trusted broker function that mints the tainted `ValueRecord` — never by the
-worker, and never by a flag any worker IPC message could carry. `mint_from_read` is the SOLE
-trust-flip site for I1, exactly as it is already documented as the SOLE broker taint-mint site
-(T-04-03, `crates/brokerd/src/quarantine.rs` module doc: "the only call site in brokerd that ...
-Both operations occur in one call so the chain is unbroken"). No other function in `brokerd` MUST be
+worker, and never by a flag any worker IPC message could carry. `mint_from_read` remains the SOLE
+broker TAINT-MINT site (T-04-03, `crates/brokerd/src/quarantine.rs` module doc: "the only call site
+in brokerd that ... Both operations occur in one call so the chain is unbroken"), but as of v1.6
+Phase 27 (HARDEN-01) it is **one of exactly TWO I1 trust-flip sites** — the second is
+`crates/brokerd/src/server.rs`'s `RequestFd` arm, which demotes at fd-GRANT time via a broker-derived
+`fstat` inode-identity compare (see the amendment below). No function OTHER than these two MUST be
 permitted to set `SessionStatus::Draft` for the I1 reason. This is the identical anti-spoofing
 structure `DESIGN-taint-model.md` already states for I0 ("The tainted-seed tag MUST be set by the
 trusted session-creation path from provenance — never self-declared by the creating agent") applied
 to session state instead of value state: if a worker's `ReportClaims` message could itself carry
 "I am now tainted, please demote me," an injected worker would simply omit that flag and the session
-would remain falsely `Active`. The demotion determination MUST derive from the broker's own act of
-minting untrusted taint, never from any claim the (possibly compromised) worker asserts about itself.
+would remain falsely `Active`. The demotion determination MUST derive from the broker's own act —
+either minting untrusted taint (`mint_from_read`) or granting an untrusted-labeled fd (`RequestFd`) —
+never from any claim the (possibly compromised) worker asserts about itself.
 
 `mint_from_intent` (the sibling `UserTrusted`-only mint site) MUST NOT trigger a demotion — only
 `mint_from_read`'s untrusted-taint mint path is a demotion trigger.
 
 > **Amendment — v1.6 Phase 26 design gate (D-02; `planning-docs/DESIGN-security-hardening.md` §a,
-> cleared `DESIGN-GATE-RECORD-v1.6.md`).** The v1.6 milestone (HARDEN-01) adds a **SECOND
-> broker-side I1 demotion site: `RequestFd`'s entry** in `crates/brokerd/src/server.rs`. The "SOLE
-> trust-flip site" / "No other function in `brokerd` MUST be permitted to set `SessionStatus::Draft`
-> for the I1 reason" letter above is hereby **amended to permit exactly that one additional site** —
-> both sites remain **broker-only**, so the anti-self-declaration invariant (the load-bearing spirit
-> of this clause) is *strengthened, not weakened*: the status quo already lets a silent/injected
-> worker skip demotion entirely by not sending `ReportClaims`, leaving the session falsely `Active`,
-> which is exactly the spoofing this clause exists to prevent. Demoting at fd-grant is the broker's
-> own act (precedent: `fd_requested` is flipped broker-side at `RequestFd` entry), never a
+> cleared `DESIGN-GATE-RECORD-v1.6.md`) — REALIZED in Phase 27.** The v1.6 milestone (HARDEN-01) adds a
+> **SECOND broker-side I1 demotion site: `RequestFd`'s entry** in `crates/brokerd/src/server.rs`. The
+> "SOLE trust-flip site" / "No other function in `brokerd` MUST be permitted to set
+> `SessionStatus::Draft` for the I1 reason" letter above is hereby **amended to permit exactly that one
+> additional site** — both sites remain **broker-only**, so the anti-self-declaration invariant (the
+> load-bearing spirit of this clause) is *strengthened, not weakened*: the status quo already let a
+> silent/injected worker skip demotion entirely by not sending `ReportClaims`, leaving the session
+> falsely `Active`, which is exactly the spoofing this clause exists to prevent. Demoting at fd-grant is
+> the broker's own act (precedent: `fd_requested` is flipped broker-side at `RequestFd` entry), never a
 > worker-asserted flag. The fd-grant demotion is **trusted-path-gated** (demote unless the requested
-> path is the CLI-designated `<workspace-file>`, established via a broker `fstat` inode-identity
-> compare — see the DESIGN doc §a as amended by F2), and its `session_demoted` Event parents on the
-> `fd_granted` id / current chain head (a second causal shape §5 does not yet anticipate). **The code
-> lands in Phase 27**, which also corrects `quarantine.rs`'s now-stale "SOLE trust-flip site" doc
-> comment in the same PR. This note records the design decision; it does not describe current shipped
-> behavior (as of v1.5, `mint_from_read` remains the only demotion site in code).
+> path is inode-identical, via a broker `fstat` `(st_dev, st_ino)` compare, to the CLI-designated
+> `<workspace-file>` — see the DESIGN doc §a as amended by F2), and its `session_demoted` Event parents
+> on the `fd_granted` id (the second causal shape §5 now documents below). **The code landed in Phase
+> 27** (`crates/brokerd/src/server.rs`'s `RequestFd` arm), which also corrected `quarantine.rs`'s
+> now-stale "SOLE trust-flip site" doc comment in the same PR. This note now describes shipped
+> behavior — both sites are live in code as of v1.6 Phase 27.
 
 ---
 
@@ -224,6 +227,19 @@ row and the ledger can never disagree — there MUST NOT be a window where `sess
 storage) is unchanged and owned by `brokerd::audit` (already documented in Phase 3) — this document
 does not redefine it, only the new event_type value (`"session_demoted"`) and its required
 `parent_id` linkage.
+
+> **Amendment — v1.6 Phase 27 (HARDEN-01, `planning-docs/DESIGN-security-hardening.md` §a, "Causal-edge
+> target" pin).** A SECOND causal shape now exists for the identical `"session_demoted"` event_type: the
+> `RequestFd` fd-grant demotion (§2 above) has **no `file_read` Event** to parent on — it fires at
+> fd-grant time, before any read is ever reported. Its `session_demoted.parent_id` instead equals the
+> **`fd_granted` Event's id** (appended immediately beforehand, in the same `RequestFd` arm), giving the
+> causal edge `fd_granted -> session_demoted`. Both this edge and the original
+> `file_read -> session_demoted` edge (above) are genuine, non-stapled, single-parent causal links —
+> `audit::verify_chain`'s single-linear-chain walk sees exactly one of them per connection (a session
+> demoted twice on the same connection, e.g. an untrusted `RequestFd` followed by a `ReportClaims`, gets
+> a second `session_demoted` Event chained onto the first — still one linear chain, not a fork). Both
+> writes still follow the identical atomic-pair discipline (mutable read-model UPDATE + append-only
+> Event, same lock/transaction) pinned above; only the parent_id target differs by trigger site.
 
 ---
 

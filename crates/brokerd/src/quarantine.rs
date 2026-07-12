@@ -243,16 +243,27 @@ fn looks_like_email(s: &str) -> bool {
 /// The §9 held-out test asserts `result.provenance_chain[0] == returned read_event_id`
 /// and then queries the audit DAG to confirm that id exists as a `file_read` event.
 ///
-/// # SOLE I1 TRUST-FLIP SITE (TAINT-01/TAINT-04, DESIGN-session-trust-state.md §2)
+/// # ONE OF TWO I1 TRUST-FLIP SITES (TAINT-01/TAINT-04, DESIGN-session-trust-state.md §2)
 ///
-/// This is ALSO the only call site in brokerd that demotes a session to
-/// `SessionStatus::Draft` for the I1 reason. Same atomicity discipline as
+/// This demotes a session to `SessionStatus::Draft` for the I1 reason on the
+/// `ReportClaims`/worker-self-report path. Same atomicity discipline as
 /// above: the `sessions` status UPDATE and the causally-linked
 /// `session_demoted` Event append happen under the SAME connection/lock this
-/// function already holds — never a second, separately-locked step. No other
-/// function may set `Draft` for the I1 reason; `mint_from_intent` (the
-/// sibling `UserTrusted`-only mint site below) MUST NOT and does NOT trigger
-/// a demotion.
+/// function already holds — never a second, separately-locked step.
+///
+/// **v1.6 Phase 27 (HARDEN-01, D-02 amendment,
+/// `planning-docs/DESIGN-security-hardening.md` §a):** a SECOND broker-side
+/// I1 demotion site now exists — `crates/brokerd/src/server.rs`'s
+/// `RequestFd` arm, which demotes at fd-GRANT time via a broker-derived
+/// `fstat` inode-identity compare against the CLI-designated
+/// `<workspace-file>`, closing the gap where a silent/injected worker that
+/// never sends `ReportClaims` kept the session falsely `Active`. Both sites
+/// remain broker-only (never worker-asserted) and both reuse the identical
+/// `"session_demoted"` event_type literal, so `verify_chain`/audit tooling
+/// that filters on that token covers both. No function OTHER than these two
+/// may set `Draft` for the I1 reason; `mint_from_intent` (the sibling
+/// `UserTrusted`-only mint site below) MUST NOT and does NOT trigger a
+/// demotion.
 ///
 /// # Arguments
 /// * `conn`         — open rusqlite connection for the audit DAG.
@@ -373,8 +384,11 @@ pub fn mint_from_read(
     // Step 4 (TAINT-01/TAINT-04, DESIGN-session-trust-state.md §2/§5): atomic
     // I1 demotion, performed under the SAME `conn` already passed in and
     // already locked by the caller — NEVER a second lock acquisition
-    // (RESEARCH Pitfall 5). This makes `mint_from_read` the SOLE I1 trust-flip
-    // site, exactly as it is already the sole broker taint-mint site (T-04-03).
+    // (RESEARCH Pitfall 5). `mint_from_read` remains the SOLE broker
+    // taint-mint site (T-04-03). As of v1.6 Phase 27 (HARDEN-01) there are
+    // now TWO broker-side I1 trust-flip sites, not one: `server.rs`'s
+    // `RequestFd` arm is the second (fd-grant-time, fstat-identity-gated).
+    // Both sites share the identical `"session_demoted"` event_type.
     //
     // 4a. Mutable read-model update: UPDATE sessions SET status = 'Draft'.
     update_session_status(conn, session_id, &SessionStatus::Draft)?;
