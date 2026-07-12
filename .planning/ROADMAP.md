@@ -110,7 +110,7 @@ Full detail archived in [`milestones/v1.5-ROADMAP.md`](milestones/v1.5-ROADMAP.m
 **Milestone goal:** Close the standing TCB-local security residuals that v1.1–v1.5 accumulated and documented as accepted caveats — turning each DOC-01 honesty qualifier into an enforced guarantee, without adding any new external-effect surface. Per this project's standing design-gate precedent (v1.0 P2, v1.2 P8, v1.3 P12, v1.4 P18, v1.5 P23), v1.6 opens with a design-gate phase that hard-blocks all five hardening items until it clears a fresh (non-self) adversarial review, followed by implementation grouped by blast radius, closing with a dedicated regression & live-proof phase.
 
 - [x] **Phase 26: Security Hardening Design Gate** - A DESIGN doc specifies the mechanism + fail-closed default for all five residuals and clears a fresh adversarial review before any hardening code is written (completed 2026-07-12)
-- [ ] **Phase 27: Session & Connection Integrity Hardening** - fd release itself carries the I1 draft-only consequence, and the CreateSession forced-Active mint arm is compiled out of the production binary
+- [x] **Phase 27: Session & Connection Integrity Hardening** - fd release itself carries the I1 draft-only consequence, and the CreateSession forced-Active mint arm is compiled out of the production binary (completed 2026-07-12)
 - [ ] **Phase 28: Authenticated Audit Chain** - `verify_chain` becomes forge-resistant (keyed MAC and/or externally-anchored head), not just a corruption detector
 - [ ] **Phase 29: Sink-Path Hardening — Replay CAS & contents Slot** - the Allowed email.send path is replay-safe (at-most-once), and `file.create`'s `contents` arg is no longer an unconstrained slot
 - [ ] **Phase 30: Regression & Live Proof** - the full workspace regression is independently re-run green on real Linux with a dedicated negative test proving each closed residual, no regression to v1.1–v1.5 behavior
@@ -151,10 +151,10 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
   3. The `CreateSession`-IPC forced-`Active` mint arm is excluded from a default production build via a compile-time feature/cfg — grep/build evidence shows it absent from a default release build, not merely gated behind `CAPRUN_ENABLE_IPC_CREATE_SESSION` at runtime.
   4. Existing test fixtures that previously relied on the runtime env-flag opt-in still exercise the forced-Active behavior, now under an explicit test-only compile feature, so coverage isn't silently lost.
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 
 - [x] 27-01-PLAN.md
-- [ ] 27-02-PLAN.md
+- [x] 27-02-PLAN.md
 
 ### Phase 28: Authenticated Audit Chain
 
@@ -227,7 +227,7 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 | 24. Slot-Type Binding Enforcement | v1.5 | 3/3 | Complete    | 2026-07-12 |
 | 25. Regression & Live Proof | v1.5 | 3/3 | Complete    | 2026-07-12 |
 | 26. Security Hardening Design Gate | v1.6 | 2/2 | Complete    | 2026-07-12 |
-| 27. Session & Connection Integrity Hardening | v1.6 | 1/2 | In Progress|  |
+| 27. Session & Connection Integrity Hardening | v1.6 | 2/2 | Complete   | 2026-07-12 |
 | 28. Authenticated Audit Chain | v1.6 | 0/? | Not started | - |
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 0/? | Not started | - |
 | 30. Regression & Live Proof | v1.6 | 0/? | Not started | - |
