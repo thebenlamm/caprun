@@ -362,7 +362,12 @@ pub fn mint_from_read(
     // never errors on the live path. Propagate the typed invariant error into
     // anyhow so a future regression fails closed rather than silently.
     let value_id = store
-        .mint(claim.value.clone(), taint, vec![event_id])
+        .mint(
+            claim.value.clone(),
+            taint,
+            vec![event_id],
+            Some(claim.claim_type.clone()),
+        )
         .map_err(|e| anyhow::anyhow!("mint invariant: {e:?}"))?;
 
     // Step 4 (TAINT-01/TAINT-04, DESIGN-session-trust-state.md §2/§5): atomic
@@ -426,6 +431,11 @@ pub fn mint_from_read(
 ///                    `Some(last_event_id)` so `intent_received` is parent-linked onto
 ///                    `session_created`; standalone callers pass `None` (isolated root).
 /// * `parent_hash`  — hash of the preceding DAG event row (`None` for session-root intents).
+/// * `origin_role`  — caller-supplied semantic origin-role tag (T2,
+///                    DESIGN-slot-type-binding.md §1/§2) — the ONLY mint site whose role
+///                    is supplied by the caller, because this function has no internal
+///                    way to know which intent field it is minting; `server.rs` selects
+///                    it inside the intent-variant match, never hardcodes it here.
 ///
 /// # Returns
 /// `(intent_event_id, intent_hash, value_id)` where:
@@ -439,6 +449,7 @@ pub fn mint_from_intent(
     literal: String,
     parent_id: Option<Uuid>,
     parent_hash: Option<&str>,
+    origin_role: Option<String>,
 ) -> Result<(Uuid, String, runtime_core::plan_node::ValueId)> {
     // Step 1: Build the intent_received audit Event.
     //
@@ -467,7 +478,7 @@ pub fn mint_from_intent(
     let taint = vec![TaintLabel::UserTrusted];
     // No behavior change: [UserTrusted] + non-empty provenance always mints Ok.
     let value_id = store
-        .mint(literal, taint, vec![event_id])
+        .mint(literal, taint, vec![event_id], origin_role)
         .map_err(|e| anyhow::anyhow!("mint invariant: {e:?}"))?;
 
     Ok((event_id, intent_hash, value_id))
@@ -667,6 +678,12 @@ pub fn mint_from_derivation(
     // raw hostile bytes (EXTRACT-01 stays intact). Any other transform_kind
     // is unimplemented and fails closed, mirroring mint_from_read's
     // unknown-claim_type discipline.
+    // origin_role (T2, DESIGN-slot-type-binding.md §4): a deterministic function
+    // of transform_kind's own VERIFIED OUTPUT SHAPE — NEVER inherited or unioned
+    // from `inputs[*].origin_role` (anti-laundering; contrast with `taint`,
+    // which IS unioned across inputs above). Computed in the SAME match as the
+    // byte-verify guard.
+    let origin_role: Option<String>;
     match transform_kind {
         "concat" => {
             let joined = inputs
@@ -682,6 +699,16 @@ pub fn mint_from_derivation(
                      worker (fail-closed, MAJOR-1)"
                 ));
             }
+            // The `local@domain` email shape (DESIGN §4, F2) is guaranteed only
+            // for the 2-input case — Concat joins N>=1 inputs on '@'; 1 input is
+            // verbatim (no '@'), 3+ is `a@b@c`. Guard on arity before assigning
+            // "recipient"; any other arity gets None (I2 remains the backstop —
+            // the derived value's taint is unconditionally untrusted).
+            origin_role = if inputs.len() == 2 {
+                Some("recipient".to_string())
+            } else {
+                None
+            };
         }
         other => {
             return Err(anyhow::anyhow!(
@@ -700,7 +727,12 @@ pub fn mint_from_derivation(
     // guards above, since taint always contains WorkerExtracted and
     // provenance_chain is non-empty whenever inputs is non-empty).
     let value_id = store
-        .mint(transformed_literal, taint.clone(), provenance_chain.clone())
+        .mint(
+            transformed_literal,
+            taint.clone(),
+            provenance_chain.clone(),
+            origin_role,
+        )
         .map_err(|e| anyhow::anyhow!("mint invariant: {e:?}"))?;
 
     // Append the durable `derivation` Event. Its CAUSAL parent is the
@@ -1591,12 +1623,14 @@ mod tests {
             literal: "a-lit".into(),
             taint: vec![TaintLabel::ExternalUntrusted],
             provenance_chain: vec![read_x, read_y],
+            origin_role: Some("doc_fragment".to_string()),
         };
         let record_b = ValueRecord {
             id: runtime_core::plan_node::ValueId::new(),
             literal: "b-lit".into(),
             taint: vec![TaintLabel::ExternalUntrusted],
             provenance_chain: vec![read_y, read_z],
+            origin_role: Some("doc_fragment".to_string()),
         };
         let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
 

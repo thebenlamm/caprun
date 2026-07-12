@@ -1291,13 +1291,26 @@ pub async fn dispatch_request(
             // still carries only `path`. `subject_literal`/`body_literal` are
             // `None` for the latter (minimal additive shape — it mints only
             // ONE handle, unchanged from pre-15-04 behavior).
-            let (primary_literal, subject_literal, body_literal): (String, Option<String>, Option<String>) =
-                match &intent {
-                    CaprunIntent::SendEmailSummary { recipient, subject, body } => {
-                        (recipient.clone(), Some(subject.clone()), Some(body.clone()))
-                    }
-                    CaprunIntent::CreateFileFromReport { path } => (path.clone(), None, None),
-                };
+            // `primary_role` (T2, DESIGN-slot-type-binding.md §2, Round-1 F3): role is
+            // selected INSIDE this intent-variant match, in the SAME arm that produces
+            // `primary_literal` — never hardcoded at the shared mint_from_intent call
+            // below, which is reached by BOTH variants (recipient for SendEmailSummary,
+            // path for CreateFileFromReport). Hardcoding "recipient" there would mistag
+            // every file.create path.
+            let (primary_literal, primary_role, subject_literal, body_literal): (
+                String,
+                &'static str,
+                Option<String>,
+                Option<String>,
+            ) = match &intent {
+                CaprunIntent::SendEmailSummary { recipient, subject, body } => (
+                    recipient.clone(),
+                    "recipient",
+                    Some(subject.clone()),
+                    Some(body.clone()),
+                ),
+                CaprunIntent::CreateFileFromReport { path } => (path.clone(), "path", None, None),
+            };
 
             // Mint inside the per-connection ValueStore (Pitfall 1: minting outside
             // handle_connection would put the ValueId in an unreachable store → Denied).
@@ -1321,6 +1334,7 @@ pub async fn dispatch_request(
                     primary_literal,
                     Some(*last_event_id),
                     Some(last_event_hash),
+                    Some(primary_role.to_string()),
                 )?;
                 *last_event_id = recipient_event_id;
                 *last_event_hash = recipient_hash;
@@ -1334,6 +1348,7 @@ pub async fn dispatch_request(
                             subject,
                             Some(*last_event_id),
                             Some(last_event_hash),
+                            Some("subject".to_string()),
                         )?;
                         *last_event_id = event_id;
                         *last_event_hash = hash;
@@ -1351,6 +1366,7 @@ pub async fn dispatch_request(
                             body,
                             Some(*last_event_id),
                             Some(last_event_hash),
+                            Some("body".to_string()),
                         )?;
                         *last_event_id = event_id;
                         *last_event_hash = hash;
