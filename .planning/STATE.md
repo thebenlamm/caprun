@@ -5,9 +5,8 @@ milestone_name: — Slot-Type Binding Enforcement
 current_phase: 25
 status: executing
 stopped_at: Phase 24 Plan 03 complete — Step 1c wired, expected_role table added (with body/doc_fragment correction), full workspace green, ready for verification
-last_updated: "2026-07-12T13:14:36.334Z"
+last_updated: "2026-07-12T13:44:16.533Z"
 last_activity: 2026-07-12
-last_activity_desc: Phase 25 complete
 progress:
   total_phases: 3
   completed_phases: 3
@@ -31,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-11)
 Phase: 25
 Plan: Not started
 Status: Executing Phase 25
-Last activity: 2026-07-12 — Phase 25 complete
+Last activity: 2026-07-12
 
 ## Performance Metrics
 
