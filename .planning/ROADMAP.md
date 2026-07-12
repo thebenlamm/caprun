@@ -112,7 +112,9 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   4. The doc pins the fail-closed default: a value with no assigned role, or a role that isn't in the expected-role table for the target slot, hitting a role-checked slot is a `Deny` — never a silent pass-through to `Allowed`.
   5. The doc has cleared a fresh (non-self) adversarial review with every raised finding resolved, and no `crates/executor` or `crates/brokerd` mint-site code exists yet.
 
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 23-01-PLAN.md — Author `planning-docs/DESIGN-slot-type-binding.md` (§0-§10): origin-role tag, claim_type unification, expected-role table, derivation propagation, ordering ruling, fail-closed default (DESIGN-07..10)
+- [ ] 23-02-PLAN.md — Fresh non-self adversarial review (traces code, re-runs the DenyReason blast-radius grep), resolve every finding, gate record `DESIGN-GATE-RECORD-v1.5.md` reads CLEARED (DESIGN-07..10)
 
 ### Phase 24: Slot-Type Binding Enforcement
 
@@ -167,6 +169,6 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 20. Planner Seam & Capability Split | v1.4 | 3/3 | Complete    | 2026-07-11 |
 | 21. Adversarial LLM Planner | v1.4 | 4/4 | Complete    | 2026-07-11 |
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 3/3 | Complete    | 2026-07-11 |
-| 23. Slot-Type Binding Design Gate | v1.5 | 0/TBD | Not started | - |
+| 23. Slot-Type Binding Design Gate | v1.5 | 0/2 | Not started | - |
 | 24. Slot-Type Binding Enforcement | v1.5 | 0/TBD | Not started | - |
 | 25. Regression & Live Proof | v1.5 | 0/TBD | Not started | - |
