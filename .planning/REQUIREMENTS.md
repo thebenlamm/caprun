@@ -11,7 +11,7 @@ v1.2 Phase 8, v1.3 Phase 12, and v1.4 Phase 18 did before it.
 
 ### Design Gate (blocks all TCB code)
 
-- [ ] **DESIGN-07**: `planning-docs/DESIGN-slot-type-binding.md` authored and
+- [x] **DESIGN-07**: `planning-docs/DESIGN-slot-type-binding.md` authored and
       clears a fresh (non-self) adversarial review — no `crates/executor` or
       `crates/brokerd` mint-site code before it clears. Specifies: the
       origin-role tagging mechanism, the new `DenyReason` variant's shape and
@@ -20,7 +20,7 @@ v1.2 Phase 8, v1.3 Phase 12, and v1.4 Phase 18 did before it.
       collect-then-Block `BlockedPendingConfirmation` set or returns a hard
       `Denied`).
 
-- [ ] **DESIGN-08**: DESIGN doc unifies with the EXISTING `claim_type`
+- [x] **DESIGN-08**: DESIGN doc unifies with the EXISTING `claim_type`
       taxonomy already present in `crates/brokerd/src/quarantine.rs`
       (`"email_address"`/`"relative_path"`/`"doc_fragment"`, currently
       consumed only at `mint_from_read` time to derive taint labels, then
@@ -29,12 +29,12 @@ v1.2 Phase 8, v1.3 Phase 12, and v1.4 Phase 18 did before it.
       values (recipient/subject/body — no existing claim_type equivalent),
       the doc defines the analogous role tags from scratch.
 
-- [ ] **DESIGN-09**: DESIGN doc explicitly resolves role propagation through
+- [x] **DESIGN-09**: DESIGN doc explicitly resolves role propagation through
       `mint_from_derivation` (e.g. `ReportDerivedClaim`'s `Concat` transform
       over a Reply-To/Domain pair) — what role, if any, a derived/composite
       value carries. Not left implicit.
 
-- [ ] **DESIGN-10**: DESIGN doc pins the fail-closed default: a value with
+- [x] **DESIGN-10**: DESIGN doc pins the fail-closed default: a value with
       no assigned role, or a role that isn't in the expected-role table for
       the target slot, hitting a role-checked slot is a `Deny` — never a
       silent pass-through to `Allowed`.
@@ -103,10 +103,10 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DESIGN-07 | Phase 23 | Pending |
-| DESIGN-08 | Phase 23 | Pending |
-| DESIGN-09 | Phase 23 | Pending |
-| DESIGN-10 | Phase 23 | Pending |
+| DESIGN-07 | Phase 23 | Complete |
+| DESIGN-08 | Phase 23 | Complete |
+| DESIGN-09 | Phase 23 | Complete |
+| DESIGN-10 | Phase 23 | Complete |
 | T2-02 | Phase 24 | Pending |
 | T2-03 | Phase 24 | Pending |
 | T2-04 | Phase 24 | Pending |

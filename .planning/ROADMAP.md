@@ -93,7 +93,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 
 **Milestone goal:** Close v1.4's accepted residual #5 (T2) — the executor gains a structural check that a resolved value's semantic origin matches the semantic role of the plan-node slot it's routed into, so a misrouted `UserTrusted` handle (e.g. a subject-typed string landed in `to`) is caught even though it is neither untrusted (I2 doesn't fire) nor a class-level deny (I0/I1 don't apply).
 
-- [ ] **Phase 23: Slot-Type Binding Design Gate** - A DESIGN doc for slot-type binding enforcement exists, unifies with the existing `claim_type` taxonomy, resolves derivation role propagation, and pins the fail-closed default — clearing a fresh (non-self) adversarial review before any TCB code
+- [x] **Phase 23: Slot-Type Binding Design Gate** - A DESIGN doc for slot-type binding enforcement exists, unifies with the existing `claim_type` taxonomy, resolves derivation role propagation, and pins the fail-closed default — clearing a fresh (non-self) adversarial review before any TCB code (completed 2026-07-12)
 - [ ] **Phase 24: Slot-Type Binding Enforcement** - The executor structurally enforces that a resolved value's origin role matches its plan-node slot's expected role, via a new mint-time tag, a hardcoded expected-role table, and a new exhaustive `DenyReason` variant
 - [ ] **Phase 25: Regression & Live Proof** - A deliberately swapped subject/recipient handle pair is proven to produce the new deny with an unbroken audit chain, existing tests are updated for the new check, and the full workspace regression passes green on real Linux
 
@@ -112,14 +112,14 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   4. The doc pins the fail-closed default: a value with no assigned role, or a role that isn't in the expected-role table for the target slot, hitting a role-checked slot is a `Deny` — never a silent pass-through to `Allowed`.
   5. The doc has cleared a fresh (non-self) adversarial review with every raised finding resolved, and no `crates/executor` or `crates/brokerd` mint-site code exists yet.
 
-**Plans**: 2 plans
+**Plans**: 2/2 plans complete
 **Wave 1**
 
-- [ ] 23-01-PLAN.md — Author `planning-docs/DESIGN-slot-type-binding.md` (§0-§10): origin-role tag, claim_type unification, expected-role table, derivation propagation, ordering ruling, fail-closed default (DESIGN-07..10)
+- [x] 23-01-PLAN.md — Author `planning-docs/DESIGN-slot-type-binding.md` (§0-§10): origin-role tag, claim_type unification, expected-role table, derivation propagation, ordering ruling, fail-closed default (DESIGN-07..10)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 23-02-PLAN.md — Fresh non-self adversarial review (traces code, re-runs the DenyReason blast-radius grep), resolve every finding, gate record `DESIGN-GATE-RECORD-v1.5.md` reads CLEARED (DESIGN-07..10)
+- [x] 23-02-PLAN.md — Fresh non-self adversarial review (traces code, re-runs the DenyReason blast-radius grep), resolve every finding, gate record `DESIGN-GATE-RECORD-v1.5.md` reads CLEARED (DESIGN-07..10)
 
 ### Phase 24: Slot-Type Binding Enforcement
 
@@ -174,6 +174,6 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 20. Planner Seam & Capability Split | v1.4 | 3/3 | Complete    | 2026-07-11 |
 | 21. Adversarial LLM Planner | v1.4 | 4/4 | Complete    | 2026-07-11 |
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 3/3 | Complete    | 2026-07-11 |
-| 23. Slot-Type Binding Design Gate | v1.5 | 0/2 | Not started | - |
+| 23. Slot-Type Binding Design Gate | v1.5 | 2/2 | Complete    | 2026-07-12 |
 | 24. Slot-Type Binding Enforcement | v1.5 | 0/TBD | Not started | - |
 | 25. Regression & Live Proof | v1.5 | 0/TBD | Not started | - |

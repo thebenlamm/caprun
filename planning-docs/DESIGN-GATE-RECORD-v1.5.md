@@ -40,8 +40,11 @@ remains. **No TCB code was written during this design-gate phase** (re-confirmed
 
 ## Independent blast-radius re-verification (DESIGN-07b)
 
-The reviewer re-ran `grep -rn "DenyReason" crates/ cli/ | grep -v /target/` (40 hits) and
-classified every hit:
+The reviewer re-ran `grep -rn "DenyReason" crates/ cli/ | grep -v /target/` and classified every
+hit. (The reviewer's narration reported ~40 raw hits; an independent re-run by the phase verifier
+counted 53. The raw line count is **not** load-bearing — what matters is the *classification*, and
+both the reviewer and the verifier independently agree there are **exactly 2 exhaustive matches**
+over `DenyReason`. Corrected here for accuracy.) Classification:
 
 - **Exactly 2 EXHAUSTIVE matches over `DenyReason`**, both in
   `crates/runtime-core/src/executor_decision.rs`: `code()` (`:64-80`) and `Display::fmt`
