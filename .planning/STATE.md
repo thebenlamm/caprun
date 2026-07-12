@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: — Slot-Type Binding Enforcement
 current_phase: 25
-current_phase_name: Regression & Live Proof
+current_phase_name: regression-live-proof
 status: executing
 stopped_at: Phase 24 Plan 03 complete — Step 1c wired, expected_role table added (with body/doc_fragment correction), full workspace green, ready for verification
-last_updated: "2026-07-12T04:24:12.534Z"
+last_updated: "2026-07-12T04:30:54.891Z"
 last_activity: 2026-07-12
-last_activity_desc: Phase 24 complete, transitioned to Phase 25
+last_activity_desc: Phase 25 execution started
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 5
+  total_plans: 8
   completed_plans: 5
-  percent: 67
+  percent: 63
 ---
 
 # Project State
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-11)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, and now (v1.5) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into — closing the v1.4 T2 residual.
-**Current focus:** Phase 24 — slot-type-binding-enforcement
+**Current focus:** Phase 25 — regression-live-proof
 
 ## Current Position
 
-Phase: 25 — Regression & Live Proof
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-12 — Phase 24 complete, transitioned to Phase 25
+Phase: 25 (regression-live-proof) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 25
+Last activity: 2026-07-12 — Phase 25 execution started
 
 ## Performance Metrics
 

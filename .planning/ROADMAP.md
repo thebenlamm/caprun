@@ -154,11 +154,11 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   2. Existing tests that currently rely on permissive `UserTrusted`-in-any-slot behavior are identified via a regression audit and updated so the new check isn't silently bypassed or broken by a fixture that never assigns a role.
   3. `scripts/mailpit-verify.sh` is independently re-run green (0 failures) after the change lands — not assumed from a prior pass, per this project's standing milestone-close discipline.
 
-**Plans**: 3 plans
+**Plans**: 2/3 plans executed
 **Wave 1**
 
-- [ ] 25-01-PLAN.md — T2-06: held-out swapped subject↔recipient deny test (genuine mint-time origin_role chain, plan_node_evaluated audit event, verify_chain true) + correctly-routed Allowed control proving Step-1c isolation
-- [ ] 25-02-PLAN.md — T2-07: independent regression audit of Mac-buildable direct-mint fixtures (per-site verdict catalog, no silent bypass) + full Mac workspace green
+- [x] 25-01-PLAN.md — T2-06: held-out swapped subject↔recipient deny test (genuine mint-time origin_role chain, plan_node_evaluated audit event, verify_chain true) + correctly-routed Allowed control proving Step-1c isolation
+- [x] 25-02-PLAN.md — T2-07: independent regression audit of Mac-buildable direct-mint fixtures (per-site verdict catalog, no silent bypass) + full Mac workspace green
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -192,4 +192,4 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 3/3 | Complete    | 2026-07-11 |
 | 23. Slot-Type Binding Design Gate | v1.5 | 2/2 | Complete    | 2026-07-12 |
 | 24. Slot-Type Binding Enforcement | v1.5 | 3/3 | Complete    | 2026-07-12 |
-| 25. Regression & Live Proof | v1.5 | 0/3 | Planned | - |
+| 25. Regression & Live Proof | v1.5 | 2/3 | In Progress|  |
