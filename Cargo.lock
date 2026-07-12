@@ -103,6 +103,7 @@ version = "0.1.0"
 dependencies = [
  "adapter-fs",
  "anyhow",
+ "brokerd",
  "chrono",
  "executor",
  "hex",

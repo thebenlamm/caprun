@@ -42,12 +42,19 @@ use crate::audit::append_event;
 use crate::proto::{BrokerRequest, BrokerResponse, WorkerClaim};
 use crate::quarantine::{mint_from_derivation, mint_from_intent, mint_from_read, Claim};
 use runtime_core::intent::CaprunIntent;
+// v1.6 HARDEN-04: `create_session`/`persist_session`/`SeedProvenance` are used
+// only by `create_session_arm`'s `#[cfg(any(test, feature = "test-fixtures"))]`
+// mint sibling — gated identically so a default/featureless build (where that
+// sibling does not exist) has no unused-import warning.
+#[cfg(any(test, feature = "test-fixtures"))]
 use crate::session::{create_session, persist_session};
 use adapter_fs::pass_fd;
 use anyhow::Context;
 use chrono::Utc;
 use executor::value_store::ValueStore;
-use runtime_core::{Event, SeedProvenance, SessionStatus};
+#[cfg(any(test, feature = "test-fixtures"))]
+use runtime_core::SeedProvenance;
+use runtime_core::{Event, SessionStatus};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
@@ -925,6 +932,140 @@ async fn evaluate_plan_node_and_record(
     Ok(decision)
 }
 
+/// The `CreateSession`-over-IPC disabled-path `Error` response (v1.6
+/// HARDEN-04). Shared verbatim by both `create_session_arm` siblings below so
+/// the wire behavior on this negative path is IDENTICAL whether the mint arm
+/// is present-but-runtime-disabled (a `test`/`test-fixtures` build with the
+/// env flag unset) or physically absent (a default/featureless build) — only
+/// the arm's REACHABILITY changes, never its response shape.
+async fn create_session_arm_disabled_response(
+    stream: &mut tokio::net::UnixStream,
+) -> anyhow::Result<()> {
+    send_response(
+        stream,
+        &BrokerResponse::Error {
+            message: "CreateSession over IPC is disabled; set \
+                      CAPRUN_ENABLE_IPC_CREATE_SESSION=1 to enable \
+                      (test-only path)"
+                .into(),
+        },
+    )
+    .await
+}
+
+/// The `CreateSession`-IPC forced-`Active` mint arm (v1.6 HARDEN-04).
+///
+/// Phase 16 (BLOCKER-1 guard c): this in-broker IPC arm forces a fresh
+/// session `Active` via `SeedProvenance::TrustedArg` — a forced-Active mint
+/// reachable over IPC with NO once-only/ordering guard would, combined with
+/// the reach-to-a-send path BLOCKER-1 documents, let ANY IPC caller obtain a
+/// trusted-seeded session. It is test-only (the live `cli/caprun` path calls
+/// `create_session` directly, never through this arm).
+///
+/// v1.6 HARDEN-04 hardens this further: the mint body below is now gated
+/// `#[cfg(any(test, feature = "test-fixtures"))]` so it is PHYSICALLY ABSENT
+/// from a default/featureless build (SC3) — not merely runtime-gated. The
+/// runtime env-flag check (exactly the string `"1"`, never `.is_ok()` — F3
+/// hardening: an EMPTY inherited `CAPRUN_ENABLE_IPC_CREATE_SESSION=""` must
+/// NOT enable it) is RETAINED inside this test-only-compiled arm as
+/// deliberate defense-in-depth and to preserve the exact semantics of the 3
+/// existing `uds_ipc.rs` tests. The featureless sibling immediately below
+/// returns the identical `Error` unconditionally, with no env read at all —
+/// no runtime flag can ever re-enable this arm in a default build (D-10).
+#[cfg(any(test, feature = "test-fixtures"))]
+async fn create_session_arm(
+    stream: &mut tokio::net::UnixStream,
+    conn: &Arc<Mutex<rusqlite::Connection>>,
+    intent_id: Uuid,
+) -> anyhow::Result<()> {
+    // SC3 build-evidence marker: a stable, greppable string literal that
+    // exists ONLY in this test-fixtures-gated sibling. `std::hint::black_box`
+    // keeps it live in the compiled artifact (no dead-code elimination) with
+    // zero runtime side effect — grepping a compiled binary for this literal
+    // demonstrates whether the mint arm is physically present (built
+    // `--features test-fixtures`) or absent (a default build).
+    let _sc3_marker = std::hint::black_box("HARDEN04_MINT_ARM_PRESENT_v1_6");
+
+    if !matches!(
+        std::env::var("CAPRUN_ENABLE_IPC_CREATE_SESSION").as_deref(),
+        Ok("1")
+    ) {
+        let _ = intent_id;
+        return create_session_arm_disabled_response(stream).await;
+    }
+
+    // Session-independent: mints its own fresh session (parent_id None);
+    // does NOT thread the connection chain.
+    let seed_provenance = SeedProvenance::TrustedArg;
+    let session = create_session(intent_id, seed_provenance.clone());
+    let new_session_id = session.id;
+
+    // ORIGIN-01: record the seed-provenance determination in the
+    // session_created Event. `Event` carries no free-form metadata
+    // field (its serialized form IS the audit `payload` column), so
+    // the provenance tag rides in `actor` — still part of the hashed
+    // payload — as an explicit, exhaustively-matched tag (never a
+    // silent default).
+    let actor = match seed_provenance {
+        SeedProvenance::TrustedArg => "broker:seed_provenance=trusted_arg",
+        SeedProvenance::FileDerived => "broker:seed_provenance=file_derived",
+    };
+    let event = Event::new(
+        Uuid::new_v4(),
+        None,
+        new_session_id,
+        actor.into(),
+        "session_created".into(),
+        Utc::now(),
+        vec![],
+    );
+
+    let result: anyhow::Result<()> = match conn.lock() {
+        Ok(locked) => persist_session(&locked, &session)
+            .and_then(|_| append_event(&locked, &event, None).map(|_| ())),
+        Err(e) => Err(anyhow::anyhow!("mutex poisoned: {e}")),
+    };
+
+    match result {
+        Ok(_) => {
+            send_response(
+                stream,
+                &BrokerResponse::SessionCreated {
+                    session_id: new_session_id,
+                },
+            )
+            .await
+        }
+        Err(e) => {
+            eprintln!("[brokerd] CreateSession error: {e}");
+            send_response(
+                stream,
+                &BrokerResponse::Error {
+                    message: "internal error".into(),
+                },
+            )
+            .await
+        }
+    }
+}
+
+/// The featureless (shipped default) sibling of `create_session_arm` (v1.6
+/// HARDEN-04, SC3/D-10): the forced-Active mint body above is PHYSICALLY
+/// ABSENT from this build configuration — this function contains NO
+/// `std::env::var` read at all. It returns the SAME `Error` response the
+/// disabled-path above returns, unconditionally: no runtime flag (not even
+/// `CAPRUN_ENABLE_IPC_CREATE_SESSION=1`) can ever re-enable the mint in a
+/// default/featureless build, because the mint code does not exist in the
+/// compiled artifact.
+#[cfg(not(any(test, feature = "test-fixtures")))]
+async fn create_session_arm(
+    stream: &mut tokio::net::UnixStream,
+    _conn: &Arc<Mutex<rusqlite::Connection>>,
+    _intent_id: Uuid,
+) -> anyhow::Result<()> {
+    create_session_arm_disabled_response(stream).await
+}
+
 /// Dispatch a single `BrokerRequest`, writing its response to `stream`.
 ///
 /// Extracted from the accept loop (RESEARCH Pitfall 6) so individual arms are
@@ -975,95 +1116,7 @@ pub async fn dispatch_request(
 
     match request {
         BrokerRequest::CreateSession { intent_id } => {
-            // Phase 16 (BLOCKER-1 guard c): this in-broker IPC arm forces a
-            // fresh session Active via SeedProvenance::TrustedArg — a forced-
-            // Active mint reachable over IPC with NO once-only/ordering guard
-            // would, combined with the reach-to-a-send path BLOCKER-1
-            // documents, let ANY IPC caller obtain a trusted-seeded session.
-            // It is test-only (the live cli/caprun path calls create_session
-            // directly, never through this arm) and is now gated behind a
-            // fail-closed RUNTIME opt-in env flag — NOT `cfg(test)`, which is
-            // unset when brokerd compiles as a dependency of an integration-
-            // test binary (the Round-3 mechanism this replaces was Linux-
-            // invisible and would panic uds_ipc.rs's own tests under
-            // mailpit-verify.sh). Exactly the string "1" enables the arm
-            // (never `.is_ok()` — F3 hardening: an EMPTY inherited
-            // CAPRUN_ENABLE_IPC_CREATE_SESSION="" must NOT enable it). Default
-            // (unset/empty/anything else) = Error, mint nothing. The confined
-            // worker cannot set the broker PROCESS's own environment
-            // (separate process), so no production IPC caller can obtain a
-            // forced-Active session this way.
-            if !matches!(
-                std::env::var("CAPRUN_ENABLE_IPC_CREATE_SESSION").as_deref(),
-                Ok("1")
-            ) {
-                let _ = intent_id;
-                send_response(
-                    stream,
-                    &BrokerResponse::Error {
-                        message: "CreateSession over IPC is disabled; set \
-                                  CAPRUN_ENABLE_IPC_CREATE_SESSION=1 to enable \
-                                  (test-only path)"
-                            .into(),
-                    },
-                )
-                .await?;
-                return Ok(());
-            }
-
-            // Session-independent: mints its own fresh session (parent_id None);
-            // does NOT thread the connection chain.
-            let seed_provenance = SeedProvenance::TrustedArg;
-            let session = create_session(intent_id, seed_provenance.clone());
-            let new_session_id = session.id;
-
-            // ORIGIN-01: record the seed-provenance determination in the
-            // session_created Event. `Event` carries no free-form metadata
-            // field (its serialized form IS the audit `payload` column), so
-            // the provenance tag rides in `actor` — still part of the hashed
-            // payload — as an explicit, exhaustively-matched tag (never a
-            // silent default).
-            let actor = match seed_provenance {
-                SeedProvenance::TrustedArg => "broker:seed_provenance=trusted_arg",
-                SeedProvenance::FileDerived => "broker:seed_provenance=file_derived",
-            };
-            let event = Event::new(
-                Uuid::new_v4(),
-                None,
-                new_session_id,
-                actor.into(),
-                "session_created".into(),
-                Utc::now(),
-                vec![],
-            );
-
-            let result: anyhow::Result<()> = match conn.lock() {
-                Ok(locked) => persist_session(&locked, &session)
-                    .and_then(|_| append_event(&locked, &event, None).map(|_| ())),
-                Err(e) => Err(anyhow::anyhow!("mutex poisoned: {e}")),
-            };
-
-            match result {
-                Ok(_) => {
-                    send_response(
-                        stream,
-                        &BrokerResponse::SessionCreated {
-                            session_id: new_session_id,
-                        },
-                    )
-                    .await?;
-                }
-                Err(e) => {
-                    eprintln!("[brokerd] CreateSession error: {e}");
-                    send_response(
-                        stream,
-                        &BrokerResponse::Error {
-                            message: "internal error".into(),
-                        },
-                    )
-                    .await?;
-                }
-            }
+            create_session_arm(stream, conn, intent_id).await?;
         }
 
         BrokerRequest::RequestFd { path } => {

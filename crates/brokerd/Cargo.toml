@@ -30,7 +30,21 @@ chrono       = { workspace = true }
 # verification). Mailpit needs no TLS at all; builder_dangerous bypasses it.
 lettre       = "0.11.22"
 
+[features]
+# Gates the CreateSession-IPC forced-Active mint arm (HARDEN-04) so it is
+# visible to integration tests in `tests/` (which link this crate as a
+# normal, non-`--cfg test` dependency — plain `#[cfg(test)]` items are
+# invisible to them). Enabled only via the self dev-dependency below; NEVER a
+# default feature, so the mint arm is absent from any production build.
+test-fixtures = []
+
 [dev-dependencies]
+# Self dev-dependency with `test-fixtures` enabled: Cargo unifies this with
+# the `brokerd` lib target when building this package's own test targets
+# (unit + integration), making the `#[cfg(any(test, feature =
+# "test-fixtures"))]` CreateSession mint arm visible to `tests/uds_ipc.rs`
+# without ever appearing in a production build.
+brokerd      = { path = ".", features = ["test-fixtures"] }
 runtime-core = { path = "../runtime-core" }
 executor     = { path = "../executor" }
 rusqlite     = { workspace = true }
