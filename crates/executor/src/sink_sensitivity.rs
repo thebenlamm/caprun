@@ -126,12 +126,30 @@ pub fn is_content_sensitive(sink: &SinkId, arg_name: &str) -> bool {
 /// v1.5 scope: hardcoded per-sink-arg table, mirroring `is_routing_sensitive`
 /// / `is_content_sensitive` above — a security property, not a configuration
 /// knob (CON-i2-non-bypassable). Scoped to the two live sinks only.
+///
+/// `body`'s list includes `"doc_fragment"` alongside the trusted `"body"`
+/// spelling (Phase 24 Plan 03 correction to the DESIGN §3 table, traced
+/// against live code, not a re-scoping): the ONLY production vocabulary for
+/// hostile-extracted body content IS `"doc_fragment"` —
+/// `cli/caprun/src/worker.rs`'s `SendEmailSummary` arm reports the `Body:`
+/// marker fragment as `WorkerClaim::DocFragment`, which `server.rs`'s
+/// `ReportClaims` dispatch (`claim_type: "doc_fragment"`) and
+/// `mint_from_read` (role reused verbatim from `claim_type`) carry through
+/// unchanged — there is no separate "body" claim_type anywhere in the
+/// codebase. Omitting it here would fail-closed-Deny the exact CONTENT-01/
+/// CONTROL-02 hostile-body-Block acceptance flow this project has shipped
+/// since Phase 14, converting an intended human-confirmable Block into an
+/// unconditional structural Deny. Safe under DESIGN §3/F4's table-
+/// construction invariant: `body` is content-sensitive
+/// (`is_content_sensitive`), so a tainted `doc_fragment`-tagged value here
+/// still hits I2's per-arg Block regardless of role match — the role check
+/// never becomes the sole gate for this untrusted vocabulary.
 pub fn expected_role(sink: &SinkId, arg_name: &str) -> Option<&'static [&'static str]> {
     match sink.0.as_str() {
         "email.send" => match arg_name {
             "to" | "cc" | "bcc" => Some(&["recipient", "email_address"]),
             "subject" => Some(&["subject"]),
-            "body" => Some(&["body"]),
+            "body" => Some(&["body", "doc_fragment"]),
             _ => None,
         },
         "file.create" => match arg_name {
@@ -266,8 +284,16 @@ mod tests {
     }
 
     #[test]
-    fn email_send_body_expects_body_only() {
-        assert_eq!(expected_role(&email(), "body"), Some(&["body"][..]));
+    fn email_send_body_expects_body_or_doc_fragment() {
+        // "doc_fragment" is the untrusted spelling — the ONLY vocabulary
+        // production code uses for hostile-extracted `Body:` content
+        // (worker.rs's SendEmailSummary arm, mirroring the recipient/path
+        // dual-vocabulary pattern). Without it, a genuinely-tainted body
+        // would fail-closed-Deny at Step 1c instead of reaching I2's Block.
+        assert_eq!(
+            expected_role(&email(), "body"),
+            Some(&["body", "doc_fragment"][..])
+        );
     }
 
     #[test]

@@ -674,3 +674,149 @@ fn attachment_denied_unknown_arg() {
         other => panic!("expected Denied(UnknownArg(\"attachment\")), got {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Phase 24 Plan 03 (T2-05, DESIGN-slot-type-binding.md §6/§7): Step 1c role
+// check — a resolved value's origin_role must match its slot's expected role.
+// ---------------------------------------------------------------------------
+
+/// A value minted for one semantic field ("body") but routed into a
+/// DIFFERENT slot's role-checked arg ("to") must be hard-`Denied` with
+/// `SlotTypeMismatch` — the core T2 gap this milestone closes. The value is
+/// `UserTrusted` (not tainted), so this proves Step 1c fires independently of
+/// I2 — a value that would otherwise sail through untainted still Denies on
+/// role mismatch.
+#[test]
+fn role_mismatch_denies() {
+    let mut store = ValueStore::default();
+    let id = store
+        .mint(
+            "not actually a recipient".to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![Uuid::new_v4()],
+            Some("body".to_string()), // minted for `body`, routed into `to`
+        )
+        .expect("valid mint");
+
+    let plan = email_send_with_to(id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+
+    match decision {
+        ExecutorDecision::Denied {
+            reason:
+                DenyReason::SlotTypeMismatch {
+                    sink,
+                    arg,
+                    expected,
+                    found,
+                },
+        } => {
+            assert_eq!(sink, "email.send");
+            assert_eq!(arg, "to");
+            assert_eq!(expected, vec!["recipient".to_string(), "email_address".to_string()]);
+            assert_eq!(found, Some("body".to_string()));
+        }
+        other => panic!("expected Denied(SlotTypeMismatch), got {other:?}"),
+    }
+}
+
+/// A value with NO role (`origin_role == None`) at a role-checked slot must
+/// also hard-`Deny` — fail-closed, never a silent pass-through to Allowed
+/// (DESIGN §7 item 1).
+#[test]
+fn role_none_at_role_checked_slot_denies() {
+    let mut store = ValueStore::default();
+    let id = store
+        .mint(
+            "boss@company.com".to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![Uuid::new_v4()],
+            None, // no role tag at all
+        )
+        .expect("valid mint");
+
+    let plan = email_send_with_to(id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+
+    match decision {
+        ExecutorDecision::Denied {
+            reason: DenyReason::SlotTypeMismatch { found, .. },
+        } => {
+            assert_eq!(found, None, "found must reflect the value's actual None role");
+        }
+        other => panic!("expected Denied(SlotTypeMismatch) for a None-role value, got {other:?}"),
+    }
+}
+
+/// A value whose role MATCHES its slot (passes Step 1c) but is tainted at a
+/// routing-sensitive slot must still `BlockedPendingConfirmation` — proving
+/// Step 1c does not reorder or weaken I2 precedence (DESIGN §6/§8 angle 3).
+#[test]
+fn matching_role_tainted_still_blocks() {
+    let mut store = ValueStore::default();
+    let id = store
+        .mint(
+            "attacker@ev1l.com".to_string(),
+            vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw],
+            vec![Uuid::new_v4()],
+            Some("email_address".to_string()), // matches the "to" slot's expected roles
+        )
+        .expect("valid mint");
+
+    let plan = email_send_with_to(id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+
+    assert!(
+        matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }),
+        "a role-matching but tainted 'to' arg must still Block (I2 precedence preserved); got {decision:?}"
+    );
+}
+
+/// A value at an UNCONSTRAINED slot (file.create's `contents`, where
+/// `expected_role` returns `None`) is unaffected by Step 1c — the role check
+/// is a documented no-op there, not fail-open (DESIGN §7 item 3). Outcome is
+/// unchanged from the pre-Step-1c behavior: Allowed.
+#[test]
+fn unconstrained_slot_unaffected() {
+    let mut store = ValueStore::default();
+    let event_id = Uuid::new_v4();
+    let path_id = store
+        .mint(
+            "/workspace/out.txt".to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![event_id],
+            Some("path".to_string()),
+        )
+        .expect("valid mint");
+    // contents' role is deliberately mismatched/absent — it must have NO effect
+    // because file.create's `contents` slot is unconstrained (expected_role == None).
+    let contents_id = store
+        .mint(
+            "hello".to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![event_id],
+            Some("subject".to_string()), // nonsensical role, but slot is unconstrained
+        )
+        .expect("valid mint");
+
+    let plan = PlanNode {
+        sink: SinkId("file.create".to_string()),
+        args: vec![
+            PlanArg {
+                name: "path".to_string(),
+                value_id: path_id,
+            },
+            PlanArg {
+                name: "contents".to_string(),
+                value_id: contents_id,
+            },
+        ],
+    };
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+
+    assert_eq!(
+        decision,
+        ExecutorDecision::Allowed,
+        "an unconstrained slot (contents) must be unaffected by Step 1c regardless of its role tag"
+    );
+}

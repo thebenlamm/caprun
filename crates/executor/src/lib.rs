@@ -108,6 +108,43 @@ pub fn submit_plan_node(
             };
         }
 
+        // Step 1c: role check (NEW, T2, DESIGN-slot-type-binding.md §6/§7).
+        // A per-arg fail-closed structural guard — same tier as 1/1a/1b, fires
+        // BEFORE this arg is considered for sensitivity collection, and RETURNS
+        // immediately on a mismatch (never joins the Steps 2/3 collect-then-Block
+        // `blocked` vec). A role mismatch is a structural type error, not a
+        // confirmable judgment call — it Denies, never Blocks.
+        //
+        // expected_role returns Option<&[&str]>, matched explicitly here:
+        //   None            => this slot is unconstrained (e.g. file.create's
+        //                       `contents`) — a documented, intentional
+        //                       scope-out (DESIGN §7 item 3), NOT fail-open.
+        //                       Fall through unchanged.
+        //   Some(list)      => this slot IS role-checked. The value passes iff
+        //                       `record.origin_role` is `Some(s)` AND `list`
+        //                       contains `s`. A `None` role at a role-checked
+        //                       slot fails closed (DESIGN §7 item 1), exactly
+        //                       like a role not present in `list` (item 2).
+        // Never collapse the None/Some(&[]) states via an unwrap-with-empty-
+        // default here — that would break the fail-closed contract (DESIGN
+        // §7, Pitfall 2).
+        if let Some(expected) = sink_sensitivity::expected_role(&plan_node.sink, &arg.name) {
+            let role_ok = match record.origin_role.as_deref() {
+                Some(role) => expected.contains(&role),
+                None => false,
+            };
+            if !role_ok {
+                return ExecutorDecision::Denied {
+                    reason: DenyReason::SlotTypeMismatch {
+                        sink: plan_node.sink.0.clone(),
+                        arg: arg.name.clone(),
+                        expected: expected.iter().map(|s| s.to_string()).collect(),
+                        found: record.origin_role.clone(),
+                    },
+                };
+            }
+        }
+
         // Step 2/3 (unified, Phase 14 D-14): sensitivity check. If this arg either
         // routes the effect (e.g., email.send "to") OR carries content-sensitive
         // payload (e.g., email.send "body"/"subject") AND the resolved record
