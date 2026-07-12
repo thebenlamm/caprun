@@ -17,7 +17,7 @@ Milestone **v1.6 — Security Hardening (close the residuals)**. Five TCB-local 
 - [x] **HARDEN-01**: fd release to the confined worker (`RequestFd`) itself demotes the session to draft-only for the I1 reason, so "reading raw untrusted bytes → draft-only" holds at release time — without breaking the CONTROL-01 benign clean path (a fragment-free doc read must still stay Active and send).
 - [ ] **HARDEN-02**: The audit chain is authenticated — an actor with `events`-table write access can no longer produce a chain that `verify_chain` accepts (keyed MAC and/or externally-anchored head), and a tampered payload/head is detected rather than silently re-consistent.
 - [ ] **HARDEN-03**: A replayed `SubmitPlanNode` on the trusted (Allowed) `email.send` path sends at most once via an idempotency key / compare-and-swap, matching the confirm path's at-most-once transaction.
-- [ ] **HARDEN-04**: The `CreateSession`-IPC forced-`Active` mint arm is excluded from the production build at compile time (cfg), so the code is absent from the shipped binary — not merely gated behind the `CAPRUN_ENABLE_IPC_CREATE_SESSION` runtime default-deny flag.
+- [x] **HARDEN-04**: The `CreateSession`-IPC forced-`Active` mint arm is excluded from the production build at compile time (cfg), so the code is absent from the shipped binary — not merely gated behind the `CAPRUN_ENABLE_IPC_CREATE_SESSION` runtime default-deny flag.
 - [ ] **HARDEN-05**: The `file.create` `contents` arg carries an expected-role / sensitivity treatment so a tainted value routed into it is handled under the same I2 / slot-type discipline as other sensitive sink args, closing the currently-unconstrained-slot gap.
 
 ### Proof
@@ -58,7 +58,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | DESIGN-11 | Phase 26 | Complete |
 | DESIGN-12 | Phase 26 | Complete |
 | HARDEN-01 | Phase 27 | Complete |
-| HARDEN-04 | Phase 27 | Pending |
+| HARDEN-04 | Phase 27 | Complete |
 | HARDEN-02 | Phase 28 | Pending |
 | HARDEN-03 | Phase 29 | Pending |
 | HARDEN-05 | Phase 29 | Pending |
