@@ -74,7 +74,7 @@ v1.2 Phase 8, v1.3 Phase 12, and v1.4 Phase 18 did before it.
       `UserTrusted`, both otherwise valid) produces the new deny, with a
       corresponding audit-DAG event recorded and `verify_chain` still true.
 
-- [ ] **T2-07**: Existing tests that currently rely on permissive
+- [x] **T2-07**: Existing tests that currently rely on permissive
       `UserTrusted`-in-any-slot behavior are identified (regression audit)
       and updated so the new check doesn't silently break existing coverage
       or get bypassed by a fixture that never assigns a role.
@@ -112,7 +112,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | T2-04 | Phase 24 | Complete |
 | T2-05 | Phase 24 | Complete |
 | T2-06 | Phase 25 | Pending |
-| T2-07 | Phase 25 | Pending |
+| T2-07 | Phase 25 | Complete |
 | T2-08 | Phase 25 | Pending |
 
 **Coverage:**
