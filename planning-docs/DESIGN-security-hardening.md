@@ -544,3 +544,258 @@ in Phase 29, not left stale. `s9_live_file_create_clean_allow` is the regression
 `Deny`). No `PlanNode`/schema changes (`sink_schema.rs`'s `required: &["path","contents"]` unaffected).
 
 ---
+
+## §f — Cross-Cutting Rulings (X-01, X-02, X-03) + the X-04 ruling
+
+Three questions cut across the five residuals; each gets **ONE uniform rule**. A fourth (X-04) is a
+NEW code-traced finding named by no locked decision — it gets its own dedicated ruling subsection so
+the DESIGN-12 reviewer has a clean target.
+
+### X-01 — label continuity (broker-written files)
+
+**Current-code anchor.** No provenance/taint label of any kind is stamped on a broker-WRITTEN file
+today. `invoke_file_create` (`crates/brokerd/src/sinks/file_create.rs`, the sole `file.create` writer,
+`openat2(O_CREAT|O_EXCL|O_WRONLY, RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)`) writes bytes with no xattr,
+sidecar, or DB row recording "path P was written by session X with taint Y." A write→re-read laundering
+loop is theoretically possible but **not currently reachable** (§e: `contents` only ever carries a
+trusted `"path"`-role literal, so no tainted bytes reach disk via `file.create` yet), and no live flow
+both writes tainted `contents` AND later `RequestFd`s that same path in the same session. It becomes
+live risk only once §e's content-extraction pipeline (D-12's deferred work) lands.
+
+**Ruling (ONE model answers both HARDEN-01 and HARDEN-05).** Reuse §a's `is_trusted_labeled` as the
+single label-provenance model: **a path is "trusted-labeled" ONLY if it equals the CLI's designated
+`<workspace-file>` argument (`workspace_rel`).** A broker-WRITTEN file (via `file.create`) is, by this
+rule, **automatically NOT trusted-labeled** — it was never the CLI's designated document — so a later
+`RequestFd` on it **fail-closed-demotes by default.** This gives X-01 a fail-closed answer for v1.6
+**without new xattr/sidecar machinery.** Recorded mechanism: *"broker-written files carry no explicit
+label; they are treated untrusted-by-default via the same `is_trusted_labeled` fail-closed rule."* The
+write→re-read laundering loop (D-12) is thereby **closed for v1.6**, and the full output-file provenance
+model is explicitly **deferred** (§ Accepted Residual Risks).
+
+### X-02 — shared-store recovery authority (REFRAMED — RESEARCH CORRECTION (iv))
+
+**Framing correction.** CONTEXT.md's X-02 text ("a DB-writer can flip `SessionStatus` ... the change
+goes live at broker restart") implies a persistent broker daemon that restarts mid-session. **That does
+not describe this architecture.** `run_broker_server` is spawned **fresh, once, per `caprun` process
+invocation** (`main.rs:238`) and lives only for that session's lifetime; `initial_session_status` is
+seeded from `create_session`'s in-process result, **never re-read from the `sessions` table after
+creation.** The REAL "restart" actor is the **`caprun confirm` / `caprun deny` / `caprun review`
+process** — a fresh OS process opening `audit.db` fresh (`audit.rs:69-71` doc comment:
+`pending_confirmations` "is the ONLY thing that survives to resume from").
+
+**Ruling (ONE rule, applied uniformly to BOTH the `events` chain AND `pending_confirmations`).** On
+**every** `confirm`/`deny` process start, all recovered security state — the `sessions.status` /
+`events` chain (via HARDEN-02's anchor + MAC) AND `PendingConfirmation.state` / `resolved_args` /
+`combined_digest` (which has **no MAC of its own today**, §b) — is **either MAC-re-verified (ties to
+HARDEN-02) or fail-closed re-derived.** **Pinned choice: MAC-re-verified**, because §b already folds
+`pending_confirmations` into the same broker-key MAC scheme; a failed verification is fail-closed
+(refuse to resume the confirm/deny, never silently trust the disk row). This closes the DB-writer
+flip-back/delete gap uniformly across both tables rather than only the `events` table CONTEXT.md's text
+centered on.
+
+### X-03 — TOCTOU / atomic ordering
+
+**Current-code anchor.** The submit-side ordering already follows **authorize-before-effect**:
+`executor::submit_plan_node` resolves its decision synchronously; the resulting Event is durably
+appended **under lock** (`server.rs:709-751`) BEFORE any sink (`file.create`/`email.send`) is invoked
+(`server.rs:761-866`). This is already the "status transition commits before effect dispatch" discipline.
+
+**Ruling (ONE uniform atomicity rule).** **The status transition commits BEFORE effect dispatch** —
+the same discipline as demote-before-fd-release in D-01 (§a) and CAS-before-SMTP in §c. Every new
+mechanism in v1.6 inherits it: §a demotes-then-releases-fd; §b anchors atomically with the append; §c
+commits the CAS + attempt before opening SMTP. The genuine remaining gap is **not** a within-`SubmitPlanNode`
+race — it is the cross-connection staleness ruled on in X-04 below.
+
+### X-04 RULING — Planner-connection `session_status` staleness (the NEW finding)
+
+**This is the single most consequential grounding of the research; it is ruled on here explicitly, not
+buried in §a prose.**
+
+**Current-code anchor (re-verified at authoring).** Every connection `run_broker_server` accepts —
+the Worker connection AND every subsequent Planner connection — seeds its own per-connection
+`session_status` local from the SAME `initial_session_status` **function parameter**, cloned fresh per
+connection: Worker at `server.rs:202` (`let initial_status = initial_session_status.clone();`), Planner
+at `server.rs:231` (same clone), threaded into `classify_second_connection` / `handle_connection` with
+`ConnectionRole::Planner`. `initial_session_status` is `run_broker_server`'s own parameter
+(`server.rs:149`), set ONCE by its caller from the in-process `create_session()` result at
+session-creation time — **never re-read from the `sessions` table when a second (Planner) connection is
+accepted.** The ONLY post-creation mutation of `session_status` is `ReportClaims`'s
+`*session_status = SessionStatus::Draft` (`server.rs:1131`), which mutates the **Worker connection's OWN
+`&mut SessionStatus` local** — a value **NEVER visible to any other connection's task** (no
+`Arc<Mutex<SessionStatus>>`, no shared cell; the signature is a plain owned-per-task `&mut`).
+
+**Concrete consequence.** In the live v1.4/v1.5 adversarial-planner architecture the normal order is:
+(1) worker connects, (2) worker `RequestFd`s + reads a hostile document, (3) worker `ReportClaims`
+demotes the session to `Draft` (in the DB and in the worker connection's own local), (4) the planner
+sidecar is engaged and a Planner-role connection is accepted, (5) the planner submits `SubmitPlanNode`.
+**At step 4 the Planner connection's `session_status` local is seeded from `initial_session_status` —
+the ORIGINAL `Active` value — NOT the `Draft` the worker demoted to at step 3.** Step 0.5 of
+`submit_plan_node` (the I0 class-level `Draft` + `CommitIrreversible` deny) therefore evaluates against a
+**STALE `Active` status** for every plan node the Planner submits, silently bypassing the class-level
+deny. It has never been caught because every shipped adversarial-planner test routes its tainted literal
+through a routing/content-sensitive arg, so I2's per-arg Block fires FIRST and Step 0.5 is never reached
+(`DESIGN-session-trust-state.md` §11 condition 4's documented precedence) — the bypass is real but
+un-exercised.
+
+**RULING — fold into HARDEN-01's Phase-27 scope (option a).** This staleness is folded into HARDEN-01
+as a **required fix**, not accepted as a residual. Rationale: (i) I0's whole point is defending the
+"clean-looking values from an untrusted context" case this bug reopens **specifically on the Planner
+path** — accepting it would be hard to justify; (ii) X-03 already commits to "status transition commits
+before effect dispatch" as the uniform atomicity rule, and a per-connection stale COPY of
+`session_status` is a species of the same problem with a **wider blast radius** (any point later in the
+run, not a narrow race window); (iii) the fix is small and has a live precedent.
+
+**Pinned fix.** Make `session_status` a **shared `Arc<Mutex<SessionStatus>>`** across the WHOLE
+`run_broker_server` invocation, **re-read at the top of every `dispatch_request`** rather than seeded
+once per connection — mirroring how `planner_slot_occupied: Arc<AtomicBool>` is ALREADY a shared handle
+for exactly the same cross-task-visibility reason (`server.rs:185`). A Worker-connection demotion then
+becomes immediately visible to the Planner connection's Step 0.5.
+
+**Requirements bookkeeping.** This is ruled **in-scope-by-extension of HARDEN-01** ("fd release itself
+carries the I1 draft-only consequence" — the bug is specifically about `session_status` not being
+consistently visible across connections at the moment ANY deny decision is evaluated), so **no new
+HARDEN-0X requirement id is minted.** If the owner prefers a distinct id for traceability, Phase 27's
+planning may add one; the design ruling does not depend on it. A Planner-connection-after-demotion
+negative test (currently unassigned to any phase) becomes a Phase-27 negative test under this ruling.
+
+---
+
+## §g — Adversarial-Review Preemption
+
+A fresh non-self reviewer (DESIGN-12's gate) will probe these; each is answerable by **tracing the
+cited code**, not by trusting this doc. Mirrors `DESIGN-slot-type-binding.md` §8.
+
+1. **§a — can a demotion be skipped by a silent worker?** No: the demotion moves to `RequestFd`'s
+   broker-side entry (symmetric with `*fd_requested = true`), fail-closed on any non-`workspace_rel`
+   path, committed BEFORE the fd is released. A worker that never sends `ReportClaims` still gets
+   demoted the moment it reads an untrusted path. Reviewer traces the `RequestFd` arm and confirms
+   `session_status` is now mutated there.
+2. **§b — can a bare DB-writer forge a chain, and does key custody leak to the worker? (RESEARCH
+   Assumption A2, highest stakes.)** No forge without the key: the MAC key lives in
+   `<audit_path>.key` outside the workspace root (worker Landlock never reaches it) and outside the DB
+   file (the in-host DB-writer never reads it); tail-truncation is caught by the MAC'd `chain_anchor`.
+   The reviewer MUST adversarially probe the key-custody path (can the confined worker's Landlock policy
+   ever include the key file? does `confirm`/`deny` obtain the SAME key?) — this is THE review focus.
+3. **§c — does an `effect_id`-keyed CAS actually stop replay?** No — and the doc says so loudly:
+   `effect_id` is minted fresh per `SubmitPlanNode` (`server.rs:562`), so the CAS MUST key on
+   `SHA256(sink || sorted(arg_name, value_id))`, not `effect_id`. Reviewer confirms the key derivation
+   is content-derived, and that CAS+append commit before any SMTP socket opens.
+4. **§d — does a plain `cargo test` silently build WITH the feature, defeating the gate?** Yes for
+   `cargo test` (Cargo unifies features) — which is exactly why the gate is a **featureless-build
+   behavioral negative test** (option c) plus a Phase-30 `cargo build --workspace --release` featureless
+   binary, NOT a `cargo test` assertion. Reviewer confirms the negative gate has no opt-in path.
+5. **§e — does the `contents` role list break the only live flow?** No, and only because it is pinned to
+   `Some(&["path"])`: the sole production `contents` value is the reused `"path"`-role handle
+   (`planner.rs:208` → `server.rs:1312`/`:1337`). Any list omitting `"path"` regresses
+   `s9_live_file_create_clean_allow`. Reviewer traces worker→server→planner and confirms `"path"` is the
+   only live role.
+6. **§f / X-04 — is the staleness fix (or its acceptance) sound?** The fix is a shared
+   `Arc<Mutex<SessionStatus>>` re-read per `dispatch_request`, mirroring `planner_slot_occupied`'s
+   existing `Arc<AtomicBool>` (`server.rs:185`). Reviewer confirms the Planner connection no longer
+   reads a stale per-connection snapshot at Step 0.5, and that the fix does not re-introduce a
+   worker-asserted trust flip (the demotion source stays broker-only).
+
+---
+
+## §h — Accepted Residual Risks
+
+Mirrors `DESIGN-slot-type-binding.md` §10. Each is a **documented, intentional** scope boundary, not an
+accidental gap.
+
+- **D-05 — full host/root compromise reading the broker MAC key.** Out of scope for v1.6; the threat
+  ceiling is the in-host DB-writer (D-04). A root actor that reads `<audit_path>.key` can forge the
+  chain. Candidate future defense: external out-of-store notarization (later milestone). The doc does
+  NOT claim tamper-evidence beyond the in-host-DB-writer model.
+- **D-08 — effects-budget beyond per-plan-node CAS.** §c's CAS buys at-most-once PER PLAN NODE; a
+  statically-compromised worker minting N distinct plan nodes still sends N times. A per-session
+  effects-budget / send rate-limit is named future defense-in-depth, out of v1.6 scope.
+- **D-12 — full output-file provenance labeling.** Deferred; v1.6 uses §e's input-role treatment plus
+  §f/X-01's `is_trusted_labeled` fail-closed continuity rule (broker-written files are untrusted-by-default).
+  The write→re-read laundering loop is closed for v1.6 by that fail-closed default, not by real write-time
+  labeling.
+- **§e weaker-than-it-sounds semantics.** `contents`'s role check currently verifies only "a trusted
+  CLI-supplied literal of some kind," not "trusted FILE CONTENT" — because its only value's role is
+  `"path"`. Honest, documented; not a T2 violation.
+
+(No X-04 residual is recorded, because X-04 is **ruled fold-not-accept** in §f — it is a required
+Phase-27 fix, not an accepted residual.)
+
+---
+
+## §i — Phase 27–30 Implementation Map (informative — not part of the gate)
+
+Anticipates the mechanical work the gate unblocks. Grounded, but each phase **re-verifies file:line** if
+commits intervene. Mirrors `DESIGN-slot-type-binding.md` §9.
+
+| Phase | Residuals | Primary files |
+|---|---|---|
+| **27** | HARDEN-01 (§a) + HARDEN-04 (§d) + X-04 fix (§f) | `crates/brokerd/src/server.rs` (RequestFd demotion, `run_broker_server`/`dispatch_request` signatures, shared `Arc<Mutex<SessionStatus>>`, `CreateSession` dual-`#[cfg]` arm), `crates/brokerd/Cargo.toml` (`[features] test-fixtures`), `quarantine.rs` (doc-comment fix), `cli/caprun/src/main.rs` (`workspace_rel` threading), `DESIGN-session-trust-state.md` (§2/§5 amendment) |
+| **28** | HARDEN-02 (§b) | `crates/brokerd/src/audit.rs` (keyed MAC, `chain_anchor` table + migration, `verify_chain` rewrite), `confirmation.rs` (`pending_confirmations` MAC, `confirm()` key-load), `cli/caprun/src/main.rs` (key gen/load) |
+| **29** | HARDEN-03 (§c) + HARDEN-05 (§e) | `crates/brokerd/src/server.rs` (`email.send` Allowed CAS), `audit.rs` (`sent_plan_nodes` table + migration), `crates/executor/src/sink_sensitivity.rs` (`is_content_sensitive` arm + `expected_role` `Some(&["path"])`) |
+| **30** | HARDEN-06 (full regression + 5 negative tests) | `cli/caprun/tests/*`, `crates/brokerd/tests/*`, `scripts/mailpit-verify.sh` (featureless release build step) |
+
+**Gate invariants each phase must not trip.** `check-invariants.sh` Gate 1 (no `EffectRequest` token
+under `crates/` — keep §c's key a `(SinkId, args)`-derived hash, never a raw args-map-to-sink path);
+Gate 3 (`mint_from_read(` / `mint_from_derivation(` / `.mint(` call-site tokens restricted to
+`quarantine.rs` / `server.rs` / `value_store.rs` — §a's demotion reuses `update_session_status`, adds no
+new mint call site). New enum variants (if any) rely on Rust's own exhaustive-match check + inline
+blast-radius grep documented per phase (there is no scripted no-wildcard gate — state the grep result the
+way `DESIGN-slot-type-binding.md` §5 did). Neither HARDEN-02 nor HARDEN-05 needs a new `DenyReason`
+variant (HARDEN-02's forged-chain outcome reuses the existing `verify_chain==false` path; HARDEN-05
+reuses the existing `SlotTypeMismatch`/I2 machinery).
+
+---
+
+## §j — Proof-plan Note (for Phase 30)
+
+Standing close-gate disciplines pinned now so Phase 30 inherits them:
+
+- **Use the BARE `scripts/mailpit-verify.sh` recipe** for all Linux verification (from Phase 16 onward,
+  per CLAUDE.md — CONTROL-01 makes a benign run capable of a live SMTP send, so a Mailpit sidecar must be
+  present even for "looks benign" tests). Scope a single test via `MAILPIT_VERIFY_CMD`.
+- **Capture `$?` BEFORE any pipe.** A `script | tail` returns `tail`'s status (always 0); assert on the
+  **PASSED sentinel + named test counts**, never on exit-0-through-a-pipe (this project's own standing
+  `verification-exit-code-through-pipe` discipline).
+- **Run a FEATURELESS release binary** (`cargo build --workspace --release`, no dev-dep feature
+  unification) as the artifact actually exercised for the HARDEN-04 proof (§d) — distinct from the
+  `cargo test` run that exercises the feature-gated fixtures.
+- **One negative test per closed residual** (Phase 30 map): forged/truncated chain rejected by
+  `verify_chain` (§b); replayed Allowed `email.send` delivers exactly once to Mailpit (§c); forced-Active
+  `CreateSession` arm absent/fail-closed in the featureless release binary (§d); `RequestFd` on an
+  untrusted path (no `ReportClaims`) demotes to `Draft` WHILE the CONTROL-01 clean path still sends (§a);
+  tainted `contents` Blocks once a mint site exists, and the live `s9_live_file_create_clean_allow`
+  still Allows (§e); Planner-connection `SubmitPlanNode` after a Worker demotion is denied at Step 0.5
+  (§f/X-04).
+
+---
+
+## Acceptance Predicate — Done When
+
+Phase 26's gate is cleared when ALL are true:
+
+1. This doc pins, for **each of the five residuals** (§a–§e), a **mechanism + fail-closed default**
+   grounded in a re-verified file:line anchor. **(DESIGN-11)**
+2. This doc pins the **three cross-cutting rulings** (§f: X-01 label continuity, X-02 shared-store
+   recovery authority reframed to the `confirm`/`deny` process + `pending_confirmations`, X-03 TOCTOU
+   commit-before-dispatch) as ONE uniform rule each.
+3. This doc **rules explicitly on X-04** (the NEW Planner-connection `session_status` staleness finding)
+   — fold-into-HARDEN-01 (chosen) vs named-residual — in a dedicated subsection, not silently inherited.
+4. This doc incorporates all **four RESEARCH corrections**: (i) `contents` expected-role `Some(&["path"])`;
+   (ii) HARDEN-01's `workspace_rel` new-plumbing budget; (iii) the X-04 ruling; (iv) X-02 reframed to the
+   `confirm`/`deny` process + `pending_confirmations`.
+5. This doc carries an **Adversarial-Review-Preemption §** (§g) and an **Accepted Residual Risks §** (§h),
+   mirroring `DESIGN-slot-type-binding.md`.
+6. This doc has **cleared a fresh, non-self adversarial review** (traced against real code) with every
+   finding resolved, recorded in `DESIGN-GATE-RECORD-v1.6.md`, and **no `crates/executor` /
+   `crates/brokerd` / `crates/runtime-core` hardening code exists yet.** **(DESIGN-12 — satisfied by
+   Plan 26-02.)**
+
+---
+
+## Amendments (post-review)
+
+Round-tagged amendments from the fresh adversarial review (DESIGN-12, Plan 26-02) are folded into the
+relevant §above, per `DESIGN-slot-type-binding.md`'s convention. See `DESIGN-GATE-RECORD-v1.6.md` for
+the full review.
+
+_(none yet — pending Plan 26-02)_
