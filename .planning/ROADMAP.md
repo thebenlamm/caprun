@@ -167,7 +167,27 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
   2. The chain's authenticity depends on a secret key or an out-of-store anchor that a bare `events`-table writer cannot derive or reproduce.
   3. An untampered chain continues to verify true — no false positives; existing confirm-path and live-acceptance callers of `verify_chain` are unaffected.
 
-**Plans**: TBD
+**Plans**: 5 plans
+
+**Wave 1**
+
+- [ ] 28-01-PLAN.md — Groundwork: migrate 7 F1-vulnerable live-test fixtures to out-of-root layout + add hmac/getrandom deps
+
+**Wave 2** *(depends on 28-01)*
+
+- [ ] 28-02-PLAN.md — Key custody + F1 refusal: `load_or_create_key` (getrandom 0600 sibling, cross-process idempotent) + canonical-path containment refusal, unit-tested standalone
+
+**Wave 3** *(depends on 28-01, 28-02)*
+
+- [ ] 28-03-PLAN.md — Keyed HMAC core: keyed `compute_event_hash` + constant-time verify, thread key through 19 append_event sites + 2 verify_chain callers + run-path wiring (SC1 forgery + SC2 key-dependence)
+
+**Wave 4** *(depends on 28-03)*
+
+- [ ] 28-04-PLAN.md — `chain_anchor` MAC'd monotonic head: atomic upsert folded into append_event + verify_chain cross-check (tail-truncation detection + legacy-DB fail-closed)
+
+**Wave 5** *(depends on 28-03, 28-04)*
+
+- [ ] 28-05-PLAN.md — `pending_confirmations` whole-row MAC fold + confirm()/deny() entry gate (X-02 uniform ruling: deny() gains the gate) + cross-process key wiring
 
 ### Phase 29: Sink-Path Hardening — Replay CAS & contents Slot
 
