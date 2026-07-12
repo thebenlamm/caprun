@@ -4,17 +4,17 @@ milestone: v1.5
 milestone_name: — Slot-Type Binding Enforcement
 current_phase: 24
 current_phase_name: slot-type-binding-enforcement
-status: executing
-stopped_at: Phase 24 Plan 01 complete — origin_role tag threaded through ValueRecord/mint_from_*/server.rs, full workspace green
-last_updated: "2026-07-12T02:54:39.460Z"
+status: verifying
+stopped_at: Phase 24 Plan 03 complete — Step 1c wired, expected_role table added (with body/doc_fragment correction), full workspace green, ready for verification
+last_updated: "2026-07-12T03:05:27.573Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 24 execution started
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 5
-  completed_plans: 4
-  percent: 33
+  completed_plans: 5
+  percent: 67
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-11)
 
 Phase: 24 (slot-type-binding-enforcement) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-12 — Phase 24 execution started
 
 ## Performance Metrics
@@ -71,6 +71,7 @@ Last activity: 2026-07-12 — Phase 24 execution started
 | Phase 16 P04 | 3h | 3 tasks | 16 files |
 | Phase 24 P01 | 25min | 3 tasks | 9 files |
 | Phase 24 P02 | 25min | 1 tasks | 1 files |
+| Phase 24 P03 | 25min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -134,6 +135,8 @@ its DESIGN doc clears a fresh (non-self) adversarial review.
 - [Phase ?]: 24-01: server.rs selects primary_role inside the :1294 intent-variant match (same arm as primary_literal), never hardcoded at the shared mint_from_intent call — avoids mistagging a file.create path as recipient
 - [Phase 24]: SlotTypeMismatch fields are owned String/Vec<String>/Option<String>, never &'static — DenyReason crosses the IPC wire via serde Deserialize (DESIGN F1)
 - [Phase 24]: No new ExecutorDecision variant added — reused the existing Denied { reason } carrier (A3)
+- [Phase 24]: Step 1c wired as a per-arg return-immediately guard (Steps 1/1a/1b tier), never joining the collect-then-Block vec — preserves I0/I2 precedence, zero new anchor shapes — DESIGN §6
+- [Phase 24]: email.send body's expected-role list corrected to [body, doc_fragment] (DESIGN §3 table amendment) — the only production vocabulary for hostile-extracted body content is doc_fragment (worker.rs WorkerClaim::DocFragment -> server.rs claim_type -> mint_from_read origin_role); the DESIGN-literal [body] alone would have hard-Denied the shipped CONTENT-01/CONTROL-02 body-Block flow instead of reaching I2 — caught by extract_provenance_threading.rs test failures; safe under F4 since body is content-sensitive
 
 ### Pending Todos
 
@@ -166,8 +169,8 @@ T2 slot-type binding moved from "deferred" to "in scope" as v1.5's roadmap.
 
 ## Session Continuity
 
-Last session: 2026-07-12T02:52:17.945Z
-Stopped at: Phase 24 Plan 01 complete — origin_role tag threaded through ValueRecord/mint_from_*/server.rs, full workspace green
+Last session: 2026-07-12T03:05:27.557Z
+Stopped at: Phase 24 Plan 03 complete — Step 1c wired, expected_role table added (with body/doc_fragment correction), full workspace green, ready for verification
 Resume file: None
 
 ## Operator Next Steps

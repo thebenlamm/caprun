@@ -48,7 +48,7 @@ v1.2 Phase 8, v1.3 Phase 12, and v1.4 Phase 18 did before it.
       trust classification — which values become `UserTrusted` vs untrusted
       is unaffected; only a new field is threaded through.
 
-- [ ] **T2-03**: A hardcoded per-sink-arg "expected role" table exists in
+- [x] **T2-03**: A hardcoded per-sink-arg "expected role" table exists in
       `crates/executor` (mirrors the `sink_sensitivity.rs` CONTENT-01/02
       precedent — hardcoded match arms scoped to the two live sinks
       `email.send`/`file.create`, not a general framework).
@@ -60,7 +60,7 @@ v1.2 Phase 8, v1.3 Phase 12, and v1.4 Phase 18 did before it.
       serialization/`code()`/`Display`, existing tests) is updated for the
       new arm — not just the match inside `submit_plan_node`.
 
-- [ ] **T2-05**: `submit_plan_node` denies (or blocks, per DESIGN-07's
+- [x] **T2-05**: `submit_plan_node` denies (or blocks, per DESIGN-07's
       ordering ruling) a plan node when a resolved value's origin role
       doesn't match its slot's expected role, evaluated per-arg in the same
       pass as the existing routing/content-sensitivity check, without
@@ -108,9 +108,9 @@ Which phases cover which requirements. Populated during roadmap creation.
 | DESIGN-09 | Phase 23 | Complete |
 | DESIGN-10 | Phase 23 | Complete |
 | T2-02 | Phase 24 | Complete |
-| T2-03 | Phase 24 | Pending |
+| T2-03 | Phase 24 | Complete |
 | T2-04 | Phase 24 | Complete |
-| T2-05 | Phase 24 | Pending |
+| T2-05 | Phase 24 | Complete |
 | T2-06 | Phase 25 | Pending |
 | T2-07 | Phase 25 | Pending |
 | T2-08 | Phase 25 | Pending |

@@ -94,7 +94,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 **Milestone goal:** Close v1.4's accepted residual #5 (T2) — the executor gains a structural check that a resolved value's semantic origin matches the semantic role of the plan-node slot it's routed into, so a misrouted `UserTrusted` handle (e.g. a subject-typed string landed in `to`) is caught even though it is neither untrusted (I2 doesn't fire) nor a class-level deny (I0/I1 don't apply).
 
 - [x] **Phase 23: Slot-Type Binding Design Gate** - A DESIGN doc for slot-type binding enforcement exists, unifies with the existing `claim_type` taxonomy, resolves derivation role propagation, and pins the fail-closed default — clearing a fresh (non-self) adversarial review before any TCB code (completed 2026-07-12)
-- [ ] **Phase 24: Slot-Type Binding Enforcement** - The executor structurally enforces that a resolved value's origin role matches its plan-node slot's expected role, via a new mint-time tag, a hardcoded expected-role table, and a new exhaustive `DenyReason` variant
+- [x] **Phase 24: Slot-Type Binding Enforcement** - The executor structurally enforces that a resolved value's origin role matches its plan-node slot's expected role, via a new mint-time tag, a hardcoded expected-role table, and a new exhaustive `DenyReason` variant (completed 2026-07-12)
 - [ ] **Phase 25: Regression & Live Proof** - A deliberately swapped subject/recipient handle pair is proven to produce the new deny with an unbroken audit chain, existing tests are updated for the new check, and the full workspace regression passes green on real Linux
 
 ## Phase Details
@@ -133,7 +133,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   3. A new exhaustive `DenyReason` variant exists for a slot-type mismatch (no wildcard arm), and every existing exhaustive match over `DenyReason` across the workspace (CLI rendering, audit serialization/`code()`/`Display`, existing tests) is updated for the new arm — not just the match inside `submit_plan_node`.
   4. `submit_plan_node` denies (or blocks, per Phase 23's ordering ruling) a plan node when a resolved value's origin role doesn't match its slot's expected role, evaluated per-arg in the same pass as the existing routing/content-sensitivity check, without weakening or reordering the existing I0 (Step 0.5 class-deny) / I2 (per-arg Block) precedence.
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 **Wave 1**
 
 - [x] 24-01-PLAN.md — T2-02: origin-role tag on ValueRecord + threading through ValueStore::mint, the 3 mint_from_* wrappers, and 5 server.rs dispatch sites, plus the ~63 compilation-forced test-fixture updates (Wave 1)
@@ -141,7 +141,7 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 24-03-PLAN.md — T2-03 + T2-05: hardcoded expected-role table + Step 1c fail-closed enforcement in submit_plan_node (Wave 2)
+- [x] 24-03-PLAN.md — T2-03 + T2-05: hardcoded expected-role table + Step 1c fail-closed enforcement in submit_plan_node (Wave 2)
 
 ### Phase 25: Regression & Live Proof
 
@@ -183,5 +183,5 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 21. Adversarial LLM Planner | v1.4 | 4/4 | Complete    | 2026-07-11 |
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 3/3 | Complete    | 2026-07-11 |
 | 23. Slot-Type Binding Design Gate | v1.5 | 2/2 | Complete    | 2026-07-12 |
-| 24. Slot-Type Binding Enforcement | v1.5 | 2/3 | In Progress|  |
+| 24. Slot-Type Binding Enforcement | v1.5 | 3/3 | Complete   | 2026-07-12 |
 | 25. Regression & Live Proof | v1.5 | 0/TBD | Not started | - |
