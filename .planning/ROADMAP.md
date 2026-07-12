@@ -151,7 +151,10 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
   3. The `CreateSession`-IPC forced-`Active` mint arm is excluded from a default production build via a compile-time feature/cfg — grep/build evidence shows it absent from a default release build, not merely gated behind `CAPRUN_ENABLE_IPC_CREATE_SESSION` at runtime.
   4. Existing test fixtures that previously relied on the runtime env-flag opt-in still exercise the forced-Active behavior, now under an explicit test-only compile feature, so coverage isn't silently lost.
 
-**Plans**: TBD
+**Plans**: 1/2 plans executed
+
+- [x] 27-01-PLAN.md
+- [ ] 27-02-PLAN.md
 
 ### Phase 28: Authenticated Audit Chain
 
@@ -224,7 +227,7 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 | 24. Slot-Type Binding Enforcement | v1.5 | 3/3 | Complete    | 2026-07-12 |
 | 25. Regression & Live Proof | v1.5 | 3/3 | Complete    | 2026-07-12 |
 | 26. Security Hardening Design Gate | v1.6 | 2/2 | Complete    | 2026-07-12 |
-| 27. Session & Connection Integrity Hardening | v1.6 | 0/? | Not started | - |
+| 27. Session & Connection Integrity Hardening | v1.6 | 1/2 | In Progress|  |
 | 28. Authenticated Audit Chain | v1.6 | 0/? | Not started | - |
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 0/? | Not started | - |
 | 30. Regression & Live Proof | v1.6 | 0/? | Not started | - |
