@@ -1218,18 +1218,56 @@ pub async fn dispatch_request(
                 // genuinely broker-derived act (never worker-asserted),
                 // exactly like `fd_requested` being flipped at entry above.
                 //
-                // (a) Mutable read-model update: the SAME `update_session_status`
-                // helper `mint_from_read` already uses (no new mint/demotion
-                // call site for check-invariants.sh Gate 3 purposes).
-                {
+                // v1.6 Phase 27 review Fix 3 (Finding 3, MINOR — single-lock
+                // atomicity): the `update_session_status` UPDATE and the
+                // `session_demoted` `append_event` now run under ONE
+                // `conn.lock()` acquisition, mirroring the SAME atomic
+                // pattern `mint_from_read` (quarantine.rs) already uses —
+                // §a pins "never a second, separately-locked step." The
+                // PRIOR implementation locked `conn` once for the UPDATE and
+                // AGAIN, separately, for the append; a panic/failure between
+                // those two acquisitions could leave `status = Draft`
+                // persisted with no causal `session_demoted` Event (an
+                // audit-DAG gap). Direction was already fail-closed (the fd
+                // is never passed on that path), but the atomicity pin was
+                // violated.
+                let demoted_event_id = Uuid::new_v4();
+                let demoted_event = Event::new(
+                    demoted_event_id,
+                    Some(fd_event_id),
+                    session_id,
+                    "broker".into(),
+                    // Reuses the EXACT literal event_type "session_demoted"
+                    // mint_from_read already uses (quarantine.rs) so
+                    // verify_chain/audit tooling that filters on that token
+                    // keeps working.
+                    "session_demoted".into(),
+                    Utc::now(),
+                    vec![],
+                );
+                let demoted_hash = {
                     let locked = conn
                         .lock()
                         .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                    // (a) Mutable read-model update: the SAME
+                    // `update_session_status` helper `mint_from_read` already
+                    // uses (no new mint/demotion call site for
+                    // check-invariants.sh Gate 3 purposes).
                     crate::session::update_session_status(&locked, session_id, &SessionStatus::Draft)
                         .context("update_session_status (RequestFd fd-grant demotion)")?;
-                }
-                // (b) SHARED in-memory cell: lock + monotonic write (X-04/F3)
-                // — never a re-seeded Active.
+                    // (c) Append-only ledger entry: a session_demoted Event
+                    // parented on the fd_granted id just appended above — a
+                    // GENUINE causal edge (fd_granted -> session_demoted),
+                    // never a stapled tag. SAME `locked` guard as the UPDATE
+                    // immediately above — one acquisition, one atomic unit.
+                    append_event(&locked, &demoted_event, Some(&fd_hash))
+                        .context("append session_demoted (RequestFd fd-grant demotion)")?
+                };
+                // (b) SHARED in-memory cell: a DIFFERENT mutex
+                // (`session_status`, not `conn`) — lock + monotonic write
+                // (X-04/F3), never a re-seeded Active. Occurs within the
+                // same logical demotion block as (a)/(c) above, immediately
+                // after the durable pair commits.
                 {
                     let mut locked_status = session_status
                         .lock()
@@ -1244,30 +1282,6 @@ pub async fn dispatch_request(
                     current_status = SessionStatus::Draft;
                 }
 
-                // (c) Append-only ledger entry: a session_demoted Event
-                // parented on the fd_granted id just appended above — a
-                // GENUINE causal edge (fd_granted -> session_demoted), never
-                // a stapled tag. Reuses the EXACT literal event_type
-                // "session_demoted" mint_from_read already uses
-                // (quarantine.rs) so verify_chain/audit tooling that filters
-                // on that token keeps working.
-                let demoted_event_id = Uuid::new_v4();
-                let demoted_event = Event::new(
-                    demoted_event_id,
-                    Some(fd_event_id),
-                    session_id,
-                    "broker".into(),
-                    "session_demoted".into(),
-                    Utc::now(),
-                    vec![],
-                );
-                let demoted_hash = {
-                    let locked = conn
-                        .lock()
-                        .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
-                    append_event(&locked, &demoted_event, Some(&fd_hash))
-                        .context("append session_demoted (RequestFd fd-grant demotion)")?
-                };
                 chain_head_id = demoted_event_id;
                 chain_head_hash = demoted_hash;
             }
