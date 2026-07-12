@@ -194,6 +194,7 @@ mod linux_tests {
                 "genesis-hash".into(),
                 SessionStatus::Active,
                 ws_root_clone,
+                std::env::temp_dir().join("__planner_reduced_signal_no_trusted_path__"),
             )
             .await;
         });

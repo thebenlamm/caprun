@@ -192,6 +192,7 @@ mod linux_tests {
                 "genesis-hash".into(), // initial_last_event_hash
                 SessionStatus::Active, // initial_session_status (stale-fresh on every conn)
                 ws_root_clone,
+                std::env::temp_dir().join("__two_connection_intent_bypass_no_trusted_path__"),
             )
             .await;
         });

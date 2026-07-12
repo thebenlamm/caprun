@@ -89,6 +89,7 @@ mod linux_tests {
                 String::new(),
                 SessionStatus::Active,
                 ws_root,
+                std::env::temp_dir().join("__uds_ipc_no_trusted_path__"),
             )
             .await;
         });
@@ -147,6 +148,7 @@ mod linux_tests {
                 String::new(),
                 SessionStatus::Active,
                 ws_root,
+                std::env::temp_dir().join("__uds_ipc_no_trusted_path__"),
             )
             .await;
         });
@@ -246,6 +248,7 @@ mod linux_tests {
                 String::new(),
                 SessionStatus::Active,
                 ws_root,
+                std::env::temp_dir().join("__uds_ipc_no_trusted_path__"),
             )
             .await;
         });
