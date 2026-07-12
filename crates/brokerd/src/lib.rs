@@ -21,6 +21,14 @@ pub mod confirmation;
 pub mod sinks;
 pub mod approval;
 
+/// Reflects whether THIS build graph actually compiled `brokerd` with the
+/// `test-fixtures` feature enabled (true under `cargo test --workspace`
+/// feature-unification; false under a scoped `cargo test -p caprun`).
+/// D-10 tests (v1.6 HARDEN-04) key their skip/hard-fail branch on this
+/// const rather than on the response variant itself, so a genuine
+/// featureless-graph regression cannot be silently downgraded to a skip.
+pub const TEST_FIXTURES_ACTIVE: bool = cfg!(feature = "test-fixtures");
+
 /// Submit a plan node for I2 evaluation against the broker-owned value store.
 ///
 /// Delegates to `executor::submit_plan_node` — the deterministic, non-LLM I2

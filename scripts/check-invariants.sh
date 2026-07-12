@@ -141,6 +141,33 @@ else
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Gate 4: no-default-test-fixtures (v1.6 HARDEN-04 / D-10, Phase 27 review Fix 1)
+#
+# `brokerd::TEST_FIXTURES_ACTIVE` (crates/brokerd/src/lib.rs) reflects
+# `cfg!(feature = "test-fixtures")`, and D-10's negative gate
+# (harden04_featureless_create_session.rs) trusts that const to distinguish
+# a genuinely featureless build from ambient Cargo feature unification. That
+# trust only holds if `test-fixtures` can NEVER be a `default` feature of
+# crates/brokerd/Cargo.toml — if it were, TEST_FIXTURES_ACTIVE would read
+# true even in a shipped build, the D-10 skip would fire for every build,
+# and the CreateSession-mint arm could ship live while looking legitimate.
+# Verified by absence of `test-fixtures` inside brokerd's `[features]`
+# `default = [ ... ]` list.
+# ──────────────────────────────────────────────────────────────────────────────
+echo "Gate 4: checking test-fixtures is never a default feature of crates/brokerd ..."
+
+BROKERD_TOML="crates/brokerd/Cargo.toml"
+if [ -f "$BROKERD_TOML" ] && \
+   awk '/^\[features\]/{f=1; next} /^\[/{f=0} f' "$BROKERD_TOML" \
+     | grep -E '^\s*default\s*=' \
+     | grep -q 'test-fixtures'; then
+    echo "  FAIL — crates/brokerd/Cargo.toml declares test-fixtures within its default feature set"
+    overall=$FAIL
+else
+    echo "  PASS — test-fixtures is not a default feature of crates/brokerd"
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Summary
 # ──────────────────────────────────────────────────────────────────────────────
 echo ""

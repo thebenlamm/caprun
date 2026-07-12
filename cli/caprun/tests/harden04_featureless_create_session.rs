@@ -50,15 +50,24 @@
 //! `crates/brokerd`'s own test targets (which need the feature via its self
 //! dev-dependency) alongside caprun's. Under `--workspace`, this test's
 //! build of brokerd is therefore NOT featureless, and `CreateSession`
-//! actually mints a session (`SessionCreated`) even with the flag set —
-//! this test detects that outcome and treats it as an explicit, loud,
-//! NON-FAILING skip (see the `SessionCreated` match arm in the test body)
-//! rather than a false failure, so `cargo test --workspace --no-fail-fast`
-//! stays green. This test only PROVES D-10 under the SCOPED `-p caprun`
-//! invocation above, where the response is `Error` and the hard assertion
-//! runs. A genuine regression (mint reachable even under the scoped
-//! invocation) still fails loudly — only the ambient-unification case is
-//! downgraded to a skip.
+//! actually mints a session (`SessionCreated`) even with the flag set.
+//!
+//! The skip/hard-fail branch is keyed on `brokerd::TEST_FIXTURES_ACTIVE` —
+//! a const reflecting whether THIS build graph actually compiled brokerd
+//! with `test-fixtures` — NOT on the response variant. Keying on the
+//! response itself would mean a genuine D-10 regression (the mint arm
+//! leaking into a build that should be featureless) produces exactly the
+//! `SessionCreated` response this test exists to catch, and that response
+//! would then be misread as "this graph must not be featureless" and
+//! silently skipped, giving D-10 zero ongoing protection. Because the
+//! const reflects the actual compiled feature set rather than the
+//! response, it cannot be fooled by the regression it is meant to detect:
+//! when `TEST_FIXTURES_ACTIVE` is true (ambient unification, e.g. under
+//! `--workspace`), the skip is legitimate and non-failing so `cargo test
+//! --workspace --no-fail-fast` stays green; when it is false (the genuinely
+//! featureless SCOPED `-p caprun` invocation), the hard assertion below
+//! ALWAYS runs and a genuine regression ALWAYS fails loudly — it can never
+//! be routed into the skip branch.
 //!
 //! Abstract-namespace UDS (what `run_broker_server` binds) is a Linux kernel
 //! extension — unavailable on macOS — so, mirroring `uds_ipc.rs`'s own
@@ -161,47 +170,60 @@ mod linux_tests {
         let intent_id = Uuid::new_v4();
         let resp = round_trip(&mut stream, &BrokerRequest::CreateSession { intent_id }).await;
 
-        // EMPIRICALLY CONFIRMED during this plan's own verification run: a
-        // bare `cargo test --workspace` DOES re-unify `test-fixtures` onto
-        // this build graph, because that single invocation also builds
-        // brokerd's OWN test targets (which need the feature via its self
-        // dev-dependency), and Cargo's feature resolver unifies the winning
-        // feature set for a package across the whole invocation. Under
-        // THAT invocation `resp` here is `SessionCreated`, not `Error` — a
-        // real, EXPECTED consequence of ambient unification, not a
-        // regression. Treating it as a hard failure would make `cargo test
-        // --workspace` red for a reason unrelated to D-10, so this branch
-        // converts it into an explicit, loud, non-failing skip rather than
-        // a false failure (this task's own acceptance criterion). The
-        // scoped invocation is what actually proves D-10 — run it directly
-        // (or via the project's Linux Mailpit recipe) for the real signal:
-        //
-        //   cargo test -p caprun --test harden04_featureless_create_session
-        //
-        // A genuine regression on THAT scoped invocation does not take
-        // this branch — it falls through to the hard assertion below,
-        // which fails loudly.
-        if matches!(resp, BrokerResponse::SessionCreated { .. }) {
+        // Keyed on whether THIS build graph actually compiled brokerd with
+        // `test-fixtures` (brokerd::TEST_FIXTURES_ACTIVE), NOT on the
+        // response variant. Keying on the response itself (the prior
+        // implementation) meant a genuine D-10 regression — the mint arm
+        // leaking into a build that should be featureless — would produce
+        // exactly the `SessionCreated` response this test exists to catch,
+        // and that response would then be (incorrectly) treated as "this
+        // graph must not be featureless" and silently skipped. The const
+        // reflects the actual compiled feature set, so it cannot be fooled
+        // by the very regression it is meant to detect.
+        if brokerd::TEST_FIXTURES_ACTIVE {
+            // EMPIRICALLY CONFIRMED during this plan's own verification run:
+            // a bare `cargo test --workspace` DOES re-unify `test-fixtures`
+            // onto this build graph, because that single invocation also
+            // builds brokerd's OWN test targets (which need the feature via
+            // its self dev-dependency), and Cargo's feature resolver unifies
+            // the winning feature set for a package across the whole
+            // invocation. Under THAT invocation this graph legitimately has
+            // the mint arm compiled in, so `SessionCreated` is expected here
+            // — a featureless-only assertion is not meaningful on this
+            // build. This is a real, EXPECTED consequence of ambient
+            // unification, not a D-10 regression; converting it into an
+            // explicit, loud, non-failing skip keeps `cargo test --workspace
+            // --no-fail-fast` green for a reason unrelated to D-10. The
+            // scoped invocation is what actually proves D-10 — run it
+            // directly (or via the project's Linux Mailpit recipe) for the
+            // real signal:
+            //
+            //   cargo test -p caprun --test harden04_featureless_create_session
             eprintln!(
                 "harden04_featureless_create_session: SKIPPING the D-10 \
-                 negative assertion -- this build graph is NOT genuinely \
-                 featureless (CreateSession minted a session, meaning \
-                 test-fixtures was unified in, most likely because this ran \
-                 under a workspace-wide invocation such as `cargo test \
-                 --workspace` rather than the scoped `cargo test -p caprun \
-                 --test harden04_featureless_create_session`). This is \
-                 expected under ambient Cargo feature unification and is \
-                 NOT a D-10 regression. Re-run scoped to get the real D-10 \
-                 proof."
+                 negative assertion -- brokerd::TEST_FIXTURES_ACTIVE is true, \
+                 meaning THIS build graph genuinely compiled brokerd with \
+                 test-fixtures (most likely because this ran under a \
+                 workspace-wide invocation such as `cargo test --workspace` \
+                 rather than the scoped `cargo test -p caprun --test \
+                 harden04_featureless_create_session`). This is expected \
+                 under ambient Cargo feature unification and is NOT a D-10 \
+                 regression. Re-run scoped to get the real D-10 proof."
             );
             server_handle.abort();
             return;
         }
 
-        // The teeth of D-10 (only reached when this build graph is
-        // genuinely featureless): Error, never SessionCreated, DESPITE the
-        // flag being set to exactly the value that opts in on a
-        // test-fixtures build.
+        // The teeth of D-10: this graph is genuinely featureless
+        // (brokerd::TEST_FIXTURES_ACTIVE == false), so the response MUST be
+        // the fail-closed Error, DESPITE the flag being set to exactly the
+        // value that opts in on a test-fixtures build. If the mint arm ever
+        // leaks into a featureless build (the `#[cfg]` gate breaks), `resp`
+        // here would be `SessionCreated` and this assertion fails loudly —
+        // unlike the prior response-keyed implementation, this branch is
+        // ALWAYS reached and ALWAYS evaluated when the build is genuinely
+        // featureless, so a genuine regression can never be routed into the
+        // skip branch above.
         assert!(
             matches!(resp, BrokerResponse::Error { .. }),
             "D-10 VIOLATION: expected a featureless (default) broker build to \
