@@ -192,4 +192,4 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
 | 22. Adversarial Gate Proof & Residual Disclosure | v1.4 | 3/3 | Complete    | 2026-07-11 |
 | 23. Slot-Type Binding Design Gate | v1.5 | 2/2 | Complete    | 2026-07-12 |
 | 24. Slot-Type Binding Enforcement | v1.5 | 3/3 | Complete    | 2026-07-12 |
-| 25. Regression & Live Proof | v1.5 | 3/3 | Complete   | 2026-07-12 |
+| 25. Regression & Live Proof | v1.5 | 3/3 | Complete    | 2026-07-12 |

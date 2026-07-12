@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: — Slot-Type Binding Enforcement
 current_phase: 25
-current_phase_name: regression-live-proof
 status: executing
 stopped_at: Phase 24 Plan 03 complete — Step 1c wired, expected_role table added (with body/doc_fragment correction), full workspace green, ready for verification
-last_updated: "2026-07-12T04:30:54.891Z"
+last_updated: "2026-07-12T13:14:36.334Z"
 last_activity: 2026-07-12
-last_activity_desc: Phase 25 execution started
+last_activity_desc: Phase 25 complete
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 8
-  completed_plans: 5
-  percent: 63
+  completed_plans: 8
+  percent: 100
+current_phase_name: regression-live-proof
 ---
 
 # Project State
@@ -28,16 +28,16 @@ See: .planning/PROJECT.md (updated 2026-07-11)
 
 ## Current Position
 
-Phase: 25 (regression-live-proof) — EXECUTING
-Plan: 1 of 3
+Phase: 25
+Plan: Not started
 Status: Executing Phase 25
-Last activity: 2026-07-12 — Phase 25 execution started
+Last activity: 2026-07-12 — Phase 25 complete
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 44 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 [Phases 12-17] + v1.4: 14 [Phases 18-22])
+- Total plans completed: 47 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 [Phases 12-17] + v1.4: 14 [Phases 18-22])
 - Average duration: — min
 
 **By Phase (v1.2):**
@@ -59,6 +59,7 @@ Last activity: 2026-07-12 — Phase 25 execution started
 | 22 | 3 | - | - |
 | 23 | 2 | - | - |
 | 24 | 3 | - | - |
+| 25 | 3 | - | - |
 
 *Updated after each plan completion. v1.3 (phases 12-17) shipped 2026-07-09 — 21/21 plans complete. v1.4 (phases 18-22) shipped 2026-07-11 — 14/14 plans complete. v1.5 (phases 23-25) roadmapped 2026-07-11, no plans yet.*
 | Phase 14 P02 | 50min | 3 tasks | 10 files |

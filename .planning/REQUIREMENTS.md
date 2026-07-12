@@ -69,7 +69,7 @@ v1.2 Phase 8, v1.3 Phase 12, and v1.4 Phase 18 did before it.
 
 ### Regression & Live Proof (the DONE gate)
 
-- [ ] **T2-06**: A held-out acceptance test proves the gap is closed: a plan
+- [x] **T2-06**: A held-out acceptance test proves the gap is closed: a plan
       node with a deliberately swapped subject↔recipient handle pair (both
       `UserTrusted`, both otherwise valid) produces the new deny, with a
       corresponding audit-DAG event recorded and `verify_chain` still true.
@@ -79,7 +79,7 @@ v1.2 Phase 8, v1.3 Phase 12, and v1.4 Phase 18 did before it.
       and updated so the new check doesn't silently break existing coverage
       or get bypassed by a fixture that never assigns a role.
 
-- [ ] **T2-08**: Full workspace regression via `scripts/mailpit-verify.sh`
+- [x] **T2-08**: Full workspace regression via `scripts/mailpit-verify.sh`
       is independently re-run green (0 failures) after the change lands —
       not assumed from a prior pass, per this project's standing milestone-
       close discipline.
@@ -111,9 +111,9 @@ Which phases cover which requirements. Populated during roadmap creation.
 | T2-03 | Phase 24 | Complete |
 | T2-04 | Phase 24 | Complete |
 | T2-05 | Phase 24 | Complete |
-| T2-06 | Phase 25 | Pending |
+| T2-06 | Phase 25 | Complete |
 | T2-07 | Phase 25 | Complete |
-| T2-08 | Phase 25 | Pending |
+| T2-08 | Phase 25 | Complete |
 
 **Coverage:**
 
