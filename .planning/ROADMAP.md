@@ -113,7 +113,12 @@ Full detail archived in [`milestones/v1.3-ROADMAP.md`](milestones/v1.3-ROADMAP.m
   5. The doc has cleared a fresh (non-self) adversarial review with every raised finding resolved, and no `crates/executor` or `crates/brokerd` mint-site code exists yet.
 
 **Plans**: 2 plans
+**Wave 1**
+
 - [ ] 23-01-PLAN.md — Author `planning-docs/DESIGN-slot-type-binding.md` (§0-§10): origin-role tag, claim_type unification, expected-role table, derivation propagation, ordering ruling, fail-closed default (DESIGN-07..10)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 23-02-PLAN.md — Fresh non-self adversarial review (traces code, re-runs the DenyReason blast-radius grep), resolve every finding, gate record `DESIGN-GATE-RECORD-v1.5.md` reads CLEARED (DESIGN-07..10)
 
 ### Phase 24: Slot-Type Binding Enforcement
