@@ -6,14 +6,14 @@ current_phase: 28
 current_phase_name: authenticated-audit-chain
 status: executing
 stopped_at: Phase 26 context gathered
-last_updated: "2026-07-13T00:30:19.380Z"
+last_updated: "2026-07-13T00:40:09.936Z"
 last_activity: 2026-07-13
 last_activity_desc: Phase 28 execution started
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 9
-  completed_plans: 5
+  completed_plans: 6
   percent: 40
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-12)
 ## Current Position
 
 Phase: 28 (authenticated-audit-chain) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-07-13 — Phase 28 execution started
 
@@ -80,6 +80,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 24 P02 | 25min | 1 tasks | 1 files |
 | Phase 24 P03 | 25min | 2 tasks | 3 files |
 | Phase 28 P01 | 7min | 2 tasks | 10 files |
+| Phase 28 P02 | 6min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -145,6 +146,8 @@ v1.3 P17, v1.4 P22, v1.5 P25; depends on Phases 27, 28, and 29 all landing.
 - [Phase 25]: file.create's contents arg has no expected-role entry at all (uses executor's routing-sensitive default) — this gap is now v1.6's HARDEN-05.
 - [Phase 28]: 28-01: run_caprun_file_create/run_caprun_block now return/take ws_dir (the workspace subdirectory) instead of the outer tmp dir, since that is the broker-derived workspace root used for post-run assertions
 - [Phase 28]: 28-01: live_acceptance_v1_3.rs/v1_4_composed.rs's run_caprun_email_on gained an explicit ws_dir param replacing the audit_db.parent() derivation, to keep the shared multi-invocation workspace root F1-safe as a sibling of audit.db
+- [Phase 28]: load_or_create_key F1 containment checks BOTH the audit-DB path and its .key sibling, per DESIGN's corrected F1 pin
+- [Phase 28]: cli/caprun is bin-only (no src/lib.rs) — key.rs unit tests run via 'cargo test -p caprun --bin caprun -- key::', not '--lib'
 
 ### Pending Todos
 
@@ -183,7 +186,7 @@ moved from "open" to "in progress" as its 5 items became v1.6's HARDEN-01..05.
 
 ## Session Continuity
 
-Last session: 2026-07-13T00:29:56.088Z
+Last session: 2026-07-13T00:40:09.929Z
 Stopped at: Phase 26 context gathered
 Resume file: .planning/phases/26-security-hardening-design-gate/26-CONTEXT.md
 

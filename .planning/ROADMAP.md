@@ -167,7 +167,7 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
   2. The chain's authenticity depends on a secret key or an out-of-store anchor that a bare `events`-table writer cannot derive or reproduce.
   3. An untampered chain continues to verify true — no false positives; existing confirm-path and live-acceptance callers of `verify_chain` are unaffected.
 
-**Plans**: 1/5 plans executed
+**Plans**: 2/5 plans executed
 
 **Wave 1**
 
@@ -175,7 +175,7 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 
 **Wave 2** *(depends on 28-01)*
 
-- [ ] 28-02-PLAN.md — Key custody + F1 refusal: `load_or_create_key` (getrandom 0600 sibling, cross-process idempotent) + canonical-path containment refusal, unit-tested standalone
+- [x] 28-02-PLAN.md — Key custody + F1 refusal: `load_or_create_key` (getrandom 0600 sibling, cross-process idempotent) + canonical-path containment refusal, unit-tested standalone
 
 **Wave 3** *(depends on 28-01, 28-02)*
 
@@ -248,6 +248,6 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 | 25. Regression & Live Proof | v1.5 | 3/3 | Complete    | 2026-07-12 |
 | 26. Security Hardening Design Gate | v1.6 | 2/2 | Complete    | 2026-07-12 |
 | 27. Session & Connection Integrity Hardening | v1.6 | 2/2 | Complete    | 2026-07-12 |
-| 28. Authenticated Audit Chain | v1.6 | 1/5 | In Progress|  |
+| 28. Authenticated Audit Chain | v1.6 | 2/5 | In Progress|  |
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 0/? | Not started | - |
 | 30. Regression & Live Proof | v1.6 | 0/? | Not started | - |

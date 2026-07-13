@@ -148,3 +148,9 @@ None - no external service configuration required.
 ---
 *Phase: 28-authenticated-audit-chain*
 *Completed: 2026-07-13*
+
+## Self-Check: PASSED
+
+Both created/modified files confirmed present on disk (`cli/caprun/src/key.rs`,
+this SUMMARY.md); all 3 commits (`63408c9` implementation, `5f97a66` unit
+tests, `3ebb7c1` this summary) confirmed present in `git log`.
