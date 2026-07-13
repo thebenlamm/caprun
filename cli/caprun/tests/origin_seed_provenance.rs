@@ -47,7 +47,11 @@ fn setup_tmp(tag: &str) -> (std::path::PathBuf, std::path::PathBuf, std::path::P
     let run_id = uuid::Uuid::new_v4();
     let tmp = std::env::temp_dir().join(format!("caprun_origin_seed_{tag}_{run_id}"));
     std::fs::create_dir_all(&tmp).expect("create tmp dir");
-    let workspace_file = tmp.join("workspace.txt");
+    // F1-safe layout: workspace file under its own subdirectory, audit.db a
+    // sibling of that subdirectory (never a direct child of the workspace root).
+    let ws_dir = tmp.join("workspace");
+    std::fs::create_dir_all(&ws_dir).expect("create workspace dir");
+    let workspace_file = ws_dir.join("workspace.txt");
     let audit_db_path = tmp.join("audit.db");
     std::fs::write(&workspace_file, b"benign workspace content, no path tokens")
         .expect("write workspace file");

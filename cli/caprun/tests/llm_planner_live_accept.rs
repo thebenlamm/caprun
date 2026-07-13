@@ -215,8 +215,12 @@ fn llm_planner_clean_allow_delivers() {
     let run_id = uuid::Uuid::new_v4();
     let tmp = std::env::temp_dir().join(format!("caprun_llm_live_{run_id}"));
     std::fs::create_dir_all(&tmp).expect("create tmp dir");
+    // F1-safe layout: workspace file under its own subdirectory, audit.db a
+    // sibling of that subdirectory (never a direct child of the workspace root).
+    let ws_dir = tmp.join("workspace");
+    std::fs::create_dir_all(&ws_dir).expect("create workspace dir");
     let audit_db = tmp.join("audit.db");
-    let workspace_file = tmp.join("clean.txt");
+    let workspace_file = ws_dir.join("clean.txt");
     std::fs::write(&workspace_file, CLEAN_PATH_CONTENT).expect("write workspace file");
 
     let clean_recipient = format!("llmclean-{run_id}@example.test");

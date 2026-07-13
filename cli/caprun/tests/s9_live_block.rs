@@ -91,7 +91,12 @@ fn run_caprun_intent_on(
     let run_id = uuid::Uuid::new_v4();
     let tmp = std::env::temp_dir().join(format!("caprun_s9_{tag}_{run_id}"));
     std::fs::create_dir_all(&tmp).expect("create tmp dir");
-    let workspace_file = tmp.join("workspace.txt");
+    // F1-safe layout: the workspace file lives under its OWN subdirectory, and
+    // audit.db is a sibling of that subdirectory (never a direct child of the
+    // workspace root) — mirrors confirm.rs.
+    let ws_dir = tmp.join("workspace");
+    std::fs::create_dir_all(&ws_dir).expect("create workspace dir");
+    let workspace_file = ws_dir.join("workspace.txt");
     let audit_db_path = tmp.join("audit.db");
     std::fs::write(&workspace_file, content).expect("write workspace file");
 
@@ -379,13 +384,18 @@ fn run_caprun_file_create(
     let run_id = uuid::Uuid::new_v4();
     let tmp = std::env::temp_dir().join(format!("caprun_s9_{tag}_{run_id}"));
     std::fs::create_dir_all(&tmp).expect("create tmp dir");
-    let workspace_file = tmp.join("workspace.txt");
+    // F1-safe layout: the workspace file lives under its OWN subdirectory, and
+    // audit.db is a sibling of that subdirectory (never a direct child of the
+    // workspace root) — mirrors confirm.rs.
+    let ws_dir = tmp.join("workspace");
+    std::fs::create_dir_all(&ws_dir).expect("create workspace dir");
+    let workspace_file = ws_dir.join("workspace.txt");
     let audit_db_path = tmp.join("audit.db");
     std::fs::write(&workspace_file, content).expect("write workspace file");
 
     // The workspace ROOT is the parent of the workspace file (caprun main derives
     // it this way); the live file.create sink writes create_exclusive_within under
-    // this root, so created files land in `tmp`.
+    // this root, so created files land in `ws_dir`.
     let caprun_bin = env!("CARGO_BIN_EXE_caprun");
     let output = std::process::Command::new(caprun_bin)
         .arg("create-file-from-report")
@@ -397,7 +407,7 @@ fn run_caprun_file_create(
 
     eprintln!("caprun stdout:\n{}", String::from_utf8_lossy(&output.stdout));
     eprintln!("caprun stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-    (output.status.success(), audit_db_path, tmp)
+    (output.status.success(), audit_db_path, ws_dir)
 }
 
 /// ACC-03 + ACC-05: a real caprun `file.create` run on a HOSTILE workspace-derived

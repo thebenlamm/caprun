@@ -82,26 +82,25 @@ fn expected_recipient(nonce: &uuid::Uuid) -> String {
 }
 
 /// Run the real caprun binary for a `send-email-summary` intent, writing
-/// `content` to a workspace file (named `{tag}.txt`) under `audit_db`'s
-/// parent directory — the workspace ROOT for every invocation in this file
-/// is therefore the SAME tmp dir the caller mints once (COORD-T5: unlike
+/// `content` to a workspace file (named `{tag}.txt`) under `ws_dir` — the
+/// workspace ROOT for every invocation in this file is therefore the SAME
+/// shared subdirectory the caller mints once (COORD-T5: unlike
 /// `s9_live_block.rs`'s `run_caprun_intent_on`, no invocation here mints its
-/// own tmp dir/audit-db). `audit_db` is the CALLER-SUPPLIED shared path —
-/// never minted per-call, never `:memory:` (a follow-up confirm/deny/sweep
-/// could not reopen an in-memory DB). Models
+/// own tmp dir/audit-db). `ws_dir` is F1-safe: `audit_db` is a sibling of
+/// `ws_dir`, never a direct child of it. `audit_db` is the CALLER-SUPPLIED
+/// shared path — never minted per-call, never `:memory:` (a follow-up
+/// confirm/deny/sweep could not reopen an in-memory DB). Models
 /// `live_acceptance_tainted_session.rs`'s `run_caprun_block` shape, extended
 /// to the email sink. Returns the process exit success.
 #[cfg(target_os = "linux")]
 fn run_caprun_email_on(
     recipient: &str,
     content: &[u8],
+    ws_dir: &std::path::Path,
     audit_db: &std::path::Path,
     tag: &str,
 ) -> bool {
-    let workspace_file = audit_db
-        .parent()
-        .expect("audit_db must have a parent directory")
-        .join(format!("{tag}.txt"));
+    let workspace_file = ws_dir.join(format!("{tag}.txt"));
     std::fs::write(&workspace_file, content).expect("write workspace file");
 
     let caprun_bin = env!("CARGO_BIN_EXE_caprun");
@@ -379,6 +378,10 @@ fn live_acceptance_v1_3_composed() {
     let run_id = uuid::Uuid::new_v4();
     let tmp = std::env::temp_dir().join(format!("caprun_live_v13_{run_id}"));
     std::fs::create_dir_all(&tmp).expect("create tmp dir");
+    // F1-safe layout: shared workspace root under its own subdirectory,
+    // audit.db a sibling of that subdirectory (never a direct child of it).
+    let ws_dir = tmp.join("workspace");
+    std::fs::create_dir_all(&ws_dir).expect("create workspace dir");
     let audit_db = tmp.join("audit.db"); // ONE shared path for ALL invocations (COORD-T5) — NEVER :memory:
 
     // Per-run nonces, minted ONCE at the top of the test (COORD-N3) — a
@@ -395,6 +398,7 @@ fn live_acceptance_v1_3_composed() {
     let success = run_caprun_email_on(
         "ops@company.example",
         &hostile_doc_with_nonce_domain(&confirm_nonce),
+        &ws_dir,
         &audit_db,
         "v13_confirm_block",
     );
@@ -442,6 +446,7 @@ fn live_acceptance_v1_3_composed() {
     let success = run_caprun_email_on(
         "ops@company.example",
         &hostile_doc_with_nonce_domain(&deny_nonce),
+        &ws_dir,
         &audit_db,
         "v13_deny_block",
     );
@@ -498,7 +503,7 @@ fn live_acceptance_v1_3_composed() {
     // ── (C) CLEAN CONTROL LEG (COORD-T3) ──
     // CLEAN_PATH_CONTENT carries no Reply-To:/Domain: markers, so no
     // recipient is derived — the trusted CLI recipient routes to `to`.
-    let success = run_caprun_email_on(&clean_recipient, CLEAN_PATH_CONTENT, &audit_db, "v13_clean");
+    let success = run_caprun_email_on(&clean_recipient, CLEAN_PATH_CONTENT, &ws_dir, &audit_db, "v13_clean");
     assert!(
         success,
         "clean control leg must exit 0 — trusted-intent Allowed"

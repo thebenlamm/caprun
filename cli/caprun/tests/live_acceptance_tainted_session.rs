@@ -50,14 +50,15 @@ const HOSTILE_FC_CONTENT: &[u8] =
 const HOSTILE_FC_PATH: &str = "reports/pwned.txt";
 
 /// Run the real caprun binary for a `create-file-from-report` intent inside
-/// `tmp` (which doubles as the workspace root — the workspace file lives
-/// directly under it, matching `s9_live_block.rs`'s `run_caprun_file_create`
-/// convention), against the explicit PERSISTENT `audit_db` path (never
-/// `:memory:` — Pitfall 2: an in-memory DB would vanish before the follow-up
-/// confirm/deny process could reopen it). Returns the process exit success.
+/// `ws_dir` (the workspace ROOT — a dedicated subdirectory, F1-safe: audit.db
+/// is a sibling of `ws_dir`, never a direct child of it — matching
+/// `s9_live_block.rs`'s `run_caprun_file_create` convention), against the
+/// explicit PERSISTENT `audit_db` path (never `:memory:` — Pitfall 2: an
+/// in-memory DB would vanish before the follow-up confirm/deny process could
+/// reopen it). Returns the process exit success.
 #[cfg(target_os = "linux")]
-fn run_caprun_block(tmp: &std::path::Path, audit_db: &std::path::Path) -> bool {
-    let workspace_file = tmp.join("workspace.txt");
+fn run_caprun_block(ws_dir: &std::path::Path, audit_db: &std::path::Path) -> bool {
+    let workspace_file = ws_dir.join("workspace.txt");
     std::fs::write(&workspace_file, HOSTILE_FC_CONTENT).expect("write workspace file");
     // `create_exclusive_within`'s single-syscall `openat2` (RESOLVE_BENEATH,
     // TOCTOU-safe by design) does NOT create intermediate directories — only
@@ -65,7 +66,7 @@ fn run_caprun_block(tmp: &std::path::Path, audit_db: &std::path::Path) -> bool {
     // already exist under the workspace root before the confirm path's live
     // sink invocation, mirroring a workspace that already has a reports/
     // folder. Harmless (unused) on the deny path, which never invokes the sink.
-    std::fs::create_dir_all(tmp.join("reports")).expect("pre-create reports/ dir under workspace root");
+    std::fs::create_dir_all(ws_dir.join("reports")).expect("pre-create reports/ dir under workspace root");
 
     let caprun_bin = env!("CARGO_BIN_EXE_caprun");
     let output = std::process::Command::new(caprun_bin)
@@ -124,10 +125,14 @@ fn live_acceptance_deny_path() {
     let run_id = uuid::Uuid::new_v4();
     let tmp = std::env::temp_dir().join(format!("caprun_live_acc_deny_{run_id}"));
     std::fs::create_dir_all(&tmp).expect("create tmp dir");
+    // F1-safe layout: workspace root under its own subdirectory, audit.db a
+    // sibling of that subdirectory (never a direct child of the workspace root).
+    let ws_dir = tmp.join("workspace");
+    std::fs::create_dir_all(&ws_dir).expect("create workspace dir");
     let audit_db = tmp.join("audit.db"); // NEVER :memory: — Pitfall 2
 
     // ── Process 1: the blocking run ──
-    let success = run_caprun_block(&tmp, &audit_db);
+    let success = run_caprun_block(&ws_dir, &audit_db);
     assert!(
         !success,
         "block run must exit non-zero (I2 block, no effect proceeds yet)"
@@ -158,11 +163,11 @@ fn live_acceptance_deny_path() {
 
     // ── Assert no effect EVER proceeded ──
     assert!(
-        !tmp.join(HOSTILE_FC_PATH).exists(),
+        !ws_dir.join(HOSTILE_FC_PATH).exists(),
         "the hostile path must NOT be created on the deny path"
     );
     assert!(
-        !tmp.join("intended_output.txt").exists(),
+        !ws_dir.join("intended_output.txt").exists(),
         "no file may be created on the deny path"
     );
 
@@ -238,10 +243,14 @@ fn live_acceptance_confirm_path() {
     let run_id = uuid::Uuid::new_v4();
     let tmp = std::env::temp_dir().join(format!("caprun_live_acc_confirm_{run_id}"));
     std::fs::create_dir_all(&tmp).expect("create tmp dir");
+    // F1-safe layout: workspace root under its own subdirectory, audit.db a
+    // sibling of that subdirectory (never a direct child of the workspace root).
+    let ws_dir = tmp.join("workspace");
+    std::fs::create_dir_all(&ws_dir).expect("create workspace dir");
     let audit_db = tmp.join("audit.db"); // NEVER :memory: — Pitfall 2
 
     // ── Process 1: the blocking run ──
-    let success = run_caprun_block(&tmp, &audit_db);
+    let success = run_caprun_block(&ws_dir, &audit_db);
     assert!(
         !success,
         "block run must exit non-zero (I2 block, no effect proceeds yet)"
@@ -270,7 +279,7 @@ fn live_acceptance_confirm_path() {
     assert_eq!(code, Some(0), "confirm on a Pending block must exit 0 (Released)");
 
     // ── Assert the effect proceeded EXACTLY ONCE ──
-    let created = tmp.join(HOSTILE_FC_PATH);
+    let created = ws_dir.join(HOSTILE_FC_PATH);
     assert!(
         created.exists(),
         "the released file.create must create the hostile path under the workspace root"

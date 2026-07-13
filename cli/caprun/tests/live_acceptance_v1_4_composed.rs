@@ -234,11 +234,13 @@ const CLEAN_PATH_CONTENT: &[u8] =
 /// `CAPRUN_PLANNER=llm` (ALL THREE legs of this file use the real
 /// OpenAI-backed planner — this file's entire purpose is the LLM-planner
 /// live proof), writing `content` to a workspace file (named `{tag}.txt`)
-/// under `audit_db`'s parent directory — the workspace ROOT for every
-/// invocation in this file is therefore the SAME tmp dir the caller mints
-/// once (mirrors `live_acceptance_v1_3.rs`'s `run_caprun_email_on`, COORD-T5:
-/// no invocation here mints its own tmp dir/audit-db). `audit_db` is the
-/// CALLER-SUPPLIED shared path — never minted per-call, never `:memory:`.
+/// under `ws_dir` — the workspace ROOT for every invocation in this file is
+/// therefore the SAME shared subdirectory the caller mints once (mirrors
+/// `live_acceptance_v1_3.rs`'s `run_caprun_email_on`, COORD-T5: no
+/// invocation here mints its own tmp dir/audit-db). `ws_dir` is F1-safe:
+/// `audit_db` is a sibling of `ws_dir`, never a direct child of it.
+/// `audit_db` is the CALLER-SUPPLIED shared path — never minted per-call,
+/// never `:memory:`.
 /// `OPENAI_API_KEY`/`CAPRUN_PLANNER_MODEL` are inherited from THIS process's
 /// own environment (`Command` inherits the parent env by default — mirrors
 /// `llm_planner_live_accept.rs`'s own note: `scripts/mailpit-verify.sh`'s
@@ -259,13 +261,11 @@ struct CaprunRunOutcome {
 fn run_caprun_email_on(
     recipient: &str,
     content: &[u8],
+    ws_dir: &std::path::Path,
     audit_db: &std::path::Path,
     tag: &str,
 ) -> CaprunRunOutcome {
-    let workspace_file = audit_db
-        .parent()
-        .expect("audit_db must have a parent directory")
-        .join(format!("{tag}.txt"));
+    let workspace_file = ws_dir.join(format!("{tag}.txt"));
     std::fs::write(&workspace_file, content).expect("write workspace file");
 
     let caprun_bin = env!("CARGO_BIN_EXE_caprun");
@@ -595,6 +595,10 @@ fn live_acceptance_v1_4_composed_three_legs() {
     let run_id = uuid::Uuid::new_v4();
     let tmp = std::env::temp_dir().join(format!("caprun_live_v14_{run_id}"));
     std::fs::create_dir_all(&tmp).expect("create tmp dir");
+    // F1-safe layout: shared workspace root under its own subdirectory,
+    // audit.db a sibling of that subdirectory (never a direct child of it).
+    let ws_dir = tmp.join("workspace");
+    std::fs::create_dir_all(&ws_dir).expect("create workspace dir");
     let audit_db = tmp.join("audit.db"); // ONE shared path for ALL THREE legs — NEVER :memory:
 
     let host = mailpit_client::host();
@@ -602,7 +606,7 @@ fn live_acceptance_v1_4_composed_three_legs() {
     // ── LEG 1 (CLEAN) — only the trusted handle ever exists ─────────────────
     let clean_recipient = format!("v14clean-{run_id}@example.test");
     let leg1_outcome =
-        run_caprun_email_on(&clean_recipient, CLEAN_PATH_CONTENT, &audit_db, "v14_leg1_clean");
+        run_caprun_email_on(&clean_recipient, CLEAN_PATH_CONTENT, &ws_dir, &audit_db, "v14_leg1_clean");
     assert!(
         leg1_outcome.success,
         "Leg 1 (clean) must exit 0 — trusted-intent Allowed (GATE-03)"
@@ -659,6 +663,7 @@ fn live_acceptance_v1_4_composed_three_legs() {
     let leg2_outcome = run_caprun_email_on(
         &control_operator_recipient,
         &control_doc_with_nonce_domain(&control_nonce),
+        &ws_dir,
         &audit_db,
         "v14_leg2_control",
     );
@@ -804,6 +809,7 @@ fn live_acceptance_v1_4_composed_three_legs() {
     let leg3_outcome = run_caprun_email_on(
         &hostile_operator_recipient,
         &hostile_doc_with_nonce_domain(&hostile_nonce),
+        &ws_dir,
         &audit_db,
         "v14_leg3_hostile",
     );

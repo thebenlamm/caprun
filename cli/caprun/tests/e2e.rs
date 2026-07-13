@@ -62,7 +62,11 @@ fn substrate_demo() {
     let run_id = uuid::Uuid::new_v4();
     let tmp = std::env::temp_dir().join(format!("caprun_e2e_{run_id}"));
     std::fs::create_dir_all(&tmp).expect("create tmp dir");
-    let workspace_file = tmp.join("workspace.txt");
+    // F1-safe layout: workspace file under its own subdirectory, audit.db a
+    // sibling of that subdirectory (never a direct child of the workspace root).
+    let ws_dir = tmp.join("workspace");
+    std::fs::create_dir_all(&ws_dir).expect("create workspace dir");
+    let workspace_file = ws_dir.join("workspace.txt");
     let audit_db_path = tmp.join("audit.db");
 
     // Benign content — no Reply-To:/Domain:/Body: markers, so the confined
@@ -187,7 +191,11 @@ fn dag_chain_integrity() {
     let run_id = uuid::Uuid::new_v4();
     let tmp = std::env::temp_dir().join(format!("caprun_e2e_dag_{run_id}"));
     std::fs::create_dir_all(&tmp).expect("create tmp dir");
-    let workspace_file = tmp.join("workspace.txt");
+    // F1-safe layout: workspace file under its own subdirectory, audit.db a
+    // sibling of that subdirectory (never a direct child of the workspace root).
+    let ws_dir = tmp.join("workspace");
+    std::fs::create_dir_all(&ws_dir).expect("create workspace dir");
+    let workspace_file = ws_dir.join("workspace.txt");
     let audit_db_path = tmp.join("audit.db");
 
     std::fs::write(&workspace_file, b"dag chain integrity test content")
