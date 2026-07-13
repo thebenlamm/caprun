@@ -717,6 +717,7 @@ fn live_acceptance_v1_3_composed() {
         };
         let (naive_read_id, _naive_hash, naive_value_id, _demoted_id, _demoted_hash) = mint_from_read(
             &conn,
+            &mac_key,
             &mut scratch_store,
             confirm_session_uuid,
             &naive_claim,

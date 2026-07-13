@@ -90,6 +90,7 @@ mod linux_tests {
                 SessionStatus::Active,
                 ws_root,
                 std::env::temp_dir().join("__uds_ipc_no_trusted_path__"),
+                Arc::new([0u8; 32]), // HARDEN-02 broker MAC key (test)
             )
             .await;
         });
@@ -149,6 +150,7 @@ mod linux_tests {
                 SessionStatus::Active,
                 ws_root,
                 std::env::temp_dir().join("__uds_ipc_no_trusted_path__"),
+                Arc::new([0u8; 32]), // HARDEN-02 broker MAC key (test)
             )
             .await;
         });
@@ -249,6 +251,7 @@ mod linux_tests {
                 SessionStatus::Active,
                 ws_root,
                 std::env::temp_dir().join("__uds_ipc_no_trusted_path__"),
+                Arc::new([0u8; 32]), // HARDEN-02 broker MAC key (test)
             )
             .await;
         });

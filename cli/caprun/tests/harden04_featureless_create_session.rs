@@ -157,6 +157,7 @@ mod linux_tests {
                 SessionStatus::Active,
                 ws_root,
                 std::env::temp_dir().join("__harden04_featureless_no_trusted_path__"),
+                std::sync::Arc::new([0u8; 32]), // HARDEN-02 broker MAC key (test)
             )
             .await;
         });

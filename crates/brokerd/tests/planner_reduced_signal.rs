@@ -195,6 +195,7 @@ mod linux_tests {
                 SessionStatus::Active,
                 ws_root_clone,
                 std::env::temp_dir().join("__planner_reduced_signal_no_trusted_path__"),
+                Arc::new([0u8; 32]), // HARDEN-02 broker MAC key (test)
             )
             .await;
         });
