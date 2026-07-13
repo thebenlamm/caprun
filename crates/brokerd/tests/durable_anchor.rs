@@ -40,6 +40,9 @@ use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
+/// Fixed, non-secret test MAC key (v1.6 Phase 28, HARDEN-02).
+const TEST_KEY: &[u8] = b"durable-anchor-rs-integration-test-key";
+
 /// Lowercase-hex SHA-256 of a literal — mirrors the digest the executor writes
 /// into `SinkBlockedAnchor.literal_sha256`.
 fn sha256_hex(s: &str) -> String {
@@ -102,7 +105,7 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
     };
     let (read_event_id, _read_hash, path_value_id, demoted_event_id, demoted_hash) = {
         let locked = conn.lock().unwrap();
-        mint_from_read(&locked, &mut store, session_id, &claim, None, None).expect("mint_from_read")
+        mint_from_read(&locked, TEST_KEY, &mut store, session_id, &claim, None, None).expect("mint_from_read")
     };
 
     // Chain onto the session_demoted event (the LAST event mint_from_read
@@ -162,6 +165,7 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
         BrokerRequest::SubmitPlanNode { plan_node },
         &mut server_end,
         &conn,
+        TEST_KEY,
         session_id,
         &mut last_event_id,
         &mut last_event_hash,
@@ -202,7 +206,7 @@ async fn after_exit_db_alone_anti_stapling_sentinel() {
 
     // ── (1) verify_chain FIRST — trust the chain BEFORE trusting the anchor. ──
     assert!(
-        verify_chain(&reopened, &sid),
+        verify_chain(&reopened, &sid, TEST_KEY),
         "verify_chain must pass on the REOPENED DB before the anchor is trusted \
          (the causal hash chain must survive process exit)"
     );
@@ -343,7 +347,7 @@ async fn tamper_evidence_mutating_payload_breaks_verify_chain() {
     {
         let reopened = open_audit_db(db_path.to_str().unwrap()).expect("reopen audit DB");
         assert!(
-            verify_chain(&reopened, &sid),
+            verify_chain(&reopened, &sid, TEST_KEY),
             "verify_chain must be TRUE before tampering (durable baseline)"
         );
     }
@@ -373,7 +377,7 @@ async fn tamper_evidence_mutating_payload_breaks_verify_chain() {
     {
         let reopened = open_audit_db(db_path.to_str().unwrap()).expect("reopen after tamper");
         assert!(
-            !verify_chain(&reopened, &sid),
+            !verify_chain(&reopened, &sid, TEST_KEY),
             "verify_chain MUST return FALSE after the anchor digest was mutated in the \
              payload column — the durable anchor is tamper-evident (rides in the hashed payload)"
         );
@@ -402,7 +406,7 @@ async fn redacting_side_table_literal_preserves_verify_chain_and_digest() {
     let event_id = blocked.id.to_string();
 
     // Pre-redaction: chain verifies, literal present, digest matches.
-    assert!(verify_chain(&reopened, &sid), "chain must verify before redaction");
+    assert!(verify_chain(&reopened, &sid, TEST_KEY), "chain must verify before redaction");
     let before = get_blocked_literal(&reopened, &event_id)
         .expect("query side table")
         .expect("literal present before redaction");
@@ -427,7 +431,7 @@ async fn redacting_side_table_literal_preserves_verify_chain_and_digest() {
         "the raw literal must be gone after redaction"
     );
     assert!(
-        verify_chain(&reopened, &sid),
+        verify_chain(&reopened, &sid, TEST_KEY),
         "verify_chain MUST stay TRUE after redaction — the hashed chain was untouched"
     );
     let blocked_after = find_event_by_type(&reopened, &sid, "sink_blocked")

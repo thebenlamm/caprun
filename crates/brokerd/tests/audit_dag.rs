@@ -10,6 +10,9 @@ use chrono::Utc;
 use runtime_core::{Event, TaintLabel};
 use uuid::Uuid;
 
+/// Fixed, non-secret test MAC key.
+const TEST_KEY: &[u8] = b"audit-dag-rs-integration-test-key";
+
 /// Append three events (session_created → fd_granted → file_read) and assert
 /// verify_chain returns true, parent_hash links are correct, and the chain is
 /// contiguous and unbroken.
@@ -48,12 +51,12 @@ fn audit_hash_chain() {
         vec![TaintLabel::LocalWorkspace],
     );
 
-    let h1 = append_event(&conn, &e1, None).expect("append e1 failed");
-    let h2 = append_event(&conn, &e2, Some(&h1)).expect("append e2 failed");
-    let _h3 = append_event(&conn, &e3, Some(&h2)).expect("append e3 failed");
+    let h1 = append_event(&conn, TEST_KEY, &e1, None).expect("append e1 failed");
+    let h2 = append_event(&conn, TEST_KEY, &e2, Some(&h1)).expect("append e2 failed");
+    let _h3 = append_event(&conn, TEST_KEY, &e3, Some(&h2)).expect("append e3 failed");
 
     assert!(
-        verify_chain(&conn, &session_id.to_string()),
+        verify_chain(&conn, &session_id.to_string(), TEST_KEY),
         "chain should be unbroken after 3 events"
     );
 
@@ -105,7 +108,7 @@ fn tamper_breaks_chain() {
         vec![],
     );
 
-    let _ = append_event(&conn, &e1, None).expect("append e1 failed");
+    let _ = append_event(&conn, TEST_KEY, &e1, None).expect("append e1 failed");
 
     // Tamper: directly mutate the payload via raw SQL (out-of-band, test-only)
     conn.execute(
@@ -115,7 +118,7 @@ fn tamper_breaks_chain() {
     .expect("tamper UPDATE failed");
 
     assert!(
-        !verify_chain(&conn, &session_id.to_string()),
+        !verify_chain(&conn, &session_id.to_string(), TEST_KEY),
         "verify_chain must return false after payload tampering"
     );
 }

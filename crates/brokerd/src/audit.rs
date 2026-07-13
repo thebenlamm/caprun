@@ -1,22 +1,81 @@
 /// audit — SQLite hash-linked audit DAG
 ///
-/// Schema: two tables (sessions, events) with a SHA-256 hash chain over the
-/// events table. Each event row stores its own hash and its parent's hash,
-/// forming a tamper-evident append-only chain.
+/// Schema: two tables (sessions, events) with a KEYED HMAC-SHA256 chain over
+/// the events table (v1.6 Phase 28, HARDEN-02). Each event row stores its own
+/// MAC and its parent's MAC, forming an AUTHENTICATED, tamper-evident
+/// append-only chain — authenticity now depends on the broker-owned secret
+/// MAC key (`cli/caprun/src/key.rs::load_or_create_key`), not merely on
+/// possession of the SQLite file. A bare `events`-table writer without the
+/// key cannot recompute a valid MAC for a forged/edited row, even if they
+/// rewrite every descendant row to be internally self-consistent under the
+/// PUBLIC (unkeyed) algorithm — see `verify_chain`'s doc comment and
+/// `self_consistent_forgery_without_key_is_rejected` below.
 ///
-/// The hash input is the canonical concatenation:
-///   SHA-256(parent_hash || id || session_id || event_type || payload || taint)
-/// where `||` means sequential `Digest::update` calls (no separator needed
-/// because each field has a fixed or content-delimited role in the chain).
+/// The MAC input is built by `mac_frame` (domain-separated + length-framed,
+/// see its doc comment) over the SAME field set the prior unkeyed SHA-256
+/// chain used, in the SAME order:
+///   parent_hash (empty string if None) || id || session_id || event_type ||
+///   payload || taint
+/// — domain tag `b"caprun.audit.event.v1"`. `mac_frame` is a SHARED helper
+/// (not event-specific) so Plan 04's chain-anchor MAC
+/// (`b"caprun.audit.anchor.v1"`) and Plan 05's `pending_confirmations`
+/// whole-row MAC (`b"caprun.audit.pending-confirmation.v1"`) reuse the exact
+/// same domain-separation + length-framing discipline over their own field
+/// sets — never a bare per-field `mac.update(field.as_bytes())`
+/// concatenation, which is ambiguous (("ab","c") and ("a","bc") collide) and
+/// would permit cross-record-type MAC replay if the same broker key is ever
+/// reused across record types without a domain tag.
 ///
 /// Append-only invariant: brokerd issues NO UPDATE or DELETE on the `events`
 /// table. Only the test suite uses raw SQL to simulate tampering.
 ///
-/// See 03-RESEARCH.md Pattern 5 for the schema DDL and hash computation.
+/// See 03-RESEARCH.md Pattern 5 for the original schema DDL, and
+/// 28-RESEARCH.md / DESIGN-security-hardening.md for the keyed-chain design.
 
 use anyhow::Result;
+use hmac::{Hmac, Mac};
 use runtime_core::Event;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
+
+/// HMAC-SHA256 type alias — the keyed MAC primitive for the audit chain
+/// (v1.6 Phase 28, HARDEN-02). `Hmac::new_from_slice` accepts a key of any
+/// length (RFC 2104), though `cli/caprun/src/key.rs::load_or_create_key`
+/// always produces exactly 32 bytes.
+type HmacSha256 = Hmac<Sha256>;
+
+/// Domain-separated, length-framed MAC input builder — SHARED across every
+/// record type this broker-key MAC scheme covers (events here; the Plan 04
+/// chain anchor and Plan 05 `pending_confirmations` whole-row MAC reuse this
+/// SAME helper with their OWN domain tags).
+///
+/// Without domain separation + length framing, a bare concatenation of
+/// fields is AMBIGUOUS: `("ab", "c")` and `("a", "bc")` hash identically
+/// under plain `mac.update(field)` calls, and reusing one broker key across
+/// multiple record types (events, chain anchors, pending_confirmations)
+/// would let a MAC computed for one record type be replayed as a valid MAC
+/// for a differently-shaped record. This function closes both holes:
+///   1. `domain` is mixed in FIRST — a fixed, record-type-specific tag (e.g.
+///      `b"caprun.audit.event.v1"`) that a differently-typed record never
+///      shares, so a MAC computed for one domain can never verify under
+///      another.
+///   2. Each field in `fields` is preceded by its own 8-byte little-endian
+///      length prefix before its bytes — this makes the boundary between
+///      adjacent fields unambiguous, closing the `("ab","c")`/`("a","bc")`
+///      collision.
+fn mac_frame(mac: &mut HmacSha256, domain: &[u8], fields: &[&[u8]]) {
+    mac.update(domain);
+    for field in fields {
+        mac.update(&(field.len() as u64).to_le_bytes());
+        mac.update(field);
+    }
+}
+
+/// Domain tag for the events-table hash-chain MAC (this file). Plan 04's
+/// chain anchor and Plan 05's `pending_confirmations` whole-row MAC MUST use
+/// their OWN distinct domain tags (`b"caprun.audit.anchor.v1"` /
+/// `b"caprun.audit.pending-confirmation.v1"` respectively) — never this one —
+/// when they reuse `mac_frame` above.
+const EVENT_MAC_DOMAIN: &[u8] = b"caprun.audit.event.v1";
 
 /// SQLite schema — STRICT tables enforce column type constraints.
 ///
@@ -233,14 +292,22 @@ pub fn event_hash_by_id(conn: &rusqlite::Connection, event_id: &str) -> Result<O
     }
 }
 
-/// Compute the SHA-256 hash for an audit event row.
+/// Compute the keyed HMAC-SHA256 MAC for an audit event row (v1.6 Phase 28,
+/// HARDEN-02).
 ///
-/// Input is the ordered concatenation (no separator) of:
-///   parent_hash (empty string if None) || id || session_id ||
-///   event_type || payload || taint
+/// Input is `mac_frame`'s domain-separated, length-framed encoding (domain
+/// tag `EVENT_MAC_DOMAIN`) over the ordered field set:
+///   parent_hash (empty string if None), id, session_id, event_type,
+///   payload, taint
+/// — the SAME field set and order the prior unkeyed SHA-256 chain used.
 ///
-/// Returns hex-encoded lowercase SHA-256 digest.
+/// `key` is the FIRST parameter (must_haves truth). Two different keys over
+/// IDENTICAL fields produce DIFFERENT digests (Success Criterion 2) — an
+/// events-table writer without the key cannot recompute a valid MAC.
+///
+/// Returns hex-encoded lowercase HMAC-SHA256 digest.
 pub fn compute_event_hash(
+    key: &[u8],
     parent_hash: Option<&str>,
     id: &str,
     session_id: &str,
@@ -248,14 +315,67 @@ pub fn compute_event_hash(
     payload: &str,
     taint: &str,
 ) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(parent_hash.unwrap_or(""));
-    hasher.update(id);
-    hasher.update(session_id);
-    hasher.update(event_type);
-    hasher.update(payload);
-    hasher.update(taint);
-    hex::encode(hasher.finalize())
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(key)
+        .expect("HMAC-SHA256 accepts a key of any length");
+    mac_frame(
+        &mut mac,
+        EVENT_MAC_DOMAIN,
+        &[
+            parent_hash.unwrap_or("").as_bytes(),
+            id.as_bytes(),
+            session_id.as_bytes(),
+            event_type.as_bytes(),
+            payload.as_bytes(),
+            taint.as_bytes(),
+        ],
+    );
+    hex::encode(mac.finalize().into_bytes())
+}
+
+/// Constant-time keyed verification of an event row's MAC (v1.6 Phase 28,
+/// HARDEN-02) — reconstructs the SAME `mac_frame` input `compute_event_hash`
+/// builds, then compares against `expected_hex` via `Mac::verify_slice`
+/// (constant-time; NEVER a `==`/`!=` hex-string compare, which would leak
+/// timing information about how many leading bytes matched).
+///
+/// Returns `false` (never panics, never `Result`) on:
+///   - a hex-decode failure of `expected_hex` (malformed/corrupt stored MAC),
+///   - a MAC mismatch under `key` (tampering, wrong key, or an unkeyed/
+///     legacy row that predates this scheme).
+///
+/// Fail-closed by construction: every error path returns `false`, never
+/// `true`.
+pub fn verify_event_hash(
+    key: &[u8],
+    expected_hex: &str,
+    parent_hash: Option<&str>,
+    id: &str,
+    session_id: &str,
+    event_type: &str,
+    payload: &str,
+    taint: &str,
+) -> bool {
+    let expected_bytes = match hex::decode(expected_hex) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    let mut mac = match <HmacSha256 as Mac>::new_from_slice(key) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    mac_frame(
+        &mut mac,
+        EVENT_MAC_DOMAIN,
+        &[
+            parent_hash.unwrap_or("").as_bytes(),
+            id.as_bytes(),
+            session_id.as_bytes(),
+            event_type.as_bytes(),
+            payload.as_bytes(),
+            taint.as_bytes(),
+        ],
+    );
+    mac.verify_slice(&expected_bytes).is_ok()
 }
 
 /// Append an event to the audit DAG and return its SHA-256 hash.
@@ -266,6 +386,9 @@ pub fn compute_event_hash(
 ///
 /// # Arguments
 /// * `conn` — open rusqlite connection (broker-owned; never shared with workers).
+/// * `key` — the broker-owned MAC key (v1.6 Phase 28, HARDEN-02) — the SAME
+///   key `cli/caprun/src/key.rs::load_or_create_key` returns, threaded
+///   through every production call site (never regenerated per-call).
 /// * `event` — the event to persist.
 /// * `parent_hash` — hash of the parent event row (`None` for session-root events).
 ///
@@ -273,6 +396,7 @@ pub fn compute_event_hash(
 /// This function only ever issues `INSERT`. No UPDATE or DELETE on `events`.
 pub fn append_event(
     conn: &rusqlite::Connection,
+    key: &[u8],
     event: &Event,
     parent_hash: Option<&str>,
 ) -> Result<String> {
@@ -288,6 +412,7 @@ pub fn append_event(
     let payload = serde_json::to_string(event)?;
     let taint_str = serde_json::to_string(&event.taint)?;
     let hash = compute_event_hash(
+        key,
         parent_hash,
         &event.id.to_string(),
         &event.session_id.to_string(),
@@ -461,20 +586,31 @@ pub fn current_chain_head(
     }
 }
 
-/// Walk the audit chain for `session_id` and verify every hash link.
+/// Walk the audit chain for `session_id` and verify every keyed MAC link
+/// (v1.6 Phase 28, HARDEN-02).
 ///
 /// Uses a recursive CTE to traverse from the root event (parent_id IS NULL)
 /// through each subsequent event linked by `parent_id`. For each row:
 ///
 /// 1. Asserts that `stored.parent_hash` matches the hash of the previous event.
-/// 2. Recomputes `compute_event_hash(...)` from stored fields.
-/// 3. Asserts the recomputed hash equals `stored.hash`.
+/// 2. Recomputes the keyed MAC via `verify_event_hash` (constant-time —
+///    `Mac::verify_slice`, never a `==`/`!=` hex-string compare) from stored
+///    fields under `key`.
 ///
 /// Returns `false` if:
-/// - Any hash mismatch is detected (tampering).
+/// - Any MAC mismatch is detected (tampering, wrong key, or an unkeyed/
+///   legacy row from before this scheme — fail-closed, not silently passed).
 /// - Any `parent_hash` link is broken.
 /// - No events exist for the session (empty chain is considered unverified).
-pub fn verify_chain(conn: &rusqlite::Connection, session_id: &str) -> bool {
+///
+/// Authenticity now depends on `key` (the broker-owned secret MAC key): a
+/// bare `events`-table writer without `key` cannot forge a self-consistent
+/// chain that verifies here, even if every descendant row is rewritten to be
+/// internally consistent under the PUBLIC (unkeyed) algorithm (Success
+/// Criterion 1) — see `self_consistent_forgery_without_key_is_rejected`.
+/// Calling with the WRONG key on an otherwise-untampered chain also returns
+/// `false` (Success Criterion 2) — see `verify_chain_is_key_dependent`.
+pub fn verify_chain(conn: &rusqlite::Connection, session_id: &str, key: &[u8]) -> bool {
     let result: Result<bool> = (|| {
         let mut stmt = conn.prepare(
             "WITH RECURSIVE chain(
@@ -516,16 +652,17 @@ pub fn verify_chain(conn: &rusqlite::Connection, session_id: &str) -> bool {
                 return Ok(false);
             }
 
-            // Recompute hash from stored fields and compare
-            let computed = compute_event_hash(
+            // Constant-time keyed MAC verify (never a `==`/`!=` hex compare).
+            if !verify_event_hash(
+                key,
+                &stored_hash,
                 stored_parent_hash.as_deref(),
                 &id,
                 &sid,
                 &event_type,
                 &payload,
                 &taint,
-            );
-            if computed != stored_hash {
+            ) {
                 return Ok(false);
             }
 
@@ -544,6 +681,13 @@ mod tests {
     use chrono::Utc;
     use runtime_core::TaintLabel;
     use uuid::Uuid;
+
+    /// Fixed, non-secret test MAC key — these unit tests exercise chain
+    /// mechanics (append/query/verify), not key custody (that's
+    /// `cli/caprun/src/key.rs`'s job) — a stable byte string is sufficient
+    /// and keeps every test in this module using ONE consistent key unless a
+    /// test explicitly wants a DIFFERENT one (key-dependence tests below).
+    const TEST_KEY: &[u8] = b"audit-rs-unit-test-key-not-secret-32b";
 
     /// Build a minimal file_read Event with taint labels [ExternalUntrusted, EmailRaw].
     fn make_file_read_event(session_id: Uuid) -> Event {
@@ -565,7 +709,7 @@ mod tests {
         let event = make_file_read_event(session_id);
         let event_id = event.id;
 
-        append_event(&conn, &event, None).expect("append_event");
+        append_event(&conn, TEST_KEY, &event, None).expect("append_event");
 
         let found = find_event_by_type(&conn, &session_id.to_string(), "file_read")
             .expect("find_event_by_type")
@@ -585,7 +729,7 @@ mod tests {
         let session_id = Uuid::new_v4();
         let event = make_file_read_event(session_id);
 
-        append_event(&conn, &event, None).expect("append_event");
+        append_event(&conn, TEST_KEY, &event, None).expect("append_event");
 
         let found = find_event_by_type(&conn, &session_id.to_string(), "email_send_stub")
             .expect("find_event_by_type");
@@ -602,7 +746,7 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         let root = make_file_read_event(session_id);
-        let root_hash = append_event(&conn, &root, None).expect("append root");
+        let root_hash = append_event(&conn, TEST_KEY, &root, None).expect("append root");
 
         let child = Event::new(
             Uuid::new_v4(),
@@ -613,7 +757,7 @@ mod tests {
             Utc::now(),
             vec![],
         );
-        let child_hash = append_event(&conn, &child, Some(&root_hash)).expect("append child");
+        let child_hash = append_event(&conn, TEST_KEY, &child, Some(&root_hash)).expect("append child");
 
         let head = current_chain_head(&conn, &session_id.to_string())
             .expect("current_chain_head")
@@ -647,8 +791,8 @@ mod tests {
         let event_b = make_file_read_event(session_id);
         assert_ne!(event_a.id, event_b.id, "sanity: distinct event ids");
 
-        append_event(&conn, &event_a, None).expect("append event_a");
-        append_event(&conn, &event_b, None).expect("append event_b");
+        append_event(&conn, TEST_KEY, &event_a, None).expect("append event_a");
+        append_event(&conn, TEST_KEY, &event_b, None).expect("append event_b");
 
         let found_a = find_event_by_id(&conn, &session_id.to_string(), &event_a.id.to_string())
             .expect("find_event_by_id a")
@@ -672,7 +816,7 @@ mod tests {
         let conn = open_audit_db(":memory:").expect("open_audit_db");
         let session_id = Uuid::new_v4();
         let event = make_file_read_event(session_id);
-        append_event(&conn, &event, None).expect("append_event");
+        append_event(&conn, TEST_KEY, &event, None).expect("append_event");
 
         let fabricated_id = Uuid::new_v4();
         let found = find_event_by_id(&conn, &session_id.to_string(), &fabricated_id.to_string())
@@ -691,7 +835,7 @@ mod tests {
         let session_a = Uuid::new_v4();
         let session_b = Uuid::new_v4();
         let event = make_file_read_event(session_a);
-        append_event(&conn, &event, None).expect("append_event");
+        append_event(&conn, TEST_KEY, &event, None).expect("append_event");
 
         let found = find_event_by_id(&conn, &session_b.to_string(), &event.id.to_string())
             .expect("find_event_by_id");
@@ -708,7 +852,7 @@ mod tests {
         let event = make_file_read_event(session_id);
         let event_id = event.id.to_string();
 
-        let hash = append_event(&conn, &event, None).expect("append_event");
+        let hash = append_event(&conn, TEST_KEY, &event, None).expect("append_event");
 
         let found = event_hash_by_id(&conn, &event_id).expect("event_hash_by_id");
         assert_eq!(found, Some(hash));
@@ -872,7 +1016,7 @@ mod tests {
         let event = make_file_read_event(session_id);
         let event_id = event.id;
 
-        append_event(&conn, &event, None).expect("append_event");
+        append_event(&conn, TEST_KEY, &event, None).expect("append_event");
 
         let events = query_events_by_session(&conn, &session_id.to_string())
             .expect("query_events_by_session");

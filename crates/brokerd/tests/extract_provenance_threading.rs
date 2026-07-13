@@ -36,6 +36,9 @@ use runtime_core::{
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
+/// Fixed, non-secret test MAC key (v1.6 Phase 28, HARDEN-02).
+const TEST_KEY: &[u8] = b"extract-provenance-threading-test-key";
+
 /// The CONFIRM-02 hostile-doc fixture: a realistic vendor-reconciliation
 /// template that embeds (a) a send-redirection injection attempt the
 /// deterministic extractor does NOT obey (there is no LLM in the loop -- the
@@ -163,7 +166,7 @@ async fn build_two_anchor_block_db(tag: &str) -> TwoAnchorFixture {
     // Mint the Reply-To: half -- the causal chain ROOT (parent_hash = None).
     let (reply_to_read_id, _reply_to_hash, reply_to_value_id, demoted1_id, demoted1_hash) = {
         let locked = conn.lock().unwrap();
-        mint_from_read(&locked, &mut store, session_id, &reply_to_claim, None, None)
+        mint_from_read(&locked, TEST_KEY, &mut store, session_id, &reply_to_claim, None, None)
             .expect("mint_from_read reply_to")
     };
 
@@ -174,6 +177,7 @@ async fn build_two_anchor_block_db(tag: &str) -> TwoAnchorFixture {
         let locked = conn.lock().unwrap();
         mint_from_read(
             &locked,
+            TEST_KEY,
             &mut store,
             session_id,
             &domain_claim,
@@ -186,7 +190,7 @@ async fn build_two_anchor_block_db(tag: &str) -> TwoAnchorFixture {
     // Mint the tainted body fragment, chained onto the Domain: session_demoted head.
     let (body_read_id, _body_hash, body_value_id, demoted3_id, demoted3_hash) = {
         let locked = conn.lock().unwrap();
-        mint_from_read(&locked, &mut store, session_id, &body_claim, Some(demoted2_id), Some(&demoted2_hash))
+        mint_from_read(&locked, TEST_KEY, &mut store, session_id, &body_claim, Some(demoted2_id), Some(&demoted2_hash))
             .expect("mint_from_read body")
     };
 
@@ -215,6 +219,7 @@ async fn build_two_anchor_block_db(tag: &str) -> TwoAnchorFixture {
         let locked = conn.lock().unwrap();
         mint_from_derivation(
             &locked,
+            TEST_KEY,
             &mut store,
             session_id,
             transformed_literal,
@@ -265,6 +270,7 @@ async fn build_two_anchor_block_db(tag: &str) -> TwoAnchorFixture {
         BrokerRequest::SubmitPlanNode { plan_node },
         &mut server_end,
         &conn,
+        TEST_KEY,
         session_id,
         &mut last_event_id,
         &mut last_event_hash,
@@ -310,7 +316,7 @@ async fn builds_two_anchor_block() {
     let sid = fixture.session_id.to_string();
 
     assert!(
-        verify_chain(&fixture.conn, &sid),
+        verify_chain(&fixture.conn, &sid, TEST_KEY),
         "verify_chain must pass on the REOPENED DB before anything else is trusted \
          (the causal hash chain must survive process exit)"
     );
@@ -369,7 +375,7 @@ async fn extract_02_and_03_positive_proof_both_anchors() {
     let sid = fixture.session_id.to_string();
 
     assert!(
-        verify_chain(&fixture.conn, &sid),
+        verify_chain(&fixture.conn, &sid, TEST_KEY),
         "verify_chain must pass on the REOPENED DB before the anchors are trusted"
     );
 
@@ -439,7 +445,7 @@ async fn extract_02_and_03_positive_proof_both_anchors() {
 async fn extract_02_anti_staple_control_a_fabricated_root_is_rejected() {
     let fixture = build_two_anchor_block_db("extract02_control_a").await;
     let sid = fixture.session_id.to_string();
-    assert!(verify_chain(&fixture.conn, &sid), "baseline chain must verify");
+    assert!(verify_chain(&fixture.conn, &sid, TEST_KEY), "baseline chain must verify");
 
     let fabricated_root = Uuid::new_v4();
     let fabricated_chain = vec![fabricated_root];
@@ -480,7 +486,7 @@ async fn extract_02_anti_staple_control_a_fabricated_root_is_rejected() {
 async fn extract_02_anti_staple_control_b_reanchored_staple_is_rejected() {
     let fixture = build_two_anchor_block_db("extract02_control_b").await;
     let sid = fixture.session_id.to_string();
-    assert!(verify_chain(&fixture.conn, &sid), "baseline chain must verify");
+    assert!(verify_chain(&fixture.conn, &sid, TEST_KEY), "baseline chain must verify");
 
     let blocked = find_event_by_type(&fixture.conn, &sid, "sink_blocked")
         .expect("query sink_blocked")
@@ -522,6 +528,7 @@ async fn extract_02_anti_staple_control_b_reanchored_staple_is_rejected() {
     };
     let (naive_read_id, _naive_hash, naive_value_id, _demoted_id, _demoted_hash) = mint_from_read(
         &fixture.conn,
+        TEST_KEY,
         &mut scratch_store,
         fixture.session_id,
         &naive_claim,
@@ -553,7 +560,7 @@ async fn extract_02_anti_staple_control_b_reanchored_staple_is_rejected() {
     // The mutation preserves a single linear chain (append-only, chained
     // onto the sink_blocked event -- never a second root).
     assert!(
-        verify_chain(&fixture.conn, &sid),
+        verify_chain(&fixture.conn, &sid, TEST_KEY),
         "verify_chain must still hold after appending the naive re-mint (single linear \
          chain preserved, not forked)"
     );

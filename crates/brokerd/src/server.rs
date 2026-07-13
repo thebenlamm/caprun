@@ -169,6 +169,14 @@ pub async fn run_broker_server(
     initial_session_status: SessionStatus,
     workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
     trusted_workspace_path: PathBuf,
+    // v1.6 Phase 28 (HARDEN-02): the broker-owned MAC key, threaded as a
+    // sibling of `conn` — the accepted fallback (28-03-PLAN.md Step C) to
+    // bundling the key onto the connection handle itself, since `conn`'s
+    // locked guard is consumed as a bare `&rusqlite::Connection` by MANY
+    // non-audit call sites (session/pending_confirmations/blocked_literals
+    // helpers) that would otherwise all need restructuring. Cloned per
+    // connection exactly like `conn` (cheap — an `Arc` pointer clone).
+    key: Arc<[u8; 32]>,
 ) -> anyhow::Result<()> {
     // Approach A: tokio detects the leading NUL and calls from_abstract_name internally.
     let sock_path = format!("\0/agentos/{session_id}");
@@ -258,6 +266,8 @@ pub async fn run_broker_server(
             // clone) — this is a READ of the shared cell, never a fresh
             // owned re-seed. Never write `Active` into the cell here.
             let session_status_clone = session_status.clone();
+            // v1.6 Phase 28 (HARDEN-02): cloned per connection exactly like `conn`.
+            let key_clone = key.clone();
             tokio::spawn(async move {
                 // ConnectionRole::Worker — full capabilities, `permits`
                 // always `true` (Phase 20, PLANNER-02/04).
@@ -271,6 +281,7 @@ pub async fn run_broker_server(
                     workspace_root_clone,
                     trusted_inode,
                     ConnectionRole::Worker,
+                    key_clone,
                 )
                 .await
                 {
@@ -292,6 +303,8 @@ pub async fn run_broker_server(
         // connection is accepted is observed immediately via this handle.
         let session_status_clone = session_status.clone();
         let planner_slot_clone = planner_slot_occupied.clone();
+        // v1.6 Phase 28 (HARDEN-02): cloned per connection exactly like `conn`.
+        let key_clone = key.clone();
         tokio::spawn(async move {
             classify_second_connection(
                 stream,
@@ -303,6 +316,7 @@ pub async fn run_broker_server(
                 workspace_root_clone,
                 trusted_inode,
                 planner_slot_clone,
+                key_clone,
             )
             .await;
         });
@@ -350,6 +364,7 @@ async fn classify_second_connection(
     workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
     trusted_inode: Option<(u64, u64)>,
     planner_slot_occupied: Arc<std::sync::atomic::AtomicBool>,
+    key: Arc<[u8; 32]>,
 ) {
     let first_frame = tokio::time::timeout(
         CLASSIFY_FIRST_FRAME_TIMEOUT,
@@ -388,6 +403,7 @@ async fn classify_second_connection(
             workspace_root,
             trusted_inode,
             ConnectionRole::Planner,
+            key,
         )
         .await
         {
@@ -469,6 +485,7 @@ async fn handle_connection(
     workspace_root: Arc<adapter_fs::workspace::WorkspaceRoot>,
     trusted_inode: Option<(u64, u64)>,
     role: ConnectionRole,
+    key: Arc<[u8; 32]>,
 ) -> anyhow::Result<()> {
     // Per-connection ValueStore — scoped to this session ONLY (HARD-03 fix).
     let mut value_store = ValueStore::default();
@@ -569,6 +586,7 @@ async fn handle_connection(
             let decision = evaluate_plan_node_and_record(
                 plan_node,
                 &conn,
+                &key[..],
                 session_id,
                 &mut value_store,
                 &workspace_root,
@@ -596,6 +614,7 @@ async fn handle_connection(
             request,
             &mut stream,
             &conn,
+            &key[..],
             session_id,
             &mut last_event_id,
             &mut last_event_hash,
@@ -632,6 +651,7 @@ async fn handle_connection(
 async fn evaluate_plan_node_and_record(
     plan_node: &runtime_core::PlanNode,
     conn: &Arc<Mutex<rusqlite::Connection>>,
+    key: &[u8],
     session_id: Uuid,
     value_store: &mut ValueStore,
     workspace_root: &Arc<adapter_fs::workspace::WorkspaceRoot>,
@@ -796,7 +816,7 @@ async fn evaluate_plan_node_and_record(
             .lock()
             .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
         let hash =
-            append_event(&locked, &audit_event, Some(last_event_hash)).map_err(|e| {
+            append_event(&locked, key, &audit_event, Some(last_event_hash)).map_err(|e| {
                 eprintln!("[brokerd] {event_type} audit append FAILED (fail-closed): {e}");
                 anyhow::anyhow!("audit append failed: {e}")
             })?;
@@ -852,6 +872,7 @@ async fn evaluate_plan_node_and_record(
                 .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
             crate::sinks::file_create::invoke_file_create(
                 &locked,
+                key,
                 value_store,
                 session_id,
                 effect_id,
@@ -920,7 +941,7 @@ async fn evaluate_plan_node_and_record(
             vec![],
         );
         let attempted_event_id = attempted_event.id;
-        let attempted_hash = append_event(&locked, &attempted_event, Some(last_event_hash))
+        let attempted_hash = append_event(&locked, key, &attempted_event, Some(last_event_hash))
             .map_err(|e| {
                 eprintln!(
                     "[brokerd] email_send_attempted audit append FAILED (fail-closed): {e}"
@@ -940,6 +961,7 @@ async fn evaluate_plan_node_and_record(
         let (sink_event_id, sink_hash) =
             crate::sinks::email_smtp::invoke_email_smtp_from_resolved(
                 &locked,
+                key,
                 session_id,
                 effect_id,
                 &resolved_args,
@@ -997,6 +1019,7 @@ async fn create_session_arm_disabled_response(
 async fn create_session_arm(
     stream: &mut tokio::net::UnixStream,
     conn: &Arc<Mutex<rusqlite::Connection>>,
+    key: &[u8],
     intent_id: Uuid,
 ) -> anyhow::Result<()> {
     // SC3 build-evidence marker: a stable, greppable string literal that
@@ -1043,7 +1066,7 @@ async fn create_session_arm(
 
     let result: anyhow::Result<()> = match conn.lock() {
         Ok(locked) => persist_session(&locked, &session)
-            .and_then(|_| append_event(&locked, &event, None).map(|_| ())),
+            .and_then(|_| append_event(&locked, key, &event, None).map(|_| ())),
         Err(e) => Err(anyhow::anyhow!("mutex poisoned: {e}")),
     };
 
@@ -1082,6 +1105,7 @@ async fn create_session_arm(
 async fn create_session_arm(
     stream: &mut tokio::net::UnixStream,
     _conn: &Arc<Mutex<rusqlite::Connection>>,
+    _key: &[u8],
     _intent_id: Uuid,
 ) -> anyhow::Result<()> {
     create_session_arm_disabled_response(stream).await
@@ -1119,6 +1143,7 @@ pub async fn dispatch_request(
     request: BrokerRequest,
     stream: &mut tokio::net::UnixStream,
     conn: &Arc<Mutex<rusqlite::Connection>>,
+    key: &[u8],
     session_id: Uuid,
     last_event_id: &mut Uuid,
     last_event_hash: &mut String,
@@ -1142,7 +1167,7 @@ pub async fn dispatch_request(
 
     match request {
         BrokerRequest::CreateSession { intent_id } => {
-            create_session_arm(stream, conn, intent_id).await?;
+            create_session_arm(stream, conn, key, intent_id).await?;
         }
 
         BrokerRequest::RequestFd { path } => {
@@ -1177,7 +1202,7 @@ pub async fn dispatch_request(
                 let locked = conn
                     .lock()
                     .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
-                append_event(&locked, &fd_event, Some(last_event_hash))
+                append_event(&locked, key, &fd_event, Some(last_event_hash))
                     .context("append fd_granted")?
             };
 
@@ -1260,7 +1285,7 @@ pub async fn dispatch_request(
                     // GENUINE causal edge (fd_granted -> session_demoted),
                     // never a stapled tag. SAME `locked` guard as the UPDATE
                     // immediately above — one acquisition, one atomic unit.
-                    append_event(&locked, &demoted_event, Some(&fd_hash))
+                    append_event(&locked, key, &demoted_event, Some(&fd_hash))
                         .context("append session_demoted (RequestFd fd-grant demotion)")?
                 };
                 // (b) SHARED in-memory cell: a DIFFERENT mutex
@@ -1349,6 +1374,7 @@ pub async fn dispatch_request(
                         .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
                     mint_from_read(
                         &locked,
+                        key,
                         value_store,
                         session_id,
                         &quarantine_claim,
@@ -1424,6 +1450,7 @@ pub async fn dispatch_request(
             let decision = evaluate_plan_node_and_record(
                 &plan_node,
                 conn,
+                key,
                 session_id,
                 value_store,
                 workspace_root,
@@ -1494,6 +1521,7 @@ pub async fn dispatch_request(
                     .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
                 mint_from_derivation(
                     &locked,
+                    key,
                     value_store,
                     session_id,
                     transformed_literal,
@@ -1607,6 +1635,7 @@ pub async fn dispatch_request(
                 // is parent-linked onto session_created, keeping the parent_id chain unbroken.
                 let (recipient_event_id, recipient_hash, recipient_value_id) = mint_from_intent(
                     &locked,
+                    key,
                     value_store,
                     session_id,
                     primary_literal,
@@ -1621,6 +1650,7 @@ pub async fn dispatch_request(
                     Some(subject) => {
                         let (event_id, hash, vid) = mint_from_intent(
                             &locked,
+                            key,
                             value_store,
                             session_id,
                             subject,
@@ -1639,6 +1669,7 @@ pub async fn dispatch_request(
                     Some(body) => {
                         let (event_id, hash, vid) = mint_from_intent(
                             &locked,
+                            key,
                             value_store,
                             session_id,
                             body,
@@ -1734,6 +1765,9 @@ mod tests {
     use runtime_core::intent::CaprunIntent;
     use std::os::unix::io::{AsRawFd, FromRawFd};
 
+    /// Fixed, non-secret test MAC key (mirrors `audit.rs`'s `TEST_KEY`).
+    const TEST_KEY: &[u8] = b"server-rs-unit-test-key-not-secret-32by";
+
     /// Read one framed `BrokerResponse` from the client end of a
     /// `UnixStream::pair` (mirrors `send_response`'s wire framing).
     async fn read_framed(stream: &mut tokio::net::UnixStream) -> BrokerResponse {
@@ -1810,6 +1844,7 @@ mod tests {
             BrokerRequest::ProvideIntent { intent: sample_intent() },
             &mut server_end,
             &conn,
+            TEST_KEY,
             session_id,
             &mut last_event_id,
             &mut last_event_hash,
@@ -1848,6 +1883,7 @@ mod tests {
             BrokerRequest::ProvideIntent { intent: sample_intent() },
             &mut server_end,
             &conn,
+            TEST_KEY,
             session_id,
             &mut last_event_id,
             &mut last_event_hash,
@@ -1869,6 +1905,7 @@ mod tests {
             BrokerRequest::ProvideIntent { intent: sample_intent() },
             &mut server_end,
             &conn,
+            TEST_KEY,
             session_id,
             &mut last_event_id,
             &mut last_event_hash,
@@ -1929,6 +1966,7 @@ mod tests {
             BrokerRequest::RequestFd { path: "workspace.txt".to_string() },
             &mut server_end,
             &conn,
+            TEST_KEY,
             session_id,
             &mut last_event_id,
             &mut last_event_hash,
@@ -1959,6 +1997,7 @@ mod tests {
             BrokerRequest::ProvideIntent { intent: sample_intent() },
             &mut server_end,
             &conn,
+            TEST_KEY,
             session_id,
             &mut last_event_id,
             &mut last_event_hash,

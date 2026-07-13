@@ -41,8 +41,14 @@ use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 // Cross-process MAC-key custody + F1 fail-closed startup refusal (HARDEN-02).
-// Not yet wired into the `open_audit_db` call sites below — Plan 03 wires the
-// `caprun run` path, Plan 05 wires `run_confirm_or_deny`.
+// Plan 03 wires the `caprun run` path (below, step 1c) AND — as a necessary
+// consequence of threading `key: &[u8]` through `confirm()`/`deny()`'s
+// signatures (so `cli/caprun/tests/confirm.rs`'s existing macOS-run
+// cross-process suite keeps passing under the keyed chain) — a MINIMAL
+// key-load in `run_confirm_or_deny` for both verbs too. Plan 05 still owns
+// the REMAINING confirm/deny wiring: the `pending_confirmations` whole-row
+// MAC fold, the MAC-verify-before-terminal-state gate, and deny()'s NEW
+// `verify_chain` gate (deny() does not call `verify_chain` at all yet).
 mod key;
 
 /// Trusted default `subject`/`body` for a `send-email-summary` intent (Phase
@@ -206,6 +212,28 @@ async fn main() -> anyhow::Result<()> {
     // below, which the worker consumes — this one reaches the broker).
     let trusted_workspace_path: std::path::PathBuf = ws_path.to_path_buf();
 
+    // ── 1c. Load (or create) the broker-owned MAC key (v1.6 Phase 28, HARDEN-02) ─
+    // AFTER workspace_root_dir is derived (F1 needs a workspace root to check
+    // containment against) and BEFORE the broker task is spawned (every
+    // broker-internal append_event/verify_chain needs this key in scope from
+    // its very first call). `load_or_create_key` is F1-checked (fail-closed
+    // refusal if the audit DB or its `.key` sibling resolves beneath the
+    // workspace root — the confined worker's PRIMARY reach) and idempotent
+    // (a later, separate `caprun confirm`/`deny` process reads the SAME
+    // persisted key back). Converted to a fixed `[u8; 32]` array — the DESIGN
+    // doc's pinned key length — then wrapped in an `Arc` so it can be cloned
+    // per-connection exactly like `conn` (server.rs's accepted Step-C
+    // fallback: threaded as a sibling of the `conn` Arc, never bundled onto
+    // the connection handle, since `conn`'s locked guard is consumed as a
+    // bare `&rusqlite::Connection` by many non-audit call sites).
+    let mac_key_bytes = key::load_or_create_key(&audit_path, workspace_root_dir)
+        .context("load_or_create_key (F1 fail-closed MAC-key custody)")?;
+    let mac_key: std::sync::Arc<[u8; 32]> = std::sync::Arc::new(
+        mac_key_bytes
+            .try_into()
+            .map_err(|v: Vec<u8>| anyhow::anyhow!("MAC key must be 32 bytes, got {}", v.len()))?,
+    );
+
     // ── 2. Create session + persist + append session_created event ──────────
     // The CLI decides seed_provenance (above); create_session (broker-side,
     // Plan 03) is the ONLY place that turns provenance into the session's
@@ -239,7 +267,7 @@ async fn main() -> anyhow::Result<()> {
     let session_created_hash = {
         let locked = conn.lock().unwrap();
         persist_session(&locked, &session).context("persist_session")?;
-        append_event(&locked, &e_session, None).context("append session_created")?
+        append_event(&locked, &mac_key[..], &e_session, None).context("append session_created")?
     };
 
     // ── 3. Spawn the unified broker server ───────────────────────────────────
@@ -248,6 +276,7 @@ async fn main() -> anyhow::Result<()> {
     // synchronously at the top of the task, before the worker process can connect.
     let conn_clone = conn.clone();
     let ws_root_for_broker = workspace_root.clone();
+    let mac_key_for_broker = mac_key.clone();
     let broker_task = tokio::spawn(async move {
         brokerd::server::run_broker_server(
             &session_id.to_string(),
@@ -258,6 +287,7 @@ async fn main() -> anyhow::Result<()> {
             initial_session_status,
             ws_root_for_broker,
             trusted_workspace_path,
+            mac_key_for_broker,
         )
         .await
     });
@@ -355,7 +385,7 @@ async fn main() -> anyhow::Result<()> {
     {
         let locked = conn.lock().unwrap();
         print_audit_dag(&locked, &session_id.to_string())?;
-        let chain_ok = verify_chain(&locked, &session_id.to_string());
+        let chain_ok = verify_chain(&locked, &session_id.to_string(), &mac_key[..]);
         println!(
             "\nChain verification: {}",
             if chain_ok { "PASSED" } else { "FAILED" }
@@ -401,11 +431,45 @@ fn run_confirm_or_deny(verb: &str, effect_id: &str, audit_path: &str) -> anyhow:
                         &pc.workspace_root_path,
                     ))
                     .context("open workspace root for confirm")?;
-                    confirm(&mut conn, effect_id, &ws)?
+                    // v1.6 Phase 28 (HARDEN-02): load the SAME F1-checked,
+                    // cross-process-stable broker key the original `caprun
+                    // run` process persisted (Plan 02's `load_or_create_key`)
+                    // — required so `confirm()`'s keyed `verify_chain` gate
+                    // (Step 4.5a) verifies true against a chain appended by a
+                    // DIFFERENT OS process. This is the minimal key-load half
+                    // of Plan 05 Task 2's "run_confirm_or_deny key wiring";
+                    // Plan 05 still owns the pending_confirmations MAC-verify
+                    // gate that runs BEFORE this point.
+                    let key = key::load_or_create_key(
+                        audit_path,
+                        Path::new(&pc.workspace_root_path),
+                    )
+                    .context("load_or_create_key (F1 fail-closed MAC-key custody, confirm)")?;
+                    confirm(&mut conn, &key, effect_id, &ws)?
                 }
             }
         }
-        "deny" => deny(&conn, effect_id)?,
+        "deny" => {
+            // deny() itself needs no workspace root for its OWN logic
+            // (CONFIRM-03 — it never invokes a sink), but v1.6 Phase 28
+            // (HARDEN-02) needs `pc.workspace_root_path` to run the SAME F1
+            // key-load `confirm` runs above, so a `caprun deny` process
+            // agrees with the original `caprun run` process's broker key.
+            // An unknown effect_id short-circuits here (no row to derive a
+            // workspace root from) rather than falling through to deny()'s
+            // own (now key-requiring) internal lookup.
+            match find_pending_confirmation(&conn, effect_id)? {
+                None => ConfirmOutcome::UnknownEffect,
+                Some(pc) => {
+                    let key = key::load_or_create_key(
+                        audit_path,
+                        Path::new(&pc.workspace_root_path),
+                    )
+                    .context("load_or_create_key (F1 fail-closed MAC-key custody, deny)")?;
+                    deny(&conn, &key, effect_id)?
+                }
+            }
+        }
         // review (MAJOR-8): read-only — never opens the workspace root, never
         // invokes any sink, never transitions state.
         "review" => review(&conn, effect_id)?,

@@ -872,6 +872,11 @@ fn live_acceptance_v1_4_composed_three_legs() {
     // one shared audit.db file, every session's verify_chain independently
     // true — never a single cross-session parent_id chain).
     let conn = open_audit_db(audit_db.to_str().unwrap()).expect("open shared audit DB (final sweep)");
+    // v1.6 Phase 28 (HARDEN-02): all three composed runs share ONE
+    // `<audit_db>.key` — a single read-back is the correct key for every
+    // `verify_chain` call below.
+    let mac_key = std::fs::read(format!("{}.key", audit_db.display()))
+        .expect("read persisted MAC key file written by the caprun run subprocesses");
     let sids = all_session_ids(&conn);
     assert_eq!(
         sids.len(),
@@ -881,7 +886,7 @@ fn live_acceptance_v1_4_composed_three_legs() {
     );
     for sid in &sids {
         assert!(
-            verify_chain(&conn, sid),
+            verify_chain(&conn, sid, &mac_key),
             "verify_chain must be true for session {sid} (per-session, enumerated via \
              ORDER BY rowid, never LIMIT 1)"
         );

@@ -358,14 +358,22 @@ pub enum ConfirmOutcome {
     /// mismatch→retry sequence extends the chain linearly and never forks
     /// `verify_chain`). No sink is ever invoked on this path.
     ///
-    /// HONESTY (MAJOR-6): `audit::verify_chain` recomputes hashes from the
-    /// SAME SQLite store and nothing pins the chain head — an actor with
-    /// `events` table write access could forge the chain end-to-end. Wiring
-    /// it here detects single-store and non-recomputing multi-store
-    /// tampering; it does NOT make tamper-evidence "fully closed." The
-    /// chain-head-not-anchored residual risk is an Accepted Residual Risk
-    /// (v2 obligation: keyed-MAC / external head-pin) — see
-    /// `.planning/todos/pending`.
+    /// HONESTY (MAJOR-6, UPDATED v1.6 Phase 28 HARDEN-02): `audit::verify_chain`
+    /// now recomputes a KEYED HMAC-SHA256 MAC under the broker-owned secret
+    /// key (`cli/caprun/src/key.rs::load_or_create_key`) — an actor with bare
+    /// `events` table write access (no key) can no longer forge a
+    /// self-consistent chain end-to-end (Success Criterion 1/2,
+    /// `self_consistent_forgery_without_key_is_rejected` /
+    /// `verify_chain_is_key_dependent` in `audit.rs`). This closes the prior
+    /// "an actor with table write access could forge the chain" residual for
+    /// the EVENTS chain specifically. Two residuals remain, tracked as
+    /// separate plans in this phase (NOT closed here): (a) the chain HEAD
+    /// itself is not yet externally anchored against tail-truncation (Plan
+    /// 04's chain-anchor MAC); (b) `pending_confirmations` — the mutable
+    /// side table this enum's outcome reads — has no MAC of its own yet, so
+    /// a flip-back/delete on THAT table is still undetected here (Plan 05's
+    /// whole-row MAC fold). See `.planning/todos/pending` for anything past
+    /// this phase's scope.
     DigestMismatch,
 }
 
@@ -533,6 +541,7 @@ fn current_chain_head_or_bail(
 /// discovering for `mint_from_read`).
 fn append_confirm_digest_mismatch_event(
     conn: &rusqlite::Connection,
+    key: &[u8],
     pc: &PendingConfirmation,
     effect_id: &str,
     head_id: Uuid,
@@ -547,7 +556,7 @@ fn append_confirm_digest_mismatch_event(
         Utc::now(),
         vec![],
     );
-    crate::audit::append_event(conn, &mismatch_event, Some(head_hash))?;
+    crate::audit::append_event(conn, key, &mismatch_event, Some(head_hash))?;
     Ok(())
 }
 
@@ -563,6 +572,7 @@ fn append_confirm_digest_mismatch_event(
 /// (CONFIRM-02, T-10-05, "Confirm MUST NOT Re-Invoke submit_plan_node").
 pub fn confirm(
     conn: &mut rusqlite::Connection,
+    key: &[u8],
     effect_id: &str,
     workspace_root: &adapter_fs::workspace::WorkspaceRoot,
 ) -> Result<ConfirmOutcome> {
@@ -591,14 +601,16 @@ pub fn confirm(
     // Step 4.5a: CHAIN-VERIFY FIRST (MAJOR-3) — fail closed on a broken chain
     // BEFORE trusting ANYTHING read back from the hash-chained `sink_blocked`
     // Event. `find_event_by_id` only DESERIALIZES; it does NOT check hashes.
-    // HONESTY (MAJOR-6): `verify_chain` recomputes hashes from the SAME
-    // SQLite store and nothing pins the chain head — this detects
-    // single-store and non-recomputing multi-store tampering, it is NOT
-    // authenticated/externally-anchored (see ConfirmOutcome::DigestMismatch's
-    // doc comment for the full honest scope + Accepted Residual Risk).
-    if !crate::audit::verify_chain(conn, &pc.session_id.to_string()) {
+    // HONESTY (MAJOR-6, UPDATED v1.6 Phase 28 HARDEN-02): `verify_chain` now
+    // recomputes a KEYED HMAC-SHA256 MAC under `key` (the broker-owned
+    // secret) — a bare `events`-table writer without the key cannot forge a
+    // self-consistent chain here. This is still NOT externally
+    // tail-anchored (Plan 04) and `pending_confirmations` itself is still
+    // unMAC'd (Plan 05) — see `ConfirmOutcome::DigestMismatch`'s doc comment
+    // for the full honest scope of what remains open in this phase.
+    if !crate::audit::verify_chain(conn, &pc.session_id.to_string(), key) {
         let (head_id, head_hash) = current_chain_head_or_bail(conn, pc.session_id)?;
-        append_confirm_digest_mismatch_event(conn, &pc, effect_id, head_id, &head_hash)?;
+        append_confirm_digest_mismatch_event(conn, key, &pc, effect_id, head_id, &head_hash)?;
         return Ok(ConfirmOutcome::DigestMismatch);
     }
 
@@ -631,7 +643,7 @@ pub fn confirm(
     // all three are the SAME integrity alarm from confirm()'s perspective.
     if authoritative_digest.as_deref() != Some(recomputed_digest.as_str()) {
         let (head_id, head_hash) = current_chain_head_or_bail(conn, pc.session_id)?;
-        append_confirm_digest_mismatch_event(conn, &pc, effect_id, head_id, &head_hash)?;
+        append_confirm_digest_mismatch_event(conn, key, &pc, effect_id, head_id, &head_hash)?;
         return Ok(ConfirmOutcome::DigestMismatch);
     }
 
@@ -653,7 +665,7 @@ pub fn confirm(
         vec![],
     );
     let granted_event_id = granted_event.id;
-    let granted_hash = crate::audit::append_event(conn, &granted_event, Some(&head_hash))?;
+    let granted_hash = crate::audit::append_event(conn, key, &granted_event, Some(&head_hash))?;
 
     // Step 6: at-most-once — the state transition is persisted BEFORE the sink
     // is invoked (DESIGN Step 4a.5). A `0` return means a raced re-transition
@@ -679,6 +691,7 @@ pub fn confirm(
     match pc.sink.0.as_str() {
         "file.create" => match crate::sinks::file_create::invoke_file_create_from_resolved(
             conn,
+            key,
             pc.session_id,
             pc.effect_id,
             &pc.resolved_args,
@@ -714,13 +727,14 @@ pub fn confirm(
             );
             let attempted_event_id = attempted_event.id;
             let attempted_hash =
-                crate::audit::append_event(&tx, &attempted_event, Some(&granted_hash))?;
+                crate::audit::append_event(&tx, key, &attempted_event, Some(&granted_hash))?;
             tx.commit()?;
 
             // AFTER commit — the CAS + attempt are now durable together, or
             // neither is; only now does an SMTP connection ever open.
             match crate::sinks::email_smtp::invoke_email_smtp_from_resolved(
                 conn,
+                key,
                 pc.session_id,
                 pc.effect_id,
                 &pc.resolved_args,
@@ -750,7 +764,7 @@ pub fn confirm(
 /// find the block and set the causal parent chain onto the CURRENT CHAIN HEAD
 /// (MAJOR-7 — never `blocked_event_id` directly; in the single-shot case the
 /// head IS `blocked_event_id`, so this is behavior-preserving there).
-pub fn deny(conn: &rusqlite::Connection, effect_id: &str) -> Result<ConfirmOutcome> {
+pub fn deny(conn: &rusqlite::Connection, key: &[u8], effect_id: &str) -> Result<ConfirmOutcome> {
     // Steps 1-2: same fresh lookup + terminal-state check as confirm.
     let pc = match find_pending_confirmation(conn, effect_id)? {
         Some(pc) => pc,
@@ -773,7 +787,7 @@ pub fn deny(conn: &rusqlite::Connection, effect_id: &str) -> Result<ConfirmOutco
         Utc::now(),
         vec![],
     );
-    crate::audit::append_event(conn, &denied_event, Some(&head_hash))?;
+    crate::audit::append_event(conn, key, &denied_event, Some(&head_hash))?;
 
     let affected = transition_state(conn, effect_id, PendingConfirmationState::Denied)?;
     if affected == 0 {
@@ -790,6 +804,12 @@ mod tests {
     use crate::audit::open_audit_db;
     use runtime_core::plan_node::{SinkId, TaintLabel, ValueId};
     use uuid::Uuid;
+
+    /// Fixed, non-secret test MAC key (mirrors `audit.rs`'s `TEST_KEY`) — used
+    /// consistently for both the seeding `append_event` calls AND the
+    /// `confirm()`/`deny()` calls under test in this module, so the keyed
+    /// `verify_chain` gate verifies true on an untampered chain.
+    const TEST_KEY: &[u8] = b"confirmation-rs-unit-test-key-not-secret";
 
     // ── combined_digest primitive (Task 1, CONFIRM-03 / DESIGN Round-6) ─────
 
@@ -1207,7 +1227,7 @@ mod tests {
             chrono::Utc::now(),
             vec![],
         );
-        let root_hash = append_event(conn, &root, None).unwrap();
+        let root_hash = append_event(conn, TEST_KEY, &root, None).unwrap();
 
         let literal_sha256 = {
             let mut hasher = Sha256::new();
@@ -1262,7 +1282,7 @@ mod tests {
             blocked_arg_names.clone(),
         );
         let blocked_event_id = blocked_event.id;
-        append_event(conn, &blocked_event, Some(&root_hash)).unwrap();
+        append_event(conn, TEST_KEY, &blocked_event, Some(&root_hash)).unwrap();
         insert_blocked_literal(conn, &blocked_event_id.to_string(), "path", path).unwrap();
 
         let pc = PendingConfirmation {
@@ -1295,7 +1315,7 @@ mod tests {
         let (effect_id, session_id, blocked_event_id) =
             seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
 
-        let outcome = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
         assert_eq!(outcome, ConfirmOutcome::Released);
 
         let on_disk = std::fs::read_to_string(root.join("out.txt")).unwrap();
@@ -1328,10 +1348,10 @@ mod tests {
         let (effect_id, _session_id, _blocked_event_id) =
             seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
 
-        let first = confirm(&mut conn, &effect_id.to_string(), &ws).expect("first confirm");
+        let first = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("first confirm");
         assert_eq!(first, ConfirmOutcome::Released);
 
-        let second = confirm(&mut conn, &effect_id.to_string(), &ws).expect("second confirm");
+        let second = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("second confirm");
         assert_eq!(second, ConfirmOutcome::AlreadyTerminal);
 
         let entries: Vec<_> = std::fs::read_dir(&root).unwrap().collect();
@@ -1358,7 +1378,7 @@ mod tests {
         let (effect_id, session_id, blocked_event_id) =
             seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
 
-        let outcome = deny(&conn, &effect_id.to_string()).expect("deny");
+        let outcome = deny(&conn, TEST_KEY, &effect_id.to_string()).expect("deny");
         assert_eq!(outcome, ConfirmOutcome::Denied);
 
         let denied = find_event_by_type(&conn, &session_id.to_string(), "confirm_denied")
@@ -1372,7 +1392,7 @@ mod tests {
             .unwrap();
         assert_eq!(pc.state, PendingConfirmationState::Denied);
 
-        let later = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm after deny");
+        let later = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm after deny");
         assert_eq!(later, ConfirmOutcome::AlreadyTerminal);
         assert!(
             !root.join("out.txt").exists(),
@@ -1397,7 +1417,7 @@ mod tests {
 
         redact_blocked_literal(&conn, &blocked_event_id.to_string()).unwrap();
 
-        let outcome = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
         assert_eq!(outcome, ConfirmOutcome::BlockedLiteralRedacted);
         assert!(
             !root.join("out.txt").exists(),
@@ -1419,11 +1439,11 @@ mod tests {
         let unknown = Uuid::new_v4().to_string();
 
         assert_eq!(
-            confirm(&mut conn, &unknown, &ws).expect("confirm"),
+            confirm(&mut conn, TEST_KEY, &unknown, &ws).expect("confirm"),
             ConfirmOutcome::UnknownEffect
         );
         assert_eq!(
-            deny(&conn, &unknown).expect("deny"),
+            deny(&conn, TEST_KEY, &unknown).expect("deny"),
             ConfirmOutcome::UnknownEffect
         );
 
@@ -1595,7 +1615,7 @@ mod tests {
 
         mutate_resolved_arg_literal(&conn, effect_id, "contents", "attacker-injected contents");
 
-        let outcome = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
         assert_eq!(outcome, ConfirmOutcome::DigestMismatch);
         assert!(
             !root.join("out.txt").exists(),
@@ -1625,7 +1645,7 @@ mod tests {
 
         rename_resolved_arg(&conn, effect_id, "body", "cc");
 
-        let outcome = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
         assert_eq!(outcome, ConfirmOutcome::DigestMismatch);
         assert_eq!(
             count_events_of_type(&conn, session_id, "email_send_attempted"),
@@ -1687,11 +1707,11 @@ mod tests {
         // Sanity: this edit genuinely breaks verify_chain — proving this test
         // exercises the chain-hash path, not the plain-compare path.
         assert!(
-            !crate::audit::verify_chain(&conn, &session_id.to_string()),
+            !crate::audit::verify_chain(&conn, &session_id.to_string(), TEST_KEY),
             "sanity: the Event payload edit must break verify_chain"
         );
 
-        let outcome = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
         assert_eq!(outcome, ConfirmOutcome::DigestMismatch);
         assert!(!root.join("out.txt").exists());
 
@@ -1716,20 +1736,20 @@ mod tests {
 
         mutate_resolved_arg_literal(&conn, effect_id, "contents", "attacker-injected");
 
-        let first = confirm(&mut conn, &effect_id.to_string(), &ws).expect("first confirm");
+        let first = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("first confirm");
         assert_eq!(first, ConfirmOutcome::DigestMismatch);
         assert!(
-            crate::audit::verify_chain(&conn, &session_id.to_string()),
+            crate::audit::verify_chain(&conn, &session_id.to_string(), TEST_KEY),
             "the chain must remain linear (verify_chain true) immediately after the mismatch append"
         );
 
         // The row is left Pending (an alarm, not a deny) — revert the tamper
         // and retry; the recompute now matches the ORIGINAL digest again.
         mutate_resolved_arg_literal(&conn, effect_id, "contents", "hello");
-        let second = confirm(&mut conn, &effect_id.to_string(), &ws).expect("second confirm");
+        let second = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("second confirm");
         assert_eq!(second, ConfirmOutcome::Released);
         assert!(
-            crate::audit::verify_chain(&conn, &session_id.to_string()),
+            crate::audit::verify_chain(&conn, &session_id.to_string(), TEST_KEY),
             "verify_chain must STILL be true after mismatch -> retry (MAJOR-7 no-fork)"
         );
 
@@ -1771,7 +1791,7 @@ mod tests {
             chrono::Utc::now(),
             vec![],
         );
-        let root_hash = append_event(conn, &root, None).unwrap();
+        let root_hash = append_event(conn, TEST_KEY, &root, None).unwrap();
 
         let literal_sha256 = {
             let mut hasher = Sha256::new();
@@ -1833,7 +1853,7 @@ mod tests {
             blocked_arg_names.clone(),
         );
         let blocked_event_id = blocked_event.id;
-        append_event(conn, &blocked_event, Some(&root_hash)).unwrap();
+        append_event(conn, TEST_KEY, &blocked_event, Some(&root_hash)).unwrap();
         insert_blocked_literal(conn, &blocked_event_id.to_string(), "to", to).unwrap();
 
         let pc = PendingConfirmation {
@@ -1942,14 +1962,14 @@ mod tests {
         let (effect_id, session_id, _blocked_event_id) =
             seed_pending_email_send_block(&conn, "recipient@example.com", "hello", "hi there");
 
-        let first = confirm(&mut conn, &effect_id.to_string(), &ws).expect("first confirm");
+        let first = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("first confirm");
         assert_eq!(
             first,
             ConfirmOutcome::Released,
             "first confirm of a Pending email.send block must Release (real send succeeded)"
         );
 
-        let second = confirm(&mut conn, &effect_id.to_string(), &ws).expect("second confirm");
+        let second = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("second confirm");
         assert_eq!(
             second,
             ConfirmOutcome::AlreadyTerminal,
@@ -2002,7 +2022,7 @@ mod tests {
         let (effect_id, session_id, _blocked_event_id) =
             seed_pending_email_send_block(&conn, "recipient@example.com", "hello", "hi there");
 
-        let outcome = confirm(&mut conn, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
         assert_eq!(
             outcome,
             ConfirmOutcome::EmailSendFailed,
@@ -2027,7 +2047,7 @@ mod tests {
 
         // A re-confirm must not retry the send — it is already terminal
         // (Confirmed), refusing per the CAS (no auto-retry, SEND-02).
-        let second = confirm(&mut conn, &effect_id.to_string(), &ws).expect("second confirm");
+        let second = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("second confirm");
         assert_eq!(second, ConfirmOutcome::AlreadyTerminal);
         assert_eq!(
             count_events_of_type(&conn, session_id, "email_send_attempted"),

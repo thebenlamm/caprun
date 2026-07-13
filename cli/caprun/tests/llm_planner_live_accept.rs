@@ -267,8 +267,11 @@ fn llm_planner_clean_allow_delivers() {
         )
         .expect("at least one session row must exist for the run just performed");
 
+    // v1.6 Phase 28 (HARDEN-02): read back the persisted broker MAC key.
+    let mac_key = std::fs::read(format!("{}.key", audit_db.display()))
+        .expect("read persisted MAC key file written by the caprun run subprocess");
     assert!(
-        verify_chain(&conn, &session_id),
+        verify_chain(&conn, &session_id, &mac_key),
         "verify_chain must be true for the LLM-planner-driven session"
     );
     assert!(

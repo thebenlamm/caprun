@@ -225,6 +225,7 @@ fn build_message(resolved_args: &[ResolvedArg]) -> Result<Message> {
 #[allow(clippy::too_many_arguments)]
 pub fn invoke_email_smtp_from_resolved(
     conn: &rusqlite::Connection,
+    key: &[u8],
     session_id: Uuid,
     effect_id: Uuid,
     resolved_args: &[ResolvedArg],
@@ -236,7 +237,9 @@ pub fn invoke_email_smtp_from_resolved(
     // are audited-abort paths, never a silent drop.
     let message = match build_message(resolved_args) {
         Ok(m) => m,
-        Err(e) => return record_send_failed(conn, session_id, effect_id, parent_id, parent_hash, e),
+        Err(e) => {
+            return record_send_failed(conn, key, session_id, effect_id, parent_id, parent_hash, e)
+        }
     };
 
     let transport = SmtpTransport::builder_dangerous(smtp_host())
@@ -257,11 +260,11 @@ pub fn invoke_email_smtp_from_resolved(
                 Utc::now(),
                 vec![],
             );
-            let hash = append_event(conn, &event, Some(parent_hash))
+            let hash = append_event(conn, key, &event, Some(parent_hash))
                 .context("append email_send_succeeded")?;
             Ok((event.id, hash))
         }
-        Err(e) => record_send_failed(conn, session_id, effect_id, parent_id, parent_hash, e),
+        Err(e) => record_send_failed(conn, key, session_id, effect_id, parent_id, parent_hash, e),
     }
 }
 
@@ -274,6 +277,7 @@ pub fn invoke_email_smtp_from_resolved(
 /// silent drop, never `Ok(ConfirmedButSinkFailed)`-style swallowing.
 fn record_send_failed<E: std::fmt::Display>(
     conn: &rusqlite::Connection,
+    key: &[u8],
     session_id: Uuid,
     effect_id: Uuid,
     parent_id: Uuid,
@@ -290,7 +294,7 @@ fn record_send_failed<E: std::fmt::Display>(
         Utc::now(),
         vec![],
     );
-    append_event(conn, &event, Some(parent_hash)).context("append email_send_failed")?;
+    append_event(conn, key, &event, Some(parent_hash)).context("append email_send_failed")?;
     Err(anyhow::anyhow!("email.send SMTP send failed: {err}"))
 }
 
@@ -299,6 +303,9 @@ mod tests {
     use super::*;
     use crate::audit::{find_event_by_type, open_audit_db};
     use runtime_core::plan_node::{TaintLabel, ValueId};
+
+    /// Fixed, non-secret test MAC key (mirrors `audit.rs`'s `TEST_KEY`).
+    const TEST_KEY: &[u8] = b"email-smtp-rs-unit-test-key-not-secret";
 
     fn arg(name: &str, literal: &str) -> ResolvedArg {
         ResolvedArg {
@@ -380,7 +387,7 @@ mod tests {
             Utc::now(),
             vec![],
         );
-        let root_hash = append_event(&conn, &root, None).unwrap();
+        let root_hash = append_event(&conn, TEST_KEY, &root, None).unwrap();
 
         let effect_id = Uuid::new_v4();
         let args = vec![
@@ -391,6 +398,7 @@ mod tests {
 
         let result = invoke_email_smtp_from_resolved(
             &conn,
+            TEST_KEY,
             session_id,
             effect_id,
             &args,

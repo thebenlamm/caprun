@@ -32,9 +32,34 @@ use runtime_core::executor_decision::SinkBlockedAnchor;
 use runtime_core::plan_node::{SinkId, TaintLabel, ValueId};
 use runtime_core::Event;
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use uuid::Uuid;
+
+/// Test-local mirror of `cli/caprun/src/key.rs`'s idempotent
+/// read-existing-first custody (that module is `pub(crate)` inside the
+/// bin-only `caprun` crate — `cli/caprun` has no lib target, so this
+/// external integration-test crate cannot import it directly). This
+/// duplicates ONLY the read-or-create-and-persist behavior (no F1 check —
+/// this test fully controls its own tmpdir layout, which is always F1-safe:
+/// `audit.db` and `workspace/` are created as SIBLINGS under the same unique
+/// `tmp` dir, never nested) so the SAME key bytes land on disk at
+/// `<db_path>.key` BEFORE the seeding `append_event` calls below — matching
+/// what the `caprun confirm`/`deny` subprocess's OWN
+/// `key::load_or_create_key` call reads back (v1.6 Phase 28, HARDEN-02).
+fn seed_test_key(db_path: &Path) -> Vec<u8> {
+    let key_path = PathBuf::from(format!("{}.key", db_path.to_str().unwrap()));
+    if let Ok(bytes) = std::fs::read(&key_path) {
+        return bytes;
+    }
+    // Uniqueness (not cryptographic strength) is all this test-local key
+    // needs: every test uses its own fresh `run_id`-suffixed tmp dir, so
+    // there is no cross-test collision risk.
+    let mut key = Uuid::new_v4().as_bytes().to_vec();
+    key.extend_from_slice(Uuid::new_v4().as_bytes());
+    std::fs::write(&key_path, &key).expect("write test MAC key file");
+    key
+}
 
 /// Seed a Pending file.create block directly via brokerd's API against the
 /// persistent DB at `db_path`: a causal-root event, a `sink_blocked` event
@@ -50,6 +75,7 @@ use uuid::Uuid;
 /// Returns `(effect_id, session_id, blocked_event_id)`.
 fn seed_pending_file_create_block(
     db_path: &Path,
+    key: &[u8],
     path: &str,
     contents: &str,
     workspace_root: &Path,
@@ -69,7 +95,7 @@ fn seed_pending_file_create_block(
         Utc::now(),
         vec![],
     );
-    let root_hash = append_event(&conn, &root, None).expect("append session_created");
+    let root_hash = append_event(&conn, key, &root, None).expect("append session_created");
 
     let literal_sha256 = {
         let mut hasher = Sha256::new();
@@ -124,7 +150,7 @@ fn seed_pending_file_create_block(
         blocked_arg_names.clone(),
     );
     let blocked_event_id = blocked_event.id;
-    append_event(&conn, &blocked_event, Some(&root_hash)).expect("append sink_blocked");
+    append_event(&conn, key, &blocked_event, Some(&root_hash)).expect("append sink_blocked");
     insert_blocked_literal(&conn, &blocked_event_id.to_string(), "path", path)
         .expect("insert_blocked_literal");
 
@@ -221,9 +247,10 @@ fn confirm_releases_once_and_second_confirm_is_already_terminal() {
     let workspace = tmp.join("workspace");
     std::fs::create_dir_all(&workspace).expect("create workspace dir");
     let db_path = tmp.join("audit.db");
+    let key = seed_test_key(&db_path);
 
     let (effect_id, _session_id, blocked_event_id) =
-        seed_pending_file_create_block(&db_path, "released.txt", "hello world", &workspace);
+        seed_pending_file_create_block(&db_path, &key, "released.txt", "hello world", &workspace);
 
     // First confirm: releases exactly once (CONFIRM-01, CONFIRM-02).
     let (code, stdout) = run_caprun_verb("confirm", effect_id, &db_path);
@@ -276,9 +303,15 @@ fn deny_is_durable_and_confirm_after_deny_is_already_terminal() {
     let workspace = tmp.join("workspace");
     std::fs::create_dir_all(&workspace).expect("create workspace dir");
     let db_path = tmp.join("audit.db");
+    let key = seed_test_key(&db_path);
 
-    let (effect_id, _session_id, blocked_event_id) =
-        seed_pending_file_create_block(&db_path, "denied.txt", "should never land", &workspace);
+    let (effect_id, _session_id, blocked_event_id) = seed_pending_file_create_block(
+        &db_path,
+        &key,
+        "denied.txt",
+        "should never land",
+        &workspace,
+    );
 
     let (code, _stdout) = run_caprun_verb("deny", effect_id, &db_path);
     assert_eq!(code, 2, "deny on a Pending block must exit 2 (Denied)");
@@ -337,6 +370,7 @@ fn confirm_and_deny_on_unknown_effect_id_exit_4() {
 /// Returns `(effect_id, session_id, blocked_event_id)`.
 fn seed_pending_email_send_block(
     db_path: &Path,
+    key: &[u8],
     workspace_root: &Path,
     to: &str,
     subject: &str,
@@ -357,7 +391,7 @@ fn seed_pending_email_send_block(
         Utc::now(),
         vec![],
     );
-    let root_hash = append_event(&conn, &root, None).expect("append session_created");
+    let root_hash = append_event(&conn, key, &root, None).expect("append session_created");
 
     let literal_sha256 = {
         let mut hasher = Sha256::new();
@@ -419,7 +453,7 @@ fn seed_pending_email_send_block(
         blocked_arg_names.clone(),
     );
     let blocked_event_id = blocked_event.id;
-    append_event(&conn, &blocked_event, Some(&root_hash)).expect("append sink_blocked");
+    append_event(&conn, key, &blocked_event, Some(&root_hash)).expect("append sink_blocked");
     insert_blocked_literal(&conn, &blocked_event_id.to_string(), "to", to)
         .expect("insert_blocked_literal");
 
@@ -454,6 +488,7 @@ fn confirm_email_send_adapter_failure_exits_7() {
     let workspace = tmp.join("workspace");
     std::fs::create_dir_all(&workspace).expect("create workspace dir");
     let db_path = tmp.join("audit.db");
+    let key = seed_test_key(&db_path);
 
     // Bind an ephemeral port then drop the listener immediately — nothing is
     // listening on it, so the adapter's real send fails fast (ECONNREFUSED).
@@ -463,6 +498,7 @@ fn confirm_email_send_adapter_failure_exits_7() {
 
     let (effect_id, session_id, _blocked_event_id) = seed_pending_email_send_block(
         &db_path,
+        &key,
         &workspace,
         "recipient@example.com",
         "hello",

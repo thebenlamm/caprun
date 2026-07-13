@@ -221,8 +221,14 @@ fn dag_chain_integrity() {
         .expect("sessions table must have one row");
 
     // ── Assert 1: cryptographic hash chain is unbroken ───────────────────────
+    // v1.6 Phase 28 (HARDEN-02): read back the SAME broker-owned MAC key the
+    // `caprun run` subprocess persisted via `key::load_or_create_key` at
+    // `<audit_db_path>.key` — `verify_chain` is now keyed, so a fresh/
+    // unrelated key would spuriously fail this assertion.
+    let mac_key = std::fs::read(format!("{}.key", audit_db_path.display()))
+        .expect("read persisted MAC key file written by the caprun run subprocess");
     assert!(
-        verify_chain(&conn, &session_id),
+        verify_chain(&conn, &session_id, &mac_key),
         "audit DAG hash chain must be unbroken for session {session_id}"
     );
 

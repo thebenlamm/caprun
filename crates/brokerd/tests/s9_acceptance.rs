@@ -26,6 +26,9 @@ use runtime_core::{DenyReason, ExecutorDecision, SessionStatus};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+/// Fixed, non-secret test MAC key (v1.6 Phase 28, HARDEN-02).
+const TEST_KEY: &[u8] = b"s9-acceptance-rs-integration-test-key";
+
 /// Lowercase-hex SHA-256 — mirrors the digest the executor writes into
 /// `SinkBlockedAnchor.literal_sha256`.
 fn sha256_hex(s: &str) -> String {
@@ -95,7 +98,7 @@ fn s9_acceptance() {
     // -----------------------------------------------------------------------
     let claim = &claims[0];
     let (read_event_id, _read_hash, value_id, _demoted_id, _demoted_hash) =
-        mint_from_read(&conn, &mut store, session_id, claim, None, None)
+        mint_from_read(&conn, TEST_KEY, &mut store, session_id, claim, None, None)
             .expect("mint_from_read failed");
 
     // -----------------------------------------------------------------------
@@ -265,7 +268,7 @@ fn s9_acceptance() {
 
     // Hash-chain integrity: the DAG is tamper-evident from root to present.
     assert!(
-        verify_chain(&conn, &session_id.to_string()),
+        verify_chain(&conn, &session_id.to_string(), TEST_KEY),
         "verify_chain must return true — the audit DAG hash chain must be unbroken \
          from the file_read Event through the blocked evaluation"
     );
@@ -296,6 +299,7 @@ fn clean_path_intent_value_evaluates_to_allowed() {
     let recipient = "boss@company.com";
     let (intent_event_id, intent_hash, intent_value_id) = mint_from_intent(
         &conn,
+        TEST_KEY,
         &mut store,
         session_id,
         recipient.to_string(),
@@ -364,7 +368,7 @@ fn clean_path_intent_value_evaluates_to_allowed() {
         chrono::Utc::now(),
         vec![],
     );
-    append_event(&conn, &eval_event, Some(&intent_hash)).expect("append plan_node_evaluated");
+    append_event(&conn, TEST_KEY, &eval_event, Some(&intent_hash)).expect("append plan_node_evaluated");
 
     // -----------------------------------------------------------------------
     // Step 6: Verify the audit DAG.
@@ -427,7 +431,7 @@ fn s9_acceptance_file_create_path_block() {
         value: hostile_path.into(),
     };
     let (read_event_id, _read_hash, path_value_id, _demoted_id, _demoted_hash) =
-        mint_from_read(&conn, &mut store, session_id, &claim, None, None).expect("mint_from_read failed");
+        mint_from_read(&conn, TEST_KEY, &mut store, session_id, &claim, None, None).expect("mint_from_read failed");
 
     // file.create requires {path, contents}. `path` is tainted and routing-sensitive
     // (blocks); `contents` MUST be a genuinely-resolvable handle — the Phase 14
@@ -533,7 +537,7 @@ fn s9_acceptance_file_create_path_block() {
 
     // Hash-chain integrity from the file_read root.
     assert!(
-        verify_chain(&conn, &session_id.to_string()),
+        verify_chain(&conn, &session_id.to_string(), TEST_KEY),
         "verify_chain must return true — the audit DAG hash chain must be unbroken"
     );
 }
@@ -571,6 +575,7 @@ fn slot_type_binding_swapped_subject_recipient_denies() {
     // -----------------------------------------------------------------------
     let (subject_event_id, subject_hash, subject_value_id) = mint_from_intent(
         &conn,
+        TEST_KEY,
         &mut store,
         session_id,
         "Re: quarterly report".to_string(),
@@ -582,6 +587,7 @@ fn slot_type_binding_swapped_subject_recipient_denies() {
 
     let (recipient_event_id, recipient_hash, recipient_value_id) = mint_from_intent(
         &conn,
+        TEST_KEY,
         &mut store,
         session_id,
         "boss@company.com".to_string(),
@@ -663,7 +669,7 @@ fn slot_type_binding_swapped_subject_recipient_denies() {
         chrono::Utc::now(),
         vec![],
     );
-    append_event(&conn, &eval_event, Some(&recipient_hash)).expect("append plan_node_evaluated");
+    append_event(&conn, TEST_KEY, &eval_event, Some(&recipient_hash)).expect("append plan_node_evaluated");
 
     // -----------------------------------------------------------------------
     // Step 6: Assert the durable record and hash-chain integrity across it.
@@ -678,7 +684,7 @@ fn slot_type_binding_swapped_subject_recipient_denies() {
     );
 
     assert!(
-        verify_chain(&conn, &session_id.to_string()),
+        verify_chain(&conn, &session_id.to_string(), TEST_KEY),
         "verify_chain must return true — the audit DAG hash chain must be unbroken \
          across the Denied evaluation"
     );
@@ -704,6 +710,7 @@ fn slot_type_binding_correctly_routed_allows() {
 
     let (subject_event_id, subject_hash, subject_value_id) = mint_from_intent(
         &conn,
+        TEST_KEY,
         &mut store,
         session_id,
         "Re: quarterly report".to_string(),
@@ -715,6 +722,7 @@ fn slot_type_binding_correctly_routed_allows() {
 
     let (_recipient_event_id, _recipient_hash, recipient_value_id) = mint_from_intent(
         &conn,
+        TEST_KEY,
         &mut store,
         session_id,
         "boss@company.com".to_string(),

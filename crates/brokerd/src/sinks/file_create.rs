@@ -64,6 +64,7 @@ use crate::confirmation::ResolvedArg;
 #[allow(clippy::too_many_arguments)]
 pub fn invoke_file_create(
     conn: &rusqlite::Connection,
+    key: &[u8],
     value_store: &ValueStore,
     session_id: Uuid,
     effect_id: Uuid,
@@ -91,7 +92,7 @@ pub fn invoke_file_create(
                 Utc::now(),
                 vec![], // the executed effect carries no taint (path was UserTrusted)
             );
-            let hash = append_event(conn, &event, Some(parent_hash))
+            let hash = append_event(conn, key, &event, Some(parent_hash))
                 .context("append sink_executed")?;
             Ok((event.id, hash))
         }
@@ -107,7 +108,7 @@ pub fn invoke_file_create(
                 Utc::now(),
                 vec![],
             );
-            append_event(conn, &event, Some(parent_hash))
+            append_event(conn, key, &event, Some(parent_hash))
                 .context("append sink_execution_failed")?;
             Err(anyhow::Error::new(e).context("file.create create_exclusive_within failed"))
         }
@@ -174,6 +175,7 @@ fn resolved_literal<'a>(resolved_args: &'a [ResolvedArg], name: &str) -> Result<
 #[allow(clippy::too_many_arguments)]
 pub fn invoke_file_create_from_resolved(
     conn: &rusqlite::Connection,
+    key: &[u8],
     session_id: Uuid,
     effect_id: Uuid,
     resolved_args: &[ResolvedArg],
@@ -196,7 +198,7 @@ pub fn invoke_file_create_from_resolved(
                 Utc::now(),
                 vec![], // the executed effect carries no taint (frozen literal was adjudicated)
             );
-            let hash = append_event(conn, &event, Some(parent_hash))
+            let hash = append_event(conn, key, &event, Some(parent_hash))
                 .context("append sink_executed")?;
             Ok((event.id, hash))
         }
@@ -213,7 +215,7 @@ pub fn invoke_file_create_from_resolved(
                 Utc::now(),
                 vec![],
             );
-            append_event(conn, &event, Some(parent_hash))
+            append_event(conn, key, &event, Some(parent_hash))
                 .context("append sink_invocation_failed")?;
             Err(anyhow::Error::new(e).context("file.create create_exclusive_within (from_resolved) failed"))
         }
@@ -226,6 +228,9 @@ mod tests {
     use crate::audit::{find_event_by_type, open_audit_db};
     use executor::value_store::ValueStore;
     use runtime_core::plan_node::{PlanArg, SinkId, TaintLabel};
+
+    /// Fixed, non-secret test MAC key (mirrors `audit.rs`'s `TEST_KEY`).
+    const TEST_KEY: &[u8] = b"file-create-rs-unit-test-key-not-secret";
 
     /// Build a file.create plan node whose path+contents resolve to the given
     /// literals in a fresh store, plus a seeded causal-root event.
@@ -248,7 +253,7 @@ mod tests {
             Utc::now(),
             vec![],
         );
-        let root_hash = append_event(&conn, &root, None).unwrap();
+        let root_hash = append_event(&conn, TEST_KEY, &root, None).unwrap();
         // Mint path + contents as trusted values (this is the Allowed path).
         let ev = Uuid::new_v4();
         let path_vid = store
@@ -292,7 +297,7 @@ mod tests {
         let effect_id = Uuid::new_v4();
 
         let (evt_id, hash) = invoke_file_create(
-            &conn, &store, session_id, effect_id, &plan_node, &ws, parent_id, &parent_hash,
+            &conn, TEST_KEY, &store, session_id, effect_id, &plan_node, &ws, parent_id, &parent_hash,
         )
         .expect("file.create must succeed on a fresh path");
 
@@ -328,7 +333,7 @@ mod tests {
         let effect_id = Uuid::new_v4();
 
         let result = invoke_file_create(
-            &conn, &store, session_id, effect_id, &plan_node, &ws, parent_id, &parent_hash,
+            &conn, TEST_KEY, &store, session_id, effect_id, &plan_node, &ws, parent_id, &parent_hash,
         );
         assert!(result.is_err(), "exclusive create on an existing path must fail");
 
@@ -388,7 +393,7 @@ mod tests {
             Utc::now(),
             vec![],
         );
-        let root_hash = append_event(&conn, &root, None).unwrap();
+        let root_hash = append_event(&conn, TEST_KEY, &root, None).unwrap();
         (conn, session_id, root.id, root_hash)
     }
 
@@ -407,6 +412,7 @@ mod tests {
 
         let (evt_id, hash) = invoke_file_create_from_resolved(
             &conn,
+            TEST_KEY,
             session_id,
             effect_id,
             &resolved_args,
@@ -447,6 +453,7 @@ mod tests {
 
         let result = invoke_file_create_from_resolved(
             &conn,
+            TEST_KEY,
             session_id,
             effect_id,
             &resolved_args,

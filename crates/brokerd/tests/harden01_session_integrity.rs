@@ -71,6 +71,9 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
+/// Fixed, non-secret test MAC key (v1.6 Phase 28, HARDEN-02).
+const TEST_KEY: &[u8] = b"harden01-session-integrity-test-key";
+
 /// A fresh workspace dir containing TWO distinct files — `trusted.txt` (the
 /// CLI-designated `<workspace-file>`) and `hostile.txt` (any other in-tree
 /// path a worker might `RequestFd`, standing in for an attacker-controlled
@@ -154,6 +157,7 @@ async fn request_fd_via_dispatch(
         BrokerRequest::RequestFd { path: path.to_string() },
         &mut server_end,
         conn,
+        TEST_KEY,
         session_id,
         last_event_id,
         last_event_hash,
@@ -335,6 +339,7 @@ async fn second_dispatch_call_after_demotion_observes_draft_not_stale_active() {
         BrokerRequest::SubmitPlanNode { plan_node },
         &mut conn2_server_end,
         &conn,
+        TEST_KEY,
         session_id,
         &mut conn2_last_event_id,
         &mut conn2_last_event_hash,

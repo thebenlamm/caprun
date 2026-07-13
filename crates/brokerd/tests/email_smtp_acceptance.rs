@@ -51,6 +51,13 @@ use std::time::Duration;
 #[cfg(target_os = "linux")]
 use uuid::Uuid;
 
+/// Fixed, non-secret test MAC key (v1.6 Phase 28, HARDEN-02) — this harness
+/// drives `confirm()` IN-PROCESS (not a subprocess), so a single consistent
+/// key for both the seeding `append_event` calls and `confirm()` itself is
+/// correct (no cross-process key-custody round-trip needed here).
+#[cfg(target_os = "linux")]
+const TEST_KEY: &[u8] = b"email-smtp-acceptance-integration-test-key";
+
 /// Read the Mailpit host — the SAME env var the broker/confirm process reads
 /// for the SMTP connection itself (`CAPRUN_SMTP_HOST`, D-04 endpoint
 /// sourcing). Defaults to `127.0.0.1` for a locally-running Mailpit instance
@@ -235,7 +242,7 @@ fn seed_and_confirm_email_send(
         chrono::Utc::now(),
         vec![],
     );
-    let root_hash = append_event(conn, &root, None).unwrap();
+    let root_hash = append_event(conn, TEST_KEY, &root, None).unwrap();
 
     let literal_sha256 = {
         let mut hasher = Sha256::new();
@@ -297,7 +304,7 @@ fn seed_and_confirm_email_send(
         blocked_arg_names.clone(),
     );
     let blocked_event_id = blocked_event.id;
-    append_event(conn, &blocked_event, Some(&root_hash)).unwrap();
+    append_event(conn, TEST_KEY, &blocked_event, Some(&root_hash)).unwrap();
     insert_blocked_literal(conn, &blocked_event_id.to_string(), "to", to).unwrap();
 
     let pc = PendingConfirmation {
@@ -318,7 +325,7 @@ fn seed_and_confirm_email_send(
     std::fs::create_dir_all(&root_dir).unwrap();
     let ws = WorkspaceRoot::open(&root_dir).unwrap();
 
-    let outcome = confirm(conn, &effect_id.to_string(), &ws).expect("confirm");
+    let outcome = confirm(conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
     std::fs::remove_dir_all(&root_dir).ok();
     outcome
 }

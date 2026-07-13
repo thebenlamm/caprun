@@ -31,6 +31,9 @@ use uuid::Uuid;
 
 const HOSTILE_ADDR: &str = "accounts@ev1l.com";
 
+/// Fixed, non-secret test MAC key (v1.6 Phase 28, HARDEN-02).
+const TEST_KEY: &[u8] = b"phase5-dispatch-rs-integration-test-key";
+
 /// Build an Arc<Mutex<Connection>> backed by an in-memory audit DB with schema.
 fn shared_db() -> Arc<Mutex<rusqlite::Connection>> {
     Arc::new(Mutex::new(open_audit_db(":memory:").expect("open_audit_db")))
@@ -71,7 +74,7 @@ fn mint_anchors_provenance_to_file_read_event() {
     };
 
     let (read_event_id, _hash, value_id, _demoted_id, _demoted_hash) =
-        mint_from_read(&conn, &mut store, session_id, &claim, None, None).expect("mint_from_read");
+        mint_from_read(&conn, TEST_KEY, &mut store, session_id, &claim, None, None).expect("mint_from_read");
 
     // The resolved record's provenance chain anchors to the returned read event id.
     let record = store.resolve(&value_id).expect("value_id resolves");
@@ -106,7 +109,7 @@ fn handle_from_other_connection_store_is_denied() {
         value: HOSTILE_ADDR.into(),
     };
     let (_id, _hash, value_id, _demoted_id, _demoted_hash) =
-        mint_from_read(&conn, &mut store_a, session_id, &claim, None, None).expect("mint_from_read");
+        mint_from_read(&conn, TEST_KEY, &mut store_a, session_id, &claim, None, None).expect("mint_from_read");
 
     // Sanity: in store A the same plan blocks (the value is tainted + routing-sensitive).
     let decision_a = executor::submit_plan_node(
@@ -178,7 +181,7 @@ async fn block_appends_durable_causal_sink_blocked() {
     };
     let (_read_event_id, _read_hash, value_id, demoted_event_id, demoted_hash) = {
         let locked = conn.lock().unwrap();
-        mint_from_read(&locked, &mut store, session_id, &claim, None, None).expect("mint_from_read")
+        mint_from_read(&locked, TEST_KEY, &mut store, session_id, &claim, None, None).expect("mint_from_read")
     };
 
     // Chain onto the session_demoted event (the LAST event mint_from_read
@@ -207,6 +210,7 @@ async fn block_appends_durable_causal_sink_blocked() {
         },
         &mut server_end,
         &conn,
+        TEST_KEY,
         session_id,
         &mut last_event_id,
         &mut last_event_hash,
@@ -259,7 +263,7 @@ async fn append_failure_is_fail_closed() {
     };
     let (_read_event_id, _read_hash, value_id, demoted_event_id, demoted_hash) = {
         let locked = conn.lock().unwrap();
-        mint_from_read(&locked, &mut store, session_id, &claim, None, None).expect("mint_from_read")
+        mint_from_read(&locked, TEST_KEY, &mut store, session_id, &claim, None, None).expect("mint_from_read")
     };
 
     // Sanity: the file_read anchor exists before we break the DAG.
@@ -302,6 +306,7 @@ async fn append_failure_is_fail_closed() {
         },
         &mut server_end,
         &conn,
+        TEST_KEY,
         session_id,
         &mut last_event_id,
         &mut last_event_hash,

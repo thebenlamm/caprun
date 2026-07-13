@@ -8,6 +8,11 @@
 /// fails closed on unknown claim kinds. These tests prove both halves of that
 /// contract.
 
+/// Fixed, non-secret test MAC key (v1.6 Phase 28, HARDEN-02) — shared by
+/// every `dispatch_request` call in this file (both the standalone Test 2d
+/// and `DispatchHarness::dispatch`).
+const TEST_KEY: &[u8] = b"proto-claims-rs-integration-test-key";
+
 /// Test 1: BrokerRequest::ReportClaims containing one WorkerClaim::EmailAddress
 /// round-trips through serde_json to an equal value.
 ///
@@ -141,6 +146,7 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
         },
         &mut server_end,
         &conn,
+        TEST_KEY,
         session_id,
         &mut last_event_id,
         &mut last_event_hash,
@@ -377,6 +383,7 @@ impl DispatchHarness {
             request,
             &mut self.server_end,
             &self.conn,
+            TEST_KEY,
             self.session_id,
             &mut self.last_event_id,
             &mut self.last_event_hash,

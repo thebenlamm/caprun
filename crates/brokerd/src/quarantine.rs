@@ -300,6 +300,7 @@ fn looks_like_email(s: &str) -> bool {
 ///   the `parent_hash` callers must forward to the next append.
 pub fn mint_from_read(
     conn: &rusqlite::Connection,
+    key: &[u8],
     store: &mut ValueStore,
     session_id: Uuid,
     claim: &Claim,
@@ -368,7 +369,7 @@ pub fn mint_from_read(
     );
 
     // Step 2: Append the event to the audit DAG, obtaining the row hash.
-    let read_hash = append_event(conn, &event, parent_hash)?;
+    let read_hash = append_event(conn, key, &event, parent_hash)?;
 
     // Step 3: Mint the ValueRecord in the broker-owned store.
     //
@@ -413,7 +414,7 @@ pub fn mint_from_read(
         Utc::now(),
         vec![],
     );
-    let demoted_hash = append_event(conn, &demoted_event, Some(&read_hash))?;
+    let demoted_hash = append_event(conn, key, &demoted_event, Some(&read_hash))?;
 
     Ok((event_id, read_hash, value_id, demoted_event_id, demoted_hash))
 }
@@ -464,6 +465,7 @@ pub fn mint_from_read(
 /// * `value_id`        — opaque handle to the minted `ValueRecord` (taint: [UserTrusted]).
 pub fn mint_from_intent(
     conn: &rusqlite::Connection,
+    key: &[u8],
     store: &mut ValueStore,
     session_id: Uuid,
     literal: String,
@@ -488,7 +490,7 @@ pub fn mint_from_intent(
     );
 
     // Step 2: Append the event to the audit DAG, obtaining the row hash.
-    let intent_hash = append_event(conn, &event, parent_hash)?;
+    let intent_hash = append_event(conn, key, &event, parent_hash)?;
 
     // Step 3: Mint the ValueRecord with UserTrusted label.
     //
@@ -604,6 +606,7 @@ fn resolve_event_type_by_id(
 #[allow(clippy::too_many_arguments)]
 pub fn mint_from_derivation(
     conn: &rusqlite::Connection,
+    key: &[u8],
     store: &mut ValueStore,
     session_id: Uuid,
     transformed_literal: String,
@@ -778,7 +781,7 @@ pub fn mint_from_derivation(
         input_provenance_chains,
         Some(transform_kind.to_string()),
     );
-    let derivation_hash = append_event(conn, &derivation_event, parent_hash)?;
+    let derivation_hash = append_event(conn, key, &derivation_event, parent_hash)?;
 
     Ok((derivation_event_id, derivation_hash, value_id))
 }
@@ -788,6 +791,10 @@ mod tests {
     use super::*;
     use crate::audit::{find_event_by_type, open_audit_db};
     use runtime_core::plan_node::TaintLabel;
+
+    /// Fixed, non-secret test MAC key (mirrors `audit.rs`'s `TEST_KEY`) — these
+    /// mint-site tests exercise taint/provenance mechanics, not key custody.
+    const TEST_KEY: &[u8] = b"quarantine-rs-unit-test-key-not-secret";
 
     // -----------------------------------------------------------------------
     // extract_email_claims tests
@@ -856,7 +863,7 @@ mod tests {
         };
 
         let (read_event_id, _read_hash, value_id, _demoted_id, _demoted_hash) =
-            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
+            mint_from_read(&conn, TEST_KEY, &mut store, session_id, &claim, None, None).unwrap();
 
         // provenance_chain[0] must equal the returned read_event_id
         let record = store.resolve(&value_id).expect("value_id must resolve");
@@ -888,7 +895,7 @@ mod tests {
         };
 
         let (_read_event_id, _read_hash, value_id, _demoted_id, _demoted_hash) =
-            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
+            mint_from_read(&conn, TEST_KEY, &mut store, session_id, &claim, None, None).unwrap();
 
         let record = store.resolve(&value_id).expect("value_id must resolve");
         assert!(
@@ -917,7 +924,7 @@ mod tests {
         };
 
         let (_read_event_id, _read_hash, value_id, _demoted_id, _demoted_hash) =
-            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
+            mint_from_read(&conn, TEST_KEY, &mut store, session_id, &claim, None, None).unwrap();
 
         let record = store.resolve(&value_id).expect("value_id must resolve");
         assert_eq!(
@@ -939,7 +946,7 @@ mod tests {
         };
 
         let (_read_event_id, _read_hash, _value_id, _demoted_id, _demoted_hash) =
-            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
+            mint_from_read(&conn, TEST_KEY, &mut store, session_id, &claim, None, None).unwrap();
 
         let evt = find_event_by_type(&conn, &session_id.to_string(), "file_read")
             .unwrap()
@@ -971,6 +978,7 @@ mod tests {
 
         let (intent_event_id, _intent_hash, value_id) = mint_from_intent(
             &conn,
+            TEST_KEY,
             &mut store,
             session_id,
             literal.clone(),
@@ -1007,6 +1015,7 @@ mod tests {
 
         let (_intent_event_id, _intent_hash, value_id) = mint_from_intent(
             &conn,
+            TEST_KEY,
             &mut store,
             session_id,
             "boss@company.com".into(),
@@ -1047,6 +1056,7 @@ mod tests {
 
         let (_intent_event_id, _intent_hash, value_id) = mint_from_intent(
             &conn,
+            TEST_KEY,
             &mut store,
             session_id,
             literal.clone(),
@@ -1165,7 +1175,7 @@ mod tests {
         };
 
         let (read_event_id, _read_hash, value_id, _demoted_id, _demoted_hash) =
-            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
+            mint_from_read(&conn, TEST_KEY, &mut store, session_id, &claim, None, None).unwrap();
 
         let record = store.resolve(&value_id).expect("value_id must resolve");
         assert_eq!(record.taint, vec![TaintLabel::ExternalUntrusted]);
@@ -1186,7 +1196,7 @@ mod tests {
             value: "accounts@ev1l.com".into(),
         };
 
-        let result = mint_from_read(&conn, &mut store, session_id, &claim, None, None);
+        let result = mint_from_read(&conn, TEST_KEY, &mut store, session_id, &claim, None, None);
         assert!(
             result.is_err(),
             "a '@'-containing doc_fragment value must fail closed at the mint"
@@ -1206,7 +1216,7 @@ mod tests {
         };
 
         let (read_event_id, _read_hash, value_id, _demoted_id, _demoted_hash) =
-            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
+            mint_from_read(&conn, TEST_KEY, &mut store, session_id, &claim, None, None).unwrap();
 
         let record = store.resolve(&value_id).expect("value_id must resolve");
         assert!(record.taint.contains(&TaintLabel::ExternalUntrusted));
@@ -1236,7 +1246,7 @@ mod tests {
             value: "whatever".into(),
         };
 
-        let result = mint_from_read(&conn, &mut store, session_id, &claim, None, None);
+        let result = mint_from_read(&conn, TEST_KEY, &mut store, session_id, &claim, None, None);
         assert!(
             result.is_err(),
             "an unknown claim_type must fail closed, never default-tag"
@@ -1268,7 +1278,7 @@ mod tests {
             claim_type: "email_address".into(),
             value: "accounts@ev1l.com".into(),
         };
-        mint_from_read(&conn, &mut store, session.id, &claim, None, None).unwrap();
+        mint_from_read(&conn, TEST_KEY, &mut store, session.id, &claim, None, None).unwrap();
 
         let status_json: String = conn
             .query_row(
@@ -1299,7 +1309,7 @@ mod tests {
         };
 
         let (read_event_id, _read_hash, _value_id, _demoted_id, _demoted_hash) =
-            mint_from_read(&conn, &mut store, session_id, &claim, None, None).unwrap();
+            mint_from_read(&conn, TEST_KEY, &mut store, session_id, &claim, None, None).unwrap();
 
         let demoted = find_event_by_type(&conn, &session_id.to_string(), "session_demoted")
             .unwrap()
@@ -1325,6 +1335,7 @@ mod tests {
 
         mint_from_intent(
             &conn,
+            TEST_KEY,
             &mut store,
             session.id,
             "boss@company.com".into(),
@@ -1374,12 +1385,12 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         let (read_a, _, value_id_a, _, _) = mint_from_read(
-            &conn, &mut store, session_id,
+            &conn, TEST_KEY, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
             None, None,
         ).unwrap();
         let (read_b, _, value_id_b, _, _) = mint_from_read(
-            &conn, &mut store, session_id,
+            &conn, TEST_KEY, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
             None, None,
         ).unwrap();
@@ -1389,7 +1400,7 @@ mod tests {
         let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
 
         let (derivation_event_id, _hash, value_id) = mint_from_derivation(
-            &conn, &mut store, session_id, "accounts@ev1l.com".into(),
+            &conn, TEST_KEY, &mut store, session_id, "accounts@ev1l.com".into(),
             &inputs, "concat", None, None,
         ).unwrap();
 
@@ -1415,12 +1426,12 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         let (read_a, _, value_id_a, _, _) = mint_from_read(
-            &conn, &mut store, session_id,
+            &conn, TEST_KEY, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
             None, None,
         ).unwrap();
         let (_read_b, _, value_id_b, _, _) = mint_from_read(
-            &conn, &mut store, session_id,
+            &conn, TEST_KEY, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
             None, None,
         ).unwrap();
@@ -1430,7 +1441,7 @@ mod tests {
         let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
 
         let (derivation_event_id, _hash, value_id) = mint_from_derivation(
-            &conn, &mut store, session_id, "accounts@ev1l.com".into(),
+            &conn, TEST_KEY, &mut store, session_id, "accounts@ev1l.com".into(),
             &inputs, "concat", None, None,
         ).unwrap();
 
@@ -1459,12 +1470,12 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         let (_, _, value_id_a, _, _) = mint_from_read(
-            &conn, &mut store, session_id,
+            &conn, TEST_KEY, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
             None, None,
         ).unwrap();
         let (_, _, value_id_b, _, _) = mint_from_read(
-            &conn, &mut store, session_id,
+            &conn, TEST_KEY, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
             None, None,
         ).unwrap();
@@ -1477,7 +1488,7 @@ mod tests {
 
         let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
         let (_derivation_event_id, _hash, value_id) = mint_from_derivation(
-            &conn, &mut store, session_id, "accounts@ev1l.com".into(),
+            &conn, TEST_KEY, &mut store, session_id, "accounts@ev1l.com".into(),
             &inputs, "concat", None, None,
         ).unwrap();
 
@@ -1502,6 +1513,7 @@ mod tests {
 
         let (_, _, value_id_trusted) = mint_from_intent(
             &conn,
+            TEST_KEY,
             &mut store,
             session_id,
             "boss@company.com".into(),
@@ -1511,7 +1523,7 @@ mod tests {
         )
         .unwrap();
         let (_, _, value_id_untrusted, _, _) = mint_from_read(
-            &conn, &mut store, session_id,
+            &conn, TEST_KEY, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
             None, None,
         ).unwrap();
@@ -1521,7 +1533,7 @@ mod tests {
         let inputs: Vec<&ValueRecord> = vec![&record_trusted, &record_untrusted];
 
         let result = mint_from_derivation(
-            &conn, &mut store, session_id, "boss@company.com@ev1l.com".into(),
+            &conn, TEST_KEY, &mut store, session_id, "boss@company.com@ev1l.com".into(),
             &inputs, "concat", None, None,
         );
         assert!(
@@ -1541,12 +1553,13 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         let (_, _, value_id_untrusted, _, _) = mint_from_read(
-            &conn, &mut store, session_id,
+            &conn, TEST_KEY, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
             None, None,
         ).unwrap();
         let (_, _, value_id_trusted) = mint_from_intent(
             &conn,
+            TEST_KEY,
             &mut store,
             session_id,
             "boss@company.com".into(),
@@ -1561,7 +1574,7 @@ mod tests {
         let inputs: Vec<&ValueRecord> = vec![&record_untrusted, &record_trusted];
 
         let result = mint_from_derivation(
-            &conn, &mut store, session_id, "accounts@boss@company.com".into(),
+            &conn, TEST_KEY, &mut store, session_id, "accounts@boss@company.com".into(),
             &inputs, "concat", None, None,
         );
         assert!(
@@ -1586,6 +1599,7 @@ mod tests {
 
         let (_, _, value_id_a) = mint_from_intent(
             &conn,
+            TEST_KEY,
             &mut store,
             session_id,
             "local-part".into(),
@@ -1596,6 +1610,7 @@ mod tests {
         .unwrap();
         let (_, _, value_id_b) = mint_from_intent(
             &conn,
+            TEST_KEY,
             &mut store,
             session_id,
             "domain-part".into(),
@@ -1610,7 +1625,7 @@ mod tests {
         let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
 
         let result = mint_from_derivation(
-            &conn, &mut store, session_id, "local-part@domain-part".into(),
+            &conn, TEST_KEY, &mut store, session_id, "local-part@domain-part".into(),
             &inputs, "concat", None, None,
         );
         assert!(
@@ -1631,12 +1646,12 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         let (_, _, value_id_a, _, _) = mint_from_read(
-            &conn, &mut store, session_id,
+            &conn, TEST_KEY, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
             None, None,
         ).unwrap();
         let (_, _, value_id_b, _, _) = mint_from_read(
-            &conn, &mut store, session_id,
+            &conn, TEST_KEY, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
             None, None,
         ).unwrap();
@@ -1647,7 +1662,7 @@ mod tests {
 
         // Mismatch: claimed literal != join(input_literals, '@').
         let mismatch_result = mint_from_derivation(
-            &conn, &mut store, session_id, "attacker@evil.com".into(),
+            &conn, TEST_KEY, &mut store, session_id, "attacker@evil.com".into(),
             &inputs, "concat", None, None,
         );
         assert!(
@@ -1658,7 +1673,7 @@ mod tests {
 
         // Matching case mints successfully.
         let matching_result = mint_from_derivation(
-            &conn, &mut store, session_id, "accounts@ev1l.com".into(),
+            &conn, TEST_KEY, &mut store, session_id, "accounts@ev1l.com".into(),
             &inputs, "concat", None, None,
         );
         assert!(matching_result.is_ok(), "the byte-verified matching literal must mint Ok");
@@ -1672,17 +1687,17 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         let (read_x, _, value_id_x, _, _) = mint_from_read(
-            &conn, &mut store, session_id,
+            &conn, TEST_KEY, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "x-frag".into() },
             None, None,
         ).unwrap();
         let (read_y, _, value_id_y, _, _) = mint_from_read(
-            &conn, &mut store, session_id,
+            &conn, TEST_KEY, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "y-frag".into() },
             None, None,
         ).unwrap();
         let (read_z, _, value_id_z, _, _) = mint_from_read(
-            &conn, &mut store, session_id,
+            &conn, TEST_KEY, &mut store, session_id,
             &Claim { claim_type: "doc_fragment".into(), value: "z-frag".into() },
             None, None,
         ).unwrap();
@@ -1707,7 +1722,7 @@ mod tests {
         let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
 
         let (_derivation_event_id, _hash, value_id) = mint_from_derivation(
-            &conn, &mut store, session_id, "a-lit@b-lit".into(),
+            &conn, TEST_KEY, &mut store, session_id, "a-lit@b-lit".into(),
             &inputs, "concat", None, None,
         ).unwrap();
 
@@ -1730,7 +1745,7 @@ mod tests {
 
         let inputs: Vec<&ValueRecord> = vec![];
         let result = mint_from_derivation(
-            &conn, &mut store, session_id, "whatever".into(), &inputs, "concat", None, None,
+            &conn, TEST_KEY, &mut store, session_id, "whatever".into(), &inputs, "concat", None, None,
         );
         assert!(result.is_err(), "zero inputs must fail closed");
 
@@ -1752,12 +1767,12 @@ mod tests {
         persist_session(&conn, &session).unwrap();
 
         let (_, _, value_id_a, _, _) = mint_from_read(
-            &conn, &mut store, session.id,
+            &conn, TEST_KEY, &mut store, session.id,
             &Claim { claim_type: "doc_fragment".into(), value: "accounts".into() },
             None, None,
         ).unwrap();
         let (_, _, value_id_b, _, _) = mint_from_read(
-            &conn, &mut store, session.id,
+            &conn, TEST_KEY, &mut store, session.id,
             &Claim { claim_type: "doc_fragment".into(), value: "ev1l.com".into() },
             None, None,
         ).unwrap();
@@ -1773,7 +1788,7 @@ mod tests {
         let inputs: Vec<&ValueRecord> = vec![&record_a, &record_b];
 
         mint_from_derivation(
-            &conn, &mut store, session.id, "accounts@ev1l.com".into(),
+            &conn, TEST_KEY, &mut store, session.id, "accounts@ev1l.com".into(),
             &inputs, "concat", None, None,
         ).unwrap();
 

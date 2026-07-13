@@ -552,6 +552,11 @@ fn live_acceptance_v1_3_composed() {
 
     // ── END-OF-RUN SWEEP (teeth #1 and #5) — open the shared audit_db ONCE ──
     let conn = open_audit_db(audit_db.to_str().unwrap()).expect("open shared audit DB (final sweep)");
+    // v1.6 Phase 28 (HARDEN-02): all three composed runs share ONE workspace
+    // root (and therefore ONE `<audit_db>.key`), so a single read-back here
+    // is the correct key for every `verify_chain` call below.
+    let mac_key = std::fs::read(format!("{}.key", audit_db.display()))
+        .expect("read persisted MAC key file written by the caprun run subprocesses");
     let sids = all_session_ids(&conn);
     assert_eq!(
         sids.len(),
@@ -560,7 +565,7 @@ fn live_acceptance_v1_3_composed() {
     );
     for sid in &sids {
         assert!(
-            verify_chain(&conn, sid),
+            verify_chain(&conn, sid, &mac_key),
             "verify_chain must be true for session {sid} (tooth #1 — per-session, \
              enumerated via ORDER BY rowid, never LIMIT 1)"
         );
@@ -737,7 +742,7 @@ fn live_acceptance_v1_3_composed() {
         // linear-chain data, chained onto the live head rather than the
         // mid-chain sink_blocked node (tooth #2's whole purpose).
         assert!(
-            verify_chain(&conn, sid),
+            verify_chain(&conn, sid, &mac_key),
             "verify_chain must remain true after Control B's linear append"
         );
     }
