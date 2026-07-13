@@ -177,3 +177,84 @@ fn canonicalize_existing_or_parent(path: &Path) -> std::io::Result<PathBuf> {
     let canonical_parent = std::fs::canonicalize(parent)?;
     Ok(canonical_parent.join(file_name))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Create a uniquely-named temp subdir (no `tempfile` dev-dep in this
+    /// crate — mirrors `crates/adapter-fs/src/workspace.rs`'s
+    /// `unique_tmp_root` convention, but portable/not Linux-gated since these
+    /// custody/F1 tests run on macOS host-side too).
+    fn unique_tmp_root(tag: &str) -> PathBuf {
+        static CTR: AtomicU64 = AtomicU64::new(0);
+        let n = CTR.fetch_add(1, Ordering::Relaxed);
+        let mut d = std::env::temp_dir();
+        d.push(format!("caprun_key_{}_{}_{}", tag, std::process::id(), n));
+        std::fs::create_dir_all(&d).expect("create tmp root");
+        d
+    }
+
+    /// F1: an audit DB placed INSIDE the workspace root is refused — `Err`,
+    /// and no `.key` file is left on disk (fail-closed leaves no artifact).
+    #[test]
+    fn f1_refusal_when_audit_under_workspace_root() {
+        let ws_root = unique_tmp_root("f1_vuln");
+        let audit_path = ws_root.join("audit.db");
+        let key_path = PathBuf::from(format!("{}.key", audit_path.display()));
+
+        let result = load_or_create_key(audit_path.to_str().unwrap(), &ws_root);
+
+        assert!(
+            result.is_err(),
+            "audit DB beneath the workspace root must be refused (F1)"
+        );
+        assert!(
+            !key_path.exists(),
+            "F1 refusal must write no key file (fail-closed leaves no artifact)"
+        );
+
+        std::fs::remove_dir_all(&ws_root).ok();
+    }
+
+    /// F1-safe layout, two independent loads: byte-identical keys prove
+    /// cross-process stability (Pitfall 2 — a per-process fresh key would
+    /// silently break every legitimate `confirm()`'s `verify_chain` gate).
+    #[test]
+    fn key_file_reused_across_calls() {
+        let tmp = unique_tmp_root("f1_safe");
+        let ws_root = tmp.join("workspace");
+        std::fs::create_dir_all(&ws_root).expect("create workspace subdir");
+        let audit_path = tmp.join("audit.db"); // sibling of ws_root, NOT beneath it
+
+        let first = load_or_create_key(audit_path.to_str().unwrap(), &ws_root)
+            .expect("first load must succeed");
+        let second = load_or_create_key(audit_path.to_str().unwrap(), &ws_root)
+            .expect("second load must succeed");
+
+        assert_eq!(first.len(), KEY_LEN, "key must be 32 bytes");
+        assert_eq!(
+            first, second,
+            "two independent loads for the same audit path must return identical bytes"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// `:memory:` returns an ephemeral 32-byte key and writes no `.key` file.
+    #[test]
+    fn memory_audit_path_ephemeral() {
+        let ws_root = unique_tmp_root("memory_ephemeral");
+
+        let key = load_or_create_key(":memory:", &ws_root).expect(":memory: load must succeed");
+
+        assert_eq!(key.len(), KEY_LEN, "ephemeral key must be 32 bytes");
+        assert!(
+            !Path::new(":memory:.key").exists(),
+            ":memory: must never write a key file"
+        );
+
+        std::fs::remove_dir_all(&ws_root).ok();
+    }
+}
