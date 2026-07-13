@@ -111,7 +111,7 @@ Full detail archived in [`milestones/v1.5-ROADMAP.md`](milestones/v1.5-ROADMAP.m
 
 - [x] **Phase 26: Security Hardening Design Gate** - A DESIGN doc specifies the mechanism + fail-closed default for all five residuals and clears a fresh adversarial review before any hardening code is written (completed 2026-07-12)
 - [x] **Phase 27: Session & Connection Integrity Hardening** - fd release itself carries the I1 draft-only consequence, and the CreateSession forced-Active mint arm is compiled out of the production binary (completed 2026-07-12)
-- [ ] **Phase 28: Authenticated Audit Chain** - `verify_chain` becomes forge-resistant (keyed MAC and/or externally-anchored head), not just a corruption detector
+- [x] **Phase 28: Authenticated Audit Chain** - `verify_chain` becomes forge-resistant (keyed MAC and/or externally-anchored head), not just a corruption detector (completed 2026-07-13)
 - [ ] **Phase 29: Sink-Path Hardening — Replay CAS & contents Slot** - the Allowed email.send path is replay-safe (at-most-once), and `file.create`'s `contents` arg is no longer an unconstrained slot
 - [ ] **Phase 30: Regression & Live Proof** - the full workspace regression is independently re-run green on real Linux with a dedicated negative test proving each closed residual, no regression to v1.1–v1.5 behavior
 
@@ -167,7 +167,7 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
   2. The chain's authenticity depends on a secret key or an out-of-store anchor that a bare `events`-table writer cannot derive or reproduce.
   3. An untampered chain continues to verify true — no false positives; existing confirm-path and live-acceptance callers of `verify_chain` are unaffected.
 
-**Plans**: 4/5 plans executed
+**Plans**: 5/5 plans complete
 
 **Wave 1**
 
@@ -187,7 +187,7 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 
 **Wave 5** *(depends on 28-03, 28-04)*
 
-- [ ] 28-05-PLAN.md — `pending_confirmations` whole-row MAC fold + confirm()/deny() entry gate (X-02 uniform ruling: deny() gains the gate) + cross-process key wiring
+- [x] 28-05-PLAN.md — `pending_confirmations` whole-row MAC fold + confirm()/deny() entry gate (X-02 uniform ruling: deny() gains the gate) + cross-process key wiring
 
 ### Phase 29: Sink-Path Hardening — Replay CAS & contents Slot
 
@@ -248,6 +248,6 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 | 25. Regression & Live Proof | v1.5 | 3/3 | Complete    | 2026-07-12 |
 | 26. Security Hardening Design Gate | v1.6 | 2/2 | Complete    | 2026-07-12 |
 | 27. Session & Connection Integrity Hardening | v1.6 | 2/2 | Complete    | 2026-07-12 |
-| 28. Authenticated Audit Chain | v1.6 | 4/5 | In Progress|  |
+| 28. Authenticated Audit Chain | v1.6 | 5/5 | Complete   | 2026-07-13 |
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 0/? | Not started | - |
 | 30. Regression & Live Proof | v1.6 | 0/? | Not started | - |
