@@ -40,6 +40,11 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
+// Cross-process MAC-key custody + F1 fail-closed startup refusal (HARDEN-02).
+// Not yet wired into the `open_audit_db` call sites below — Plan 03 wires the
+// `caprun run` path, Plan 05 wires `run_confirm_or_deny`.
+mod key;
+
 /// Trusted default `subject`/`body` for a `send-email-summary` intent (Phase
 /// 15 finding #6). Deliberately NOT a new CLI flag (this plan's DEFERRED
 /// note) — always user-trusted by construction (`SeedProvenance::TrustedArg`

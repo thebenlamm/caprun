@@ -140,6 +140,7 @@ dependencies = [
  "brokerd",
  "chrono",
  "executor",
+ "getrandom 0.4.3",
  "hex",
  "llm-planner",
  "runtime-core",

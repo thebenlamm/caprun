@@ -20,6 +20,9 @@ chrono       = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 rusqlite     = { workspace = true }
+# Cross-process MAC-key custody (HARDEN-02, cli/caprun/src/key.rs) — vetted
+# CSPRNG-backed key generation, never a custom PRNG.
+getrandom    = { workspace = true }
 
 [dev-dependencies]
 rusqlite     = { workspace = true }
