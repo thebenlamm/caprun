@@ -4,17 +4,17 @@ milestone: v1.6
 milestone_name: — Security Hardening
 current_phase: 28
 current_phase_name: authenticated-audit-chain
-status: executing
-stopped_at: Completed 28-03-PLAN.md
-last_updated: "2026-07-13T01:44:00.516Z"
+status: verifying
+stopped_at: Completed 28-05-PLAN.md
+last_updated: "2026-07-13T02:12:13.544Z"
 last_activity: 2026-07-13
 last_activity_desc: Phase 28 execution started
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 9
-  completed_plans: 8
-  percent: 40
+  completed_plans: 9
+  percent: 60
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-12)
 
 Phase: 28 (authenticated-audit-chain) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-13 — Phase 28 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -83,6 +83,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 28 P02 | 6min | 2 tasks | 4 files |
 | Phase 28 P03 | 31min | 2 tasks | 22 files |
 | Phase 28-authenticated-audit-chain P04 | 24min | 2 tasks | 1 files |
+| Phase 28 P05 | 25 | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -153,6 +154,8 @@ v1.3 P17, v1.4 P22, v1.5 P25; depends on Phases 27, 28, and 29 all landing.
 - [Phase ?]: 28-03: keyed HMAC-SHA256 audit chain via shared domain-separated+length-framed mac_frame helper, key threaded as a sibling &[u8]/Arc<[u8;32]> parameter (not bundled into the connection type) through all 19 append_event sites + 2 verify_chain callers
 - [Phase ?]: 28-03: run_confirm_or_deny gained a minimal load_or_create_key wiring for both confirm/deny verbs (necessary for confirm.rs's cross-process tests to keep passing under the keyed scheme) — Plan 05 still owns the pending_confirmations MAC fold, MAC-verify-before-terminal-state gate, and deny()'s new verify_chain call
 - [Phase ?]: chain_anchor MAC binds session_id+head_event_id+head_hash+event_count via mac_frame(ANCHOR_MAC_DOMAIN=caprun.audit.anchor.v1); upsert folded atomically inside append_event under the same conn lock; verify_chain fails closed on absent/MAC-invalid/mismatched anchor — Closes tail-truncation detection gap (D-04) — a MAC'd head hash alone doesn't prove non-truncation; binding event_count lets verify_chain assert actual==anchored.
+- [Phase 28]: pending_confirmations MAC covers the WHOLE row (not just state+combined_digest) — resolved_args/blocked_arg_names/workspace_root_path are equally forgeable and load-bearing — 28-RESEARCH.md Assumption A3; strict superset of the DESIGN doc's literal text
+- [Phase 28]: deny() gains the SAME pending_confirmations MAC gate AND verify_chain gate confirm() has (X-02 uniform ruling) — deny() previously had neither — DESIGN-security-hardening.md X-02 locked cross-cutting ruling
 
 ### Pending Todos
 
@@ -191,8 +194,8 @@ moved from "open" to "in progress" as its 5 items became v1.6's HARDEN-01..05.
 
 ## Session Continuity
 
-Last session: 2026-07-13T01:42:58.161Z
-Stopped at: Completed 28-03-PLAN.md
+Last session: 2026-07-13T02:12:13.537Z
+Stopped at: Completed 28-05-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
