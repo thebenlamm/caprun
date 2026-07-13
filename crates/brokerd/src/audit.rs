@@ -756,8 +756,10 @@ pub fn current_chain_head(
     }
 }
 
-/// Walk the audit chain for `session_id` and verify every keyed MAC link
-/// (v1.6 Phase 28, HARDEN-02).
+/// Walk the audit chain for `session_id` and verify every keyed MAC link,
+/// then cross-check the MAC'd `chain_anchor` row (v1.6 Phase 28, HARDEN-02;
+/// Plan 04, D-04 — the anchor cross-check is what turns tail-truncation
+/// from invisible into detected).
 ///
 /// Uses a recursive CTE to traverse from the root event (parent_id IS NULL)
 /// through each subsequent event linked by `parent_id`. For each row:
@@ -767,11 +769,28 @@ pub fn current_chain_head(
 ///    `Mac::verify_slice`, never a `==`/`!=` hex-string compare) from stored
 ///    fields under `key`.
 ///
+/// After the walk completes, the NEW (Plan 04) anchor cross-check runs:
+///
+/// 3. Loads the session's `chain_anchor` row. **Absent → `false`** (a
+///    session with events but NO anchor row — e.g. a legacy pre-Phase-28
+///    database — is untrusted until re-anchored; DESIGN's "Migration
+///    (pinned)" rule, fail-closed by construction, never silently trusted).
+/// 4. Verifies the anchor row's OWN MAC (constant-time, `verify_anchor_mac`)
+///    under `key`. Mismatch → `false`.
+/// 5. Asserts the walk's final `(id, hash)` and total row COUNT equal the
+///    anchor's `head_event_id`/`head_hash`/`event_count`. Mismatch →
+///    `false` — this is what catches a tail-truncation (`DELETE` the last N
+///    events via raw SQL, bypassing `append_event` so the anchor is left
+///    stale): the walk now terminates at a SHORTER true leaf that no longer
+///    matches the anchor an attacker without the broker key cannot re-MAC.
+///
 /// Returns `false` if:
 /// - Any MAC mismatch is detected (tampering, wrong key, or an unkeyed/
 ///   legacy row from before this scheme — fail-closed, not silently passed).
 /// - Any `parent_hash` link is broken.
 /// - No events exist for the session (empty chain is considered unverified).
+/// - The session's `chain_anchor` row is absent, MAC-invalid, or its
+///   head/count no longer matches the recomputed walk (tail-truncation).
 ///
 /// Authenticity now depends on `key` (the broker-owned secret MAC key): a
 /// bare `events`-table writer without `key` cannot forge a self-consistent
@@ -779,7 +798,10 @@ pub fn current_chain_head(
 /// internally consistent under the PUBLIC (unkeyed) algorithm (Success
 /// Criterion 1) — see `self_consistent_forgery_without_key_is_rejected`.
 /// Calling with the WRONG key on an otherwise-untampered chain also returns
-/// `false` (Success Criterion 2) — see `verify_chain_is_key_dependent`.
+/// `false` (Success Criterion 2) — see `verify_chain_is_key_dependent`. A
+/// genuinely untampered, normally-appended chain still verifies `true` — no
+/// false positive — since `append_event` atomically upserts a matching
+/// anchor with every append (Plan 04 Task 1).
 pub fn verify_chain(conn: &rusqlite::Connection, session_id: &str, key: &[u8]) -> bool {
     let result: Result<bool> = (|| {
         let mut stmt = conn.prepare(
@@ -806,9 +828,12 @@ pub fn verify_chain(conn: &rusqlite::Connection, session_id: &str, key: &[u8]) -
         let mut rows = stmt.query(rusqlite::params![session_id])?;
         let mut prev_hash: Option<String> = None;
         let mut found_any = false;
+        let mut last_id: Option<String> = None;
+        let mut walked_count: i64 = 0;
 
         while let Some(row) = rows.next()? {
             found_any = true;
+            walked_count += 1;
             let id: String = row.get(0)?;
             let sid: String = row.get(1)?;
             let event_type: String = row.get(2)?;
@@ -836,10 +861,58 @@ pub fn verify_chain(conn: &rusqlite::Connection, session_id: &str, key: &[u8]) -
                 return Ok(false);
             }
 
+            last_id = Some(id);
             prev_hash = Some(stored_hash);
         }
 
-        Ok(found_any)
+        if !found_any {
+            return Ok(false);
+        }
+
+        // Anchor cross-check (Plan 04, D-04): load the session's
+        // chain_anchor row — absent means untrusted/legacy, fail closed.
+        let anchor_row: Option<(String, String, i64, String)> = match conn.query_row(
+            "SELECT head_event_id, head_hash, event_count, mac \
+             FROM chain_anchor WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ) {
+            Ok(v) => Some(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Err(anyhow::Error::from(e)),
+        };
+
+        let (anchor_head_event_id, anchor_head_hash, anchor_event_count, anchor_mac) =
+            match anchor_row {
+                Some(v) => v,
+                None => return Ok(false), // fail-closed: no anchor => untrusted
+            };
+
+        // Constant-time keyed MAC verify of the anchor row itself.
+        if !verify_anchor_mac(
+            key,
+            &anchor_mac,
+            session_id,
+            &anchor_head_event_id,
+            &anchor_head_hash,
+            anchor_event_count,
+        ) {
+            return Ok(false);
+        }
+
+        // The walk's final (id, hash) and total row count must equal the
+        // anchor's — a stale anchor (tail-truncation via raw SQL bypassing
+        // append_event) fails here.
+        let final_id = last_id.expect("found_any guarantees at least one row was walked");
+        let final_hash = prev_hash.expect("found_any guarantees at least one row was walked");
+        if final_id != anchor_head_event_id
+            || final_hash != anchor_head_hash
+            || walked_count != anchor_event_count
+        {
+            return Ok(false);
+        }
+
+        Ok(true)
     })();
 
     result.unwrap_or(false)
@@ -1374,6 +1447,96 @@ mod tests {
             !verify_chain(&conn, &session_id.to_string(), key_b),
             "verify_chain under the WRONG key on an untampered chain must return false \
              (Success Criterion 2)"
+        );
+    }
+
+    // ── HARDEN-02 Plan 04: chain_anchor tail-truncation + fail-closed ──────
+
+    /// D-04's whole point: tail-truncation was PREVIOUSLY invisible to
+    /// `verify_chain` (the recursive-CTE walk simply terminates at the
+    /// shorter true leaf and `found_any` still passed). The MAC'd
+    /// `chain_anchor` row closes this: after a raw-SQL `DELETE` removes the
+    /// tail event (bypassing `append_event` entirely, so the anchor is left
+    /// STALE — still pointing at the deleted event), the walk's recomputed
+    /// leaf/count no longer match the anchor, and an attacker without the
+    /// broker key cannot re-MAC the anchor to match the shortened chain.
+    #[test]
+    fn tail_truncation_detected_via_anchor_mismatch() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+
+        let root = make_file_read_event(session_id);
+        let root_hash = append_event(&conn, TEST_KEY, &root, None).expect("append root");
+        let child = Event::new(
+            Uuid::new_v4(),
+            Some(root.id),
+            session_id,
+            "worker".to_string(),
+            "sink_ok".to_string(),
+            Utc::now(),
+            vec![],
+        );
+        append_event(&conn, TEST_KEY, &child, Some(&root_hash)).expect("append child");
+
+        // Sanity (also the "untampered chain still verifies true, no false
+        // positive" assertion): the genuine 2-event anchored chain verifies
+        // true BEFORE any tamper.
+        assert!(
+            verify_chain(&conn, &session_id.to_string(), TEST_KEY),
+            "sanity: an untampered, normally-appended anchored chain must verify \
+             true (no false positive)"
+        );
+
+        // ATTACK: delete the tail (child) event via raw SQL, bypassing
+        // append_event entirely — events shrinks to just the root, but the
+        // chain_anchor row is left STALE (still records the deleted child
+        // as head_event_id/head_hash with event_count=2).
+        conn.execute(
+            "DELETE FROM events WHERE id = ?1",
+            rusqlite::params![child.id.to_string()],
+        )
+        .expect("raw-SQL tail delete (simulating a bare events-table writer)");
+
+        assert!(
+            !verify_chain(&conn, &session_id.to_string(), TEST_KEY),
+            "tail-truncation (raw DELETE bypassing append_event, leaving a stale \
+             anchor) must now be DETECTED — verify_chain must return false (D-04)"
+        );
+    }
+
+    /// Migration pin (DESIGN-security-hardening.md "Migration (pinned)"): a
+    /// session with events but NO `chain_anchor` row — e.g. a legacy
+    /// pre-Phase-28 database, or an anchor row deleted alongside the tail
+    /// (T-28-10) — must fail closed: untrusted until re-anchored, never
+    /// silently trusted as authenticated.
+    #[test]
+    fn legacy_db_without_anchor_fails_closed() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+
+        let event = make_file_read_event(session_id);
+        append_event(&conn, TEST_KEY, &event, None).expect("append_event");
+
+        // Sanity: append_event's atomic upsert means the anchor DOES exist
+        // right after a normal append, and the chain verifies true.
+        assert!(
+            verify_chain(&conn, &session_id.to_string(), TEST_KEY),
+            "sanity: a freshly-appended chain has its anchor and verifies true"
+        );
+
+        // Simulate a legacy pre-Phase-28 DB (or a deleted anchor row,
+        // T-28-10): remove the chain_anchor row for this session — the
+        // events themselves are untouched.
+        conn.execute(
+            "DELETE FROM chain_anchor WHERE session_id = ?1",
+            rusqlite::params![session_id.to_string()],
+        )
+        .expect("remove anchor row to simulate a legacy un-anchored session");
+
+        assert!(
+            !verify_chain(&conn, &session_id.to_string(), TEST_KEY),
+            "a session with events but NO chain_anchor row must fail closed \
+             (untrusted until re-anchored) — never silently pass, never panic"
         );
     }
 }
