@@ -926,6 +926,24 @@ pub fn verify_chain(conn: &rusqlite::Connection, session_id: &str, key: &[u8]) -
             return Ok(false);
         }
 
+        // Orphan/extra-row guard (HARDEN-02): the anchored count must also equal
+        // the LIVE row count for this session. The recursive walk above only
+        // counts events reachable from the single NULL-parent root; an actor
+        // with `events`-table write access could INSERT an unreferenced row
+        // (a non-NULL `parent_id` pointing nowhere) that the walk skips. Such a
+        // row carries a forged MAC (the attacker lacks the key) and never enters
+        // a confirm/deny decision path, but an *authenticated* chain must not
+        // silently carry unreferenced rows — fail closed if the table holds more
+        // events for this session than the chain walk reached.
+        let live_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |row| row.get(0),
+        )?;
+        if live_count != walked_count {
+            return Ok(false);
+        }
+
         // The walk's final (id, hash) and total row count must equal the
         // anchor's — a stale anchor (tail-truncation via raw SQL bypassing
         // append_event) fails here.
@@ -1527,6 +1545,63 @@ mod tests {
             !verify_chain(&conn, &session_id.to_string(), TEST_KEY),
             "tail-truncation (raw DELETE bypassing append_event, leaving a stale \
              anchor) must now be DETECTED — verify_chain must return false (D-04)"
+        );
+    }
+
+    /// Orphan-row guard (HARDEN-02): an actor with `events`-table write access
+    /// could INSERT an unreferenced row (a non-NULL `parent_id` pointing at no
+    /// existing event) that the recursive chain walk — rooted at `parent_id IS
+    /// NULL` and following `parent_id` links — never reaches. Its MAC is forged
+    /// (the attacker lacks the key) and it never enters a confirm/deny decision
+    /// path, but an authenticated chain must not silently carry unreferenced
+    /// rows. The live-count guard in `verify_chain` fails closed when the table
+    /// holds more events for the session than the walk reached.
+    #[test]
+    fn orphan_event_injection_detected_via_live_count() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+
+        let root = make_file_read_event(session_id);
+        let root_hash = append_event(&conn, TEST_KEY, &root, None).expect("append root");
+        let child = Event::new(
+            Uuid::new_v4(),
+            Some(root.id),
+            session_id,
+            "worker".to_string(),
+            "sink_ok".to_string(),
+            Utc::now(),
+            vec![],
+        );
+        append_event(&conn, TEST_KEY, &child, Some(&root_hash)).expect("append child");
+
+        assert!(
+            verify_chain(&conn, &session_id.to_string(), TEST_KEY),
+            "sanity: untampered anchored chain verifies true before the orphan insert"
+        );
+
+        // ATTACK: INSERT an unreferenced ("orphan") event via raw SQL — same
+        // session, but `parent_id` points at a fresh, nonexistent UUID, so the
+        // recursive walk never reaches it. Bypasses append_event, so the
+        // chain_anchor row is NOT updated: walked_count stays 2 (matching the
+        // stale anchor), but the live row count is now 3.
+        conn.execute(
+            "INSERT INTO events \
+             (id, parent_id, session_id, event_type, actor, payload, taint, parent_hash, hash) \
+             VALUES (?1, ?2, ?3, 'orphan', 'attacker', '{}', '[]', ?4, 'orphan-forged-hash')",
+            rusqlite::params![
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(), // nonexistent parent — never walked
+                session_id.to_string(),
+                "orphan-forged-parent-hash",
+            ],
+        )
+        .expect("raw-SQL orphan insert (simulating a bare events-table writer)");
+
+        assert!(
+            !verify_chain(&conn, &session_id.to_string(), TEST_KEY),
+            "orphan-row injection (unreferenced events-table INSERT bypassing \
+             append_event) must be DETECTED — verify_chain must return false via \
+             the live-count guard"
         );
     }
 
