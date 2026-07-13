@@ -77,6 +77,14 @@ fn mac_frame(mac: &mut HmacSha256, domain: &[u8], fields: &[&[u8]]) {
 /// when they reuse `mac_frame` above.
 const EVENT_MAC_DOMAIN: &[u8] = b"caprun.audit.event.v1";
 
+/// Domain tag for the `chain_anchor` row's MAC (v1.6 Phase 28 Plan 04,
+/// HARDEN-02 D-04) — reserved in Plan 03's doc comments above, consumed
+/// here. MUST stay distinct from `EVENT_MAC_DOMAIN` (and Plan 05's
+/// `b"caprun.audit.pending-confirmation.v1"`) so a MAC computed for one
+/// record type can never verify — or be replayed — as another's, per
+/// `mac_frame`'s domain-separation discipline.
+const ANCHOR_MAC_DOMAIN: &[u8] = b"caprun.audit.anchor.v1";
+
 /// SQLite schema — STRICT tables enforce column type constraints.
 ///
 /// `sessions`: broker-created session rows (id, intent, status, created_at).
@@ -153,6 +161,29 @@ CREATE TABLE IF NOT EXISTS pending_confirmations (
     workspace_root_path TEXT NOT NULL,
     state               TEXT NOT NULL
 ) STRICT;
+
+-- Anchored/monotonic head (v1.6 Phase 28 Plan 04, HARDEN-02 D-04): a single
+-- MAC'd row per session recording the CURRENT chain head (head_event_id,
+-- head_hash) and the ACTUAL persisted event_count. Upserted ATOMICALLY
+-- inside `append_event`, under the SAME already-held connection lock as the
+-- events INSERT (never a separate, skippable call site — see
+-- append_event's doc comment / 28-RESEARCH.md Pitfall 4: a panic/early
+-- return between two separate calls would reopen the truncation gap this
+-- table exists to close). `verify_chain` loads this row, verifies its own
+-- MAC, and asserts the recomputed walk's final (id, hash) and total event
+-- count match it — this is what turns tail-truncation (DELETE the last N
+-- events) from invisible into detected: an attacker with bare `events`-
+-- table write access cannot re-MAC this row without the broker key. A
+-- session with events but NO chain_anchor row (e.g. a legacy pre-Phase-28
+-- database) fails closed in verify_chain (untrusted until re-anchored)
+-- rather than silently passing.
+CREATE TABLE IF NOT EXISTS chain_anchor (
+    session_id     TEXT PRIMARY KEY,
+    head_event_id  TEXT NOT NULL,
+    head_hash      TEXT NOT NULL,
+    event_count    INTEGER NOT NULL,
+    mac            TEXT NOT NULL
+) STRICT;
 ";
 
 /// Idempotently widen a pre-existing `pending_confirmations` table with the
@@ -203,6 +234,49 @@ fn migrate_pending_confirmations_schema(conn: &rusqlite::Connection) -> Result<(
     Ok(())
 }
 
+/// Idempotently verify the `chain_anchor` table exists (v1.6 Phase 28 Plan
+/// 04, HARDEN-02 D-04) — the presence-check half of a migration for a
+/// pre-existing (pre-Phase-28) database.
+///
+/// Unlike `migrate_pending_confirmations_schema` above (which WIDENS an
+/// existing table with new columns via a `PRAGMA table_info`-gated `ALTER
+/// TABLE`), `chain_anchor` is a WHOLE NEW table with all five columns
+/// present from its very first introduction — there is no column-widening
+/// case to handle. The single DDL statement in `SCHEMA_DDL` above (run via
+/// `execute_batch` on every `open_audit_db` call, BEFORE this function) is
+/// already idempotent and already creates the table on a legacy database
+/// missing it entirely — so this function's own job is the defensive,
+/// explicit `sqlite_master`-gated presence check mirroring
+/// `migrate_pending_confirmations_schema`'s idiom (verify before trusting,
+/// never assume): it fails loudly (never silently) if the table is somehow
+/// still absent after `SCHEMA_DDL` ran, rather than duplicating the DDL
+/// statement a second time in this file.
+///
+/// Deliberately does NOT backfill `chain_anchor` rows for a legacy
+/// database's EXISTING sessions — a pre-Phase-28 session's events predate
+/// MAC authentication entirely, and per DESIGN-security-hardening.md's
+/// "Migration (pinned)" rule, such a session must remain untrusted until
+/// explicitly re-anchored. That fail-closed behavior is enforced by
+/// `verify_chain`'s absent-anchor check, not backfilled here.
+fn migrate_chain_anchor_schema(conn: &rusqlite::Connection) -> Result<()> {
+    let table_exists: bool = match conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chain_anchor'",
+        [],
+        |_row| Ok(()),
+    ) {
+        Ok(()) => true,
+        Err(rusqlite::Error::QueryReturnedNoRows) => false,
+        Err(e) => return Err(anyhow::Error::from(e)),
+    };
+
+    if !table_exists {
+        return Err(anyhow::anyhow!(
+            "chain_anchor table missing after SCHEMA_DDL ran — open_audit_db invariant violated"
+        ));
+    }
+    Ok(())
+}
+
 /// Open (or create) the audit database at `path` and run schema DDL.
 ///
 /// Uses rusqlite with the `bundled` feature (no system SQLite dep).
@@ -216,6 +290,7 @@ pub fn open_audit_db(path: &str) -> Result<rusqlite::Connection> {
     let conn = rusqlite::Connection::open(path)?;
     conn.execute_batch(SCHEMA_DDL)?;
     migrate_pending_confirmations_schema(&conn)?;
+    migrate_chain_anchor_schema(&conn)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     Ok(conn)
 }
@@ -378,6 +453,70 @@ pub fn verify_event_hash(
     mac.verify_slice(&expected_bytes).is_ok()
 }
 
+/// Compute a `chain_anchor` row's MAC (v1.6 Phase 28 Plan 04, HARDEN-02
+/// D-04) — domain-separated (`ANCHOR_MAC_DOMAIN`, distinct from
+/// `EVENT_MAC_DOMAIN`) via the shared `mac_frame` helper, over
+/// `session_id`, `head_event_id`, `head_hash`, and `event_count` (encoded
+/// as its decimal string; `mac_frame`'s length-framing already makes each
+/// field's boundary unambiguous, so no fixed-width integer encoding is
+/// needed). Binding `event_count` INTO the MAC — not just the head hash —
+/// is what lets `verify_chain` detect a tail-truncation replay: a MAC'd
+/// head hash alone does not prove the chain wasn't shortened and re-
+/// anchored at an earlier legitimate point.
+fn compute_anchor_mac(
+    key: &[u8],
+    session_id: &str,
+    head_event_id: &str,
+    head_hash: &str,
+    event_count: i64,
+) -> String {
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(key)
+        .expect("HMAC-SHA256 accepts a key of any length");
+    mac_frame(
+        &mut mac,
+        ANCHOR_MAC_DOMAIN,
+        &[
+            session_id.as_bytes(),
+            head_event_id.as_bytes(),
+            head_hash.as_bytes(),
+            event_count.to_string().as_bytes(),
+        ],
+    );
+    hex::encode(mac.finalize().into_bytes())
+}
+
+/// Constant-time verification of a `chain_anchor` row's MAC — mirrors
+/// `verify_event_hash`'s fail-closed contract (never panics, always
+/// `Mac::verify_slice`, never a `==`/`!=` hex-string compare).
+fn verify_anchor_mac(
+    key: &[u8],
+    expected_hex: &str,
+    session_id: &str,
+    head_event_id: &str,
+    head_hash: &str,
+    event_count: i64,
+) -> bool {
+    let expected_bytes = match hex::decode(expected_hex) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    let mut mac = match <HmacSha256 as Mac>::new_from_slice(key) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    mac_frame(
+        &mut mac,
+        ANCHOR_MAC_DOMAIN,
+        &[
+            session_id.as_bytes(),
+            head_event_id.as_bytes(),
+            head_hash.as_bytes(),
+            event_count.to_string().as_bytes(),
+        ],
+    );
+    mac.verify_slice(&expected_bytes).is_ok()
+}
+
 /// Append an event to the audit DAG and return its SHA-256 hash.
 ///
 /// Reuses `runtime_core::Event` directly — no duplicate type definition.
@@ -436,6 +575,37 @@ pub fn append_event(
             &hash,
         ],
     )?;
+
+    // Atomically upsert the MAC'd `chain_anchor` row for this session, under
+    // the SAME already-held `conn` lock as the events INSERT above (v1.6
+    // Phase 28 Plan 04, HARDEN-02 D-04) — every one of the 19 production
+    // `append_event` call sites inherits this for free; NO second call site
+    // is ever added anywhere else (28-RESEARCH.md Pitfall 4: a separate,
+    // caller-invoked step could be skipped by a panic/early-return between
+    // the two calls, reopening the truncation gap this table exists to
+    // close — mirrors `quarantine.rs::mint_from_read`'s two-write same-lock
+    // atomicity discipline).
+    let session_id_str = event.session_id.to_string();
+    // Read back the ACTUAL persisted count — never assume `+ 1` arithmetic
+    // (28-RESEARCH.md Anti-Pattern: the MAC must cover a CONFIRMED value).
+    let event_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM events WHERE session_id = ?1",
+        rusqlite::params![session_id_str],
+        |row| row.get(0),
+    )?;
+    let event_id_str = event.id.to_string();
+    let anchor_mac = compute_anchor_mac(key, &session_id_str, &event_id_str, &hash, event_count);
+    conn.execute(
+        "INSERT INTO chain_anchor (session_id, head_event_id, head_hash, event_count, mac) \
+         VALUES (?1, ?2, ?3, ?4, ?5) \
+         ON CONFLICT(session_id) DO UPDATE SET \
+             head_event_id = excluded.head_event_id, \
+             head_hash = excluded.head_hash, \
+             event_count = excluded.event_count, \
+             mac = excluded.mac",
+        rusqlite::params![session_id_str, event_id_str, &hash, event_count, anchor_mac],
+    )?;
+
     Ok(hash)
 }
 
