@@ -131,3 +131,9 @@ None - no external service configuration required.
 ---
 *Phase: 28-authenticated-audit-chain*
 *Completed: 2026-07-13*
+
+## Self-Check: PASSED
+
+All 10 modified/created files confirmed present on disk; all 3 commits
+(`23b6e15` fixture migration, `048e64b` hmac/getrandom deps, plus this
+summary's own commit) confirmed present in git log.

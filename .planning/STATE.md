@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: — Security Hardening
 current_phase: 28
-current_phase_name: Authenticated Audit Chain
+current_phase_name: authenticated-audit-chain
 status: executing
 stopped_at: Phase 26 context gathered
-last_updated: "2026-07-12T21:30:05.509Z"
-last_activity: 2026-07-12
-last_activity_desc: Phase 27 complete, transitioned to Phase 28
+last_updated: "2026-07-13T00:30:19.380Z"
+last_activity: 2026-07-13
+last_activity_desc: Phase 28 execution started
 progress:
   total_phases: 5
   completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 9
+  completed_plans: 5
   percent: 40
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-12)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, (v1.5, SHIPPED) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into (closing the v1.4 T2 residual), and now (v1.6) hardening the standing residuals that made several of those guarantees "true only incidentally" into enforced guarantees.
-**Current focus:** Phase 27 — Session & Connection Integrity Hardening
+**Current focus:** Phase 28 — authenticated-audit-chain
 
 ## Current Position
 
-Phase: 28 — Authenticated Audit Chain
-Plan: Not started
+Phase: 28 (authenticated-audit-chain) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-07-12 — Phase 27 complete, transitioned to Phase 28
+Last activity: 2026-07-13 — Phase 28 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -79,6 +79,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 24 P01 | 25min | 3 tasks | 9 files |
 | Phase 24 P02 | 25min | 1 tasks | 1 files |
 | Phase 24 P03 | 25min | 2 tasks | 3 files |
+| Phase 28 P01 | 7min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -142,6 +143,8 @@ v1.3 P17, v1.4 P22, v1.5 P25; depends on Phases 27, 28, and 29 all landing.
 - [Phase 24]: Step 1c wired as a per-arg return-immediately guard (Steps 1/1a/1b tier), never joining the collect-then-Block vec — preserves I0/I2 precedence, zero new anchor shapes — DESIGN §6
 - [Phase 24]: email.send body's expected-role list corrected to [body, doc_fragment] (DESIGN §3 table amendment) — the only production vocabulary for hostile-extracted body content is doc_fragment (worker.rs WorkerClaim::DocFragment -> server.rs claim_type -> mint_from_read origin_role); the DESIGN-literal [body] alone would have hard-Denied the shipped CONTENT-01/CONTROL-02 body-Block flow instead of reaching I2 — caught by extract_provenance_threading.rs test failures; safe under F4 since body is content-sensitive
 - [Phase 25]: file.create's contents arg has no expected-role entry at all (uses executor's routing-sensitive default) — this gap is now v1.6's HARDEN-05.
+- [Phase 28]: 28-01: run_caprun_file_create/run_caprun_block now return/take ws_dir (the workspace subdirectory) instead of the outer tmp dir, since that is the broker-derived workspace root used for post-run assertions
+- [Phase 28]: 28-01: live_acceptance_v1_3.rs/v1_4_composed.rs's run_caprun_email_on gained an explicit ws_dir param replacing the audit_db.parent() derivation, to keep the shared multi-invocation workspace root F1-safe as a sibling of audit.db
 
 ### Pending Todos
 
@@ -180,7 +183,7 @@ moved from "open" to "in progress" as its 5 items became v1.6's HARDEN-01..05.
 
 ## Session Continuity
 
-Last session: 2026-07-12T15:52:10.746Z
+Last session: 2026-07-13T00:29:56.088Z
 Stopped at: Phase 26 context gathered
 Resume file: .planning/phases/26-security-hardening-design-gate/26-CONTEXT.md
 
