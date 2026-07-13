@@ -1588,6 +1588,109 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    // ── pending_confirmations whole-row MAC gate (Task 3, v1.6 Phase 28 Plan 05) ──
+
+    /// A raw-SQL flip-back of a TERMINAL row's `state` back to `pending`
+    /// (WITHOUT recomputing `mac`) is caught by the whole-row MAC check —
+    /// distinct from Step 2's plain `!= Pending` guard, which would NOT
+    /// catch this specific tamper (the flipped `state` column IS literally
+    /// `"pending"` again). Real `deny()` first (so `transition_state`
+    /// legitimately persists a Denied-state MAC), THEN the raw flip-back,
+    /// THEN `confirm()` — proving the MAC (bound to the OLD `denied` state)
+    /// rejects the row even though the SQL-level `state` column reads
+    /// `pending`.
+    #[test]
+    fn flip_back_denied_to_pending_caught_by_mac() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_flipback_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, _session_id, _blocked_event_id) =
+            seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
+
+        let denied = deny(&conn, TEST_KEY, &effect_id.to_string()).expect("deny");
+        assert_eq!(denied, ConfirmOutcome::Denied);
+
+        // Raw-SQL flip-back: state -> 'pending', mac left UNTOUCHED (still
+        // bound to state="denied") — simulates a bare
+        // pending_confirmations-table writer.
+        conn.execute(
+            "UPDATE pending_confirmations SET state = 'pending' WHERE effect_id = ?1",
+            rusqlite::params![effect_id.to_string()],
+        )
+        .unwrap();
+
+        // Sanity: the flip really did land at the SQL layer — a Step-2-only
+        // guard (`pc.state != Pending`), with no MAC check, would NOT catch
+        // this: the row genuinely reads back as Pending.
+        let raw_state: String = conn
+            .query_row(
+                "SELECT state FROM pending_confirmations WHERE effect_id = ?1",
+                rusqlite::params![effect_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw_state, "pending");
+
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
+        assert_eq!(
+            outcome,
+            ConfirmOutcome::DigestMismatch,
+            "a raw-SQL flip-back to Pending (bypassing transition_state's mac \
+             recompute) must be caught by the pending_confirmations whole-row \
+             MAC check, not silently accepted"
+        );
+        assert!(
+            !root.join("out.txt").exists(),
+            "no sink must ever run after a MAC-invalid flip-back"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `deny()`'s BRAND-NEW gate (it previously had none at all —
+    /// 28-RESEARCH.md NEW FINDING) rejects a MAC-invalid `pending_
+    /// confirmations` row: no state transition, no `confirm_denied` event.
+    #[test]
+    fn deny_fails_closed_on_tampered_state() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let root = std::env::temp_dir().join(format!("caprun_deny_tamper_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let (effect_id, session_id, _blocked_event_id) =
+            seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
+
+        // Tamper resolved_args via raw SQL (bypassing insert/transition_state's
+        // mac recompute) — the SAME helper the existing confirm()-side tests
+        // use, reused here for deny().
+        mutate_resolved_arg_literal(&conn, effect_id, "contents", "attacker-injected");
+
+        let outcome = deny(&conn, TEST_KEY, &effect_id.to_string()).expect("deny");
+        assert_eq!(
+            outcome,
+            ConfirmOutcome::DigestMismatch,
+            "deny() must now fail closed on a MAC-invalid pending_confirmations row"
+        );
+
+        let pc = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            pc.state,
+            PendingConfirmationState::Pending,
+            "a MAC-rejected deny must never transition state"
+        );
+        assert_eq!(
+            count_events_of_type(&conn, session_id, "confirm_denied"),
+            0,
+            "no confirm_denied event may be appended when deny()'s new gate rejects the row"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     /// (d) confirm on an effect_id whose blocked_literals row was redacted
     /// refuses to release and creates no file (T-10-09 fail-closed).
     #[test]
