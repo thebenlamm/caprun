@@ -5,15 +5,15 @@ milestone_name: — Security Hardening
 current_phase: 28
 current_phase_name: authenticated-audit-chain
 status: executing
-stopped_at: Phase 26 context gathered
-last_updated: "2026-07-13T00:40:09.936Z"
+stopped_at: Completed 28-03-PLAN.md
+last_updated: "2026-07-13T01:14:12.746Z"
 last_activity: 2026-07-13
 last_activity_desc: Phase 28 execution started
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 9
-  completed_plans: 6
+  completed_plans: 7
   percent: 40
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-12)
 ## Current Position
 
 Phase: 28 (authenticated-audit-chain) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-07-13 — Phase 28 execution started
 
@@ -81,6 +81,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 24 P03 | 25min | 2 tasks | 3 files |
 | Phase 28 P01 | 7min | 2 tasks | 10 files |
 | Phase 28 P02 | 6min | 2 tasks | 4 files |
+| Phase 28 P03 | 31min | 2 tasks | 22 files |
 
 ## Accumulated Context
 
@@ -148,6 +149,8 @@ v1.3 P17, v1.4 P22, v1.5 P25; depends on Phases 27, 28, and 29 all landing.
 - [Phase 28]: 28-01: live_acceptance_v1_3.rs/v1_4_composed.rs's run_caprun_email_on gained an explicit ws_dir param replacing the audit_db.parent() derivation, to keep the shared multi-invocation workspace root F1-safe as a sibling of audit.db
 - [Phase 28]: load_or_create_key F1 containment checks BOTH the audit-DB path and its .key sibling, per DESIGN's corrected F1 pin
 - [Phase 28]: cli/caprun is bin-only (no src/lib.rs) — key.rs unit tests run via 'cargo test -p caprun --bin caprun -- key::', not '--lib'
+- [Phase ?]: 28-03: keyed HMAC-SHA256 audit chain via shared domain-separated+length-framed mac_frame helper, key threaded as a sibling &[u8]/Arc<[u8;32]> parameter (not bundled into the connection type) through all 19 append_event sites + 2 verify_chain callers
+- [Phase ?]: 28-03: run_confirm_or_deny gained a minimal load_or_create_key wiring for both confirm/deny verbs (necessary for confirm.rs's cross-process tests to keep passing under the keyed scheme) — Plan 05 still owns the pending_confirmations MAC fold, MAC-verify-before-terminal-state gate, and deny()'s new verify_chain call
 
 ### Pending Todos
 
@@ -186,9 +189,9 @@ moved from "open" to "in progress" as its 5 items became v1.6's HARDEN-01..05.
 
 ## Session Continuity
 
-Last session: 2026-07-13T00:40:09.929Z
-Stopped at: Phase 26 context gathered
-Resume file: .planning/phases/26-security-hardening-design-gate/26-CONTEXT.md
+Last session: 2026-07-13T01:14:12.740Z
+Stopped at: Completed 28-03-PLAN.md
+Resume file: None
 
 ## Operator Next Steps
 
