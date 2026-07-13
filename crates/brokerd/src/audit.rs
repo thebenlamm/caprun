@@ -1028,4 +1028,182 @@ mod tests {
             vec![TaintLabel::ExternalUntrusted, TaintLabel::EmailRaw]
         );
     }
+
+    // ── HARDEN-02 Task 2: forgery-without-key rejected + key-dependence ────
+
+    /// Recompute an event row's hash the way a bare `events`-table writer
+    /// WITHOUT the broker key would: the PUBLIC, unkeyed SHA-256 algorithm
+    /// this file used before the v1.6 Phase 28 HMAC upgrade (plain
+    /// concatenation, no domain separation, no length framing, no secret
+    /// key). An attacker who only has read/write access to the SQLite file
+    /// — never the key — can reproduce THIS, and only this.
+    fn unkeyed_sha256_hash(
+        parent_hash: Option<&str>,
+        id: &str,
+        session_id: &str,
+        event_type: &str,
+        payload: &str,
+        taint: &str,
+    ) -> String {
+        use sha2::Digest as _;
+        let mut hasher = Sha256::new();
+        hasher.update(parent_hash.unwrap_or(""));
+        hasher.update(id);
+        hasher.update(session_id);
+        hasher.update(event_type);
+        hasher.update(payload);
+        hasher.update(taint);
+        hex::encode(hasher.finalize())
+    }
+
+    /// Success Criterion 1 (HARDEN-02): a bare `events`-table writer who does
+    /// NOT know the broker key rewrites one event row's payload AND
+    /// recomputes every descendant's hash/parent_hash to be internally
+    /// SELF-CONSISTENT — but only under the PUBLIC unkeyed algorithm, since
+    /// that is all an attacker without the key can reproduce. This is
+    /// specifically NOT a call to the keyed `compute_event_hash(&key, ...)`
+    /// (that would require the very secret this test simulates the attacker
+    /// lacking) — the forgery is rejected because `verify_chain` recomputes
+    /// with the REAL keyed MAC, which the attacker's unkeyed forgery can
+    /// never match.
+    #[test]
+    fn self_consistent_forgery_without_key_is_rejected() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+        let real_key: &[u8] = b"the-real-broker-secret-key-attacker-lacks";
+
+        // Build a genuine 2-event keyed chain: root -> child.
+        let root = make_file_read_event(session_id);
+        let root_hash = append_event(&conn, real_key, &root, None).expect("append root");
+        let child = Event::new(
+            Uuid::new_v4(),
+            Some(root.id),
+            session_id,
+            "worker".to_string(),
+            "sink_ok".to_string(),
+            Utc::now(),
+            vec![],
+        );
+        let _child_hash =
+            append_event(&conn, real_key, &child, Some(&root_hash)).expect("append child");
+
+        // Sanity: the genuine chain verifies true under the real key BEFORE
+        // any tamper.
+        assert!(
+            verify_chain(&conn, &session_id.to_string(), real_key),
+            "sanity: the untampered chain must verify true under the real key"
+        );
+
+        // ATTACK: rewrite the root's payload (e.g. forging a different
+        // event), then — WITHOUT the key — recompute a fully self-consistent
+        // chain under the PUBLIC unkeyed algorithm: root's new hash, and
+        // child's new hash (its parent_hash field now points at root's new,
+        // unkeyed-recomputed hash).
+        let tampered_payload = r#"{"tampered":"attacker-controlled content"}"#;
+        let root_taint: String = conn
+            .query_row(
+                "SELECT taint FROM events WHERE id = ?1",
+                rusqlite::params![root.id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("query root taint");
+        let forged_root_hash = unkeyed_sha256_hash(
+            None,
+            &root.id.to_string(),
+            &session_id.to_string(),
+            "file_read",
+            tampered_payload,
+            &root_taint,
+        );
+        conn.execute(
+            "UPDATE events SET payload = ?1, hash = ?2 WHERE id = ?3",
+            rusqlite::params![tampered_payload, forged_root_hash, root.id.to_string()],
+        )
+        .expect("tamper root payload+hash");
+
+        let child_payload: String = conn
+            .query_row(
+                "SELECT payload FROM events WHERE id = ?1",
+                rusqlite::params![child.id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("query child payload");
+        let forged_child_hash = unkeyed_sha256_hash(
+            Some(&forged_root_hash),
+            &child.id.to_string(),
+            &session_id.to_string(),
+            "sink_ok",
+            &child_payload,
+            "[]",
+        );
+        conn.execute(
+            "UPDATE events SET parent_hash = ?1, hash = ?2 WHERE id = ?3",
+            rusqlite::params![forged_root_hash, forged_child_hash, child.id.to_string()],
+        )
+        .expect("tamper child parent_hash+hash");
+
+        // THE TEETH: the forged chain is internally self-consistent under
+        // the unkeyed algorithm the attacker CAN reproduce, but
+        // `verify_chain` recomputes with the REAL keyed MAC — which the
+        // attacker, lacking the key, could never have produced.
+        assert!(
+            !verify_chain(&conn, &session_id.to_string(), real_key),
+            "a self-consistent forgery built WITHOUT the broker key must be rejected \
+             by the keyed verify_chain (Success Criterion 1)"
+        );
+    }
+
+    /// Success Criterion 2 (HARDEN-02): the chain's authenticity depends on
+    /// the secret key. Two different keys over IDENTICAL fields produce
+    /// DIFFERENT MACs, and `verify_chain` called with the WRONG key on an
+    /// otherwise-UNTAMPERED chain returns `false`.
+    #[test]
+    fn verify_chain_is_key_dependent() {
+        let key_a: &[u8] = b"key-a-0123456789abcdef0123456789ab";
+        let key_b: &[u8] = b"key-b-fedcba9876543210fedcba987654";
+        assert_ne!(key_a, key_b, "sanity: the two test keys must differ");
+
+        // Key-dependence of compute_event_hash itself: identical fields,
+        // different keys, different digests.
+        let digest_a = compute_event_hash(
+            key_a,
+            None,
+            "id-1",
+            "session-1",
+            "file_read",
+            "payload",
+            "taint",
+        );
+        let digest_b = compute_event_hash(
+            key_b,
+            None,
+            "id-1",
+            "session-1",
+            "file_read",
+            "payload",
+            "taint",
+        );
+        assert_ne!(
+            digest_a, digest_b,
+            "compute_event_hash must produce different digests under different keys \
+             for identical fields"
+        );
+
+        // verify_chain called with the WRONG key on an untampered chain
+        // returns false — never a false positive.
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+        let event = make_file_read_event(session_id);
+        append_event(&conn, key_a, &event, None).expect("append under key_a");
+
+        assert!(
+            verify_chain(&conn, &session_id.to_string(), key_a),
+            "sanity: the chain must verify true under the SAME key it was appended with"
+        );
+        assert!(
+            !verify_chain(&conn, &session_id.to_string(), key_b),
+            "verify_chain under the WRONG key on an untampered chain must return false \
+             (Success Criterion 2)"
+        );
+    }
 }
