@@ -19,10 +19,25 @@
 /// only the persisted-state layer everything later builds on.
 use anyhow::Result;
 use chrono::Utc;
+use hmac::{Hmac, Mac};
 use rusqlite::params;
 use runtime_core::plan_node::TaintLabel;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+/// HMAC-SHA256 type for `pending_confirmations`'s whole-row MAC (v1.6 Phase
+/// 28 Plan 05, HARDEN-02 / X-02) — a local alias mirroring `audit.rs`'s
+/// `HmacSha256`, since that alias is private to `audit.rs`; the underlying
+/// `Hmac<Sha256>` type is fully public, so this is structurally the SAME
+/// primitive, not a divergent one.
+type PendingConfHmac = Hmac<Sha256>;
+
+/// Domain tag for `pending_confirmations`'s whole-row MAC — reserved in
+/// Plan 03's `audit.rs` doc comments, consumed here. MUST stay distinct from
+/// `audit.rs`'s `EVENT_MAC_DOMAIN`/`ANCHOR_MAC_DOMAIN` so a MAC computed for
+/// one record type can never verify — or be replayed — as another's, per
+/// `audit::mac_frame`'s domain-separation discipline.
+const PENDING_CONFIRMATION_MAC_DOMAIN: &[u8] = b"caprun.audit.pending-confirmation.v1";
 
 /// The single shared primitive computing CONFIRM-03's combined digest over a
 /// full `(arg_name, literal)` set (`planning-docs/DESIGN-confirm-binding.md`,
@@ -205,27 +220,132 @@ pub struct PendingConfirmation {
     pub workspace_root_path: String,
     /// `Pending | Confirmed | Denied`. MUST start `Pending` at persistence time.
     pub state: PendingConfirmationState,
+    /// The row's WHOLE-ROW broker-key MAC (v1.6 Phase 28 Plan 05, HARDEN-02 /
+    /// X-02), hex-encoded — persisted alongside `state`, recomputed
+    /// atomically with every `transition_state` call. `find_pending_
+    /// confirmation` populates this from the `mac` column; a freshly
+    /// constructed row (not yet inserted) may leave this as an empty
+    /// placeholder — `insert_pending_confirmation` computes and stores the
+    /// REAL value independently of whatever this field holds at call time.
+    pub mac: String,
+}
+
+/// Build (but do not finalize) the keyed MAC over a `pending_confirmations`
+/// row's WHOLE-ROW field set UNDER A GIVEN `state` (v1.6 Phase 28 Plan 05,
+/// HARDEN-02 / X-02) — the `state` parameter is explicit and separate from
+/// `pc.state` because `transition_state` needs to compute the MAC for the
+/// NEW state, not the state the row still holds at read time.
+///
+/// DECISION (pinned, stated explicitly per this plan's SUMMARY): MACs the
+/// WHOLE row — effect_id, session_id, blocked_event_id, sink, resolved_args,
+/// blocked_arg_names, combined_digest, workspace_root_path, state — not only
+/// `state`+`combined_digest` as the DESIGN doc's literal text names
+/// (28-RESEARCH.md Assumption A3 / Open Question 2): `resolved_args`/
+/// `blocked_arg_names`/`workspace_root_path` are equally forgeable by a bare
+/// `pending_confirmations`-table writer and equally load-bearing for
+/// `confirm()`'s Step 4.5b recompute-and-compare.
+///
+/// Uses the SHARED `audit::mac_frame` helper (domain-separated + length-
+/// framed — never a bare per-field concatenation) with the reserved
+/// `PENDING_CONFIRMATION_MAC_DOMAIN` tag, distinct from `audit.rs`'s event
+/// and anchor domains.
+fn build_pending_confirmation_mac(
+    key: &[u8],
+    pc: &PendingConfirmation,
+    state: PendingConfirmationState,
+) -> Result<PendingConfHmac> {
+    let resolved_args_json = serde_json::to_string(&pc.resolved_args)?;
+    let blocked_arg_names_json = serde_json::to_string(&pc.blocked_arg_names)?;
+    let effect_id = pc.effect_id.to_string();
+    let session_id = pc.session_id.to_string();
+    let blocked_event_id = pc.blocked_event_id.to_string();
+    let mut mac = <PendingConfHmac as Mac>::new_from_slice(key)
+        .expect("HMAC-SHA256 accepts a key of any length");
+    crate::audit::mac_frame(
+        &mut mac,
+        PENDING_CONFIRMATION_MAC_DOMAIN,
+        &[
+            effect_id.as_bytes(),
+            session_id.as_bytes(),
+            blocked_event_id.as_bytes(),
+            pc.sink.0.as_bytes(),
+            resolved_args_json.as_bytes(),
+            blocked_arg_names_json.as_bytes(),
+            pc.combined_digest.as_bytes(),
+            pc.workspace_root_path.as_bytes(),
+            state.as_str().as_bytes(),
+        ],
+    );
+    Ok(mac)
+}
+
+/// Compute a `pending_confirmations` row's whole-row MAC (hex-encoded) under
+/// `state` — the write-side half of `build_pending_confirmation_mac`, used by
+/// `insert_pending_confirmation` and `transition_state` to STORE the MAC.
+fn compute_pending_confirmation_mac_for_state(
+    key: &[u8],
+    pc: &PendingConfirmation,
+    state: PendingConfirmationState,
+) -> Result<String> {
+    let mac = build_pending_confirmation_mac(key, pc, state)?;
+    Ok(hex::encode(mac.finalize().into_bytes()))
+}
+
+/// Constant-time whole-row MAC verification for a `pending_confirmations`
+/// row (v1.6 Phase 28 Plan 05, HARDEN-02 / X-02) — mirrors
+/// `audit::verify_event_hash`'s / `verify_anchor_mac`'s fail-closed contract:
+/// never panics, always `Mac::verify_slice` (never a plain string compare on
+/// the MAC value, which would leak timing information about a secret-
+/// dependent comparison).
+///
+/// Verifies `pc` EXACTLY as currently fetched — including `pc.mac` (the
+/// persisted value) and `pc.state` (the persisted state at read time).
+/// Called by `confirm()`/`deny()` immediately after `find_pending_
+/// confirmation` returns, BEFORE the terminal-state branch reads `pc.state`
+/// for any decision (28-RESEARCH.md Pitfall 5) — a raw-SQL flip-back that
+/// `transition_state`'s own `WHERE state = 'pending'` guard would not catch
+/// is detected here and fails closed.
+///
+/// Returns `false` (never panics) on a hex-decode failure of `pc.mac`
+/// (malformed/corrupt/legacy-default-empty MAC) or a MAC mismatch under
+/// `key` (tampering, wrong key, or an unMAC'd legacy row).
+pub fn verify_pending_confirmation_mac(key: &[u8], pc: &PendingConfirmation) -> bool {
+    let expected_bytes = match hex::decode(&pc.mac) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    let mac = match build_pending_confirmation_mac(key, pc, pc.state) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    mac.verify_slice(&expected_bytes).is_ok()
 }
 
 /// Persist a new `PendingConfirmation` row.
 ///
-/// One `INSERT` binding all nine columns. Serializes `resolved_args` and
+/// One `INSERT` binding all ten columns (nine data columns plus the v1.6
+/// Phase 28 Plan 05 whole-row `mac`). Serializes `resolved_args` and
 /// `blocked_arg_names` with `serde_json::to_string`, `sink` as `pc.sink.0`,
-/// uuids via `.to_string()`, state via `as_str()`. Caller should invoke this
-/// under the same broker-owned connection lock as the `append_event` that
-/// wrote the anchoring `sink_blocked` row (the two writes MUST succeed or
-/// fail together).
+/// uuids via `.to_string()`, state via `as_str()`. The MAC is computed HERE,
+/// under `key`, over `pc`'s fields AND `pc.state` — `pc.mac` (whatever the
+/// caller happened to set it to, if anything) is IGNORED; this function is
+/// the sole source of truth for a freshly-inserted row's MAC. Caller should
+/// invoke this under the same broker-owned connection lock as the
+/// `append_event` that wrote the anchoring `sink_blocked` row (the two
+/// writes MUST succeed or fail together).
 pub fn insert_pending_confirmation(
     conn: &rusqlite::Connection,
+    key: &[u8],
     pc: &PendingConfirmation,
 ) -> Result<()> {
     let resolved_args_json = serde_json::to_string(&pc.resolved_args)?;
     let blocked_arg_names_json = serde_json::to_string(&pc.blocked_arg_names)?;
+    let mac = compute_pending_confirmation_mac_for_state(key, pc, pc.state)?;
     conn.execute(
         "INSERT INTO pending_confirmations \
          (effect_id, session_id, blocked_event_id, sink, resolved_args, \
-          blocked_arg_names, combined_digest, workspace_root_path, state) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+          blocked_arg_names, combined_digest, workspace_root_path, state, mac) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             pc.effect_id.to_string(),
             pc.session_id.to_string(),
@@ -236,6 +356,7 @@ pub fn insert_pending_confirmation(
             &pc.combined_digest,
             &pc.workspace_root_path,
             pc.state.as_str(),
+            &mac,
         ],
     )?;
     Ok(())
@@ -244,13 +365,18 @@ pub fn insert_pending_confirmation(
 /// Fetch a `PendingConfirmation` row by its `effect_id` (indexed PRIMARY KEY
 /// lookup), or `None` if no row was ever persisted for that id — the fail-closed
 /// case for an untrusted/forged CLI-supplied `effect_id` (T-10-07).
+///
+/// Populates `PendingConfirmation.mac` from the persisted `mac` column but
+/// does NOT itself verify it — callers (`confirm()`/`deny()`) call
+/// `verify_pending_confirmation_mac` immediately after this returns, BEFORE
+/// reading `pc.state` for any decision (Pitfall 5).
 pub fn find_pending_confirmation(
     conn: &rusqlite::Connection,
     effect_id: &str,
 ) -> Result<Option<PendingConfirmation>> {
     let mut stmt = conn.prepare(
         "SELECT effect_id, session_id, blocked_event_id, sink, resolved_args, \
-                blocked_arg_names, combined_digest, workspace_root_path, state \
+                blocked_arg_names, combined_digest, workspace_root_path, state, mac \
          FROM pending_confirmations WHERE effect_id = ?1",
     )?;
     let mut rows = stmt.query(params![effect_id])?;
@@ -265,6 +391,7 @@ pub fn find_pending_confirmation(
             let combined_digest: String = row.get(6)?;
             let workspace_root_path: String = row.get(7)?;
             let state: String = row.get(8)?;
+            let mac: String = row.get(9)?;
 
             let resolved_args: Vec<ResolvedArg> = serde_json::from_str(&resolved_args_json)?;
             let blocked_arg_names: Vec<String> = serde_json::from_str(&blocked_arg_names_json)?;
@@ -279,6 +406,7 @@ pub fn find_pending_confirmation(
                 combined_digest,
                 workspace_root_path,
                 state: PendingConfirmationState::from_str(&state)?,
+                mac,
             }))
         }
         None => Ok(None),
@@ -288,19 +416,30 @@ pub fn find_pending_confirmation(
 /// Transition a `pending_confirmations` row's `state`, returning the number of
 /// affected rows.
 ///
-/// A single `UPDATE ... WHERE effect_id = ?2 AND state = 'pending'`. The
-/// `AND state = 'pending'` guard is the CONFIRM-03 fail-closed terminal check IN
-/// THE SQL: a row already `confirmed`/`denied` matches zero rows, so a
-/// re-transition is refused atomically with no read-then-write race. Callers
-/// treat a `0` return as "already terminal / refused".
+/// A single `UPDATE ... SET state = ?1, mac = ?2 WHERE effect_id = ?3 AND
+/// state = 'pending'`. The `AND state = 'pending'` guard is the CONFIRM-03
+/// fail-closed terminal check IN THE SQL: a row already `confirmed`/`denied`
+/// matches zero rows, so a re-transition is refused atomically with no
+/// read-then-write race. Callers treat a `0` return as "already terminal /
+/// refused".
+///
+/// `mac` is recomputed for `new_state` (v1.6 Phase 28 Plan 05, HARDEN-02 /
+/// X-02) and rewritten in the SAME `UPDATE` — never a separate statement —
+/// so `state` and `mac` can never observably desync. `pc` MUST be the row as
+/// freshly fetched by the caller (its OTHER fields — resolved_args,
+/// blocked_arg_names, combined_digest, workspace_root_path — are assumed
+/// unchanged since that fetch and are what the new MAC binds alongside
+/// `new_state`).
 pub fn transition_state(
     conn: &rusqlite::Connection,
-    effect_id: &str,
+    key: &[u8],
+    pc: &PendingConfirmation,
     new_state: PendingConfirmationState,
 ) -> Result<usize> {
+    let new_mac = compute_pending_confirmation_mac_for_state(key, pc, new_state)?;
     let affected = conn.execute(
-        "UPDATE pending_confirmations SET state = ?1 WHERE effect_id = ?2 AND state = 'pending'",
-        params![new_state.as_str(), effect_id],
+        "UPDATE pending_confirmations SET state = ?1, mac = ?2 WHERE effect_id = ?3 AND state = 'pending'",
+        params![new_state.as_str(), new_mac, pc.effect_id.to_string()],
     )?;
     Ok(affected)
 }
@@ -342,11 +481,15 @@ pub enum ConfirmOutcome {
     /// read-only: always safe to re-run, any number of times, on a Pending
     /// OR terminal row.
     Reviewed,
-    /// The audit chain was broken (`audit::verify_chain` returned `false`),
-    /// OR the FULL-set `combined_digest` recomputed from the frozen
-    /// `resolved_args` snapshot did NOT match the hash-chained `sink_blocked`
-    /// Event's stored `combined_digest` (or that Event/field was missing) —
-    /// confirm refuses to release (BLOCKER-2, MAJOR-3).
+    /// An integrity gate failed: the `pending_confirmations` row's own
+    /// whole-row MAC did not verify (v1.6 Phase 28 Plan 05, checked FIRST,
+    /// before any `pc.state` read), OR the audit chain was broken
+    /// (`audit::verify_chain` returned `false`), OR — `confirm()` only — the
+    /// FULL-set `combined_digest` recomputed from the frozen `resolved_args`
+    /// snapshot did NOT match the hash-chained `sink_blocked` Event's stored
+    /// `combined_digest` (or that Event/field was missing). Both `confirm()`
+    /// and `deny()` refuse to proceed on any of these (BLOCKER-2, MAJOR-3,
+    /// X-02).
     ///
     /// This is an INTEGRITY ALARM, not an operator deny: the row is
     /// intentionally LEFT `Pending` (retriable), never auto-transitioned to
@@ -358,22 +501,16 @@ pub enum ConfirmOutcome {
     /// mismatch→retry sequence extends the chain linearly and never forks
     /// `verify_chain`). No sink is ever invoked on this path.
     ///
-    /// HONESTY (MAJOR-6, UPDATED v1.6 Phase 28 HARDEN-02): `audit::verify_chain`
-    /// now recomputes a KEYED HMAC-SHA256 MAC under the broker-owned secret
-    /// key (`cli/caprun/src/key.rs::load_or_create_key`) — an actor with bare
-    /// `events` table write access (no key) can no longer forge a
-    /// self-consistent chain end-to-end (Success Criterion 1/2,
-    /// `self_consistent_forgery_without_key_is_rejected` /
-    /// `verify_chain_is_key_dependent` in `audit.rs`). This closes the prior
-    /// "an actor with table write access could forge the chain" residual for
-    /// the EVENTS chain specifically. Two residuals remain, tracked as
-    /// separate plans in this phase (NOT closed here): (a) the chain HEAD
-    /// itself is not yet externally anchored against tail-truncation (Plan
-    /// 04's chain-anchor MAC); (b) `pending_confirmations` — the mutable
-    /// side table this enum's outcome reads — has no MAC of its own yet, so
-    /// a flip-back/delete on THAT table is still undetected here (Plan 05's
-    /// whole-row MAC fold). See `.planning/todos/pending` for anything past
-    /// this phase's scope.
+    /// HONESTY (MAJOR-6, UPDATED v1.6 Phase 28 Plans 03-05): `audit::
+    /// verify_chain` recomputes a KEYED HMAC-SHA256 MAC under the
+    /// broker-owned secret key (`cli/caprun/src/key.rs::load_or_create_key`)
+    /// AND cross-checks the MAC'd `chain_anchor` head/count (Plan 04) — an
+    /// actor with bare `events`-table write access (no key) can no longer
+    /// forge a self-consistent chain OR silently truncate the tail. `pending_
+    /// confirmations` is now ALSO folded into the same broker-key MAC scheme
+    /// (Plan 05, X-02 uniform ruling): a flip-back/delete on THAT table is
+    /// detected too, in BOTH `confirm()` and `deny()`. See
+    /// `.planning/todos/pending` for anything past this phase's scope.
     DigestMismatch,
 }
 
@@ -506,6 +643,11 @@ pub fn render_block_display(pc: &PendingConfirmation) -> String {
 /// bytes they had not yet read. `review` gives the human the verbatim
 /// literals + provenance at a point where they can still decide either way.
 /// Idempotent: running it any number of times never changes state.
+///
+/// Deliberately unauthenticated (v1.6 Phase 28 Plan 05, MAJOR-8): `review`
+/// never transitions state, appends an Event, or invokes a sink — it is a
+/// pre-decision, non-authoritative display, so no MAC/chain-verify gate is
+/// added here (plan's explicit scope: `confirm()`/`deny()` only).
 pub fn review(conn: &rusqlite::Connection, effect_id: &str) -> Result<ConfirmOutcome> {
     let pc = match find_pending_confirmation(conn, effect_id)? {
         Some(pc) => pc,
@@ -532,26 +674,33 @@ fn current_chain_head_or_bail(
     })
 }
 
-/// Append a durable `confirm_digest_mismatch` Event, parented on the CURRENT
-/// CHAIN HEAD (never `blocked_event_id` — MAJOR-7): this is what keeps a
-/// mismatch→retry sequence a LINEAR extension of the chain rather than a
-/// fork of `blocked_event_id` (which would permanently break
+/// Append a durable `confirm_digest_mismatch` integrity-alarm Event, parented
+/// on the CURRENT CHAIN HEAD (never `blocked_event_id` — MAJOR-7): this is
+/// what keeps a mismatch→retry sequence a LINEAR extension of the chain
+/// rather than a fork of `blocked_event_id` (which would permanently break
 /// `audit::verify_chain`'s single-linear-chain walk, exactly as
 /// `quarantine.rs`'s `chain_head_id` doc comment describes empirically
 /// discovering for `mint_from_read`).
-fn append_confirm_digest_mismatch_event(
+///
+/// `verb` (v1.6 Phase 28 Plan 05) is `"confirm"` or `"deny"` — used ONLY in
+/// the event's `actor` field so the audit trail records which decision verb
+/// tripped the alarm; both verbs share this SAME helper and event_type
+/// (`confirm_digest_mismatch`) since it is one integrity-alarm mechanism,
+/// not two.
+fn append_digest_mismatch_event(
     conn: &rusqlite::Connection,
     key: &[u8],
     pc: &PendingConfirmation,
     effect_id: &str,
     head_id: Uuid,
     head_hash: &str,
+    verb: &str,
 ) -> Result<()> {
     let mismatch_event = runtime_core::Event::new(
         Uuid::new_v4(),
         Some(head_id),
         pc.session_id,
-        format!("confirm:{effect_id}"),
+        format!("{verb}:{effect_id}"),
         "confirm_digest_mismatch".into(),
         Utc::now(),
         vec![],
@@ -582,7 +731,18 @@ pub fn confirm(
         None => return Ok(ConfirmOutcome::UnknownEffect),
     };
 
-    // Step 2: terminal-state check, read from the persisted row (never a cache).
+    // Step 1.5 (v1.6 Phase 28 Plan 05, HARDEN-02 / X-02): pending_confirmations
+    // whole-row MAC-verify IMMEDIATELY after fetch, BEFORE Step 2 reads
+    // pc.state for any decision (Pitfall 5) — a raw-SQL flip-back (e.g.
+    // Denied -> Pending) that transition_state's own WHERE-guard would not
+    // catch is detected here and fails closed.
+    if !verify_pending_confirmation_mac(key, &pc) {
+        let (head_id, head_hash) = current_chain_head_or_bail(conn, pc.session_id)?;
+        append_digest_mismatch_event(conn, key, &pc, effect_id, head_id, &head_hash, "confirm")?;
+        return Ok(ConfirmOutcome::DigestMismatch);
+    }
+
+    // Step 2: terminal-state check, read from the persisted (now MAC-verified) row.
     if pc.state != PendingConfirmationState::Pending {
         return Ok(ConfirmOutcome::AlreadyTerminal);
     }
@@ -601,16 +761,17 @@ pub fn confirm(
     // Step 4.5a: CHAIN-VERIFY FIRST (MAJOR-3) — fail closed on a broken chain
     // BEFORE trusting ANYTHING read back from the hash-chained `sink_blocked`
     // Event. `find_event_by_id` only DESERIALIZES; it does NOT check hashes.
-    // HONESTY (MAJOR-6, UPDATED v1.6 Phase 28 HARDEN-02): `verify_chain` now
-    // recomputes a KEYED HMAC-SHA256 MAC under `key` (the broker-owned
-    // secret) — a bare `events`-table writer without the key cannot forge a
-    // self-consistent chain here. This is still NOT externally
-    // tail-anchored (Plan 04) and `pending_confirmations` itself is still
-    // unMAC'd (Plan 05) — see `ConfirmOutcome::DigestMismatch`'s doc comment
-    // for the full honest scope of what remains open in this phase.
+    // HONESTY (MAJOR-6, UPDATED v1.6 Phase 28 Plans 03-05): `verify_chain`
+    // now recomputes a KEYED HMAC-SHA256 MAC under `key` (the broker-owned
+    // secret) AND cross-checks the MAC'd `chain_anchor` head/count — a bare
+    // `events`-table writer without the key can no longer forge a
+    // self-consistent chain OR silently truncate the tail. `pending_
+    // confirmations` itself is now ALSO folded into the same MAC scheme
+    // (Step 1.5 above, this plan) — see `ConfirmOutcome::DigestMismatch`'s
+    // doc comment for the full current scope.
     if !crate::audit::verify_chain(conn, &pc.session_id.to_string(), key) {
         let (head_id, head_hash) = current_chain_head_or_bail(conn, pc.session_id)?;
-        append_confirm_digest_mismatch_event(conn, key, &pc, effect_id, head_id, &head_hash)?;
+        append_digest_mismatch_event(conn, key, &pc, effect_id, head_id, &head_hash, "confirm")?;
         return Ok(ConfirmOutcome::DigestMismatch);
     }
 
@@ -643,7 +804,7 @@ pub fn confirm(
     // all three are the SAME integrity alarm from confirm()'s perspective.
     if authoritative_digest.as_deref() != Some(recomputed_digest.as_str()) {
         let (head_id, head_hash) = current_chain_head_or_bail(conn, pc.session_id)?;
-        append_confirm_digest_mismatch_event(conn, key, &pc, effect_id, head_id, &head_hash)?;
+        append_digest_mismatch_event(conn, key, &pc, effect_id, head_id, &head_hash, "confirm")?;
         return Ok(ConfirmOutcome::DigestMismatch);
     }
 
@@ -680,7 +841,7 @@ pub fn confirm(
     // permanently breaking the "one atomic transaction" requirement below
     // (two separate autocommit statements, not one atomic unit).
     if pc.sink.0.as_str() != "email.send" {
-        let affected = transition_state(conn, effect_id, PendingConfirmationState::Confirmed)?;
+        let affected = transition_state(conn, key, &pc, PendingConfirmationState::Confirmed)?;
         if affected == 0 {
             return Ok(ConfirmOutcome::AlreadyTerminal);
         }
@@ -712,7 +873,7 @@ pub fn confirm(
             // CAS rolls back automatically when `tx` drops without `.commit()`
             // — no attempt event is appended, and the send is never attempted.
             let tx = conn.transaction()?;
-            let affected = transition_state(&tx, effect_id, PendingConfirmationState::Confirmed)?;
+            let affected = transition_state(&tx, key, &pc, PendingConfirmationState::Confirmed)?;
             if affected == 0 {
                 return Ok(ConfirmOutcome::AlreadyTerminal);
             }
@@ -764,18 +925,43 @@ pub fn confirm(
 /// find the block and set the causal parent chain onto the CURRENT CHAIN HEAD
 /// (MAJOR-7 — never `blocked_event_id` directly; in the single-shot case the
 /// head IS `blocked_event_id`, so this is behavior-preserving there).
+///
+/// v1.6 Phase 28 Plan 05 (HARDEN-02 / X-02): `deny` now gains the SAME
+/// pending_confirmations MAC gate AND `verify_chain` gate `confirm()` has —
+/// previously `deny` had NO integrity check at all (28-RESEARCH.md NEW
+/// FINDING).
 pub fn deny(conn: &rusqlite::Connection, key: &[u8], effect_id: &str) -> Result<ConfirmOutcome> {
-    // Steps 1-2: same fresh lookup + terminal-state check as confirm.
+    // Step 1: same fresh lookup as confirm.
     let pc = match find_pending_confirmation(conn, effect_id)? {
         Some(pc) => pc,
         None => return Ok(ConfirmOutcome::UnknownEffect),
     };
+
+    // Step 1.5: pending_confirmations whole-row MAC-verify IMMEDIATELY after
+    // fetch, BEFORE Step 2 reads pc.state (Pitfall 5) — mirrors confirm()'s
+    // Step 1.5 exactly.
+    if !verify_pending_confirmation_mac(key, &pc) {
+        let (head_id, head_hash) = current_chain_head_or_bail(conn, pc.session_id)?;
+        append_digest_mismatch_event(conn, key, &pc, effect_id, head_id, &head_hash, "deny")?;
+        return Ok(ConfirmOutcome::DigestMismatch);
+    }
+
+    // Step 2: terminal-state check, read from the persisted (now MAC-verified) row.
     if pc.state != PendingConfirmationState::Pending {
         return Ok(ConfirmOutcome::AlreadyTerminal);
     }
 
     // Both verbs show the same evidence before acting (DESIGN CLI Contract).
     println!("{}", render_block_display(&pc));
+
+    // Step 2.5 (NEW — X-02): the SAME chain-verify gate confirm()'s Step
+    // 4.5a runs. Fail closed on a broken/forged events chain BEFORE
+    // recording a durable deny.
+    if !crate::audit::verify_chain(conn, &pc.session_id.to_string(), key) {
+        let (head_id, head_hash) = current_chain_head_or_bail(conn, pc.session_id)?;
+        append_digest_mismatch_event(conn, key, &pc, effect_id, head_id, &head_hash, "deny")?;
+        return Ok(ConfirmOutcome::DigestMismatch);
+    }
 
     let (head_id, head_hash) = current_chain_head_or_bail(conn, pc.session_id)?;
     let denied_event = runtime_core::Event::new(
@@ -789,7 +975,7 @@ pub fn deny(conn: &rusqlite::Connection, key: &[u8], effect_id: &str) -> Result<
     );
     crate::audit::append_event(conn, key, &denied_event, Some(&head_hash))?;
 
-    let affected = transition_state(conn, effect_id, PendingConfirmationState::Denied)?;
+    let affected = transition_state(conn, key, &pc, PendingConfirmationState::Denied)?;
     if affected == 0 {
         return Ok(ConfirmOutcome::AlreadyTerminal);
     }
@@ -931,6 +1117,7 @@ mod tests {
             combined_digest,
             workspace_root_path: "/workspace".to_string(),
             state: PendingConfirmationState::Pending,
+            mac: String::new(),
         }
     }
 
@@ -940,14 +1127,25 @@ mod tests {
         let effect_id = Uuid::new_v4();
         let pc = make_pending_confirmation(effect_id);
 
-        insert_pending_confirmation(&conn, &pc).expect("insert_pending_confirmation");
+        insert_pending_confirmation(&conn, TEST_KEY, &pc).expect("insert_pending_confirmation");
 
         let found = find_pending_confirmation(&conn, &effect_id.to_string())
             .expect("find_pending_confirmation")
             .expect("row should be present");
 
-        assert_eq!(found, pc);
+        assert_eq!(found.effect_id, pc.effect_id);
+        assert_eq!(found.session_id, pc.session_id);
+        assert_eq!(found.blocked_event_id, pc.blocked_event_id);
+        assert_eq!(found.sink, pc.sink);
+        assert_eq!(found.resolved_args, pc.resolved_args);
+        assert_eq!(found.blocked_arg_names, pc.blocked_arg_names);
+        assert_eq!(found.combined_digest, pc.combined_digest);
+        assert_eq!(found.workspace_root_path, pc.workspace_root_path);
         assert_eq!(found.state, PendingConfirmationState::Pending);
+        assert!(
+            verify_pending_confirmation_mac(TEST_KEY, &found),
+            "the persisted whole-row MAC must verify under the same key used to insert it"
+        );
     }
 
     #[test]
@@ -965,27 +1163,18 @@ mod tests {
         let conn = open_audit_db(":memory:").expect("open_audit_db");
         let effect_id = Uuid::new_v4();
         let pc = make_pending_confirmation(effect_id);
-        insert_pending_confirmation(&conn, &pc).expect("insert_pending_confirmation");
+        insert_pending_confirmation(&conn, TEST_KEY, &pc).expect("insert_pending_confirmation");
 
-        let effect_id_str = effect_id.to_string();
-
-        let confirmed = transition_state(
-            &conn,
-            &effect_id_str,
-            PendingConfirmationState::Confirmed,
-        )
-        .expect("transition_state to Confirmed");
+        let confirmed = transition_state(&conn, TEST_KEY, &pc, PendingConfirmationState::Confirmed)
+            .expect("transition_state to Confirmed");
         assert_eq!(confirmed, 1);
 
-        let denied_after_confirmed = transition_state(
-            &conn,
-            &effect_id_str,
-            PendingConfirmationState::Denied,
-        )
-        .expect("transition_state to Denied after Confirmed");
+        let denied_after_confirmed =
+            transition_state(&conn, TEST_KEY, &pc, PendingConfirmationState::Denied)
+                .expect("transition_state to Denied after Confirmed");
         assert_eq!(denied_after_confirmed, 0);
 
-        let found = find_pending_confirmation(&conn, &effect_id_str)
+        let found = find_pending_confirmation(&conn, &effect_id.to_string())
             .expect("find_pending_confirmation")
             .expect("row should still be present");
         assert_eq!(
@@ -1000,21 +1189,15 @@ mod tests {
         let conn = open_audit_db(":memory:").expect("open_audit_db");
         let effect_id = Uuid::new_v4();
         let pc = make_pending_confirmation(effect_id);
-        insert_pending_confirmation(&conn, &pc).expect("insert_pending_confirmation");
+        insert_pending_confirmation(&conn, TEST_KEY, &pc).expect("insert_pending_confirmation");
 
-        let effect_id_str = effect_id.to_string();
-
-        let denied =
-            transition_state(&conn, &effect_id_str, PendingConfirmationState::Denied)
-                .expect("transition_state to Denied");
+        let denied = transition_state(&conn, TEST_KEY, &pc, PendingConfirmationState::Denied)
+            .expect("transition_state to Denied");
         assert_eq!(denied, 1);
 
-        let confirmed_after_denied = transition_state(
-            &conn,
-            &effect_id_str,
-            PendingConfirmationState::Confirmed,
-        )
-        .expect("transition_state to Confirmed after Denied");
+        let confirmed_after_denied =
+            transition_state(&conn, TEST_KEY, &pc, PendingConfirmationState::Confirmed)
+                .expect("transition_state to Confirmed after Denied");
         assert_eq!(
             confirmed_after_denied, 0,
             "durable-deny: a denied row must never transition to confirmed (CONFIRM-03)"
@@ -1084,6 +1267,7 @@ mod tests {
             combined_digest: digest,
             workspace_root_path: "/unused-for-render".to_string(),
             state: PendingConfirmationState::Pending,
+            mac: String::new(),
         }
     }
 
@@ -1180,6 +1364,7 @@ mod tests {
             combined_digest: digest,
             workspace_root_path: "/unused".to_string(),
             state: PendingConfirmationState::Pending,
+            mac: String::new(),
         };
 
         let output = render_block_display(&pc);
@@ -1295,8 +1480,9 @@ mod tests {
             combined_digest: digest,
             workspace_root_path: workspace_root_path.to_string(),
             state: PendingConfirmationState::Pending,
+            mac: String::new(),
         };
-        insert_pending_confirmation(conn, &pc).unwrap();
+        insert_pending_confirmation(conn, TEST_KEY, &pc).unwrap();
 
         (effect_id, session_id, blocked_event_id)
     }
@@ -1866,8 +2052,9 @@ mod tests {
             combined_digest: digest,
             workspace_root_path: "/unused-for-email-send".to_string(),
             state: PendingConfirmationState::Pending,
+            mac: String::new(),
         };
-        insert_pending_confirmation(conn, &pc).unwrap();
+        insert_pending_confirmation(conn, TEST_KEY, &pc).unwrap();
 
         (effect_id, session_id, blocked_event_id)
     }

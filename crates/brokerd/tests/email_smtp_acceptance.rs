@@ -317,8 +317,9 @@ fn seed_and_confirm_email_send(
         combined_digest: digest,
         workspace_root_path: "/unused-for-email-send".to_string(),
         state: PendingConfirmationState::Pending,
+        mac: String::new(),
     };
-    insert_pending_confirmation(conn, &pc).unwrap();
+    insert_pending_confirmation(conn, TEST_KEY, &pc).unwrap();
 
     let mut root_dir = std::env::temp_dir();
     root_dir.push(format!("caprun_email_smtp_acceptance_{}", Uuid::new_v4()));

@@ -807,6 +807,10 @@ async fn evaluate_plan_node_and_record(
             combined_digest,
             workspace_root_path: workspace_root.root_path().to_string_lossy().into_owned(),
             state: crate::confirmation::PendingConfirmationState::Pending,
+            // Placeholder — insert_pending_confirmation (below) computes and
+            // stores the REAL whole-row MAC under `key`, ignoring this value
+            // (v1.6 Phase 28 Plan 05, HARDEN-02 / X-02).
+            mac: String::new(),
         })
     } else {
         None
@@ -845,7 +849,7 @@ async fn evaluate_plan_node_and_record(
         // checkpoint, and no orphaned checkpoint without an anchoring
         // block.
         if let Some(pc) = &pending_confirmation {
-            crate::confirmation::insert_pending_confirmation(&locked, pc).map_err(|e| {
+            crate::confirmation::insert_pending_confirmation(&locked, key, pc).map_err(|e| {
                 eprintln!("[brokerd] pending_confirmations insert FAILED (fail-closed): {e}");
                 anyhow::anyhow!("pending_confirmations insert failed: {e}")
             })?;

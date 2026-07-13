@@ -45,10 +45,11 @@ use uuid::Uuid;
 // consequence of threading `key: &[u8]` through `confirm()`/`deny()`'s
 // signatures (so `cli/caprun/tests/confirm.rs`'s existing macOS-run
 // cross-process suite keeps passing under the keyed chain) — a MINIMAL
-// key-load in `run_confirm_or_deny` for both verbs too. Plan 05 still owns
-// the REMAINING confirm/deny wiring: the `pending_confirmations` whole-row
-// MAC fold, the MAC-verify-before-terminal-state gate, and deny()'s NEW
-// `verify_chain` gate (deny() does not call `verify_chain` at all yet).
+// key-load in `run_confirm_or_deny` for both verbs too. Plan 05 (v1.6 Phase
+// 28, X-02) completed the REMAINING confirm/deny wiring on top of this: the
+// `pending_confirmations` whole-row MAC fold, the MAC-verify-before-
+// terminal-state gate, and deny()'s NEW `verify_chain` gate — `deny()` now
+// carries the SAME integrity gates `confirm()` has.
 mod key;
 
 /// Trusted default `subject`/`body` for a `send-email-summary` intent (Phase

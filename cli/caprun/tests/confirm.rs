@@ -164,8 +164,9 @@ fn seed_pending_file_create_block(
         combined_digest: digest,
         workspace_root_path: workspace_root.to_string_lossy().into_owned(),
         state: PendingConfirmationState::Pending,
+        mac: String::new(),
     };
-    insert_pending_confirmation(&conn, &pc).expect("insert_pending_confirmation");
+    insert_pending_confirmation(&conn, key, &pc).expect("insert_pending_confirmation");
 
     // `conn` drops here — the persistent file is fully released before any
     // `caprun confirm`/`deny` subprocess opens its own connection.
@@ -467,8 +468,9 @@ fn seed_pending_email_send_block(
         combined_digest: digest,
         workspace_root_path: workspace_root.to_string_lossy().into_owned(),
         state: PendingConfirmationState::Pending,
+        mac: String::new(),
     };
-    insert_pending_confirmation(&conn, &pc).expect("insert_pending_confirmation");
+    insert_pending_confirmation(&conn, key, &pc).expect("insert_pending_confirmation");
 
     (effect_id, session_id, blocked_event_id)
 }

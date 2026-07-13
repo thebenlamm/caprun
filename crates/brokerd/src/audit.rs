@@ -62,7 +62,7 @@ type HmacSha256 = Hmac<Sha256>;
 ///      length prefix before its bytes — this makes the boundary between
 ///      adjacent fields unambiguous, closing the `("ab","c")`/`("a","bc")`
 ///      collision.
-fn mac_frame(mac: &mut HmacSha256, domain: &[u8], fields: &[&[u8]]) {
+pub(crate) fn mac_frame(mac: &mut HmacSha256, domain: &[u8], fields: &[&[u8]]) {
     mac.update(domain);
     for field in fields {
         mac.update(&(field.len() as u64).to_le_bytes());
@@ -150,6 +150,19 @@ CREATE TABLE IF NOT EXISTS blocked_literals (
 -- pre-existing DB predating these columns is widened idempotently by
 -- `migrate_pending_confirmations_schema` below — `CREATE TABLE IF NOT EXISTS`
 -- only ever fires on a FRESH database.
+--
+-- `mac` (v1.6 Phase 28 Plan 05, HARDEN-02 / X-02) is the WHOLE-ROW broker-key
+-- MAC — computed/verified in `confirmation.rs` (domain tag
+-- caprun.audit.pending-confirmation.v1, distinct from the events/anchor
+-- domains) over every column above (effect_id, session_id, blocked_event_id,
+-- sink, resolved_args, blocked_arg_names, combined_digest,
+-- workspace_root_path, state), recomputed atomically with `state` by
+-- `transition_state`'s own `UPDATE`. Closes the DB-writer flip-back/delete
+-- gap X-02 pins uniformly for `pending_confirmations` (the SAME table
+-- `confirm()`/`deny()` — the ONLY thing that survives a process restart —
+-- resume from). A legacy pre-Plan-05 row's DEFAULT `''` MAC fails
+-- `verify_pending_confirmation_mac`'s `hex::decode`/`verify_slice` closed by
+-- construction — no special-casing needed.
 CREATE TABLE IF NOT EXISTS pending_confirmations (
     effect_id           TEXT PRIMARY KEY,
     session_id          TEXT NOT NULL,
@@ -159,7 +172,8 @@ CREATE TABLE IF NOT EXISTS pending_confirmations (
     blocked_arg_names   TEXT NOT NULL,
     combined_digest     TEXT NOT NULL,
     workspace_root_path TEXT NOT NULL,
-    state               TEXT NOT NULL
+    state               TEXT NOT NULL,
+    mac                 TEXT NOT NULL DEFAULT ''
 ) STRICT;
 
 -- Anchored/monotonic head (v1.6 Phase 28 Plan 04, HARDEN-02 D-04): a single
@@ -228,6 +242,18 @@ fn migrate_pending_confirmations_schema(conn: &rusqlite::Connection) -> Result<(
     if !existing_columns.iter().any(|c| c == "combined_digest") {
         conn.execute(
             "ALTER TABLE pending_confirmations ADD COLUMN combined_digest TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    // v1.6 Phase 28 Plan 05 (HARDEN-02 / X-02): widen a pre-Plan-05 DB with
+    // the whole-row MAC column. The DEFAULT `''` value fails
+    // `verify_pending_confirmation_mac`'s `hex::decode`/`Mac::verify_slice`
+    // closed for any legacy row — untrusted-until-re-confirmed, same "fail
+    // closed on a migrated legacy row" discipline `chain_anchor`'s migration
+    // pin uses (28-RESEARCH.md "Migration (pinned)").
+    if !existing_columns.iter().any(|c| c == "mac") {
+        conn.execute(
+            "ALTER TABLE pending_confirmations ADD COLUMN mac TEXT NOT NULL DEFAULT ''",
             [],
         )?;
     }
