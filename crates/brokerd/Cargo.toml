@@ -22,6 +22,8 @@ tokio        = { workspace = true, features = ["time"] }
 rusqlite     = { workspace = true }
 sha2         = { workspace = true }
 hex          = { workspace = true }
+hmac         = { workspace = true }
+getrandom    = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 chrono       = { workspace = true }
