@@ -167,7 +167,7 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
   2. The chain's authenticity depends on a secret key or an out-of-store anchor that a bare `events`-table writer cannot derive or reproduce.
   3. An untampered chain continues to verify true — no false positives; existing confirm-path and live-acceptance callers of `verify_chain` are unaffected.
 
-**Plans**: 3/5 plans executed
+**Plans**: 4/5 plans executed
 
 **Wave 1**
 
@@ -183,7 +183,7 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 
 **Wave 4** *(depends on 28-03)*
 
-- [ ] 28-04-PLAN.md — `chain_anchor` MAC'd monotonic head: atomic upsert folded into append_event + verify_chain cross-check (tail-truncation detection + legacy-DB fail-closed)
+- [x] 28-04-PLAN.md — `chain_anchor` MAC'd monotonic head: atomic upsert folded into append_event + verify_chain cross-check (tail-truncation detection + legacy-DB fail-closed)
 
 **Wave 5** *(depends on 28-03, 28-04)*
 
@@ -248,6 +248,6 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 | 25. Regression & Live Proof | v1.5 | 3/3 | Complete    | 2026-07-12 |
 | 26. Security Hardening Design Gate | v1.6 | 2/2 | Complete    | 2026-07-12 |
 | 27. Session & Connection Integrity Hardening | v1.6 | 2/2 | Complete    | 2026-07-12 |
-| 28. Authenticated Audit Chain | v1.6 | 3/5 | In Progress|  |
+| 28. Authenticated Audit Chain | v1.6 | 4/5 | In Progress|  |
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 0/? | Not started | - |
 | 30. Regression & Live Proof | v1.6 | 0/? | Not started | - |

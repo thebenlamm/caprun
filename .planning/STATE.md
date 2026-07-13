@@ -6,14 +6,14 @@ current_phase: 28
 current_phase_name: authenticated-audit-chain
 status: executing
 stopped_at: Completed 28-03-PLAN.md
-last_updated: "2026-07-13T01:14:12.746Z"
+last_updated: "2026-07-13T01:44:00.516Z"
 last_activity: 2026-07-13
 last_activity_desc: Phase 28 execution started
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 9
-  completed_plans: 7
+  completed_plans: 8
   percent: 40
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-12)
 ## Current Position
 
 Phase: 28 (authenticated-audit-chain) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-07-13 — Phase 28 execution started
 
@@ -82,6 +82,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 28 P01 | 7min | 2 tasks | 10 files |
 | Phase 28 P02 | 6min | 2 tasks | 4 files |
 | Phase 28 P03 | 31min | 2 tasks | 22 files |
+| Phase 28-authenticated-audit-chain P04 | 24min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -151,6 +152,7 @@ v1.3 P17, v1.4 P22, v1.5 P25; depends on Phases 27, 28, and 29 all landing.
 - [Phase 28]: cli/caprun is bin-only (no src/lib.rs) — key.rs unit tests run via 'cargo test -p caprun --bin caprun -- key::', not '--lib'
 - [Phase ?]: 28-03: keyed HMAC-SHA256 audit chain via shared domain-separated+length-framed mac_frame helper, key threaded as a sibling &[u8]/Arc<[u8;32]> parameter (not bundled into the connection type) through all 19 append_event sites + 2 verify_chain callers
 - [Phase ?]: 28-03: run_confirm_or_deny gained a minimal load_or_create_key wiring for both confirm/deny verbs (necessary for confirm.rs's cross-process tests to keep passing under the keyed scheme) — Plan 05 still owns the pending_confirmations MAC fold, MAC-verify-before-terminal-state gate, and deny()'s new verify_chain call
+- [Phase ?]: chain_anchor MAC binds session_id+head_event_id+head_hash+event_count via mac_frame(ANCHOR_MAC_DOMAIN=caprun.audit.anchor.v1); upsert folded atomically inside append_event under the same conn lock; verify_chain fails closed on absent/MAC-invalid/mismatched anchor — Closes tail-truncation detection gap (D-04) — a MAC'd head hash alone doesn't prove non-truncation; binding event_count lets verify_chain assert actual==anchored.
 
 ### Pending Todos
 
@@ -189,7 +191,7 @@ moved from "open" to "in progress" as its 5 items became v1.6's HARDEN-01..05.
 
 ## Session Continuity
 
-Last session: 2026-07-13T01:14:12.740Z
+Last session: 2026-07-13T01:42:58.161Z
 Stopped at: Completed 28-03-PLAN.md
 Resume file: None
 
