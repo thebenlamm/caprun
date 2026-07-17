@@ -2,8 +2,8 @@
 phase: 32
 slug: process-exec-sink-broker-spawned-confined-child
 status: draft
-nyquist_compliant: false
-wave_0_complete: false
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-07-17
 ---
 
@@ -47,15 +47,15 @@ created: 2026-07-17
 
 | Task | Req | Secure Behavior | Test Type | Automated Command | Status |
 |------|-----|-----------------|-----------|-------------------|--------|
-| exec sink table entries | EXEC-01/04 | `process.exec` in KNOWN_SINKS (command/args/cwd allowed+required); command/args routing+content-sensitive, expected_role=None; CommitIrreversible | unit | `cargo test -p executor sink_schema sink_sensitivity` | ⬜ |
-| TaintLabel::ExecRaw | EXEC-02 | new variant; `is_untrusted()` + every non-wildcard TaintLabel match updated (compiler-enforced) | unit | `cargo test -p runtime-core` | ⬜ |
-| mint_from_exec (server.rs locus) | EXEC-02 | mints combined stdout/stderr ValueNode rooted at a new `process_exited` Event; provenance_chain[0] == that Event id (non-stapled); fail-closed unknown-classification | unit | `cargo test -p brokerd mint_from_exec` (mirror `mint_from_read_anchor_identity`) | ⬜ |
-| Gate 3 extension | EXEC-02 | `check_mint_token "mint_from_exec("` added, same commit | gate | `bash scripts/check-invariants.sh` exits 0 | ⬜ |
-| caprun-exec-launcher | EXEC-01/04 | new bin: receives target, self-confines post-fork (exec_child_ruleset + exec_child_filter + rlimits), then execve; built by `cargo build --workspace` (sibling-binary gotcha) | integration (linux) | `#[cfg(target_os="linux")]` launcher confinement test | ⬜ |
-| broker spawn + capture + timeout | EXEC-01/04 | broker spawns launcher (never worker execve); captures stdout/stderr; wall-clock `tokio::time::timeout` + child.kill; output byte cap | integration (linux) | `#[cfg(target_os="linux")]` exec spawn test | ⬜ |
-| two-phase durable audit | EXEC-04 | `process_exited`/`process_spawn_failed` Event pair chained on parent_id/parent_hash (mirror file_create.rs) | integration | `cargo test -p brokerd` audit test | ⬜ |
-| EXEC-03 acceptance (genuine taint → I2 Block) | EXEC-03 | exec Event → ValueNode → sensitive sink arg → deterministic Block; unbroken audit-DAG edge; `verify_chain` true (NON-stapled) | e2e (linux) | `#[cfg(target_os="linux")]` s-exec acceptance test | ⬜ |
-| negative test per sink | EXEC-03/04 | clean exec Allowed; confinement escape denied; tainted-command Blocks | e2e (linux) | dedicated negative test | ⬜ |
+| exec sink table entries | EXEC-01/04 | `process.exec` in KNOWN_SINKS (command/args/cwd allowed+required); command/args routing+content-sensitive, expected_role=None; CommitIrreversible | unit | `cargo test -p executor sink_schema sink_sensitivity` | ✅ |
+| TaintLabel::ExecRaw | EXEC-02 | new variant; `is_untrusted()` + every non-wildcard TaintLabel match updated (compiler-enforced) | unit | `cargo test -p runtime-core` | ✅ |
+| mint_from_exec (server.rs locus) | EXEC-02 | mints combined stdout/stderr ValueNode rooted at a new `process_exited` Event; provenance_chain[0] == that Event id (non-stapled); fail-closed unknown-classification | unit | `cargo test -p brokerd mint_from_exec` (mirror `mint_from_read_anchor_identity`) | ✅ |
+| Gate 3 extension | EXEC-02 | `check_mint_token "mint_from_exec("` added, same commit | gate | `bash scripts/check-invariants.sh` exits 0 | ✅ |
+| caprun-exec-launcher | EXEC-01/04 | new bin: receives target, self-confines post-fork (exec_child_ruleset + exec_child_filter + rlimits), then execve; built by `cargo build --workspace` (sibling-binary gotcha) | integration (linux) | `#[cfg(target_os="linux")]` launcher confinement test (`crates/sandbox/tests/exec_child_confinement.rs`, 4/4 pass in the mandatory Linux container) | ✅ |
+| broker spawn + capture + timeout | EXEC-01/04 | broker spawns launcher (never worker execve); captures stdout/stderr; wall-clock `tokio::time::timeout` + child.kill; output byte cap | integration (linux) | `#[cfg(target_os="linux")]` exec spawn test (`crates/brokerd/tests/process_exec_spawn.rs`, 3/3 pass in the mandatory Linux container) | ✅ |
+| two-phase durable audit | EXEC-04 | `process_exited`/`process_spawn_failed` Event pair chained on parent_id/parent_hash (mirror file_create.rs) | integration | `cargo test -p brokerd` audit test (same `process_exec_spawn.rs` run, all three assert `verify_chain`) | ✅ |
+| EXEC-03 acceptance (genuine taint → I2 Block) | EXEC-03 | exec Event → ValueNode → sensitive sink arg → deterministic Block; unbroken audit-DAG edge; `verify_chain` true (NON-stapled) | e2e (linux) | `#[cfg(target_os="linux")]` s9_process_exec_block.rs::s9_process_exec_genuine_taint_block, 4/4 pass in the mandatory Linux container | ✅ |
+| negative test per sink | EXEC-03/04 | clean exec Allowed; confinement escape denied; tainted-command Blocks | e2e (linux) | `s9_process_exec_block.rs` (clean-allow control + tainted-command negative) + `exec_child_confinement.rs` (fs-escape denied, net-deny persists across execve, benign write + legitimate execve succeed) — 8/8 Linux tests pass | ✅ |
 
 *Status: ⬜ pending · ✅ green · ❌ red*
 
@@ -63,9 +63,9 @@ created: 2026-07-17
 
 ## Wave 0 Requirements
 
-- [ ] `cli/caprun-exec-launcher/` new crate scaffolding (Cargo.toml + main.rs) added to the workspace members.
-- [ ] `tokio` `process` feature enabled where the broker spawns/awaits the child (research gap #3).
-- [ ] `output_value_id: Option<ValueId>` wire field added to the broker decision response (research gap #2) so the worker can route exec-output into a later sink arg (required for EXEC-03).
+- [x] `cli/caprun-exec-launcher/` new crate scaffolding (Cargo.toml + main.rs) added to the workspace members.
+- [x] `tokio` `process` feature enabled where the broker spawns/awaits the child (research gap #3).
+- [x] `output_value_id: Option<ValueId>` wire field added to the broker decision response (research gap #2) so the worker can route exec-output into a later sink arg (required for EXEC-03).
 
 *Existing test infrastructure (cargo + check-invariants.sh + mailpit-verify.sh) covers the rest.*
 
@@ -82,11 +82,11 @@ created: 2026-07-17
 
 ## Validation Sign-Off
 
-- [ ] All EXEC-01..04 requirement IDs covered by at least one test (see map)
-- [ ] `bash scripts/check-invariants.sh` exits 0, INCLUDING the new Gate-3 `mint_from_exec(` line
-- [ ] Mac `cargo build --workspace` + `cargo test --workspace` green (Linux tests show 0 — expected)
-- [ ] **Linux compile-check ran**: `cargo build --tests --keep-going` in the `rust:1` container enumerated zero errors (cfg-linux-blindness guard)
-- [ ] `nyquist_compliant: true` set in frontmatter
-- [ ] Full live acceptance (EXEC-03 non-stapled Block, clean Allow) deferred to Phase 34 LIVE-01, but the tests exist and compile on Linux now
+- [x] All EXEC-01..04 requirement IDs covered by at least one test (see map)
+- [x] `bash scripts/check-invariants.sh` exits 0, INCLUDING the new Gate-3 `mint_from_exec(` line
+- [x] Mac `cargo build --workspace` + `cargo test --workspace` green (Linux tests show 0 — expected)
+- [x] **Linux compile-check ran**: `cargo build --tests --keep-going` in the `rust:1` container enumerated zero errors (cfg-linux-blindness guard) — via `MAILPIT_VERIFY_CMD='cargo build --workspace && cargo build --tests --keep-going' bash scripts/mailpit-verify.sh`, real exit 0 captured before any pipe
+- [x] `nyquist_compliant: true` set in frontmatter
+- [x] Full live acceptance (EXEC-03 non-stapled Block, clean Allow) deferred to Phase 34 LIVE-01, but the tests exist, compile, AND RUN GREEN on Linux now (8/8 new Linux tests + 3/3 pre-existing process_exec_spawn.rs, all via `scripts/mailpit-verify.sh`)
 
-**Approval:** pending
+**Approval:** 32-06 executor — Linux container verification complete 2026-07-17 (Colima+Docker, rust:1, seccomp=unconfined, via `scripts/mailpit-verify.sh`). Two genuine pre-existing bugs found and fixed in the process (see 32-06-SUMMARY.md Deviations): a landlock 0.4.5 API-mismatch compile error in `exec_child_ruleset`, an `EXEC_CWD=""` chdir("") bug in `run_launcher`, and two Landlock ruleset gaps (missing `ReadDir`/`MakeReg`) discovered running a real `/usr/bin/python3` target through the launcher. Full composed live acceptance (LIVE-01) remains Phase 34.
