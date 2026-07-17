@@ -22,7 +22,7 @@ Milestone **v1.6 — Security Hardening (close the residuals)**. Five TCB-local 
 
 ### Proof
 
-- [ ] **HARDEN-06**: After all hardening lands, the full workspace regression is independently re-run green on real Linux via the bare `scripts/mailpit-verify.sh` recipe, with new negative tests proving each closed residual (a forged/tampered chain is rejected; a replayed Allowed send delivers exactly once; the forced-Active path is absent from the built binary; fd release demotes the session; the `file.create` `contents` slot is constrained) — and no regression to v1.1–v1.5 behavior.
+- [x] **HARDEN-06**: After all hardening lands, the full workspace regression is independently re-run green on real Linux via the bare `scripts/mailpit-verify.sh` recipe, with new negative tests proving each closed residual (a forged/tampered chain is rejected; a replayed Allowed send delivers exactly once; the forced-Active path is absent from the built binary; fd release demotes the session; the `file.create` `contents` slot is constrained) — and no regression to v1.1–v1.5 behavior.
 
 ## v2 Requirements
 
@@ -62,7 +62,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | HARDEN-02 | Phase 28 | Complete |
 | HARDEN-03 | Phase 29 | Complete |
 | HARDEN-05 | Phase 29 | Complete |
-| HARDEN-06 | Phase 30 | Pending |
+| HARDEN-06 | Phase 30 | Complete |
 
 **Coverage:**
 

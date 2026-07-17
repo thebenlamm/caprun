@@ -113,7 +113,7 @@ Full detail archived in [`milestones/v1.5-ROADMAP.md`](milestones/v1.5-ROADMAP.m
 - [x] **Phase 27: Session & Connection Integrity Hardening** - fd release itself carries the I1 draft-only consequence, and the CreateSession forced-Active mint arm is compiled out of the production binary (completed 2026-07-12)
 - [x] **Phase 28: Authenticated Audit Chain** - `verify_chain` becomes forge-resistant (keyed MAC and/or externally-anchored head), not just a corruption detector (completed 2026-07-13)
 - [x] **Phase 29: Sink-Path Hardening — Replay CAS & contents Slot** - the Allowed email.send path is replay-safe (at-most-once), and `file.create`'s `contents` arg is no longer an unconstrained slot (completed 2026-07-17)
-- [ ] **Phase 30: Regression & Live Proof** - the full workspace regression is independently re-run green on real Linux with a dedicated negative test proving each closed residual, no regression to v1.1–v1.5 behavior
+- [x] **Phase 30: Regression & Live Proof** - the full workspace regression is independently re-run green on real Linux with a dedicated negative test proving each closed residual, no regression to v1.1–v1.5 behavior (completed 2026-07-17)
 
 ## Phase Details
 
@@ -224,12 +224,12 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
   4. A test/build check proves the forced-Active `CreateSession` path is absent from the built production binary.
   5. A test proves fd release (`RequestFd`) demotes the session, while the CONTROL-01 clean path still succeeds.
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 
 Plans:
 
 - [x] 30-01-PLAN.md — Author `scripts/verify-harden04-featureless.sh` (criterion 4 formalized featureless-build proof) + regression-fixture audit sweep (`30-REGRESSION-AUDIT.md`)
-- [ ] 30-02-PLAN.md — Real-Linux live proof of all 5 criteria + fresh v1.6 baseline + `30-VERIFICATION.md` evidence table + human sign-off (orchestrator-run gates)
+- [x] 30-02-PLAN.md — Real-Linux live proof of all 5 criteria + fresh v1.6 baseline + `30-VERIFICATION.md` evidence table + human sign-off (orchestrator-run gates)
 
 ## Progress
 
@@ -264,4 +264,4 @@ Plans:
 | 27. Session & Connection Integrity Hardening | v1.6 | 2/2 | Complete    | 2026-07-12 |
 | 28. Authenticated Audit Chain | v1.6 | 5/5 | Complete   | 2026-07-13 |
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 3/3 | Complete    | 2026-07-17 |
-| 30. Regression & Live Proof | v1.6 | 1/2 | In Progress|  |
+| 30. Regression & Live Proof | v1.6 | 2/2 | Complete    | 2026-07-17 |
