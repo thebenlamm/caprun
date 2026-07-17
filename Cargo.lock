@@ -154,6 +154,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "caprun-exec-launcher"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sandbox",
+ "serde_json",
+]
+
+[[package]]
 name = "caprun-planner"
 version = "0.1.0"
 dependencies = [

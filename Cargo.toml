@@ -1,5 +1,5 @@
 [workspace]
-members  = ["crates/*", "cli/caprun", "cli/caprun-planner"]
+members  = ["crates/*", "cli/caprun", "cli/caprun-planner", "cli/caprun-exec-launcher"]
 resolver = "3"
 
 [workspace.package]
