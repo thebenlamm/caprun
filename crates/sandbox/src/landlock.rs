@@ -36,3 +36,75 @@ pub fn deny_all_filesystem() -> std::io::Result<()> {
 pub fn deny_all_filesystem() -> std::io::Result<()> {
     Ok(())
 }
+
+/// Narrow-allow-list Landlock ruleset for a broker-spawned `process.exec`
+/// child (the `caprun-exec-launcher`, applied to itself post-fork, pre-exec —
+/// DESIGN §1.3 Option B).
+///
+/// Unlike `deny_all_filesystem()` (zero allow-rules — everything denied),
+/// this ruleset grants exactly two carve-outs so an arbitrary target binary
+/// can actually load and run:
+///   - `ReadFile + Execute` on an enumerated, hardcoded system-path allow-list
+///     (loading + running the target binary and its shared libraries).
+///   - `ReadFile + WriteFile` on `workspace_root` ONLY — no `Execute` there,
+///     so a worker-planted binary inside the workspace can never be run.
+///
+/// The system path list (`/usr`, `/bin`, `/lib`, `/lib64`) is an enumerated,
+/// explicitly-hardcoded allow-list, NEVER a PATH walk or directory scan — per
+/// the "no dynamic registry" discipline. DESIGN §8 item 1 defers the EXACT
+/// strings to in-container verification (32-06 confirms via `ldd`/`which`
+/// against the real verification container layout); this list is the
+/// starting point, not a final deployment constant.
+///
+/// Do NOT reuse `deny_all_filesystem()` here — its zero-allow-rule ruleset
+/// would block the target binary from loading (EACCES/ENOEXEC). This is a
+/// deliberately distinct, narrower-than-open ruleset (T-32-08).
+#[cfg(target_os = "linux")]
+pub fn exec_child_ruleset(workspace_root: &std::path::Path) -> std::io::Result<()> {
+    use landlock::{
+        path_beneath_rules, Access, AccessFs, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, ABI,
+    };
+
+    let abi = ABI::V3;
+
+    // System paths: ReadFile + Execute only (loading + running the target
+    // binary and its shared libs). Exact literal path list is an Open Item
+    // (DESIGN §8 item 1) — resolved against the verification container's
+    // real layout at 32-06.
+    let system_paths = ["/usr", "/bin", "/lib", "/lib64"];
+    let system_access = AccessFs::ReadFile | AccessFs::Execute;
+
+    // Workspace: ReadFile + WriteFile only — no Execute (never run a
+    // worker-planted binary), matching "narrowest that works."
+    let workspace_access = AccessFs::ReadFile | AccessFs::WriteFile;
+
+    let status = Ruleset::default()
+        .handle_access(AccessFs::from_all(abi))
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?
+        .create()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?
+        .add_rules(path_beneath_rules(system_paths.iter(), system_access))
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?
+        .add_rules(path_beneath_rules(
+            std::iter::once(
+                PathFd::new(workspace_root)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?,
+            ),
+            workspace_access,
+        ))
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?
+        .restrict_self()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?;
+
+    eprintln!(
+        "[caprun-exec-launcher] Landlock exec_child_ruleset status: {:?}",
+        status.ruleset
+    );
+    Ok(())
+}
+
+/// No-op stub on non-Linux targets.
+#[cfg(not(target_os = "linux"))]
+pub fn exec_child_ruleset(_workspace_root: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}

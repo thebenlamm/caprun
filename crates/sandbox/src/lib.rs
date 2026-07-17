@@ -39,7 +39,7 @@ pub mod landlock;
 pub mod rlimits;
 pub mod seccomp;
 
-pub use landlock::deny_all_filesystem;
+pub use landlock::{deny_all_filesystem, exec_child_ruleset};
 pub use rlimits::apply_rlimits;
 pub use seccomp::apply_worker_filter;
 
