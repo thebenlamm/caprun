@@ -137,7 +137,9 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
   1. `planning-docs/DESIGN-effect-breadth-exec.md` exists and pins the broker-spawned confined-child-`exec` model (how the child is spawned from the broker — the confined worker cannot `execve` per seccomp deny-execve — how it is confined, and how stdout/stderr are captured and taint-minted) AND the filesystem read/write-breadth model.
   2. The doc pins the **fail-closed defaults** for both new sinks — `process.exec` command/arg schema + (dis)allow posture, exec-output taint label + `origin_role`, and fs read/write path & slot constraints — consistent with I0/I1/I2 and v1.5 slot-type binding; nothing in it disables or bypasses I2, and no new raw `EffectRequest` path is introduced.
   3. A fresh, **non-self** adversarial code-trace review clears the doc (all findings resolved), recorded in a gate record; no `crates/executor`/`brokerd`/`sandbox`/`runtime-core` TCB code is written before this gate clears.
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 31-01-PLAN.md — Author `DESIGN-effect-breadth-exec.md`: pin the broker-spawned confined-child `process.exec` model + fs read/write-breadth model + fail-closed defaults for both new sinks (DESIGN-13/14)
+- [ ] 31-02-PLAN.md — Fresh non-self Fable-5 adversarial code-trace clears the doc; record clearance in `DESIGN-GATE-RECORD-v1.7.md`; reconfirm no TCB code (DESIGN-13/14)
 
 #### Phase 32: `process.exec` Sink — Broker-Spawned Confined Child
 **Goal**: caprun can run a command as a broker-spawned confined child whose captured stdout/stderr are genuinely taint-minted and deterministically I2-enforced.
@@ -203,7 +205,7 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
 | 28. Authenticated Audit Chain | v1.6 | 5/5 | Complete   | 2026-07-13 |
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 3/3 | Complete    | 2026-07-17 |
 | 30. Regression & Live Proof | v1.6 | 2/2 | Complete    | 2026-07-17 |
-| 31. Effect-Breadth Design Gate | v1.7 | 0/TBD | Not started | - |
+| 31. Effect-Breadth Design Gate | v1.7 | 0/2 | Not started | - |
 | 32. `process.exec` Sink — Broker-Spawned Confined Child | v1.7 | 0/TBD | Not started | - |
 | 33. Filesystem Read/Write Breadth | v1.7 | 0/TBD | Not started | - |
 | 34. Regression & Live Proof (v1.7 DONE) | v1.7 | 0/TBD | Not started | - |
