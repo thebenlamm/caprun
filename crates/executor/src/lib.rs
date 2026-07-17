@@ -116,9 +116,11 @@ pub fn submit_plan_node(
         // confirmable judgment call — it Denies, never Blocks.
         //
         // expected_role returns Option<&[&str]>, matched explicitly here:
-        //   None            => this slot is unconstrained (e.g. file.create's
-        //                       `contents`) — a documented, intentional
+        //   None            => this slot is unconstrained (e.g. email.send's
+        //                       `attachment`) — a documented, intentional
         //                       scope-out (DESIGN §7 item 3), NOT fail-open.
+        //                       (file.create's `contents` became role-checked
+        //                       in HARDEN-05; it is no longer a None example.)
         //                       Fall through unchanged.
         //   Some(list)      => this slot IS role-checked. The value passes iff
         //                       `record.origin_role` is `Some(s)` AND `list`

@@ -13,9 +13,11 @@
 ///   2. `server.rs`'s `SubmitPlanNode` Allowed-decision dispatch, AFTER its
 ///      own durable, opaque `email_send_attempted` append succeeds (Plan
 ///      16-04, CONTROL-01) — the trusted, never-blocked path. This caller has
-///      NO CAS/`PendingConfirmation` (there is nothing to confirm on an
-///      Allowed decision); see the REPLAY RESIDUAL RISK note at that call
-///      site.
+///      no `PendingConfirmation` CAS (there is nothing to confirm on an
+///      Allowed decision), but since HARDEN-03 (Plan 29-02) it DOES guard a
+///      content-derived idempotency CAS (`sent_plan_nodes`, keyed by
+///      sink + arg `value_id`s) committed BEFORE this call — so a replayed
+///      identical plan node sends at most once (per-plan-node, D-08 caveat).
 ///
 /// SHARED PRECONDITION (both callers): a durable, opaque `email_send_attempted`
 /// event MUST be appended (parent-chained onto the caller's own current head)
