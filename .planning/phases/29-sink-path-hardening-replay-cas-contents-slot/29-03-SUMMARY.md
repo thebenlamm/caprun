@@ -133,3 +133,7 @@ None - no external service configuration required.
 ---
 *Phase: 29-sink-path-hardening-replay-cas-contents-slot*
 *Completed: 2026-07-17*
+
+## Self-Check: PASSED
+
+All 5 modified files verified present on disk; all 3 commits (`b8f240a` test, `32e7fc7` feat, `1e34fde` docs) verified present in git log.
