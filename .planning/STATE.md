@@ -1,16 +1,20 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.7
-milestone_name: Effect Breadth I (process.exec + Filesystem Breadth)
-status: roadmapped
-last_updated: "2026-07-17T20:15:00.000Z"
+milestone_name: — Effect Breadth I
+current_phase: 32
+current_phase_name: `process.exec` Sink — Broker-Spawned Confined Child
+status: executing
+stopped_at: v1.7 roadmap created (Phases 31-34)
+last_updated: "2026-07-17T21:03:37.052Z"
 last_activity: 2026-07-17
+last_activity_desc: Phase 31 complete, transitioned to Phase 32
 progress:
   total_phases: 4
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 2
+  completed_plans: 2
+  percent: 25
 ---
 
 # Project State
@@ -20,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-17)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, (v1.5, SHIPPED) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into (closing the v1.4 T2 residual), (v1.6, SHIPPED) hardening the standing residuals that made several of those guarantees "true only incidentally" into enforced guarantees, and now (v1.7) extending the set of real sinks — `process.exec` (captured+tainted command output) and filesystem read/write breadth — each through the same plan-node → taint → executor(I2) → audit path, toward the Safe Coding Agent anchor.
-**Current focus:** Phase 31 — Effect-Breadth Design Gate (DESIGN-13/14, `DESIGN-effect-breadth-exec.md` + fresh non-self adversarial code-trace)
+**Current focus:** Phase 31 — Effect-Breadth Design Gate
 
 ## Current Position
 
-Phase: 31 — Effect-Breadth Design Gate (not started)
-Plan: —
-Status: Roadmapped, ready to plan Phase 31
-Last activity: 2026-07-17 — v1.7 roadmap created (`/gsd-roadmapper`), 4 phases (31-34), 11/11 requirements mapped
+Phase: 32 — `process.exec` Sink — Broker-Spawned Confined Child
+Plan: Not started
+Status: Executing Phase 31
+Last activity: 2026-07-17 — Phase 31 complete, transitioned to Phase 32
 
 ## Performance Metrics
 
@@ -56,6 +60,7 @@ TCB code, followed by implementation, followed by a separate live-proof phase):
   Landlock+seccomp is the riskiest primitive to date; the ORCHESTRATOR (not a
   gsd-executor) owns the review spawn. No `crates/executor`/`brokerd`/`sandbox`/
   `runtime-core` TCB code before this gate clears.
+
 - The 7 implementation requirements split into **2 implementation phases by blast
   radius / subsystem coherence** rather than one bundled phase or seven
   single-requirement phases: **Phase 32** is `process.exec` alone (EXEC-01..04) —
@@ -64,6 +69,7 @@ TCB code, followed by implementation, followed by a separate live-proof phase):
   breadth (FS-01..03) — the adapter-fs fd-passing seam (read many files + write/
   edit existing files beyond `file.create`'s `O_EXCL`). Independent of each other;
   both depend only on Phase 31.
+
 - **Phase 34** is the regression/live-proof phase (LIVE-01/02 — composed
   acceptance on real Linux: exec-tainted Block + clean Allow + fs write/edit
   audited, genuine non-stapled taint chain, `verify_chain` true; full-workspace
@@ -77,6 +83,7 @@ TCB code, followed by implementation, followed by a separate live-proof phase):
   hard-blocked on Phase 31's DESIGN doc (`planning-docs/DESIGN-effect-breadth-exec.md`)
   clearing a fresh (non-self) adversarial code-trace. No `crates/executor` /
   `crates/brokerd` / `crates/sandbox` / `crates/runtime-core` TCB code before that gate.
+
 - `process.exec` fundamentally changes the confinement model (a new
   broker-spawned confined-child spawn path) — this is why v1.7 opens with a design
   gate + adversarial review rather than a bare "add a sink" plan.
@@ -86,6 +93,7 @@ TCB code, followed by implementation, followed by a separate live-proof phase):
 - `phases.clear --confirm` deletes ALL prior phase dirs from disk (documented bug,
   4-for-4 across v1.3–v1.6 scoping) — git-status-check `.planning/phases/`
   immediately after any `phases.clear`; restore if needed.
+
 - The last-wave executor's doc-completion commit has historically flipped
   ROADMAP.md's phase checkbox before verification (Phases 15/16) — never let ANY
   executor touch ROADMAP.md/STATE.md; the orchestrator owns phase-completion state.

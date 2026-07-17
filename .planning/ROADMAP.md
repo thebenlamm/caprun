@@ -143,11 +143,11 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
 **Plans**: 2 plans
 **Wave 1**
 
-- [ ] 31-01-PLAN.md — Author `DESIGN-effect-breadth-exec.md`: pin the broker-spawned confined-child `process.exec` model + fs read/write-breadth model + fail-closed defaults for both new sinks (DESIGN-13/14)
+- [x] 31-01-PLAN.md — Author `DESIGN-effect-breadth-exec.md`: pin the broker-spawned confined-child `process.exec` model + fs read/write-breadth model + fail-closed defaults for both new sinks (DESIGN-13/14)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 31-02-PLAN.md — Fresh non-self Fable-5 adversarial code-trace clears the doc; record clearance in `DESIGN-GATE-RECORD-v1.7.md`; reconfirm no TCB code (DESIGN-13/14)
+- [x] 31-02-PLAN.md — Fresh non-self Fable-5 adversarial code-trace clears the doc; record clearance in `DESIGN-GATE-RECORD-v1.7.md`; reconfirm no TCB code (DESIGN-13/14)
 
 #### Phase 32: `process.exec` Sink — Broker-Spawned Confined Child
 
@@ -222,7 +222,7 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
 | 28. Authenticated Audit Chain | v1.6 | 5/5 | Complete   | 2026-07-13 |
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 3/3 | Complete    | 2026-07-17 |
 | 30. Regression & Live Proof | v1.6 | 2/2 | Complete    | 2026-07-17 |
-| 31. Effect-Breadth Design Gate | v1.7 | 0/2 | Not started | - |
+| 31. Effect-Breadth Design Gate | v1.7 | 2/2 | Complete    | 2026-07-17 |
 | 32. `process.exec` Sink — Broker-Spawned Confined Child | v1.7 | 0/TBD | Not started | - |
 | 33. Filesystem Read/Write Breadth | v1.7 | 0/TBD | Not started | - |
 | 34. Regression & Live Proof (v1.7 DONE) | v1.7 | 0/TBD | Not started | - |
