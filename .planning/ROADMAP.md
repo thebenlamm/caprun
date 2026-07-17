@@ -224,10 +224,11 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
   4. A test/build check proves the forced-Active `CreateSession` path is absent from the built production binary.
   5. A test proves fd release (`RequestFd`) demotes the session, while the CONTROL-01 clean path still succeeds.
 
-**Plans**: 2 plans
+**Plans**: 1/2 plans executed
 
 Plans:
-- [ ] 30-01-PLAN.md — Author `scripts/verify-harden04-featureless.sh` (criterion 4 formalized featureless-build proof) + regression-fixture audit sweep (`30-REGRESSION-AUDIT.md`)
+
+- [x] 30-01-PLAN.md — Author `scripts/verify-harden04-featureless.sh` (criterion 4 formalized featureless-build proof) + regression-fixture audit sweep (`30-REGRESSION-AUDIT.md`)
 - [ ] 30-02-PLAN.md — Real-Linux live proof of all 5 criteria + fresh v1.6 baseline + `30-VERIFICATION.md` evidence table + human sign-off (orchestrator-run gates)
 
 ## Progress
@@ -263,4 +264,4 @@ Plans:
 | 27. Session & Connection Integrity Hardening | v1.6 | 2/2 | Complete    | 2026-07-12 |
 | 28. Authenticated Audit Chain | v1.6 | 5/5 | Complete   | 2026-07-13 |
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 3/3 | Complete    | 2026-07-17 |
-| 30. Regression & Live Proof | v1.6 | 0/? | Not started | - |
+| 30. Regression & Live Proof | v1.6 | 1/2 | In Progress|  |

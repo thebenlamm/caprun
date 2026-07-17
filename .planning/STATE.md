@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: — Security Hardening
 current_phase: 30
-current_phase_name: Regression & Live Proof
+current_phase_name: regression-live-proof
 status: executing
 stopped_at: Completed 28-05-PLAN.md
-last_updated: "2026-07-17T17:41:41.692Z"
+last_updated: "2026-07-17T17:59:17.138Z"
 last_activity: 2026-07-17
-last_activity_desc: Phase 29 complete, transitioned to Phase 30
+last_activity_desc: Phase 30 execution started
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 12
+  total_plans: 14
   completed_plans: 12
   percent: 80
 ---
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-12)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, (v1.5, SHIPPED) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into (closing the v1.4 T2 residual), and now (v1.6) hardening the standing residuals that made several of those guarantees "true only incidentally" into enforced guarantees.
-**Current focus:** Phase 29 — sink-path-hardening-replay-cas-contents-slot
+**Current focus:** Phase 30 — regression-live-proof
 
 ## Current Position
 
-Phase: 30 — Regression & Live Proof
-Plan: Not started
-Status: Executing Phase 29
-Last activity: 2026-07-17 — Phase 29 complete, transitioned to Phase 30
+Phase: 30 (regression-live-proof) — EXECUTING
+Plan: 1 of 2
+Status: Executing Phase 30
+Last activity: 2026-07-17 — Phase 30 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
