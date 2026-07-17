@@ -948,8 +948,8 @@ async fn evaluate_plan_node_and_record(
             .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
 
         // v1.6 Phase 29 (HARDEN-03): the CAS `INSERT OR IGNORE` and the
-        // durable `email_send_attempted` append commit in ONE atomic
-        // transaction, BEFORE any SMTP socket opens (mirrors SEND-01's
+        // durable attempt-ledger append commit in ONE atomic transaction,
+        // BEFORE any SMTP socket opens (mirrors SEND-01's
         // commit-before-effect discipline, confirmation.rs:868-896). WAL
         // is already enabled; a concurrent double-submit for the same
         // key serializes on this INSERT under the mutex.
@@ -966,47 +966,45 @@ async fn evaluate_plan_node_and_record(
             ],
         )?;
 
-        // MAJOR-4: append a durable, OPAQUE email_send_attempted event
-        // BEFORE the SMTP socket ever opens — parent-chained onto the
-        // just-advanced plan_node_evaluated head, now inside the SAME
-        // CAS transaction (mirrors confirm()'s attempt-ledger shape in
-        // confirmation.rs). Appended on BOTH a fresh send and a
-        // suppressed replay, so a replay attempt is still durably
-        // recorded for audit continuity.
-        let attempted_event = Event::new(
+        // The event appended inside this transaction DIVERGES by branch —
+        // a fresh send gets `email_send_attempted` (MAJOR-4's pre-SMTP
+        // attempt ledger); a suppressed replay gets a DISTINCT
+        // `email_send_replay_suppressed` marker instead. This is the
+        // load-bearing choice that keeps `email_send_attempted` at
+        // EXACTLY ONE per plan node no matter how many times it is
+        // replayed, while still recording every replay attempt durably
+        // (audit continuity) under its own honestly-named event type.
+        //
+        // Guarantee (D-08, stated unsoftened): at-most-once PER PLAN NODE
+        // (identical value_ids) — NOT a bounded-sends-per-session
+        // guarantee. A worker that mints a FRESH value_id resolving to
+        // "the same" recipient still sends again; an
+        // effects-budget/rate-limit is future work, out of v1.6 scope.
+        let event_type = if rows_affected == 0 {
+            "email_send_replay_suppressed"
+        } else {
+            "email_send_attempted"
+        };
+        let marker_event = Event::new(
             Uuid::new_v4(),
             Some(*last_event_id),
             session_id,
             format!("sink:email.send:{effect_id}"),
-            "email_send_attempted".into(),
+            event_type.into(),
             Utc::now(),
             vec![],
         );
-        let attempted_event_id = attempted_event.id;
-        let attempted_hash = append_event(&tx, key, &attempted_event, Some(last_event_hash))
+        let marker_event_id = marker_event.id;
+        let marker_hash = append_event(&tx, key, &marker_event, Some(last_event_hash))
             .map_err(|e| {
-                eprintln!(
-                    "[brokerd] email_send_attempted audit append FAILED (fail-closed): {e}"
-                );
-                anyhow::anyhow!("email_send_attempted append failed: {e}")
+                eprintln!("[brokerd] {event_type} audit append FAILED (fail-closed): {e}");
+                anyhow::anyhow!("{event_type} append failed: {e}")
             })?;
         tx.commit()?;
-        *last_event_id = attempted_event_id;
-        *last_event_hash = attempted_hash.clone();
+        *last_event_id = marker_event_id;
+        *last_event_hash = marker_hash.clone();
 
         if rows_affected == 0 {
-            // Replay suppressed: an identical plan node (same sink +
-            // same value_ids) already has a `sent_plan_nodes` row —
-            // the CAS `INSERT OR IGNORE` hit the PRIMARY KEY constraint.
-            // The attempt is durably recorded above, but the SMTP
-            // socket is NEVER opened a second time.
-            //
-            // Guarantee (D-08, stated unsoftened): at-most-once PER
-            // PLAN NODE (identical value_ids) — NOT a bounded-sends-
-            // per-session guarantee. A worker that mints a FRESH
-            // value_id resolving to "the same" recipient still sends
-            // again; an effects-budget/rate-limit is future work, out
-            // of v1.6 scope.
             eprintln!(
                 "[brokerd] email.send replay suppressed (idempotency_key already \
                  present in sent_plan_nodes): effect_id={effect_id}"
@@ -1022,8 +1020,8 @@ async fn evaluate_plan_node_and_record(
                     session_id,
                     effect_id,
                     &resolved_args,
-                    attempted_event_id,
-                    &attempted_hash,
+                    marker_event_id,
+                    &marker_hash,
                 )?;
             *last_event_id = sink_event_id;
             *last_event_hash = sink_hash;
