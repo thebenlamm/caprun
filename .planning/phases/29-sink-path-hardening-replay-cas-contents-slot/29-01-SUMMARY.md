@@ -122,3 +122,12 @@ None - no external service configuration required.
 ---
 *Phase: 29-sink-path-hardening-replay-cas-contents-slot*
 *Completed: 2026-07-17*
+
+## Self-Check: PASSED
+
+- FOUND: crates/brokerd/src/audit.rs
+- FOUND: .planning/phases/29-sink-path-hardening-replay-cas-contents-slot/29-01-SUMMARY.md
+- FOUND: cf9fd96 (feat: sent_plan_nodes table + migration)
+- FOUND: bebf4c5 (test: RED — plan_node_idempotency_key)
+- FOUND: b00c782 (feat: GREEN — plan_node_idempotency_key)
+- FOUND: 02fe671 (docs: plan summary)
