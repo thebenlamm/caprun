@@ -41,6 +41,7 @@ pub fn sink_effect_class(sink: &SinkId) -> EffectClass {
     match sink.0.as_str() {
         "email.send" => EffectClass::CommitIrreversible,
         "file.create" => EffectClass::CommitIrreversible,
+        "process.exec" => EffectClass::CommitIrreversible,
         // Test-fixture-only arm (DESIGN §9 Pitfall m2 / RESEARCH Pitfall 3): the
         // ONLY vehicle that makes TAINT-03 (Draft + Observe still Allowed)
         // testable end-to-end, since both live sinks are CommitIrreversible.
@@ -84,6 +85,22 @@ pub const EMAIL_SEND_CONTENT_SENSITIVE: &[&str] = &["subject", "body"];
 /// over-widening).
 pub const FILE_CREATE_CONTENT_SENSITIVE: &[&str] = &["contents"];
 
+/// Args of process.exec that determine WHAT command runs and WHERE (routing
+/// sense: `cwd` determines where the command's relative-path resolution
+/// happens; `command`/`args` determine what runs). DESIGN-effect-breadth-exec.md
+/// §4.2: `command`/`args` are ALSO content-sensitive (see
+/// `PROCESS_EXEC_CONTENT_SENSITIVE`) — the routing/content distinction is
+/// academic for these two args; the point is neither classifier ever returns
+/// `false` for them, so a tainted value in either Blocks.
+pub const PROCESS_EXEC_ROUTING_SENSITIVE: &[&str] = &["command", "args", "cwd"];
+
+/// Args of process.exec that determine WHAT irreversible payload executes.
+/// A tainted `command`/`args` value is arbitrary code execution — strictly
+/// worse than a tainted email recipient — so both are content-sensitive too
+/// (DESIGN-effect-breadth-exec.md §4.2). `cwd` is deliberately NOT included
+/// here (routing-sensitive only — it doesn't determine WHAT runs, only WHERE).
+pub const PROCESS_EXEC_CONTENT_SENSITIVE: &[&str] = &["command", "args"];
+
 /// Returns `true` iff `arg_name` is a routing-sensitive argument of `sink`.
 ///
 /// Routing-sensitive means: the attacker who controls this arg value redirects
@@ -94,6 +111,7 @@ pub fn is_routing_sensitive(sink: &SinkId, arg_name: &str) -> bool {
     match sink.0.as_str() {
         "email.send" => EMAIL_SEND_ROUTING_SENSITIVE.contains(&arg_name),
         "file.create" => FILE_CREATE_ROUTING_SENSITIVE.contains(&arg_name),
+        "process.exec" => PROCESS_EXEC_ROUTING_SENSITIVE.contains(&arg_name),
         // v0: all other sinks — no routing-sensitive args defined yet.
         _ => false,
     }
@@ -110,6 +128,7 @@ pub fn is_content_sensitive(sink: &SinkId, arg_name: &str) -> bool {
     match sink.0.as_str() {
         "email.send" => EMAIL_SEND_CONTENT_SENSITIVE.contains(&arg_name),
         "file.create" => FILE_CREATE_CONTENT_SENSITIVE.contains(&arg_name),
+        "process.exec" => PROCESS_EXEC_CONTENT_SENSITIVE.contains(&arg_name),
         _ => false,
     }
 }
@@ -176,6 +195,26 @@ pub fn expected_role(sink: &SinkId, arg_name: &str) -> Option<&'static [&'static
             "contents" => Some(&["path"]),
             _ => None,
         },
+        "process.exec" => match arg_name {
+            // DESIGN-effect-breadth-exec.md §4.2 (Round-1 finding M2): `command`
+            // and `args` are DELIBERATELY unconstrained here. There is no
+            // `origin_role`-producing mint site for a legitimately-authored
+            // exec command — pinning `Some(...)` would fail-closed-Deny the
+            // LEGITIMATE command at this Step 1c structural gate, breaking the
+            // feature rather than tightening it. The security property (a
+            // tainted `command`/`args` value Blocks) is delivered entirely by
+            // `is_routing_sensitive`/`is_content_sensitive` = true above, plus
+            // the untrusted-taint check — independent of `expected_role`.
+            // `None` here disables ONLY the structural role gate; it is NOT
+            // an I2 bypass.
+            "command" | "args" => None,
+            // `cwd` reuses the same trusted path-role vocabulary as
+            // `file.create`'s `path` (RESEARCH A3 recommendation) — DESIGN
+            // pins `cwd` routing-sensitive but leaves its role list to this
+            // sink table's own construction.
+            "cwd" => Some(&["path", "relative_path"]),
+            _ => None,
+        },
         _ => None, // any other sink: unconstrained, out of v1.5 scope
     }
 }
@@ -195,6 +234,10 @@ mod tests {
 
     fn file_create() -> SinkId {
         SinkId("file.create".to_string())
+    }
+
+    fn process_exec() -> SinkId {
+        SinkId("process.exec".to_string())
     }
 
     #[test]
@@ -373,5 +416,60 @@ mod tests {
     fn unknown_sink_expected_role_is_unconstrained() {
         assert_eq!(expected_role(&other(), "to"), None);
         assert_eq!(expected_role(&other(), "url"), None);
+    }
+
+    // -----------------------------------------------------------------
+    // process.exec (EXEC-01/02, DESIGN-effect-breadth-exec.md §4.2)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn process_exec_command_and_args_routing_and_content_sensitive() {
+        for arg in ["command", "args"] {
+            assert!(
+                is_routing_sensitive(&process_exec(), arg),
+                "process.exec `{arg}` must be routing-sensitive"
+            );
+            assert!(
+                is_content_sensitive(&process_exec(), arg),
+                "process.exec `{arg}` must be content-sensitive"
+            );
+        }
+    }
+
+    #[test]
+    fn process_exec_cwd_routing_but_not_content_sensitive() {
+        assert!(
+            is_routing_sensitive(&process_exec(), "cwd"),
+            "process.exec `cwd` determines WHERE relative paths resolve — routing-sensitive"
+        );
+        assert!(
+            !is_content_sensitive(&process_exec(), "cwd"),
+            "process.exec `cwd` does not determine WHAT runs — not content-sensitive"
+        );
+    }
+
+    #[test]
+    fn process_exec_is_commit_irreversible() {
+        assert_eq!(
+            sink_effect_class(&process_exec()),
+            EffectClass::CommitIrreversible
+        );
+    }
+
+    #[test]
+    fn process_exec_command_and_args_expected_role_is_none() {
+        // Round-1 M2: command/args are deliberately unconstrained at the
+        // structural Step 1c role gate — the Block comes from
+        // is_routing_sensitive/is_content_sensitive + taint, not this gate.
+        assert_eq!(expected_role(&process_exec(), "command"), None);
+        assert_eq!(expected_role(&process_exec(), "args"), None);
+    }
+
+    #[test]
+    fn process_exec_cwd_expects_path_or_relative_path() {
+        assert_eq!(
+            expected_role(&process_exec(), "cwd"),
+            Some(&["path", "relative_path"][..])
+        );
     }
 }
