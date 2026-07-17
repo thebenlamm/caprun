@@ -532,4 +532,203 @@ this doc).
 | fs read (multi-file) `path` | routing-sensitive (mirrors today's single-file read) | `RESOLVE_BENEATH\|RESOLVE_NO_SYMLINKS`; NEW explicit per-session read-count upper bound | escape → kernel-level Deny; count exceeded → Deny (resource-exhaustion guard, §3.1) |
 | unregistered sink, or unknown/duplicate/missing arg (either new sink) | n/a (structural) | `KNOWN_SINKS` exact-match schema, Step 0 gate | Deny at Step 0, before any resolve/sensitivity/role check ever runs |
 
-<!-- gsd:write-continue -->
+---
+
+## §6. Security-Invariant Checklist
+
+Mirrors `DESIGN-slot-type-binding.md`'s convention: each item is checked with
+a one-line justification, not asserted bare.
+
+- [x] **I0 unaffected** — neither new sink changes session-creation semantics;
+  no new session-creation path exists anywhere in this doc's model.
+- [x] **I1 unaffected** — the worker never holds raw exec-output bytes, only
+  the opaque `ValueId` handle returned from `mint_from_exec` (§2.1), mirroring
+  the existing read-extraction handle model
+  (`DESIGN-taint-model.md`'s handle discipline). The worker never sees exec
+  stdout/stderr directly — only the broker, which reads the piped bytes and
+  immediately mints them.
+- [x] **I2 — both new sinks route through the UNMODIFIED
+  `submit_plan_node` collect-then-Block loop** — §4.1: table entries only
+  (`KNOWN_SINKS`, `sink_effect_class`, `is_routing_sensitive`/
+  `is_content_sensitive`, `expected_role`), zero new enforcement logic.
+- [x] **No I2 bypass** — §4.2: `process.exec`'s own `command`/`args` are
+  sensitivity-classified (routing- AND content-sensitive), never an
+  unconstrained `expected_role = None` pass-through that could carry a
+  tainted value into arbitrary code execution unblocked.
+- [x] **No raw `EffectRequest` path** — §4.4: both sinks are
+  `PlanNode { sink, args }` from spawn; `check-invariants.sh` Gate 1 stays
+  green with zero new hits (no `EffectRequest` token anywhere in this doc's
+  model).
+- [x] **Genuine, non-stapled taint chain** — §2.1: exec-output taint is set
+  ONLY inside `mint_from_exec`, at the same call that appends the
+  `process_exited` Event; `provenance_chain[0]` MUST equal that Event's id
+  (mirrors `mint_from_read_anchor_identity`, `quarantine.rs:856-880`).
+- [x] **Mint-call-site restriction (Gate 3) MUST be extended** — §2.4:
+  `check-invariants.sh` Gate 3 today greps only for `mint_from_read(`,
+  `mint_from_derivation(`, `.mint(` (`check-invariants.sh:133-135`) and will
+  NOT catch a new `mint_from_exec(` call site as written. This doc mandates
+  the extension as part of Phase 32, in the same commit that adds
+  `mint_from_exec`.
+- [x] **Kernel-confined exec child** — §1.4: a NEW narrow-allow Landlock
+  ruleset (not `deny_all_filesystem()` verbatim) + reused seccomp
+  network-deny (no execve-deny for the one legitimate exec, recursion-deny
+  for further execs) + reused rlimits (`RLIMIT_AS`/`RLIMIT_CPU`) + a NEW
+  wall-clock timeout (`tokio::time::timeout` + existing `child.kill()` path)
+  + a captured-output byte cap.
+- [x] **Fail-closed arg-schema** — §4.1, §5: both new sinks get `KNOWN_SINKS`
+  entries with explicit `allowed`/`required` sets, mirroring `file.create`'s
+  exact-match schema (`sink_schema.rs:40-58`); an unregistered sink or
+  unknown/duplicate/missing arg Denies at Step 0, before any resolve or
+  sensitivity check.
+- [x] **Durable audit** — §3.3: both sinks use the two-phase
+  `sink_executed`/`sink_execution_failed` pattern (or an exec-specific pair,
+  e.g. `process_exited`/`process_spawn_failed`), chained onto
+  `parent_id`/`parent_hash` exactly like `invoke_file_create`
+  (`file_create.rs:82-113`).
+
+---
+
+## §7. Validation Architecture Pointer
+
+Full detail lives in `31-RESEARCH.md` §Validation Architecture — this
+section names the forward test shape that makes Phases 32-34 buildable
+without restating it in full:
+
+- **Per-requirement named test targets** — EXEC-01..04 get dedicated
+  spawn/confine/taint/I2/audit coverage (provisionally
+  `crates/brokerd/tests/process_exec_*.rs`, name TBD Phase 32); FS-01..03 get
+  fs read-breadth + write/edit-under-I2 coverage (provisionally
+  `crates/brokerd/tests/file_write_*.rs`, name TBD Phase 33) — mirroring this
+  project's existing per-requirement test-map discipline (RESEARCH §Phase
+  Requirements → Test Map).
+- **A dedicated negative test per new sink** — required by LIVE-02
+  (`.planning/REQUIREMENTS.md:75-77`), not optional coverage.
+- **Exec-child confinement negative-assertion test** — mirroring
+  `crates/sandbox/tests/confinement_integration.rs`'s existing pattern (the
+  child cannot read `~/.ssh`, cannot reach network, cannot exec beyond its
+  one legitimate `execve`, `PLAN.md:152`), a new
+  `crates/sandbox/tests/exec_child_confinement.rs` (Wave 0 gap, Phase 32).
+- **Live Linux composed-acceptance shape** — `scripts/mailpit-verify.sh` (or
+  an exec-scoped equivalent per LIVE-01's wording), asserted on counts +
+  named tests, true-exit-before-pipe (never bare `script | tail` exit-code
+  laundering — the project's own standing incident,
+  `[[verification-exit-code-through-pipe]]`).
+
+---
+
+## §8. Open Items (model pinned, deployment constants deferred)
+
+These are explicitly flagged OPEN — **deployment constants, not model
+gaps**. The design is complete without resolving them; Phase 32/33 resolves
+each against the actual verification environment.
+
+1. **Exact Landlock allow-list path strings for the `rust:1` verification
+   container.** §1.4 pins the METHOD (narrowest hardcoded allow-list scoped
+   to the chosen test commands' actual dependency paths); the literal path
+   strings are resolved at Phase 32 against the container's real filesystem
+   layout (`ldd`/`which` output for the candidate test commands).
+2. **The `RequestFd` per-session read-count limiter's exact numeric bound.**
+   §3.1 pins that an explicit upper bound MUST exist; the specific value is
+   a Phase 33 implementation detail.
+3. **Confirming the verification container's kernel version floor** —
+   Landlock ABI negotiation requires kernel ≥5.13 (ABI::V1) with ABI::V3
+   preferred ≥5.19; `openat2`'s `RESOLVE_*` flags require kernel ≥5.6. Both
+   are training-knowledge claims not re-verified against the actual `rust:1`
+   image's kernel this session (RESEARCH Assumption A3) — confirm before
+   Phase 32/33 land.
+4. **Captured-output byte-cap exact value** — §1.4 pins that a cap MUST
+   exist and fail closed (deny/truncate, never fail-open); the specific
+   byte count is a Phase 32 implementation detail.
+
+---
+
+## §9. Accepted Residual Risks & Assumptions
+
+**Accepted residual risks (v1.7):**
+- **`pre_exec` async-signal-safety** (§1.3, §2.5) — `landlock`/`seccompiler`
+  internals likely allocate heap memory between `fork()` and `execve()`
+  inside the `pre_exec` closure, a widely-accepted soft violation in the
+  Rust sandboxing ecosystem not previously exercised in this codebase.
+  Documented, not silently assumed away. Option B (a dedicated
+  `caprun-exec-launcher` binary performing its own post-fork
+  self-confinement, §1.3) is the documented fallback if the fresh
+  adversarial reviewer rules this a blocker.
+- **No `process.exec` command allowlist for v1.7** (§1.6) — confinement
+  (Landlock/seccomp/rlimits/network-deny) is the sole control on WHAT a
+  command can do once spawned; there is no curated list of WHICH commands
+  may be spawned. Deliberately scoped, deferred alongside `POL-01`
+  declarative policy.
+- **Seccomp-filter persists across the child's own execve** (§1.4) —
+  standard Linux seccomp-BPF inheritance semantics, general kernel
+  knowledge not re-verified against kernel source this session.
+
+**Assumptions (carried from RESEARCH.md, to confirm during Phase 32, not
+silently):**
+- **A1** — `std::process::Command::spawn()`'s internal fork+exec is safe to
+  call from within a `tokio::spawn`'d async task without a dedicated OS
+  thread, given this codebase already does so twice unconfined. If wrong,
+  the exec-child spawn path could intermittently hang under scheduler
+  pressure; Option B (§1.3) is already the documented mitigation.
+- **A2** — `landlock::Ruleset::create()`/`restrict_self()` and
+  `seccompiler::apply_filter()` allocate heap memory internally (making
+  them not strictly async-signal-safe inside `pre_exec`). If this
+  allocation assumption is wrong (i.e. the calls are actually alloc-free),
+  the residual risk above overstates a non-issue — low-cost to be wrong in
+  this direction.
+- **A3** — Landlock ABI negotiation (ABI::V3 down to ABI::V1, kernel ≥5.13)
+  and `openat2` `RESOLVE_*` flags (kernel ≥5.6) version floors are training
+  knowledge, not re-verified against kernel source this session (§8 item
+  3).
+- **A4** — no per-session `RequestFd` read-count limiter exists today,
+  confirmed by a direct read of the full handler (§3.1) — not merely a grep
+  miss.
+- **A5** — seccomp filters installed via `pre_exec` persist across the
+  child's own subsequent `execve` per standard Linux kernel semantics; if
+  wrong, the network-deny protection on the exec child would not actually
+  apply post-exec (§1.4, §9 residual risk above).
+
+**Common pitfalls (for Phase 32/33 implementers, carried from RESEARCH.md
+Landmines, condensed):**
+- Assuming `deny_all_filesystem()` can be reused verbatim for the exec
+  child — it has zero allow-rules and blocks the target binary from
+  loading (§1.4).
+- A new mint helper escaping Gate 3's call-site restriction by living
+  outside `quarantine.rs`/`server.rs` (§2.4) — extend Gate 3 in the SAME
+  commit.
+- Confusing `"exec.shell"` — a `validate_schema` `UnknownSink` test fixture
+  at `crates/executor/src/sink_schema.rs:193-198`, asserting that string is
+  CURRENTLY REJECTED — with prior art for the real sink id. The real
+  `process.exec` sink id (per `.planning/REQUIREMENTS.md` EXEC-01) is
+  `process.exec`; `"exec.shell"` remains a distinct, permanently-rejected
+  test fixture string with no accidental collision.
+- Reintroducing an `O_CREAT` overwrite path on the fs write/edit sink,
+  blurring it with `file.create`'s new-file-only semantics (§3.2).
+
+---
+
+## §10. Acceptance Predicate — Done When
+
+Phase 31's gate is cleared when ALL are true:
+
+1. This doc pins the broker-spawned confined-child `process.exec` model —
+   spawn ownership (§1.3), kernel confinement (§1.4), arg schema (§1.5), and
+   (dis)allow posture (§1.6) — AND the exec-output taint mint (§2), AND the
+   filesystem read/write-breadth model (§3). **(DESIGN-13, this plan.)**
+2. This doc pins the fail-closed defaults for BOTH new sinks — exec
+   command/arg schema + (dis)allow posture, exec-output taint label +
+   `origin_role`, fs read/write path & slot constraints (§4, §5) —
+   consistent with I0/I1/I2 and v1.5 slot-type binding; nothing disables or
+   bypasses I2 and no new raw request-args-to-sink path is introduced.
+   **(DESIGN-14, this plan.)**
+3. `process.exec`'s own command/args are classified routing- AND
+   content-sensitive (§4.2) — the single highest-consequence design
+   decision in this doc — and the mandated `check-invariants.sh` Gate 3
+   extension for `mint_from_exec(` is explicit (§2.4, §6).
+4. `scripts/check-invariants.sh` exits 0 against this doc's presence (no
+   architectural-invariant regression from its prose).
+5. This doc has cleared a fresh, non-self adversarial code-trace review
+   (traced against real code, not prose-read) with every finding resolved,
+   recorded in `planning-docs/DESIGN-GATE-RECORD-v1.7.md` (Plan 31-02) —
+   and no `crates/executor` / `crates/brokerd` / `crates/sandbox` /
+   `crates/runtime-core` code exists yet (`git diff` touches only
+   `planning-docs/` + `.planning/`).
