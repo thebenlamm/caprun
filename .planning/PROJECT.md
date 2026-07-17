@@ -19,15 +19,38 @@ genuine taint chain must hold.**
 ## Current State
 
 **In v1.7 — Effect Breadth I (as of 2026-07-17).** Phase 31 (Effect-Breadth Design
-Gate) COMPLETE: `planning-docs/DESIGN-effect-breadth-exec.md` pins the broker-spawned
-confined-child `process.exec` model + the fs read/write-breadth model + their
-fail-closed defaults + I2/slot-type-binding table entries (DESIGN-13/14). It cleared a
+Gate) and Phase 32 (`process.exec` Sink) COMPLETE.
+
+**Phase 32 — `process.exec` sink, COMPLETE (EXEC-01..04 all Complete).** caprun now
+runs a command as a **broker-spawned confined child** (new `caprun-exec-launcher`
+sibling binary; the confined worker never `execve`s the target — Option B from the
+design gate), captures its stdout/stderr, and **taint-mints the output as untrusted at
+a single genuine mint site** (`mint_from_exec`: `provenance_chain == [spawn_event_id]`,
+the same id appended to the audit DAG as `process_exited` — not stapled). A tainted
+exec-output value routed to a sensitive sink arg is deterministically **I2-Blocked**
+(and, being `origin_role="exec_output"`, also trips the v1.5 T2 slot-type role gate →
+`Denied SlotTypeMismatch`), verifiable as an unbroken audit-DAG edge with `verify_chain`
+true. The exec child is itself **kernel-confined** — Landlock narrow FS allow-list (no
+`Execute`/write in the workspace beyond what's needed), seccomp net-deny that **persists
+across the target's own `execve`**, rlimits + wall-clock timeout, all applied before the
+target runs. Gate-3 mint-site restriction landed in the same commit as the mint code.
+Proven on real Linux (Colima): 11/11 process.exec/confinement/s9 tests green
+(incl. genuine non-stapled taint→Block and net-deny-across-execve), full-workspace
+regression clean (355 passed / 0 failed across 53 suites, no regression to v1.0–v1.6).
+gsd-verifier PASSED 4/4; an independent fresh Fable-5 adversarial TCB code-trace returned
+APPROVE-WITH-FIXES (no BLOCKER/MAJOR). One MINOR — the launcher spawn does not
+`env_clear()`, so the exec child inherits the broker's env incl. `OPENAI_API_KEY`
+(defense-in-depth debt, not an open exfil path: seccomp blocks net egress and the command
+must be UserTrusted) — captured as a Phase-34 pre-live todo, not a Phase-32 blocker.
+
+**Phase 31 — Design Gate, COMPLETE:** `planning-docs/DESIGN-effect-breadth-exec.md` pins
+the broker-spawned confined-child `process.exec` model + the fs read/write-breadth model +
+their fail-closed defaults + I2/slot-type-binding table entries (DESIGN-13/14). It cleared a
 fresh non-self Fable-5 adversarial code-trace (`DESIGN-GATE-RECORD-v1.7.md`, CLEARED) —
 1 BLOCKER (unrealizable stateless-BPF seccomp recursion-deny) + 3 MAJOR (Option-A
 pre_exec evidence flawed → pinned Option B launcher; mint-locus/Gate-3 contradiction;
 under-grounded command/args `expected_role`) all resolved by design-tightening, no
-invariant weakened. No TCB code written this phase. **Phases 32-34 (EXEC-01..04,
-FS-01..03, LIVE-01/02) are authorized.**
+invariant weakened. **Phases 33-34 (FS-01..03, LIVE-01/02) remain.**
 
 **Shipped v1.6 — Security Hardening (close the residuals) on 2026-07-17.** The five
 standing TCB-local security residuals v1.1–v1.5 documented as accepted caveats are now
@@ -900,7 +923,7 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-17 after completing Phase 31 (Effect-Breadth Design Gate) — DESIGN doc cleared the non-self adversarial gate; Phases 32-34 authorized.*
+*Last updated: 2026-07-17 after completing Phase 32 (`process.exec` sink — EXEC-01..04) — broker-spawned confined-child exec with genuine non-stapled taint mint + I2 block + kernel confinement, proven on real Linux (355/0, 53 suites), gsd-verifier 4/4, Fable-5 APPROVE-WITH-FIXES (1 MINOR → Phase 34 todo). Phases 33 (FS-01..03) and 34 (LIVE-01/02) remain.*
 (`process.exec` + Filesystem Breadth)" (`/gsd-new-milestone`). Anchor use case
 confirmed with Ben: **A — Safe Coding Agent**. v1.7 scope = the `process.exec`
 sink (broker-spawned confined child, tainted stdout/stderr) + filesystem
