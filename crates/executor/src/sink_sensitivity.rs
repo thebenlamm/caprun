@@ -310,11 +310,38 @@ mod tests {
     }
 
     #[test]
-    fn file_create_contents_is_unconstrained() {
+    fn file_create_contents_expects_path() {
+        // HARDEN-05 (v1.6): `contents` is no longer unconstrained. The ONLY
+        // live production value ever routed into this slot is the reused
+        // trusted `"path"`-role literal (`cli/caprun/src/planner.rs:208`) —
+        // so `Some(&["path"])` is the load-bearing, non-negotiable pin that
+        // keeps that flow green while structurally wiring the slot into I2
+        // for the day a real content-extraction pipeline mints a
+        // doc-derived `contents` claim.
         assert_eq!(
             expected_role(&file_create(), "contents"),
-            None,
-            "file.create `contents` stays unconstrained for v1.5 (Assumption A2)"
+            Some(&["path"][..]),
+            "file.create `contents` must expect [path] (HARDEN-05)"
+        );
+    }
+
+    #[test]
+    fn file_create_path_not_content_sensitive() {
+        // Defense-in-depth guard (Pitfall 5): the content-sensitivity arm
+        // must be scoped to `contents` ONLY — an unconditional `"file.create"
+        // => true` would wrongly widen `path` (routing-sensitive only) into
+        // content-sensitive too.
+        assert!(
+            !is_content_sensitive(&file_create(), "path"),
+            "file.create `path` must NOT become content-sensitive (no over-widening)"
+        );
+    }
+
+    #[test]
+    fn file_create_contents_is_content_sensitive() {
+        assert!(
+            is_content_sensitive(&file_create(), "contents"),
+            "file.create `contents` must be content-sensitive (HARDEN-05)"
         );
     }
 
