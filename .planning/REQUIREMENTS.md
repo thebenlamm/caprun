@@ -115,27 +115,28 @@ Explicitly excluded from v1.7. Documented to prevent scope creep.
 
 ## Traceability
 
-Which phases cover which requirements. Filled in during roadmap creation.
+Which phases cover which requirements. 100% coverage — every v1.7 requirement
+maps to exactly one phase (`/gsd-roadmapper`, 2026-07-17).
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | DESIGN-13 | Phase 31 | Pending |
 | DESIGN-14 | Phase 31 | Pending |
-| EXEC-01 | TBD | Pending |
-| EXEC-02 | TBD | Pending |
-| EXEC-03 | TBD | Pending |
-| EXEC-04 | TBD | Pending |
-| FS-01 | TBD | Pending |
-| FS-02 | TBD | Pending |
-| FS-03 | TBD | Pending |
-| LIVE-01 | TBD | Pending |
-| LIVE-02 | TBD | Pending |
+| EXEC-01 | Phase 32 | Pending |
+| EXEC-02 | Phase 32 | Pending |
+| EXEC-03 | Phase 32 | Pending |
+| EXEC-04 | Phase 32 | Pending |
+| FS-01 | Phase 33 | Pending |
+| FS-02 | Phase 33 | Pending |
+| FS-03 | Phase 33 | Pending |
+| LIVE-01 | Phase 34 | Pending |
+| LIVE-02 | Phase 34 | Pending |
 
 **Coverage:**
 - v1.7 requirements: 11 total
-- Mapped to phases: 2 (design gate); remainder assigned by roadmapper
-- Unmapped: 9 ⚠️ (roadmapper resolves)
+- Mapped to phases: 11/11 ✓ (Phase 31 design gate: 2; Phase 32 exec: 4; Phase 33 fs: 3; Phase 34 live proof: 2)
+- Unmapped: 0 ✓ — no orphans, no duplicates
 
 ---
 *Requirements defined: 2026-07-17*
-*Last updated: 2026-07-17 after starting v1.7 (`/gsd-new-milestone`)*
+*Last updated: 2026-07-17 — roadmap created (`/gsd-roadmapper`), traceability filled (Phases 31-34)*

@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Effect Breadth I (process.exec + Filesystem Breadth)
-status: planning
-last_updated: "2026-07-17T19:53:36.137Z"
+status: roadmapped
+last_updated: "2026-07-17T20:15:00.000Z"
 last_activity: 2026-07-17
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,188 +17,85 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-12)
+See: .planning/PROJECT.md (updated 2026-07-17)
 
-**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, (v1.5, SHIPPED) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into (closing the v1.4 T2 residual), and now (v1.6) hardening the standing residuals that made several of those guarantees "true only incidentally" into enforced guarantees.
-**Current focus:** Phase 30 — regression-live-proof
+**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, (v1.5, SHIPPED) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into (closing the v1.4 T2 residual), (v1.6, SHIPPED) hardening the standing residuals that made several of those guarantees "true only incidentally" into enforced guarantees, and now (v1.7) extending the set of real sinks — `process.exec` (captured+tainted command output) and filesystem read/write breadth — each through the same plan-node → taint → executor(I2) → audit path, toward the Safe Coding Agent anchor.
+**Current focus:** Phase 31 — Effect-Breadth Design Gate (DESIGN-13/14, `DESIGN-effect-breadth-exec.md` + fresh non-self adversarial code-trace)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 31 — Effect-Breadth Design Gate (not started)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-07-17 — Milestone v1.7 started
+Status: Roadmapped, ready to plan Phase 31
+Last activity: 2026-07-17 — v1.7 roadmap created (`/gsd-roadmapper`), 4 phases (31-34), 11/11 requirements mapped
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 56 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 [Phases 12-17] + v1.4: 14 [Phases 18-22]) + v1.5: 8 [Phases 23-25]
+- Total plans completed: 64 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 + v1.4: 14 + v1.5: 8 + v1.6: 14)
 - Average duration: — min
 
-**By Phase (v1.2):**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 8 | 3 | - | - |
-| 9 | 4 | - | - |
-| 10 | 3 | - | - |
-| 11 | 1 | - | - |
-| 13 | 4 | - | - |
-| 14 | 2 | - | - |
-| 15 | 4 | - | - |
-| 16 | 4 | - | - |
-| 18 | 2 | - | - |
-| 19 | 2 | - | - |
-| 20 | 3 | - | - |
-| 21 | 4 | - | - |
-| 22 | 3 | - | - |
-| 23 | 2 | - | - |
-| 24 | 3 | - | - |
-| 25 | 3 | - | - |
-| 26-30 | 0 | - | - |
-| 26 | 2 | - | - |
-| 27 | 2 | - | - |
-| 29 | 3 | - | - |
-| 30 | 2 | - | - |
-
-*Updated after each plan completion. v1.3 (phases 12-17) shipped 2026-07-09 — 21/21 plans complete. v1.4 (phases 18-22) shipped 2026-07-11 — 14/14 plans complete. v1.5 (phases 23-25) shipped 2026-07-12 — 8/8 plans complete. v1.6 (phases 26-30) roadmapped 2026-07-12, no plans yet.*
-| Phase 14 P02 | 50min | 3 tasks | 10 files |
-| Phase 15-deterministic-doc-action-extraction P01 | 75min | 3 tasks | 3 files |
-| Phase 15-deterministic-doc-action-extraction P02 | 11min | 3 tasks | 3 files |
-| Phase 15-deterministic-doc-action-extraction P03 | 55min | 2 tasks | 3 files |
-| Phase 15 P04 | ~2h10min | 3 tasks | 11 files |
-| Phase 16 P01 | 40min | 2 tasks | 8 files |
-| Phase 16 P02 | 50min | 2 tasks | 3 files |
-| Phase 16 P03 | 25min | 1 tasks | 1 files |
-| Phase 16 P04 | 3h | 3 tasks | 16 files |
-| Phase 24 P01 | 25min | 3 tasks | 9 files |
-| Phase 24 P02 | 25min | 1 tasks | 1 files |
-| Phase 24 P03 | 25min | 2 tasks | 3 files |
-| Phase 28 P01 | 7min | 2 tasks | 10 files |
-| Phase 28 P02 | 6min | 2 tasks | 4 files |
-| Phase 28 P03 | 31min | 2 tasks | 22 files |
-| Phase 28-authenticated-audit-chain P04 | 24min | 2 tasks | 1 files |
-| Phase 28 P05 | 25 | 3 tasks | 6 files |
+*Updated after each plan completion. v1.6 (phases 26-30) shipped 2026-07-17 — 14/14 plans complete. v1.7 (phases 31-34) roadmapped 2026-07-17, no plans yet.*
 
 ## Accumulated Context
 
 ### Decisions
 
-v1.6 scoping decisions (five TCB-local hardening items, no new external-effect
-surface; breadth — Git/GitHub/test adapters, patch/PR, workspace snapshots —
-deliberately deferred to v1.7) are recorded in `.planning/PROJECT.md`'s
-Current Milestone section and `.planning/REQUIREMENTS.md`.
+**v1.7 roadmap phase structure (`/gsd-roadmapper`, 2026-07-17):** 4 phases
+(31-34), 11/11 requirements mapped, 0 orphans, 0 duplicates. Continues numbering
+from v1.6's Phase 30 (does NOT reset). Mirrors this project's established
+design-gate → implementation → live-proof precedent (v1.0 P2, v1.2 P8, v1.3 P12,
+v1.4 P18, v1.5 P23, v1.6 P26 — each a standalone reviewed DESIGN doc before any
+TCB code, followed by implementation, followed by a separate live-proof phase):
 
-**Roadmap phase structure (`/gsd-roadmapper`, 2026-07-12):** 5 phases (26-30),
-8/8 requirements mapped, 0 orphans. Mirrors this project's established
-design-gate/implementation/live-proof precedent (v1.0 P2, v1.2 P8, v1.3 P12,
-v1.4 P18, v1.5 P23 — each a standalone reviewed DESIGN doc before any TCB
-code, followed by implementation, followed by a separate live-proof phase):
-**Phase 26** is the design gate (DESIGN-11/12 — `DESIGN-security-hardening.md`
-
-+ fresh non-self adversarial review covering all five residuals' mechanisms
-
-and fail-closed defaults) — hard-blocks Phases 27-29. The five HARDEN items
-split into **3 implementation phases by blast radius** rather than one
-bundled phase (keeps each phase's success criteria independently verifiable)
-or five single-requirement phases (avoids trivial fragmentation): **Phase 27**
-groups HARDEN-01 (demote-at-RequestFd) + HARDEN-04 (CreateSession
-forced-Active compile-exclusion) — both land in `server.rs`'s session/
-connection-lifecycle surface. **Phase 28** is HARDEN-02 alone (audit-chain
-keyed-MAC/anchoring — a self-contained mechanism with its own key/anchor
-custody and threat model, substantial enough to warrant its own phase).
-**Phase 29** groups HARDEN-03 (Allowed-path replay CAS) + HARDEN-05
-(`file.create` `contents` expected-role table entry) — both are sink-
-dispatch-level hardening even though the mechanisms differ. **Phase 30** is
-the regression/live-proof phase (HARDEN-06 — full `mailpit-verify.sh`
-re-run + a dedicated negative test per closed residual), mirroring v1.2 P11,
-v1.3 P17, v1.4 P22, v1.5 P25; depends on Phases 27, 28, and 29 all landing.
-
-- [Phase 14]: blocked_literals gained an arg column and composite (event_id, arg) PRIMARY KEY so a plural sink_blocked event can persist every blocked arg's literal, not just the first. — The plan required iterating all anchors and writing every literal; the prior single-column event_id PK would PK-collide on a 2nd insert for a genuinely-plural block.
-- [Phase 14]: render_block_display's plural-block fail-closed guard re-derives the executor's is_routing_sensitive||is_content_sensitive && tainted predicate over PendingConfirmation.resolved_args instead of threading a new field through PendingConfirmation. — Avoids a schema/struct ripple across every PendingConfirmation-constructing test fixture while giving a precise (no false-positive) plurality check, since brokerd already depends on the executor crate.
-- [Phase ?]: 15-01: mint_from_derivation mints the ValueRecord before constructing the derivation Event (reverse of mint_from_read's order), since the event's hashed payload embeds derived_value_id == the minted value_id
-- [Phase ?]: 15-01: check-invariants.sh Gate 3 exempts files under tests/ and #[cfg(test)] modules (in addition to the 3 named allowed loci) to avoid false-flagging pre-existing legitimate test infrastructure that already calls mint_from_read/ValueStore::mint directly
-- [Phase ?]: 15-02: assert_unbroken_edge/genuine_derivation_binds implemented as reusable Result-returning routines shared by the positive per-anchor walk and both anti-staple negative controls (finding #2/#10/#12 identity-bound predicate, no-LIMIT derivation scan)
-- [Phase ?]: 15-03: mint_from_read Err surfaced as BrokerResponse::Error on the wire (not connection-killing ?) for the whole ReportClaims arm, not just DocFragment — Fail-closed for attacker-controlled input; no behavior change for EmailAddress/RelativePath (never actually fail today)
-- [Phase ?]: 15-03: ReportDerivedClaim resolves input handles to owned ValueRecord clones before calling mint_from_derivation — Avoids simultaneous mutable+immutable ValueStore borrow, per mint_from_derivation's own documented calling convention
-- [Phase ?]: 15-04: plan_from_intent gains trusted_subject_handle/trusted_body_handle params (6 total) beyond the must_haves' literally-quoted 4-param signature — resolves an internal plan-text inconsistency; needed for finding #6's genuinely-distinct handles under PLAN-03
-- [Phase ?]: 15-04: dag_chain_integrity corrected to 6 benign events (not the plan-specified 4) after empirical Colima/Docker verification exposed that Task 3's three sequential mint_from_intent calls each append their own intent_received event
-- [Phase ?]: 15-04: s9_live_email_hostile_block added as a new live test to satisfy the plan's own verification line requiring live email-BLOCK coverage, not explicitly named in the task action text
-- [Phase ?]: combined_digest binds sha256(name)‖sha256(literal) per element over the FULL resolved_args set (blocked+trusted), byte-wise-ascending arg_name order, per DESIGN Round-6 amendment
-- [Phase ?]: Migration gated on PRAGMA table_info presence check, not blind ALTER TABLE + error-catch
-- [Phase 16]: T-14-08 two-commit discipline: proved the plurality guard panics (commit 1f3336b) before replacing it with full ALL-args narration (commit b61e043)
-- [Phase 16]: confirm()'s DigestMismatch leaves the row Pending (integrity alarm, not an operator deny) so an attacker triggering a mismatch cannot force-terminate a retriable confirmation
-- [Phase 16]: verify_chain's scope recorded honestly: detects single-store/non-recomputing-multi-store tampering only, NOT authenticated/externally-anchored -- chain-head-not-anchored is an Accepted Residual Risk with a v2 obligation — this is now v1.6's HARDEN-02
-- [Phase 16]: CONTROL-02 live fixture models CLEAN_PATH_CONTENT's no-marker recipient side + a Body: marker only, verified against worker.rs's extraction branch directly before writing the test, to guarantee no accidental recipient taint (Pitfall 5).
-- [Phase ?]: 16-04: All three BLOCKER-1 guards (ProvideIntent ordering, non-live-state Deny, CreateSession IPC opt-in) landed in Task 1, strictly before Task 2's email.send Allowed-dispatch, so the dispatch never exists without its guards.
-- [Phase ?]: 16-04: CreateSession IPC arm gated behind CAPRUN_ENABLE_IPC_CREATE_SESSION == exactly "1" (runtime opt-in, fail-closed default-deny) instead of cfg(test), which is unset when brokerd compiles as an integration-test dependency. — this runtime-vs-compile-time gap is now v1.6's HARDEN-04.
-- [Phase ?]: 16-04: MAJOR-4 replay residual risk (no CAS on the Allowed email.send path) accepted for v1.3; durable per-attempt ledger makes each send auditable. Tracked as v2 obligation. Superseded by v1.4 DESIGN-02 (re-earned in writing, no new CAS added). Now v1.6's HARDEN-03.
-- [Phase 18]: v1.4's cross-connection trust-coherence fix used a one-way, session-lifetime occupancy latch (not release-on-disconnect) after a fresh adversarial round caught the weaker design was still bypassable via sequential reconnect.
-- [Phase 22]: v1.4's T2 (slot-type binding) residual became v1.5's scope; v1.5 shipped it. The remaining five DOC-01 residuals (demote-at-RequestFd, verify_chain auth, replay CAS, compile-exclusion, file.create contents slot) are now v1.6's scope.
-- [Phase ?]: 24-01: mint_from_derivation's concat arm guards inputs.len() == 2 before assigning origin_role Some(recipient) — any other arity gets None, I2 remains the backstop
-- [Phase ?]: 24-01: server.rs selects primary_role inside the :1294 intent-variant match (same arm as primary_literal), never hardcoded at the shared mint_from_intent call — avoids mistagging a file.create path as recipient
-- [Phase 24]: SlotTypeMismatch fields are owned String/Vec<String>/Option<String>, never &'static — DenyReason crosses the IPC wire via serde Deserialize (DESIGN F1)
-- [Phase 24]: No new ExecutorDecision variant added — reused the existing Denied { reason } carrier (A3)
-- [Phase 24]: Step 1c wired as a per-arg return-immediately guard (Steps 1/1a/1b tier), never joining the collect-then-Block vec — preserves I0/I2 precedence, zero new anchor shapes — DESIGN §6
-- [Phase 24]: email.send body's expected-role list corrected to [body, doc_fragment] (DESIGN §3 table amendment) — the only production vocabulary for hostile-extracted body content is doc_fragment (worker.rs WorkerClaim::DocFragment -> server.rs claim_type -> mint_from_read origin_role); the DESIGN-literal [body] alone would have hard-Denied the shipped CONTENT-01/CONTROL-02 body-Block flow instead of reaching I2 — caught by extract_provenance_threading.rs test failures; safe under F4 since body is content-sensitive
-- [Phase 25]: file.create's contents arg has no expected-role entry at all (uses executor's routing-sensitive default) — this gap is now v1.6's HARDEN-05.
-- [Phase 28]: 28-01: run_caprun_file_create/run_caprun_block now return/take ws_dir (the workspace subdirectory) instead of the outer tmp dir, since that is the broker-derived workspace root used for post-run assertions
-- [Phase 28]: 28-01: live_acceptance_v1_3.rs/v1_4_composed.rs's run_caprun_email_on gained an explicit ws_dir param replacing the audit_db.parent() derivation, to keep the shared multi-invocation workspace root F1-safe as a sibling of audit.db
-- [Phase 28]: load_or_create_key F1 containment checks BOTH the audit-DB path and its .key sibling, per DESIGN's corrected F1 pin
-- [Phase 28]: cli/caprun is bin-only (no src/lib.rs) — key.rs unit tests run via 'cargo test -p caprun --bin caprun -- key::', not '--lib'
-- [Phase ?]: 28-03: keyed HMAC-SHA256 audit chain via shared domain-separated+length-framed mac_frame helper, key threaded as a sibling &[u8]/Arc<[u8;32]> parameter (not bundled into the connection type) through all 19 append_event sites + 2 verify_chain callers
-- [Phase ?]: 28-03: run_confirm_or_deny gained a minimal load_or_create_key wiring for both confirm/deny verbs (necessary for confirm.rs's cross-process tests to keep passing under the keyed scheme) — Plan 05 still owns the pending_confirmations MAC fold, MAC-verify-before-terminal-state gate, and deny()'s new verify_chain call
-- [Phase ?]: chain_anchor MAC binds session_id+head_event_id+head_hash+event_count via mac_frame(ANCHOR_MAC_DOMAIN=caprun.audit.anchor.v1); upsert folded atomically inside append_event under the same conn lock; verify_chain fails closed on absent/MAC-invalid/mismatched anchor — Closes tail-truncation detection gap (D-04) — a MAC'd head hash alone doesn't prove non-truncation; binding event_count lets verify_chain assert actual==anchored.
-- [Phase 28]: pending_confirmations MAC covers the WHOLE row (not just state+combined_digest) — resolved_args/blocked_arg_names/workspace_root_path are equally forgeable and load-bearing — 28-RESEARCH.md Assumption A3; strict superset of the DESIGN doc's literal text
-- [Phase 28]: deny() gains the SAME pending_confirmations MAC gate AND verify_chain gate confirm() has (X-02 uniform ruling) — deny() previously had neither — DESIGN-security-hardening.md X-02 locked cross-cutting ruling
-
-### Pending Todos
-
-- `.planning/todos/pending/2026-07-07-gsd-phases-clear-deletes-all-milestones.md` — GSD tooling bug: `gsd_run query phases.clear --confirm` deletes ALL milestones' phase dirs, not just the previous one's leftovers. Not yet fixed upstream; recurred a 2nd time at v1.4 scoping (per learned-rules). Carries forward to v1.6 — git-status-check `.planning/phases/` immediately after any `phases.clear` invocation.
-- `.planning/todos/pending/2026-07-08-gsd-executors-must-not-write-phase-completion-state.md` — GSD tooling bug: the last-wave executor's own doc-completion commit repeatedly flips ROADMAP.md's phase-level checkbox before verification (2-for-2, Phases 15/16). Did NOT recur at Phases 17-25 (mitigation held: never let ANY executor touch ROADMAP.md/STATE.md — the orchestrator updates phase-completion state itself). Not yet fixed upstream; carries forward to v1.6 as a standing mitigation, not a re-test.
-- `.planning/todos/pending/2026-07-08-v1.3-phase16-v2-security-obligations.md` — the 5 v2 security obligations this todo tracks (demote-at-RequestFd, verify_chain keyed-MAC, Allowed-path replay CAS, CreateSession build-excluded path, kind-aware Source label) are now DIRECTLY IN SCOPE as v1.6 (HARDEN-01..05; the kind-aware-Source-label item remains a deferred UX nicety, not part of v1.6). Close this todo once v1.6 ships.
+- **Phase 31** is the design gate (DESIGN-13/14 — `DESIGN-effect-breadth-exec.md`
+  pinning the broker-spawned confined-child-`exec` model + the fs read/write-breadth
+  model + fail-closed defaults for both new sinks, cleared by a fresh non-self
+  adversarial code-trace). HARD-BLOCKS Phases 32-34. `process.exec` under
+  Landlock+seccomp is the riskiest primitive to date; the ORCHESTRATOR (not a
+  gsd-executor) owns the review spawn. No `crates/executor`/`brokerd`/`sandbox`/
+  `runtime-core` TCB code before this gate clears.
+- The 7 implementation requirements split into **2 implementation phases by blast
+  radius / subsystem coherence** rather than one bundled phase or seven
+  single-requirement phases: **Phase 32** is `process.exec` alone (EXEC-01..04) —
+  a genuinely new confined-child spawn path in the broker + sandbox, the riskiest
+  primitive, substantial enough for its own phase. **Phase 33** is filesystem
+  breadth (FS-01..03) — the adapter-fs fd-passing seam (read many files + write/
+  edit existing files beyond `file.create`'s `O_EXCL`). Independent of each other;
+  both depend only on Phase 31.
+- **Phase 34** is the regression/live-proof phase (LIVE-01/02 — composed
+  acceptance on real Linux: exec-tainted Block + clean Allow + fs write/edit
+  audited, genuine non-stapled taint chain, `verify_chain` true; full-workspace
+  regression green with no regression to v1.0–v1.6, true-exit-before-pipe, a
+  dedicated negative test per new sink). Mirrors v1.2 P11, v1.3 P17, v1.4 P22,
+  v1.5 P25, v1.6 P30. Depends on Phases 32 AND 33 both landing.
 
 ### Blockers/Concerns
 
-- Phases 27, 28, and 29 (implementation) and Phase 30 (regression/live proof) are hard-blocked on Phase 26's DESIGN doc (`planning-docs/DESIGN-security-hardening.md`) clearing a fresh (non-self) adversarial review. No `crates/executor`/`crates/brokerd`/`crates/runtime-core` hardening code before that gate.
+- Phases 32, 33 (implementation) and Phase 34 (regression/live proof) are
+  hard-blocked on Phase 31's DESIGN doc (`planning-docs/DESIGN-effect-breadth-exec.md`)
+  clearing a fresh (non-self) adversarial code-trace. No `crates/executor` /
+  `crates/brokerd` / `crates/sandbox` / `crates/runtime-core` TCB code before that gate.
+- `process.exec` fundamentally changes the confinement model (a new
+  broker-spawned confined-child spawn path) — this is why v1.7 opens with a design
+  gate + adversarial review rather than a bare "add a sink" plan.
 
-## Deferred Items
+### Standing GSD-tooling mitigations (carried forward)
 
-Items acknowledged and deferred at prior milestone closes:
-
-| Category | Item | Status | Deferred At |
-|----------|------|--------|-------------|
-| uat | 03-UAT.md (Phase 03, v1.0 milestone — passed, 0 pending scenarios; benign stale artifact) | passed | 2026-07-01 |
-| todo | gsd-phases-clear-deletes-all-milestones (GSD tooling bug) | open | 2026-07-09 |
-| todo | gsd-executors-must-not-write-phase-completion-state (GSD tooling bug) | open | 2026-07-09 |
-| todo | v1.3-phase16-v2-security-obligations (5 v2 security items) | ✓ DELIVERED — became v1.6's HARDEN-01..05, all shipped Phases 27-29 & proven live Phase 30 | closed 2026-07-17 |
-| requirement | T2 slot-type binding enforcement | ✓ DELIVERED — v1.5 Phases 23-25 (enforced in TCB, proven live on Linux) | closed 2026-07-12 |
-
-Re-acknowledged unchanged at v1.2 milestone close on 2026-07-07 (same
-pre-existing item, still benign). Re-acknowledged at v1.3 milestone close on
-2026-07-09 via `audit-open` — all 4 open items (1 UAT, 3 todos) reviewed and
-accepted as known/benign or already-tracked v2 work; none block v1.3's close.
-Re-acknowledged at v1.4 milestone close on 2026-07-11 — no new items opened;
-T2 slot-type binding moved from "deferred" to "in scope" as v1.5's roadmap.
-Re-acknowledged at v1.5 milestone close on 2026-07-12 via `audit-open` — the
-SAME 4 pre-existing cross-milestone items (1 UAT [Phase 03, passed], 3 v1.3-era
-todos), none from v1.5 and none blocking; all v1.5 phases verified passed (11/11
-requirements). T2 slot-type binding now DELIVERED (no longer a deferred item).
-v1.6 roadmap created 2026-07-12 — the v1.3-phase16-v2-security-obligations todo
-moved from "open" to "in progress" as its 5 items became v1.6's HARDEN-01..05.
-Re-acknowledged at v1.6 milestone close on 2026-07-17 via `audit-open` (override_closeout):
-3 remaining open items — the 2 GSD-tooling todos (phases-clear, executors-must-not-write;
-both still-open upstream tooling bugs, not caprun product work) and the benign Phase-03
-UAT (passed, 0 pending). The v1.3-phase16 security-obligations todo is now DELIVERED
-(HARDEN-01..05 shipped, HARDEN-06 live-proven). None block v1.6's close.
+- `phases.clear --confirm` deletes ALL prior phase dirs from disk (documented bug,
+  4-for-4 across v1.3–v1.6 scoping) — git-status-check `.planning/phases/`
+  immediately after any `phases.clear`; restore if needed.
+- The last-wave executor's doc-completion commit has historically flipped
+  ROADMAP.md's phase checkbox before verification (Phases 15/16) — never let ANY
+  executor touch ROADMAP.md/STATE.md; the orchestrator owns phase-completion state.
 
 ## Session Continuity
 
-Last session: 2026-07-13T02:12:13.537Z
-Stopped at: Completed 28-05-PLAN.md
+Last session: 2026-07-17
+Stopped at: v1.7 roadmap created (Phases 31-34)
 Resume file: None
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Plan Phase 31 (the design gate) with `/gsd-plan-phase 31`.

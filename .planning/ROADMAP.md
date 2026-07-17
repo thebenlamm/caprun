@@ -9,6 +9,7 @@
 - ✅ **v1.4 — Trust-Boundary Integrity & the Adversarial Planner** — Phases 18-22 (shipped 2026-07-11)
 - ✅ **v1.5 — Slot-Type Binding Enforcement (T2)** — Phases 23-25 (shipped 2026-07-12)
 - ✅ **v1.6 — Security Hardening (close the residuals)** — Phases 26-30 (shipped 2026-07-17)
+- 🚧 **v1.7 — Effect Breadth I (`process.exec` + Filesystem Breadth)** — Phases 31-34 (in progress)
 
 ## Phases
 
@@ -122,6 +123,52 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
 
 </details>
 
+### 🚧 v1.7 — Effect Breadth I (`process.exec` + Filesystem Breadth) (In Progress)
+
+**Milestone Goal:** Give caprun the two effect primitives a coding agent minimally needs — running a command in the sandbox with **captured + tainted** output (`process.exec`), and reading/editing repo files beyond single-file create (filesystem breadth) — each routed through the same plan-node → taint → executor(I2) → audit discipline. First milestone toward the **Safe Coding Agent** anchor. Design-gate-first (Phase 31 — `process.exec` under Landlock+seccomp is the riskiest primitive to date), implementation split by blast radius (32 exec sink, 33 fs breadth), dedicated live-proof close (34).
+
+**Standing precedent honored:** no `crates/executor` / `crates/brokerd` / `crates/sandbox` / `crates/runtime-core` TCB code before Phase 31's DESIGN doc clears a fresh non-self adversarial code-trace (v1.0 P2, v1.2 P8, v1.3 P12, v1.4 P18, v1.5 P23, v1.6 P26). The orchestrator — not a gsd-executor — owns that review spawn.
+
+#### Phase 31: Effect-Breadth Design Gate
+**Goal**: A reviewed DESIGN doc pins the broker-spawned confined-child-`exec` model and the filesystem read/write-breadth model, and clears a fresh non-self adversarial code-trace — hard-blocking every subsequent TCB-code phase.
+**Depends on**: Phase 30 (v1.6 shipped)
+**Requirements**: DESIGN-13, DESIGN-14
+**Success Criteria** (what must be TRUE):
+  1. `planning-docs/DESIGN-effect-breadth-exec.md` exists and pins the broker-spawned confined-child-`exec` model (how the child is spawned from the broker — the confined worker cannot `execve` per seccomp deny-execve — how it is confined, and how stdout/stderr are captured and taint-minted) AND the filesystem read/write-breadth model.
+  2. The doc pins the **fail-closed defaults** for both new sinks — `process.exec` command/arg schema + (dis)allow posture, exec-output taint label + `origin_role`, and fs read/write path & slot constraints — consistent with I0/I1/I2 and v1.5 slot-type binding; nothing in it disables or bypasses I2, and no new raw `EffectRequest` path is introduced.
+  3. A fresh, **non-self** adversarial code-trace review clears the doc (all findings resolved), recorded in a gate record; no `crates/executor`/`brokerd`/`sandbox`/`runtime-core` TCB code is written before this gate clears.
+**Plans**: TBD
+
+#### Phase 32: `process.exec` Sink — Broker-Spawned Confined Child
+**Goal**: caprun can run a command as a broker-spawned confined child whose captured stdout/stderr are genuinely taint-minted and deterministically I2-enforced.
+**Depends on**: Phase 31
+**Requirements**: EXEC-01, EXEC-02, EXEC-03, EXEC-04
+**Success Criteria** (what must be TRUE):
+  1. A `process.exec` plan-node sink runs a command **as a broker-spawned confined child process** (mediated like the v1.4 caprun-planner sidecar / adapter-fs fd-pass), never via the confined worker's own `execve`.
+  2. The child's stdout/stderr are captured and **taint-minted as untrusted**, producing a ValueNode whose provenance chain is genuinely rooted at the `exec` Event (the sole exec-output taint-mint site — no stapling).
+  3. A tainted exec-output value routed to a sensitive sink arg is deterministically **Blocked** by the executor, verifiable as an unbroken audit-DAG edge (exec Event → ValueNode → sink arg → block) with `verify_chain` true.
+  4. The exec child is itself **kernel-confined** (Landlock + seccomp + default-deny net + resource/time limits), the sink is **fail-closed on arg-schema**, and a durable audit Event records the spawn and exit.
+**Plans**: TBD
+
+#### Phase 33: Filesystem Read/Write Breadth
+**Goal**: The worker can read many workspace files and modify existing files, all resolved beneath `WorkspaceRoot`, taint-minted, and governed by the executor under the same I2 / slot-type-binding discipline.
+**Depends on**: Phase 31
+**Requirements**: FS-01, FS-02, FS-03
+**Success Criteria** (what must be TRUE):
+  1. The worker can **read multiple workspace files** beyond the single current read path, each resolved beneath `WorkspaceRoot` via `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)`, taint-minted as untrusted like the existing read path.
+  2. A filesystem **write/edit sink modifies an existing file** within `WorkspaceRoot` (beyond `file.create`'s `O_EXCL` new-file-only), fail-closed on path schema, kernel-confined, and durably audited.
+  3. The fs write/edit sink args are governed by the executor under the **same I2 / slot-type-binding discipline** — a tainted path or contents in a sensitive slot Blocks; there is no I2 bypass and no new raw `EffectRequest` path.
+**Plans**: TBD
+
+#### Phase 34: Regression & Live Proof (v1.7 DONE)
+**Goal**: On real Linux, the new sinks are proven end-to-end and the full workspace regresses green with no regression to v1.0–v1.6.
+**Depends on**: Phase 32, Phase 33
+**Requirements**: LIVE-01, LIVE-02
+**Success Criteria** (what must be TRUE):
+  1. A composed acceptance run on **real Linux** proves end-to-end: an `exec` whose tainted output is routed to a sensitive sink arg is **Blocked** (I2, genuine non-stapled taint chain, `verify_chain` true); a clean exec/fs path is **Allowed**; a fs write/edit within `WorkspaceRoot` succeeds and is audited — via `scripts/mailpit-verify.sh` or an exec-scoped equivalent, true-exit-before-pipe.
+  2. **Full-workspace regression** re-runs green on real Linux with **no regression to v1.0–v1.6**, asserted on counts + named tests (not exit 0 through a pipe), plus a dedicated negative test per new sink.
+**Plans**: TBD
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -156,3 +203,7 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
 | 28. Authenticated Audit Chain | v1.6 | 5/5 | Complete   | 2026-07-13 |
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 3/3 | Complete    | 2026-07-17 |
 | 30. Regression & Live Proof | v1.6 | 2/2 | Complete    | 2026-07-17 |
+| 31. Effect-Breadth Design Gate | v1.7 | 0/TBD | Not started | - |
+| 32. `process.exec` Sink — Broker-Spawned Confined Child | v1.7 | 0/TBD | Not started | - |
+| 33. Filesystem Read/Write Breadth | v1.7 | 0/TBD | Not started | - |
+| 34. Regression & Live Proof (v1.7 DONE) | v1.7 | 0/TBD | Not started | - |
