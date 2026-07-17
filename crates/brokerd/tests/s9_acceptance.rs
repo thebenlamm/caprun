@@ -440,12 +440,16 @@ fn s9_acceptance_file_create_path_block() {
     // (even a non-blocked one) now fails closed with `Denied(DanglingHandle)` before
     // the loop can finish scanning and return the Block. `contents` is UserTrusted
     // (not sensitive for file.create), so it does not itself trigger a block.
+    // HARDEN-05 (v1.6): `contents` is now role-checked to `Some(&["path"])`
+    // — mint with the reused trusted `"path"` role (the only live production
+    // shape) so Step 1c passes for this arg and the loop reaches `path`'s
+    // I2 Block instead of pre-empting it with a SlotTypeMismatch Deny.
     let contents_value_id = store
         .mint(
             "hello world".to_string(),
             vec![TaintLabel::UserTrusted],
             vec![Uuid::new_v4()],
-            None,
+            Some("path".to_string()),
         )
         .expect("mint contents value");
     let plan_node = PlanNode {

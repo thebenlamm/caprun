@@ -132,12 +132,16 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
     // IS minted (trusted) into the store because the block arm (10-02) now builds a
     // full-arg-set `PendingConfirmation` snapshot at Block time, resolving EVERY
     // plan_node arg — not only the one the executor blocked on.
+    // HARDEN-05 (v1.6): `contents` is now role-checked to `Some(&["path"])`
+    // — mint with the reused trusted `"path"` role (the only live production
+    // shape) so Step 1c passes for this arg and the loop reaches `path`'s
+    // I2 Block instead of pre-empting it with a SlotTypeMismatch Deny.
     let contents_value_id = store
         .mint(
             "hostile block harness contents".into(),
             vec![TaintLabel::UserTrusted],
             vec![read_event_id],
-            None,
+            Some("path".to_string()),
         )
         .expect("mint contents value");
     let plan_node = PlanNode {

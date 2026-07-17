@@ -313,12 +313,16 @@ async fn second_dispatch_call_after_demotion_observes_draft_not_stale_active() {
             Some("path".to_string()),
         )
         .expect("mint UserTrusted path value");
+    // HARDEN-05 (v1.6): `contents` is now role-checked to `Some(&["path"])`
+    // — mint with the reused trusted `"path"` role (the only live production
+    // shape) so this stays a clean, all-trusted fixture that reaches Step
+    // 0.5 (not a SlotTypeMismatch).
     let contents_value_id = conn2_store
         .mint(
             "clean trusted contents".to_string(),
             vec![TaintLabel::UserTrusted],
             vec![Uuid::new_v4()],
-            None,
+            Some("path".to_string()),
         )
         .expect("mint UserTrusted contents value");
     let plan_node = PlanNode {

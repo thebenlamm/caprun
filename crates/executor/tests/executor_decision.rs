@@ -360,12 +360,17 @@ fn draft_session_denies_commit_irreversible() {
             Some("path".to_string()),
         )
         .expect("valid mint");
+    // HARDEN-05 (v1.6): `contents` is now role-checked to `Some(&["path"])`
+    // (`sink_sensitivity.rs::expected_role`) — mint with the reused trusted
+    // `"path"` role, mirroring the only live production shape
+    // (`cli/caprun/src/planner.rs:208`), so this stays a clean, all-trusted
+    // fixture that reaches Step 0.5 (not a SlotTypeMismatch).
     let contents_id = store
         .mint(
             "hello".to_string(),
             vec![TaintLabel::UserTrusted],
             vec![event_id],
-            None,
+            Some("path".to_string()),
         )
         .expect("valid mint");
 
@@ -590,12 +595,16 @@ fn non_live_session_denies_commit_irreversible_in_all_four_states() {
                 Some("path".to_string()),
             )
             .expect("valid mint");
+        // HARDEN-05 (v1.6): `contents` is now role-checked to `Some(&["path"])`
+        // — mint with the reused trusted `"path"` role (the only live
+        // production shape) so this stays a clean, all-trusted fixture that
+        // reaches Step 0.5 (not a SlotTypeMismatch).
         let contents_id = store
             .mint(
                 "hello".to_string(),
                 vec![TaintLabel::UserTrusted],
                 vec![event_id],
-                None,
+                Some("path".to_string()),
             )
             .expect("valid mint");
 
@@ -772,12 +781,18 @@ fn matching_role_tainted_still_blocks() {
     );
 }
 
-/// A value at an UNCONSTRAINED slot (file.create's `contents`, where
-/// `expected_role` returns `None`) is unaffected by Step 1c — the role check
-/// is a documented no-op there, not fail-open (DESIGN §7 item 3). Outcome is
-/// unchanged from the pre-Step-1c behavior: Allowed.
+/// HARDEN-05 (v1.6) INVERTS this test's former premise: file.create's
+/// `contents` slot used to be the last UNCONSTRAINED slot among the two live
+/// sinks' registered args (`expected_role` returned `None`), so a
+/// mismatched role there had no effect. `contents` is now role-checked to
+/// `Some(&["path"])` — a mismatched role (here, `"subject"`, a nonsensical
+/// role for this slot) must hard-`Deny` with `SlotTypeMismatch`, exactly
+/// like any other role-checked slot (DESIGN §7 items 1/2). Renamed from
+/// `unconstrained_slot_unaffected` (was: asserts `Allowed`) to
+/// `file_create_contents_role_mismatch_denies` (now: asserts `Denied`) —
+/// the stale assertion is gone, updated deliberately, not left failing.
 #[test]
-fn unconstrained_slot_unaffected() {
+fn file_create_contents_role_mismatch_denies() {
     let mut store = ValueStore::default();
     let event_id = Uuid::new_v4();
     let path_id = store
@@ -788,14 +803,15 @@ fn unconstrained_slot_unaffected() {
             Some("path".to_string()),
         )
         .expect("valid mint");
-    // contents' role is deliberately mismatched/absent — it must have NO effect
-    // because file.create's `contents` slot is unconstrained (expected_role == None).
+    // contents' role is deliberately mismatched — HARDEN-05 wires this slot
+    // into I2's role check, so this must now hard-Deny (was previously a
+    // documented no-op under the pre-HARDEN-05 unconstrained-slot rule).
     let contents_id = store
         .mint(
             "hello".to_string(),
             vec![TaintLabel::UserTrusted],
             vec![event_id],
-            Some("subject".to_string()), // nonsensical role, but slot is unconstrained
+            Some("subject".to_string()), // mismatched role — file.create/contents expects "path"
         )
         .expect("valid mint");
 
@@ -814,9 +830,23 @@ fn unconstrained_slot_unaffected() {
     };
     let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
 
-    assert_eq!(
-        decision,
-        ExecutorDecision::Allowed,
-        "an unconstrained slot (contents) must be unaffected by Step 1c regardless of its role tag"
-    );
+    match decision {
+        ExecutorDecision::Denied {
+            reason:
+                DenyReason::SlotTypeMismatch {
+                    sink,
+                    arg,
+                    expected,
+                    found,
+                },
+        } => {
+            assert_eq!(sink, "file.create");
+            assert_eq!(arg, "contents");
+            assert_eq!(expected, vec!["path".to_string()]);
+            assert_eq!(found, Some("subject".to_string()));
+        }
+        other => panic!(
+            "expected Denied(SlotTypeMismatch) for file.create/contents role mismatch (HARDEN-05), got {other:?}"
+        ),
+    }
 }

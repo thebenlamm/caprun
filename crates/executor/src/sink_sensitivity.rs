@@ -77,6 +77,13 @@ pub const FILE_CREATE_ROUTING_SENSITIVE: &[&str] = &["path"];
 /// evaluation. Missing either edge is a fail-open bug.
 pub const EMAIL_SEND_CONTENT_SENSITIVE: &[&str] = &["subject", "body"];
 
+/// Args of file.create that determine WHAT is written (payload), not WHERE.
+/// A tainted value here Blocks via the same collect-then-Block loop as any
+/// other content-sensitive arg (HARDEN-05, v1.6). Scoped to `contents` ONLY
+/// — `path` stays routing-sensitive, never content-sensitive (no
+/// over-widening).
+pub const FILE_CREATE_CONTENT_SENSITIVE: &[&str] = &["contents"];
+
 /// Returns `true` iff `arg_name` is a routing-sensitive argument of `sink`.
 ///
 /// Routing-sensitive means: the attacker who controls this arg value redirects
@@ -102,6 +109,7 @@ pub fn is_routing_sensitive(sink: &SinkId, arg_name: &str) -> bool {
 pub fn is_content_sensitive(sink: &SinkId, arg_name: &str) -> bool {
     match sink.0.as_str() {
         "email.send" => EMAIL_SEND_CONTENT_SENSITIVE.contains(&arg_name),
+        "file.create" => FILE_CREATE_CONTENT_SENSITIVE.contains(&arg_name),
         _ => false,
     }
 }
@@ -154,7 +162,18 @@ pub fn expected_role(sink: &SinkId, arg_name: &str) -> Option<&'static [&'static
         },
         "file.create" => match arg_name {
             "path" => Some(&["path", "relative_path"]),
-            "contents" => None, // unconstrained for v1.5 — Assumption A2 (DESIGN §3/§10)
+            // HARDEN-05 (v1.6): `contents` is role-checked to `Some(&["path"])`
+            // — the load-bearing, non-negotiable pin (DESIGN-security-hardening.md
+            // §e). This is NOT a new role name; it's a deliberate reuse of the
+            // `"path"` role because the planner (`cli/caprun/src/planner.rs:208`)
+            // reuses the SAME trusted `"path"`-role `intent_value_id` in BOTH the
+            // `path` and `contents` slots — no `"contents"`/`"file_body"`
+            // role-producing mint site exists in the codebase. Any list omitting
+            // `"path"` would hard-Deny the only live `file.create` flow. Wires the
+            // slot into I2's role check for the day a real content-extraction
+            // pipeline (D-12, deferred) mints a doc-derived `contents` claim; a
+            // present no-op on the live path today.
+            "contents" => Some(&["path"]),
             _ => None,
         },
         _ => None, // any other sink: unconstrained, out of v1.5 scope
@@ -310,11 +329,38 @@ mod tests {
     }
 
     #[test]
-    fn file_create_contents_is_unconstrained() {
+    fn file_create_contents_expects_path() {
+        // HARDEN-05 (v1.6): `contents` is no longer unconstrained. The ONLY
+        // live production value ever routed into this slot is the reused
+        // trusted `"path"`-role literal (`cli/caprun/src/planner.rs:208`) —
+        // so `Some(&["path"])` is the load-bearing, non-negotiable pin that
+        // keeps that flow green while structurally wiring the slot into I2
+        // for the day a real content-extraction pipeline mints a
+        // doc-derived `contents` claim.
         assert_eq!(
             expected_role(&file_create(), "contents"),
-            None,
-            "file.create `contents` stays unconstrained for v1.5 (Assumption A2)"
+            Some(&["path"][..]),
+            "file.create `contents` must expect [path] (HARDEN-05)"
+        );
+    }
+
+    #[test]
+    fn file_create_path_not_content_sensitive() {
+        // Defense-in-depth guard (Pitfall 5): the content-sensitivity arm
+        // must be scoped to `contents` ONLY — an unconditional `"file.create"
+        // => true` would wrongly widen `path` (routing-sensitive only) into
+        // content-sensitive too.
+        assert!(
+            !is_content_sensitive(&file_create(), "path"),
+            "file.create `path` must NOT become content-sensitive (no over-widening)"
+        );
+    }
+
+    #[test]
+    fn file_create_contents_is_content_sensitive() {
+        assert!(
+            is_content_sensitive(&file_create(), "contents"),
+            "file.create `contents` must be content-sensitive (HARDEN-05)"
         );
     }
 
