@@ -61,9 +61,10 @@ fi
 # the sanctioned loci — it is defense-in-depth over those guards, not a
 # substitute for them.
 #
-# Restricts three call-site tokens — `mint_from_read(`, `mint_from_derivation(`,
-# and the ValueStore::mint call site `.mint(` (value_store.rs:61, the ACTUAL
-# pub taint+provenance writer both mint_from_* helpers delegate to) — to:
+# Restricts four call-site tokens — `mint_from_read(`, `mint_from_derivation(`,
+# `mint_from_exec(` (32-05, EXEC-02/EXEC-03), and the ValueStore::mint call
+# site `.mint(` (value_store.rs:61, the ACTUAL pub taint+provenance writer
+# every mint_from_* helper delegates to) — to:
 #   * crates/brokerd/src/quarantine.rs   (the helpers' definition + unit tests)
 #   * crates/brokerd/src/server.rs       (the sole dispatch call sites)
 #   * crates/executor/src/value_store.rs (`.mint(` ONLY — its own def + tests)
@@ -80,7 +81,7 @@ fi
 # An inline `<!-- planner-discipline-allow: TOKEN -->` annotation is also
 # honored for any other intentional mention (mirrors Gate 1).
 # ──────────────────────────────────────────────────────────────────────────────
-echo "Gate 3: checking mint-call-site restriction (mint_from_read / mint_from_derivation / .mint()) ..."
+echo "Gate 3: checking mint-call-site restriction (mint_from_read / mint_from_derivation / mint_from_exec / .mint()) ..."
 
 gate3_fail=0
 
@@ -132,10 +133,11 @@ check_mint_token() {
 
 check_mint_token "mint_from_read(" "crates/brokerd/src/quarantine.rs" "crates/brokerd/src/server.rs"
 check_mint_token "mint_from_derivation(" "crates/brokerd/src/quarantine.rs" "crates/brokerd/src/server.rs"
+check_mint_token "mint_from_exec(" "crates/brokerd/src/quarantine.rs" "crates/brokerd/src/server.rs"
 check_mint_token ".mint(" "crates/brokerd/src/quarantine.rs" "crates/brokerd/src/server.rs" "crates/executor/src/value_store.rs"
 
 if [ "$gate3_fail" -eq 0 ]; then
-    echo "  PASS — mint_from_read / mint_from_derivation / .mint() restricted to sanctioned loci"
+    echo "  PASS — mint_from_read / mint_from_derivation / mint_from_exec / .mint() restricted to sanctioned loci"
 else
     overall=$FAIL
 fi
