@@ -901,6 +901,17 @@ async fn evaluate_plan_node_and_record(
     if matches!(decision, runtime_core::ExecutorDecision::Allowed)
         && plan_node.sink.0 == "email.send"
     {
+        // v1.6 Phase 29 (HARDEN-03): content-derived CAS key, computed
+        // from the plan node's OWN broker-resolved handles (sink +
+        // value_ids) — mirrors `combined_digest`'s placement at the top
+        // of the block, broker-resolved handles only, NEVER worker
+        // input. Deliberately NOT `effect_id`-keyed: `effect_id` is
+        // minted fresh via `Uuid::new_v4()` on EVERY dispatch call
+        // (line ~664), including every replay, so an `effect_id`-keyed
+        // CAS would catch zero replays.
+        let idempotency_key =
+            crate::audit::plan_node_idempotency_key(&plan_node.sink, &plan_node.args);
+
         // Resolve the FULL arg set from the live per-connection
         // ValueStore into a Vec<ResolvedArg> — the SAME resolve-loop
         // shape as the block-time snapshot above — fail closed if any
@@ -923,18 +934,45 @@ async fn evaluate_plan_node_and_record(
             });
         }
 
-        let locked = conn
+        // `conn` here is `&Arc<Mutex<Connection>>` — concurrent broker
+        // tasks each hold their own connection's per-task state but
+        // share this ONE audit-db connection/mutex — architecturally
+        // distinct from SEND-01's single-process `&mut Connection`
+        // (confirmation.rs). The `rusqlite::Transaction` opened below
+        // composes UNDER this mutex; it does not substitute for it. Must
+        // be `mut` — `Connection::transaction(&mut self)` requires it,
+        // and `MutexGuard` implements `DerefMut` so this compiles once
+        // the binding itself is mutable.
+        let mut locked = conn
             .lock()
             .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
 
+        // v1.6 Phase 29 (HARDEN-03): the CAS `INSERT OR IGNORE` and the
+        // durable `email_send_attempted` append commit in ONE atomic
+        // transaction, BEFORE any SMTP socket opens (mirrors SEND-01's
+        // commit-before-effect discipline, confirmation.rs:868-896). WAL
+        // is already enabled; a concurrent double-submit for the same
+        // key serializes on this INSERT under the mutex.
+        let tx = locked.transaction()?;
+        let sent_at = Utc::now().to_rfc3339();
+        let rows_affected = tx.execute(
+            "INSERT OR IGNORE INTO sent_plan_nodes \
+             (idempotency_key, effect_id, session_id, sent_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                idempotency_key,
+                effect_id.to_string(),
+                session_id.to_string(),
+                sent_at
+            ],
+        )?;
+
         // MAJOR-4: append a durable, OPAQUE email_send_attempted event
         // BEFORE the SMTP socket ever opens — parent-chained onto the
-        // just-advanced plan_node_evaluated head, under the SAME lock.
-        // A crash/power-loss between attempt and delivery still leaves
-        // an audit record naming email.send (mirrors confirm()'s
-        // attempt-ledger shape in confirmation.rs, minus the CAS —
-        // there is no PendingConfirmation to CAS on this never-
-        // blocked path).
+        // just-advanced plan_node_evaluated head, now inside the SAME
+        // CAS transaction (mirrors confirm()'s attempt-ledger shape in
+        // confirmation.rs). Appended on BOTH a fresh send and a
+        // suppressed replay, so a replay attempt is still durably
+        // recorded for audit continuity.
         let attempted_event = Event::new(
             Uuid::new_v4(),
             Some(*last_event_id),
@@ -945,35 +983,51 @@ async fn evaluate_plan_node_and_record(
             vec![],
         );
         let attempted_event_id = attempted_event.id;
-        let attempted_hash = append_event(&locked, key, &attempted_event, Some(last_event_hash))
+        let attempted_hash = append_event(&tx, key, &attempted_event, Some(last_event_hash))
             .map_err(|e| {
                 eprintln!(
                     "[brokerd] email_send_attempted audit append FAILED (fail-closed): {e}"
                 );
                 anyhow::anyhow!("email_send_attempted append failed: {e}")
             })?;
+        tx.commit()?;
         *last_event_id = attempted_event_id;
         *last_event_hash = attempted_hash.clone();
 
-        // AFTER the durable attempt append succeeded — only now does
-        // an SMTP connection ever open. REPLAY RESIDUAL RISK (named,
-        // not silent): this Allowed path has no CAS/PendingConfirmation
-        // — a replayed SubmitPlanNode mints a fresh effect_id and would
-        // send again (N submissions => N emails). Accepted for v1.3
-        // (the durable per-attempt ledger above makes each send
-        // auditable); v2 obligation tracked in .planning/todos/pending.
-        let (sink_event_id, sink_hash) =
-            crate::sinks::email_smtp::invoke_email_smtp_from_resolved(
-                &locked,
-                key,
-                session_id,
-                effect_id,
-                &resolved_args,
-                attempted_event_id,
-                &attempted_hash,
-            )?;
-        *last_event_id = sink_event_id;
-        *last_event_hash = sink_hash;
+        if rows_affected == 0 {
+            // Replay suppressed: an identical plan node (same sink +
+            // same value_ids) already has a `sent_plan_nodes` row —
+            // the CAS `INSERT OR IGNORE` hit the PRIMARY KEY constraint.
+            // The attempt is durably recorded above, but the SMTP
+            // socket is NEVER opened a second time.
+            //
+            // Guarantee (D-08, stated unsoftened): at-most-once PER
+            // PLAN NODE (identical value_ids) — NOT a bounded-sends-
+            // per-session guarantee. A worker that mints a FRESH
+            // value_id resolving to "the same" recipient still sends
+            // again; an effects-budget/rate-limit is future work, out
+            // of v1.6 scope.
+            eprintln!(
+                "[brokerd] email.send replay suppressed (idempotency_key already \
+                 present in sent_plan_nodes): effect_id={effect_id}"
+            );
+        } else {
+            // Fresh send — the CAS row + attempt event are now durable
+            // together (or, pre-commit, neither was). AFTER commit —
+            // only now does an SMTP connection ever open.
+            let (sink_event_id, sink_hash) =
+                crate::sinks::email_smtp::invoke_email_smtp_from_resolved(
+                    &locked,
+                    key,
+                    session_id,
+                    effect_id,
+                    &resolved_args,
+                    attempted_event_id,
+                    &attempted_hash,
+                )?;
+            *last_event_id = sink_event_id;
+            *last_event_hash = sink_hash;
+        }
     }
 
     Ok(decision)
