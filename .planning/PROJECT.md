@@ -18,6 +18,17 @@ genuine taint chain must hold.**
 
 ## Current State
 
+**In v1.7 — Effect Breadth I (as of 2026-07-17).** Phase 31 (Effect-Breadth Design
+Gate) COMPLETE: `planning-docs/DESIGN-effect-breadth-exec.md` pins the broker-spawned
+confined-child `process.exec` model + the fs read/write-breadth model + their
+fail-closed defaults + I2/slot-type-binding table entries (DESIGN-13/14). It cleared a
+fresh non-self Fable-5 adversarial code-trace (`DESIGN-GATE-RECORD-v1.7.md`, CLEARED) —
+1 BLOCKER (unrealizable stateless-BPF seccomp recursion-deny) + 3 MAJOR (Option-A
+pre_exec evidence flawed → pinned Option B launcher; mint-locus/Gate-3 contradiction;
+under-grounded command/args `expected_role`) all resolved by design-tightening, no
+invariant weakened. No TCB code written this phase. **Phases 32-34 (EXEC-01..04,
+FS-01..03, LIVE-01/02) are authorized.**
+
 **Shipped v1.6 — Security Hardening (close the residuals) on 2026-07-17.** The five
 standing TCB-local security residuals v1.1–v1.5 documented as accepted caveats are now
 enforced guarantees, proven live on real Linux: (HARDEN-01) fd release to the confined
@@ -889,7 +900,7 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-17 after starting v1.7 "Effect Breadth I
+*Last updated: 2026-07-17 after completing Phase 31 (Effect-Breadth Design Gate) — DESIGN doc cleared the non-self adversarial gate; Phases 32-34 authorized.*
 (`process.exec` + Filesystem Breadth)" (`/gsd-new-milestone`). Anchor use case
 confirmed with Ben: **A — Safe Coding Agent**. v1.7 scope = the `process.exec`
 sink (broker-spawned confined child, tainted stdout/stderr) + filesystem
