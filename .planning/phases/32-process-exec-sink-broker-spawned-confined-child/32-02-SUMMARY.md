@@ -113,3 +113,10 @@ None - no external service configuration required.
 ---
 *Phase: 32-process-exec-sink-broker-spawned-confined-child*
 *Completed: 2026-07-17*
+
+## Self-Check: PASSED
+
+All created/modified files verified present on disk; all three task/summary
+commit hashes (`9300c2d`, `64a7f83`, `55cbcb5`) verified present in git log;
+both re-exports (`exec_child_ruleset`, `exec_child_filter`) verified present
+in `crates/sandbox/src/lib.rs`.
