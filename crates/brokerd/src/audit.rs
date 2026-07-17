@@ -402,14 +402,20 @@ fn migrate_sent_plan_nodes_schema(conn: &rusqlite::Connection) -> Result<()> {
 /// This is out of v1.6 scope (tracked as a future effects-budget
 /// obligation), not a gap in this function's own correctness.
 pub(crate) fn plan_node_idempotency_key(
-    _sink: &runtime_core::SinkId,
-    _args: &[runtime_core::PlanArg],
+    sink: &runtime_core::SinkId,
+    args: &[runtime_core::PlanArg],
 ) -> String {
-    // RED stub (Task 2, TDD): deliberately WRONG — a constant, ignoring
-    // both inputs — so the order-invariance/sink-scoping/value-distinguishing/
-    // determinism tests below FAIL against this stub before the real
-    // content-derived implementation lands.
-    "RED-STUB-NOT-IMPLEMENTED".to_string()
+    use sha2::Digest as _;
+    let mut sorted: Vec<&runtime_core::PlanArg> = args.iter().collect();
+    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut hasher = Sha256::new();
+    hasher.update(sink.0.as_bytes());
+    for arg in sorted {
+        hasher.update(arg.name.as_bytes());
+        hasher.update(arg.value_id.0.to_string().as_bytes());
+    }
+    hex::encode(hasher.finalize())
 }
 
 /// Open (or create) the audit database at `path` and run schema DDL.
