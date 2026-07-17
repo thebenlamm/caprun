@@ -786,6 +786,72 @@ pub fn mint_from_derivation(
     Ok((derivation_event_id, derivation_hash, value_id))
 }
 
+/// Mint the captured `process.exec` output as a genuinely-rooted untrusted
+/// `ValueRecord` (32-05, EXEC-02/EXEC-03 wiring).
+///
+/// # SOLE process.exec output-MINT SITE
+///
+/// This is the ONLY place in brokerd that mints a ValueRecord for combined
+/// exec stdout+stderr. It mints ONLY — it does NOT append its own audit
+/// Event. `invoke_process_exec` (crates/brokerd/src/sinks/process_exec.rs,
+/// Plan 32-04) already appended the `process_exited` Event and returns that
+/// event's id as `spawn_event_id`; this function mints with
+/// `provenance_chain == [spawn_event_id]`, so the SAME event is both the
+/// exit record and the genuine-taint anchor (the strongest non-stapling
+/// guarantee — the `mint_from_read_anchor_identity` analog, DESIGN §2.1/§2.4
+/// "one event, both roles"). Taint is therefore set at exec-capture time,
+/// never at sink-evaluation time (anti-stapling, mirrors T-04-03).
+///
+/// Taint = `[ExternalUntrusted, ExecRaw]` — a captured child process's
+/// combined output is untrusted by construction, regardless of the target
+/// program's own exit status (32-04's `process_exited` fires on ANY
+/// completed spawn+capture). `origin_role = Some("exec_output")`.
+///
+/// Fail-closed unknown-classification discipline (DESIGN §2.3): exec output
+/// has exactly ONE recognized shape (combined stdout+stderr text), so there
+/// is no classification branch here to get wrong — unlike `mint_from_read`'s
+/// multi-claim_type match. Any FUTURE variant of captured exec output (e.g.
+/// a hypothetical separate-streams mode) MUST follow `mint_from_read`'s
+/// `other => Err(...)` shape — a new shape must be explicitly recognized and
+/// explicitly taint-tagged, NEVER default-tagged or inferred.
+///
+/// Does NOT demote the session (mirrors `mint_from_derivation`, NOT
+/// `mint_from_read`'s I1 worker-report demotion — locked decision, RESEARCH
+/// A2): exec taint is set structurally by this function, not via a worker
+/// self-report, so no I1 trust-flip is implicated here. I2 Blocks a tainted
+/// exec value at the sink regardless of session status. Pinned as of Phase
+/// 32; a fresh adversarial reviewer in Phase 34 should confirm this holds.
+///
+/// # Arguments
+/// * `store`            — mutable ref to the broker-owned ValueStore.
+/// * `session_id`       — the Session this exec output belongs to (accepted
+///   for signature symmetry with the other mint_from_* helpers and future
+///   session-scoped bookkeeping; not currently read by this function's body).
+/// * `combined_output`  — the captured combined stdout+stderr text from
+///   `invoke_process_exec`.
+/// * `spawn_event_id`   — the `process_exited` Event id `invoke_process_exec`
+///   already appended and returned. This function does NOT append an event
+///   of its own — it roots on this id.
+///
+/// # Returns
+/// The opaque `ValueId` handle to the minted, untrusted ValueRecord.
+pub fn mint_from_exec(
+    store: &mut ValueStore,
+    session_id: Uuid,
+    combined_output: String,
+    spawn_event_id: Uuid,
+) -> Result<runtime_core::plan_node::ValueId> {
+    let _ = session_id; // signature symmetry with the other mint_from_* helpers
+    store
+        .mint(
+            combined_output,
+            vec![TaintLabel::ExternalUntrusted, TaintLabel::ExecRaw],
+            vec![spawn_event_id],
+            Some("exec_output".to_string()),
+        )
+        .map_err(|e| anyhow::anyhow!("mint invariant: {e:?}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1815,6 +1881,56 @@ mod tests {
             SessionStatus::Draft,
             "status stays whatever the input reads already set (Draft) — \
              mint_from_derivation itself never changes it"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // mint_from_exec tests — genuine-taint anchor (32-05)
+    // -----------------------------------------------------------------------
+
+    /// Genuine-taint anchor identity test, mirroring `mint_from_read_anchor_identity`:
+    /// `mint_from_exec` mints with `provenance_chain == [spawn_event_id]` — the SAME
+    /// event id the caller (invoke_process_exec) already appended as
+    /// `process_exited` — never a fabricated/fresh-rooted id. Also asserts the
+    /// exec-specific taint/origin_role/untrusted shape.
+    #[test]
+    fn mint_from_exec_anchor_identity() {
+        let mut store = ValueStore::default();
+        let session_id = Uuid::new_v4();
+        let spawn_event_id = Uuid::new_v4();
+
+        let value_id = mint_from_exec(
+            &mut store,
+            session_id,
+            "combined stdout+stderr output".to_string(),
+            spawn_event_id,
+        )
+        .unwrap();
+
+        let record = store.resolve(&value_id).expect("value_id must resolve");
+        assert_eq!(
+            record.provenance_chain,
+            vec![spawn_event_id],
+            "provenance_chain must be exactly [spawn_event_id] — the genuine-taint \
+             anchor, rooted on the caller's already-appended process_exited event, \
+             never a fresh/fabricated root"
+        );
+        assert!(
+            record.taint.contains(&TaintLabel::ExecRaw),
+            "taint must contain ExecRaw"
+        );
+        assert!(
+            record.taint.contains(&TaintLabel::ExternalUntrusted),
+            "taint must contain ExternalUntrusted"
+        );
+        assert_eq!(
+            record.origin_role,
+            Some("exec_output".to_string()),
+            "origin_role must be Some(\"exec_output\")"
+        );
+        assert!(
+            record.taint.iter().any(|t| t.is_untrusted()),
+            "a minted exec-output record must be untrusted"
         );
     }
 }
