@@ -161,7 +161,7 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
   3. A tainted exec-output value routed to a sensitive sink arg is deterministically **Blocked** by the executor, verifiable as an unbroken audit-DAG edge (exec Event → ValueNode → sink arg → block) with `verify_chain` true.
   4. The exec child is itself **kernel-confined** (Landlock + seccomp + default-deny net + resource/time limits), the sink is **fail-closed on arg-schema**, and a durable audit Event records the spawn and exit.
 
-**Plans**: 5/6 plans executed
+**Plans**: 6/6 plans complete
 
 **Wave 1**
 
@@ -182,7 +182,7 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
 
 **Wave 5** *(blocked on 32-05, 32-03)*
 
-- [ ] 32-06-PLAN.md — EXEC-03 acceptance (genuine taint→I2 Block) + exec-child confinement negative test + mandatory Linux compile-check (EXEC-02/03/04)
+- [x] 32-06-PLAN.md — EXEC-03 acceptance (genuine taint→I2 Block) + exec-child confinement negative test + mandatory Linux compile-check (EXEC-02/03/04)
 
 #### Phase 33: Filesystem Read/Write Breadth
 
@@ -244,6 +244,6 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 3/3 | Complete    | 2026-07-17 |
 | 30. Regression & Live Proof | v1.6 | 2/2 | Complete    | 2026-07-17 |
 | 31. Effect-Breadth Design Gate | v1.7 | 2/2 | Complete    | 2026-07-17 |
-| 32. `process.exec` Sink — Broker-Spawned Confined Child | v1.7 | 5/6 | In Progress|  |
+| 32. `process.exec` Sink — Broker-Spawned Confined Child | v1.7 | 6/6 | Complete   | 2026-07-17 |
 | 33. Filesystem Read/Write Breadth | v1.7 | 0/TBD | Not started | - |
 | 34. Regression & Live Proof (v1.7 DONE) | v1.7 | 0/TBD | Not started | - |
