@@ -1,8 +1,8 @@
 ---
 phase: 29
 slug: sink-path-hardening-replay-cas-contents-slot
-status: draft
-nyquist_compliant: false
+status: approved
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-07-17
 ---
@@ -79,4 +79,4 @@ created: 2026-07-17
 - [ ] Feedback latency < 90s (unit tier)
 - [ ] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-07-17 (plan-checker VERIFICATION PASSED — every task carries an automated verify, no watch-mode flags, no 3-consecutive-unverified gap)
