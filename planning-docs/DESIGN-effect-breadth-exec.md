@@ -361,4 +361,175 @@ residual risk rather than silently ignoring it — resolved fully in §9, with
 Option B (§1.3) as the documented fallback if the fresh adversarial reviewer
 rules it a blocker.
 
+---
+
+## §3. Filesystem Read/Write Breadth Model (DESIGN-13)
+
+### 3.1 Multi-file read (FS-01)
+
+The existing read path — `WorkspaceRoot::read_within`
+(`crates/adapter-fs/src/workspace.rs:75-102`), a single
+`openat2(O_RDONLY, RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)` syscall, dispatched
+from `server.rs`'s `RequestFd` arm (`crates/brokerd/src/server.rs:1229-1394`)
+and taint-minted via `mint_from_read` — already establishes the
+single-syscall, TOCTOU-safe resolution pattern this doc reuses unmodified.
+FS-01 ("read multiple workspace files") is pinned as invoking this EXACT
+existing path **N times**, once per file the worker requests, each
+independently taint-minted as untrusted exactly like today's single read —
+**no new mechanism**, only a documented multiplicity.
+
+**Open item, confirmed by direct code read (RESEARCH Open Question 1,
+resolved here):** a full read of the `RequestFd` handler
+(`server.rs:1229-1394`) found no per-session counter or explicit limiter on
+repeat `RequestFd` calls — contrast `ProvideIntent`, which explicitly
+documents an "ONCE and ONLY BEFORE any RequestFd" constraint enforced via the
+`fd_requested`/intent-accepted booleans (`server.rs:1194,1626-1639`); no
+equivalent language or guard exists for `RequestFd` itself. This means
+multi-file read is likely **already mechanically supported** by calling the
+existing single-file path repeatedly — but "unlimited repeat calls" was
+never a deliberate prior decision, only unexercised. **Fail-closed default
+pinned here:** Phase 33 MUST add an explicit per-session upper-bound counter
+on `RequestFd` invocations (exact numeric value is a Phase 33 implementation
+detail, not re-litigated here) — a resource-exhaustion guard, not a
+functional gate. Absent this counter, FS-01 would ship as "unlimited by
+accident," which this doc explicitly refuses to bless as the default.
+
+### 3.2 Write/edit an existing file (FS-02)
+
+Pinned as a straightforward sibling of `create_exclusive_within`
+(`crates/adapter-fs/src/workspace.rs:132-151`), with a **different `OFlag`
+set**: `O_WRONLY | O_TRUNC` — explicitly **NO `O_CREAT`, NO `O_EXCL`**. A
+missing target path fails closed with `ENOENT` (never silently creates the
+file) — this is the semantic split from `file.create`: `file.create` is
+new-file-only (`O_CREAT|O_EXCL`, `EEXIST` on an existing path,
+`workspace.rs:117-120`), the new write/edit sink is existing-file-only
+(`ENOENT` on a missing path). Same `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`
+single-syscall, TOCTOU-safe kernel resolution (`workspace.rs:78-83`) — same
+absolute-path rejection, `..` rejection, and symlink rejection at kernel
+resolution time as the existing read/create paths.
+
+**Equivalent negative tests are NOT assumed inherited.** The existing
+negative tests (`workspace.rs:220-401`: `absolute_path_rejected`,
+`parent_traversal_rejected`, `symlink_escape_rejected`, and the
+`create_exclusive_*` siblings) prove this behavior for the `O_RDONLY` and
+`O_CREAT|O_EXCL|O_WRONLY` flag combinations specifically — NOT for
+`O_WRONLY|O_TRUNC`. Phase 33 MUST write the equivalent set (absolute-path,
+`..`-traversal, symlink-escape, PLUS an `ENOENT`-on-missing-target test) for
+the new flag combination, not assume coverage carries over.
+
+**Explicit warning against scope-blurring.** The write/edit sink MUST NOT
+reintroduce `O_CREAT` (with or without `O_EXCL`) — doing so would blur its
+new-file-permitting behavior with `file.create`'s new-file-ONLY semantics,
+creating two sinks with overlapping "can create a file" authority and
+confusing the schema/sensitivity table (§4) about which sink is the
+create-authority. `O_WRONLY|O_TRUNC`, no `O_CREAT`, is the pinned, exclusive
+shape of the write/edit sink.
+
+### 3.3 Two-phase durable audit
+
+Both the multi-file read and the write/edit sink follow the same two-phase
+durable-audit pattern `invoke_file_create` already establishes
+(`crates/brokerd/src/sinks/file_create.rs:65-116`): on success, append a
+`sink_executed` event; on error, append a `sink_execution_failed` event
+FIRST, then propagate the error (no automatic retry — a mid-effect failure
+leaves an explicit, durable trace). The `actor` field convention
+(`format!("sink:{sink_id}:{effect_id}")`, `file_create.rs:90,107`) is
+reused verbatim for the new write/edit sink (e.g.
+`sink:file.write:<effect_id>` — exact sink id TBD Phase 33, this doc does
+not pin the literal string beyond noting the convention). Each event is
+chained onto `parent_id`/`parent_hash` exactly like `file_create.rs`'s
+pattern, keeping `verify_chain` intact.
+
+---
+
+## §4. I2 + Slot-Type Binding for the New Sinks (DESIGN-14)
+
+### 4.1 Both sinks are table entries only — no new I2 logic
+
+Both `process.exec` and the fs write/edit sink are `PlanNode { sink, args }`
+from spawn — exactly like `file.create` — and route through the
+**UNMODIFIED** `submit_plan_node` collect-then-Block loop
+(`crates/executor/src/lib.rs:54-255`). The ONLY changes required are table
+entries: a new `KNOWN_SINKS` schema entry (`crates/executor/src/sink_schema.rs:40-58`),
+a `sink_effect_class` arm (`crates/executor/src/sink_sensitivity.rs:40-57`),
+`is_routing_sensitive`/`is_content_sensitive` membership
+(`sink_sensitivity.rs:87-115`), and `expected_role` entries
+(`sink_sensitivity.rs:155-181`). **No new enforcement logic, no new
+`ExecutorDecision` variant, no new step in `submit_plan_node`'s ordering.**
+This is the same discipline `DESIGN-slot-type-binding.md` established for
+v1.5's slot-type-binding extension (table entries only), applied to two new
+sinks instead of a new mechanism.
+
+### 4.2 The single highest-consequence decision: `process.exec` command/args are sensitivity-classified
+
+**`process.exec`'s own `command` AND `args` are classified BOTH
+routing-sensitive AND content-sensitive — explicitly NOT
+`expected_role = None` / unconstrained.** A tainted `command` is not a
+data-exfiltration risk (contrast `email.send`'s deliberately-scoped-out
+`attachment`, which was descoped for v1.3 and removed from both the sink
+schema and the content-sensitive set atomically,
+`sink_sensitivity.rs:73-78`) — it is **arbitrary code execution**, strictly
+worse than a tainted email recipient. A tainted `command`/`args` value MUST
+Block under the existing collect-then-Block loop (`lib.rs:150-197`), never
+fall through unconstrained. Concretely: `is_routing_sensitive(process.exec,
+"command")`, `is_routing_sensitive(process.exec, "args")`,
+`is_content_sensitive(process.exec, "command")`, and
+`is_content_sensitive(process.exec, "args")` are all pinned `true` (the
+routing/content distinction is academic here — the point is neither
+classification function returns `false` for these two args). `cwd` is
+routing-sensitive (it determines WHERE the command's relative-path resolution
+happens) but not content-sensitive.
+
+### 4.3 fs write/edit slot roles
+
+- **`path`** — routing-sensitive, mirroring `file.create`'s existing
+  `FILE_CREATE_ROUTING_SENSITIVE` entry (`sink_sensitivity.rs:63-66`), with
+  `expected_role` mirroring `file.create`'s existing `path` role check
+  verbatim: `Some(&["path", "relative_path"])` (cited exactly from the live
+  entry at `sink_sensitivity.rs:163-164`, not re-derived).
+- **`contents`** — content-sensitive, mirroring HARDEN-05's extension of
+  `file.create`'s `contents` to content-sensitive
+  (`sink_sensitivity.rs:80-85`, `FILE_CREATE_CONTENT_SENSITIVE`). Its
+  `expected_role` list accepts BOTH a trusted-authored role (mirroring
+  `file.create`'s HARDEN-05 reuse of the `"path"` role at
+  `sink_sensitivity.rs:176`, since no dedicated `"contents"`/`"file_body"`
+  role-producing mint site exists) AND the untrusted `"exec_output"`/
+  `"doc_fragment"` roles — so a tainted exec-output ValueNode (§2, tagged
+  `origin_role = Some("exec_output")`) routed into the write/edit sink's
+  `contents` slot is role-admissible and therefore reaches I2's per-arg
+  sensitivity check, where its `ExecRaw`/`ExternalUntrusted` taint Blocks it
+  — exactly the same shape as `email.send`'s `body` slot already accepting
+  `"doc_fragment"` (`sink_sensitivity.rs:138-154`) so a tainted
+  worker-extracted body Blocks rather than fail-closed-Denying at the
+  structural Step 1c role check before ever reaching I2.
+
+### 4.4 No I2 bypass; no new raw request-args-to-sink path
+
+Both sinks stay on the `PlanNode{sink, args}` path from day one — **no new
+raw `EffectRequest { effect, args: Map }` path is introduced or possible**
+(`crates/runtime-core/src/plan_node.rs`'s `DEC-architectural-lock-plan-nodes`
+comment, lines 1-9). `check-invariants.sh` Gate 1 (the `EffectRequest` token
+absence check, `check-invariants.sh:24-38`) stays green with zero new hits —
+this doc introduces no such token anywhere. Both sinks are
+`CommitIrreversible` (`sink_effect_class`, mirroring both live sinks today,
+`sink_sensitivity.rs:42-43`), so a Draft-status session cannot invoke either
+without the existing I0 class-deny firing (`lib.rs:205-252`, unchanged by
+this doc).
+
+---
+
+## §5. Fail-Closed Defaults Table (DESIGN-14)
+
+| Sink arg | Sensitivity | Default posture | Fail-closed behavior |
+|---|---|---|---|
+| `process.exec` `command` | routing- AND content-sensitive | argv-only (never `sh -c`); no command allowlist v1.7 | tainted → Block (collect-then-Block); unknown/missing → Deny at Step 0 schema gate |
+| `process.exec` `args` | routing- AND content-sensitive | `Vec<String>`, each a direct `execve` argv element | tainted → Block; same schema-gate Deny on malformed shape |
+| `process.exec` `cwd` | routing-sensitive | workspace-relative, `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS` | tainted → Block; escape attempt → kernel-level Deny (`EXDEV`) before I2 is even reached |
+| exec-output `ValueNode` (post-spawn) | untrusted origin | `TaintLabel::ExecRaw` + `ExternalUntrusted`; `origin_role = Some("exec_output")` | unknown/unrecognized exec-output shape → fail-closed mint error (mirrors T-07-47), never default-tagged |
+| exec child kernel confinement | n/a (infrastructure) | narrow-allow Landlock + seccomp net-deny + reused rlimits + NEW wall-clock timeout + output byte cap + recursion-exec-deny | any confinement primitive failing to apply → `pre_exec` returns `Err`, `Command::spawn()` fails, no child ever runs |
+| fs write/edit `path` | routing-sensitive | `expected_role = Some(&["path","relative_path"])`; `O_WRONLY\|O_TRUNC`, `RESOLVE_BENEATH\|RESOLVE_NO_SYMLINKS` | tainted → Block; missing target → `ENOENT` Deny (never silently creates); escape → kernel-level Deny |
+| fs write/edit `contents` | content-sensitive | `expected_role` accepts trusted-authored role AND `"exec_output"`/`"doc_fragment"` | tainted/exec-output-tagged in slot → Block, same as email `body` precedent |
+| fs read (multi-file) `path` | routing-sensitive (mirrors today's single-file read) | `RESOLVE_BENEATH\|RESOLVE_NO_SYMLINKS`; NEW explicit per-session read-count upper bound | escape → kernel-level Deny; count exceeded → Deny (resource-exhaustion guard, §3.1) |
+| unregistered sink, or unknown/duplicate/missing arg (either new sink) | n/a (structural) | `KNOWN_SINKS` exact-match schema, Step 0 gate | Deny at Step 0, before any resolve/sensitivity/role check ever runs |
+
 <!-- gsd:write-continue -->
