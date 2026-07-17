@@ -198,6 +198,27 @@ CREATE TABLE IF NOT EXISTS chain_anchor (
     event_count    INTEGER NOT NULL,
     mac            TEXT NOT NULL
 ) STRICT;
+
+-- Replay-safe CAS row for the trusted (never-blocked) Allowed-dispatch sink
+-- path (v1.6 Phase 29, HARDEN-03). `idempotency_key` is the PRIMARY KEY — its
+-- value is `plan_node_idempotency_key(sink, args)` below, a CONTENT-derived
+-- digest over `sink.0` + sorted `(arg_name, value_id)` pairs, NEVER
+-- `effect_id` (D-08/§c: `effect_id` is minted fresh via `Uuid::new_v4()` on
+-- EVERY dispatch call, including every replay, so an `effect_id`-keyed CAS
+-- would never fire — it is proven unsound, not merely a style choice). A
+-- replayed `SubmitPlanNode` carrying the IDENTICAL resolved plan-node content
+-- computes the SAME key and hits the PRIMARY KEY constraint on `INSERT`,
+-- which is how the dispatch site (plan 29-02, `server.rs`) detects and
+-- suppresses the duplicate send BEFORE any SMTP socket opens. `effect_id`/
+-- `session_id`/`sent_at` are carried for audit legibility only (not part of
+-- the CAS identity). Deliberately NOT backfilled for a legacy (pre-Phase-29)
+-- database — see `migrate_sent_plan_nodes_schema`'s doc comment.
+CREATE TABLE IF NOT EXISTS sent_plan_nodes (
+    idempotency_key TEXT PRIMARY KEY,
+    effect_id       TEXT NOT NULL,
+    session_id      TEXT NOT NULL,
+    sent_at         TEXT NOT NULL
+) STRICT;
 ";
 
 /// Idempotently widen a pre-existing `pending_confirmations` table with the
@@ -303,6 +324,100 @@ fn migrate_chain_anchor_schema(conn: &rusqlite::Connection) -> Result<()> {
     Ok(())
 }
 
+/// Idempotently verify the `sent_plan_nodes` table exists (v1.6 Phase 29,
+/// HARDEN-03) — the presence-check half of a migration for a pre-existing
+/// (pre-Phase-29) database.
+///
+/// Mirrors `migrate_chain_anchor_schema` above verbatim: `sent_plan_nodes` is
+/// a WHOLE NEW table with all four columns present from its very first
+/// introduction — there is no column-widening case to handle. The single DDL
+/// statement in `SCHEMA_DDL` above (run via `execute_batch` on every
+/// `open_audit_db` call, BEFORE this function) is already idempotent and
+/// already creates the table on a legacy database missing it entirely — so
+/// this function's own job is the defensive, explicit `sqlite_master`-gated
+/// presence check: it fails loudly (never silently) if the table is somehow
+/// still absent after `SCHEMA_DDL` ran, rather than duplicating the DDL
+/// statement a second time in this file.
+///
+/// Deliberately does NOT backfill `sent_plan_nodes` rows for a legacy
+/// database's past Allowed-dispatch sends — a pre-Phase-29 send was never
+/// CAS-protected in the first place (this is forward-looking hardening, not
+/// retroactive), exactly analogous to `chain_anchor`'s own "no backfill" rule
+/// above: a legacy replayed plan node was never protected anyway (§c), and
+/// an idempotent migration that only ADDS a table cannot corrupt an existing
+/// chain.
+fn migrate_sent_plan_nodes_schema(conn: &rusqlite::Connection) -> Result<()> {
+    let table_exists: bool = match conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sent_plan_nodes'",
+        [],
+        |_row| Ok(()),
+    ) {
+        Ok(()) => true,
+        Err(rusqlite::Error::QueryReturnedNoRows) => false,
+        Err(e) => return Err(anyhow::Error::from(e)),
+    };
+
+    if !table_exists {
+        return Err(anyhow::anyhow!(
+            "sent_plan_nodes table missing after SCHEMA_DDL ran — open_audit_db invariant violated"
+        ));
+    }
+    Ok(())
+}
+
+/// Content-derived idempotency key for the trusted (Allowed) sink-dispatch
+/// CAS row (v1.6 Phase 29, HARDEN-03).
+///
+/// Computed as `SHA256( sink.0 || sorted( (arg_name, value_id) pairs ) )` —
+/// content-derived from the RESOLVED plan-node handles the broker already
+/// owns, NEVER from `effect_id` (D-08/§c: `effect_id` is minted fresh via
+/// `Uuid::new_v4()` on every dispatch call, including every replay, so an
+/// `effect_id`-keyed CAS would catch zero replays — proven unsound, not a
+/// style choice).
+///
+/// Args are sorted by `name` before hashing (mirroring
+/// `confirmation::combined_digest`'s `sort_by(|a,b| a.0.cmp(b.0))`
+/// discipline) — this is the load-bearing step that buys order-invariance:
+/// `plan_node_idempotency_key(sink, [a, b])` ==
+/// `plan_node_idempotency_key(sink, [b, a])`.
+///
+/// Implementation-choice pin: this uses the SIMPLER direct-concatenation
+/// shape, NOT `combined_digest`'s fixed-width-inner-hash-per-field
+/// discipline. `combined_digest` hardens against a partition-blindness
+/// collision (`("ab","c")` vs `("a","bc")`) because it hashes
+/// ATTACKER-INFLUENCEABLE literal strings of arbitrary length. This function
+/// hashes `arg.value_id.0.to_string()`, which is ALWAYS a fixed-width
+/// 36-char hyphenated UUID string, and `arg.name`, which is schema-fixed
+/// (`sink_schema.rs`'s `required`/`allowed` sets) — neither field has
+/// variable-length attacker-controlled content, so there is no
+/// partition-blindness collision risk here (29-RESEARCH.md Assumption A2).
+/// The pre-hash sort is kept — it is what buys order-invariance.
+///
+/// # Scope caveat (D-08, stated unsoftened)
+/// This key is `value_id`-SCOPED (per-plan-node), NOT resolved-literal-
+/// scoped: it deliberately does NOT catch a worker that mints a NEW
+/// `value_id` resolving to the identical literal (e.g. re-resolving
+/// `mint_from_intent`/`mint_from_derivation` for "the same" recipient) — an
+/// attacker who can mint fresh `ValueId`s can still cause N distinct sends.
+/// This is out of v1.6 scope (tracked as a future effects-budget
+/// obligation), not a gap in this function's own correctness.
+pub(crate) fn plan_node_idempotency_key(
+    sink: &runtime_core::SinkId,
+    args: &[runtime_core::PlanArg],
+) -> String {
+    use sha2::Digest as _;
+    let mut sorted: Vec<&runtime_core::PlanArg> = args.iter().collect();
+    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut hasher = Sha256::new();
+    hasher.update(sink.0.as_bytes());
+    for arg in sorted {
+        hasher.update(arg.name.as_bytes());
+        hasher.update(arg.value_id.0.to_string().as_bytes());
+    }
+    hex::encode(hasher.finalize())
+}
+
 /// Open (or create) the audit database at `path` and run schema DDL.
 ///
 /// Uses rusqlite with the `bundled` feature (no system SQLite dep).
@@ -317,6 +432,7 @@ pub fn open_audit_db(path: &str) -> Result<rusqlite::Connection> {
     conn.execute_batch(SCHEMA_DDL)?;
     migrate_pending_confirmations_schema(&conn)?;
     migrate_chain_anchor_schema(&conn)?;
+    migrate_sent_plan_nodes_schema(&conn)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     Ok(conn)
 }
@@ -1296,6 +1412,55 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 
+    /// (Task 1, HARDEN-03) `sent_plan_nodes` is a WHOLE NEW table, unlike
+    /// `pending_confirmations`'s column-widening case above — the migration
+    /// idempotency question here is simpler: does re-running `open_audit_db`
+    /// on an already-migrated DB (with the table already present) error?
+    /// It must not — mirrors the `chain_anchor` presence-check discipline.
+    #[test]
+    fn sent_plan_nodes_migration_is_idempotent() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("caprun_sent_plan_nodes_{}.db", Uuid::new_v4()));
+
+        // First open: `open_audit_db` runs `SCHEMA_DDL` (creates the table
+        // fresh) then `migrate_sent_plan_nodes_schema`'s presence check.
+        let conn = open_audit_db(path.to_str().unwrap()).expect("open_audit_db (first)");
+
+        let inserted = conn.execute(
+            "INSERT INTO sent_plan_nodes (idempotency_key, effect_id, session_id, sent_at) \
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                "deadbeef-idempotency-key",
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+                Utc::now().to_rfc3339(),
+            ],
+        );
+        assert!(
+            inserted.is_ok(),
+            "sent_plan_nodes must accept an insert on the first-created table: {inserted:?}"
+        );
+        drop(conn);
+
+        // Second open (fresh connection, simulating a broker restart against
+        // the same DB file): re-running `open_audit_db` on an
+        // already-migrated DB must not error, and the prior row must still
+        // be present (no data loss / no table recreation).
+        let conn2 =
+            open_audit_db(path.to_str().unwrap()).expect("open_audit_db (second, already-migrated) must not error");
+
+        let count: i64 = conn2
+            .query_row("SELECT COUNT(*) FROM sent_plan_nodes", [], |row| row.get(0))
+            .expect("count sent_plan_nodes rows");
+        assert_eq!(
+            count, 1,
+            "the row inserted before the second open must survive re-migration"
+        );
+
+        drop(conn2);
+        std::fs::remove_file(&path).ok();
+    }
+
     #[test]
     fn query_events_by_session_returns_all_events() {
         let conn = open_audit_db(":memory:").expect("open_audit_db");
@@ -1638,6 +1803,86 @@ mod tests {
             !verify_chain(&conn, &session_id.to_string(), TEST_KEY),
             "a session with events but NO chain_anchor row must fail closed \
              (untrusted until re-anchored) — never silently pass, never panic"
+        );
+    }
+
+    // ── Task 2 (HARDEN-03): plan_node_idempotency_key ──────────────────────
+
+    fn test_sink(s: &str) -> runtime_core::SinkId {
+        runtime_core::SinkId(s.to_string())
+    }
+
+    fn test_arg(name: &str, value_id: uuid::Uuid) -> runtime_core::PlanArg {
+        runtime_core::PlanArg {
+            name: name.to_string(),
+            value_id: runtime_core::ValueId(value_id),
+        }
+    }
+
+    /// Order-invariance: swapping the input arg order must not change the
+    /// key — this is what the pre-hash sort buys.
+    #[test]
+    fn idempotency_key_is_order_invariant() {
+        let sink = test_sink("email.send");
+        let v_to = Uuid::new_v4();
+        let v_body = Uuid::new_v4();
+        let arg_a = test_arg("to", v_to);
+        let arg_b = test_arg("body", v_body);
+
+        let forward = plan_node_idempotency_key(&sink, &[arg_a.clone(), arg_b.clone()]);
+        let reversed = plan_node_idempotency_key(&sink, &[arg_b, arg_a]);
+
+        assert_eq!(
+            forward, reversed,
+            "swapping arg order must not change the idempotency key"
+        );
+    }
+
+    /// Sink-scoping: identical args, different `sink.0`, must produce a
+    /// DIFFERENT key.
+    #[test]
+    fn idempotency_key_is_sink_scoped() {
+        let value_id = Uuid::new_v4();
+        let args = [test_arg("to", value_id)];
+
+        let key_email = plan_node_idempotency_key(&test_sink("email.send"), &args);
+        let key_other = plan_node_idempotency_key(&test_sink("file.create"), &args);
+
+        assert_ne!(
+            key_email, key_other,
+            "the same args under a different sink must produce a different key"
+        );
+    }
+
+    /// Value-distinguishing: same sink + arg name, different `value_id`,
+    /// must produce a DIFFERENT key.
+    #[test]
+    fn idempotency_key_distinguishes_value_id() {
+        let sink = test_sink("email.send");
+        let key_a = plan_node_idempotency_key(&sink, &[test_arg("to", Uuid::new_v4())]);
+        let key_b = plan_node_idempotency_key(&sink, &[test_arg("to", Uuid::new_v4())]);
+
+        assert_ne!(
+            key_a, key_b,
+            "the same sink + arg name with a DIFFERENT value_id must produce a different key"
+        );
+    }
+
+    /// Determinism: identical inputs (same sink, same args, same order)
+    /// produce the identical key across repeated calls.
+    #[test]
+    fn idempotency_key_is_deterministic() {
+        let sink = test_sink("email.send");
+        let v_to = Uuid::new_v4();
+        let v_body = Uuid::new_v4();
+        let args = [test_arg("to", v_to), test_arg("body", v_body)];
+
+        let key_first = plan_node_idempotency_key(&sink, &args);
+        let key_second = plan_node_idempotency_key(&sink, &args);
+
+        assert_eq!(
+            key_first, key_second,
+            "identical inputs must produce the identical key across calls"
         );
     }
 }
