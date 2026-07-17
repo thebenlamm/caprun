@@ -18,7 +18,15 @@ anyhow       = { workspace = true }
 # every member and would mask this crate's real requirement, but a scoped
 # `cargo test -p brokerd` (the exact command this plan's own verification
 # steps use) does not, and would fail to compile without this.
-tokio        = { workspace = true, features = ["time"] }
+#
+# `process` feature (Phase 32, EXEC-01/04): `sinks::process_exec` spawns the
+# `caprun-exec-launcher` via `tokio::process::Command` — a cancellable,
+# killable async child (unlike `std::process::Child::wait_with_output()`,
+# which consumes `self` and cannot be killed on timeout, Pitfall 5). `io-util`
+# is needed for `AsyncReadExt::read_to_end` on the piped stdout/stderr
+# handles. Declared explicitly here for the SAME scoped-build reason as
+# `time` above — confirm with `cargo build -p brokerd`, not `--workspace`.
+tokio        = { workspace = true, features = ["time", "process", "io-util"] }
 rusqlite     = { workspace = true }
 sha2         = { workspace = true }
 hex          = { workspace = true }
