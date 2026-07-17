@@ -1,5 +1,27 @@
 # Milestones
 
+## v1.6 Security Hardening (Shipped: 2026-07-17)
+
+**Phases completed:** 5 phases, 14 plans, 27 tasks
+
+**Key accomplishments:**
+
+- DESIGN-security-hardening.md pins the mechanism + fail-closed default for all five v1.6 TCB-local residuals (demote-at-RequestFd, keyed-MAC audit chain, Allowed-path replay CAS, compile-out forced-Active mint, file.create contents slot), three cross-cutting rulings, and an explicit fold-not-accept ruling on the newly-surfaced Planner-connection session_status staleness (X-04) — every § anchored to a re-verified file:line.
+- 26-02 (wave 2, depends_on 26-01)
+- RequestFd now demotes a session to Draft the instant an untrusted fd is granted (fstat inode-identity compare, no path-string compare), and session_status became one shared, monotonic Arc<Mutex<SessionStatus>> re-read at the top of every dispatch_request call — closing the X-04 stale-Planner-snapshot gap in the same PR.
+- Compile-excluded the CreateSession-IPC forced-Active mint arm behind a `test-fixtures` Cargo feature (executor-crate precedent), added a real behavioral D-10 negative gate proving a featureless build denies the mint even with the legacy env flag set, and recorded build-artifact SC3 evidence of its absence from a default release build.
+- 7 live-test fixtures relocated to confirm.rs's F1-safe subdirectory layout (behaviorally a no-op — 274/274 tests still pass) plus hmac 0.12.1 + getrandom 0.4 wired into crates/brokerd, with zero crypto logic written — pure groundwork for HARDEN-02's F1 refusal and keyed-MAC audit chain landing in Plans 02-05.
+- `load_or_create_key(audit_path, workspace_root)` — a single getrandom-backed, 0600, read-existing-first cross-process MAC-key custody helper with a canonical-path F1 containment refusal, unit-tested in isolation (3/3 green) and NOT yet wired into any runtime `open_audit_db` call site.
+- Converts the audit hash chain from unkeyed SHA-256 self-consistency to a keyed, domain-separated, length-framed HMAC-SHA256 MAC, threading the broker key through all 19 production `append_event` sites and both `verify_chain` callers, with the key sourced cross-process via Plan 02's `load_or_create_key`.
+- Adds a MAC'd `chain_anchor(session_id, head_event_id, head_hash, event_count)` table, upserted atomically inside `append_event`, and extends `verify_chain` to cross-check it — turning tail-truncation (raw-SQL DELETE of the last N events) from a previously-invisible attack into a detected one, and failing closed on legacy pre-Phase-28 databases with no anchor row.
+- Folds `pending_confirmations` into the same broker-key HMAC-SHA256 MAC scheme as the events chain (whole-row, domain-separated), and gives `deny()` the SAME fail-closed integrity gates `confirm()` already had — closing the flip-back/delete gap on the one table that survives a confirm/deny process restart, per DESIGN's X-02 uniform ruling.
+- Content-derived `plan_node_idempotency_key` (SHA256 of sink + sorted arg-name/value_id pairs) and a new `sent_plan_nodes` CAS table with idempotent migration, both landed in `audit.rs` in isolation ahead of the dispatch-site wiring in plan 29-02.
+- Wired the HARDEN-03 replay CAS into server.rs's Allowed email.send dispatch (CAS INSERT OR IGNORE + attempt-marker append committed in one transaction before any SMTP socket opens) and proved at-most-once-per-plan-node live on real Linux via a new Mailpit-backed double-submit integration test.
+- `file.create`'s `contents` arg is now content-sensitive and role-checked to `Some(&["path"])` in the executor TCB — closing the last unconstrained sink-arg slot from v1.5's slot-type-binding work, with zero regression to the live flow.
+- Standalone false-assurance-guarded bash wrapper that forces the self-skipping harden04 D-10 negative test to actually execute, plus an independent audit confirming zero weakened/ignored hardening tests across Phases 27-29.
+
+---
+
 ## v1.5 Slot-Type Binding Enforcement (Shipped: 2026-07-12)
 
 **Phases completed:** 3 phases, 8 plans, 10 tasks

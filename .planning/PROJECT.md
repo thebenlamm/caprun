@@ -18,18 +18,28 @@ genuine taint chain must hold.**
 
 ## Current State
 
-**Shipped v1.5 — Slot-Type Binding Enforcement (T2) on 2026-07-12.** The executor
-now structurally enforces that a resolved value's semantic origin role matches the
-semantic role of the plan-node slot it is routed into: a misrouted `UserTrusted`
-handle (e.g. a subject-typed string landed in `to`) hard-Denies with
-`SlotTypeMismatch` via Step 1c, even though it is neither untrusted (I2 doesn't fire)
-nor a class-level deny (I0/I1 don't apply). Proven live on real Linux with a genuine
-audit chain (v1.4's accepted residual #5 is closed). Milestone audit PASSED (11/11
-requirements, 5/5 integration hops wired).
+**Shipped v1.6 — Security Hardening (close the residuals) on 2026-07-17.** The five
+standing TCB-local security residuals v1.1–v1.5 documented as accepted caveats are now
+enforced guarantees, proven live on real Linux: (HARDEN-01) fd release to the confined
+worker itself demotes the session to draft-only via fstat inode identity; (HARDEN-02)
+the audit chain is authenticated with a keyed HMAC-SHA256 MAC + MAC'd anchor
+truncation/orphan detection, so an `events`-table writer can no longer forge a chain
+`verify_chain` accepts; (HARDEN-03) a replayed Allowed `email.send` sends at most once
+via a content-derived idempotency-key CAS committed before the SMTP socket opens;
+(HARDEN-04) the forced-Active `CreateSession` mint arm is compiled OUT of the production
+binary (cfg), not merely runtime-flagged; (HARDEN-05) `file.create`'s `contents` arg is
+role-checked + content-sensitive under the same I2/slot-type discipline. Full workspace
+regression re-run green on real Linux (331 passed / 0 failed across 49 suites) plus a
+dedicated proof per residual (HARDEN-06). Independent adversarial code-trace APPROVED;
+milestone audit PASSED (8/8 requirements, 5/5 cross-phase seams wired).
 
-## Current Milestone: v1.6 — Security Hardening (close the residuals)
+Prior: v1.5 Slot-Type Binding (T2) — 2026-07-12; v1.4 Trust-Boundary Integrity — 2026-07-11.
 
-**Goal:** Close the standing TCB-local security residuals that v1.1–v1.5 accumulated and
+## Shipped Milestone: v1.6 — Security Hardening (close the residuals)
+
+**✅ SHIPPED 2026-07-17 — all 8 requirements Complete, milestone audit PASSED, proven live on real Linux. Full detail archived in `milestones/v1.6-ROADMAP.md` + `milestones/v1.6-REQUIREMENTS.md` + `milestones/v1.6-MILESTONE-AUDIT.md`. Next milestone: run `/gsd-new-milestone` (a v1.7 productization sketch exists at `planning-docs/CANDIDATE-v1.7plus-productization-sketch.md`).**
+
+**Goal (delivered):** Close the standing TCB-local security residuals that v1.1–v1.5 accumulated and
 documented as accepted caveats — turning each DOC-01 honesty qualifier into an enforced
 guarantee, without adding any new external-effect surface.
 
@@ -352,6 +362,27 @@ assessment). PLAN.md wins on any conflict.
 ## Requirements
 
 ### Validated
+
+Shipped in **v1.6 — Security Hardening** (2026-07-17). Full traceability archived in
+`.planning/milestones/v1.6-REQUIREMENTS.md`.
+
+- ✓ DESIGN-11/12: `DESIGN-security-hardening.md` (mechanism + fail-closed default for all
+  five residuals) cleared a fresh non-self adversarial review before any TCB code — v1.6
+- ✓ HARDEN-01: fd release (`RequestFd`) itself demotes the session to draft-only (fstat
+  inode identity), CONTROL-01 benign path stays Active — v1.6
+- ✓ HARDEN-02: authenticated audit chain (keyed HMAC-SHA256 + MAC'd anchor truncation/orphan
+  detection); `verify_chain` is forge-resistant, not just corruption-detecting — v1.6
+- ✓ HARDEN-03: replayed Allowed `email.send` at-most-once via content-derived idempotency
+  CAS committed before SMTP — v1.6
+- ✓ HARDEN-04: forced-Active `CreateSession` mint compiled out of the production binary
+  (cfg), proven absent by a featureless-build gate — v1.6
+- ✓ HARDEN-05: `file.create` `contents` role-checked + content-sensitive under I2 — v1.6
+- ✓ HARDEN-06: full workspace regression green on real Linux (331/0, 49 suites) + a proven
+  test per closed residual, no regression to v1.1–v1.5 — v1.6
+- ✓ **v1.6 DONE gate cleared:** all 5 residuals enforced and proven live; independent
+  adversarial code-trace APPROVED; milestone audit PASSED (8/8, 5/5 seams). Accepted
+  residuals (D-08 per-session send budget, HARDEN-05 e2e-tainted-contents pre-D-12) carried
+  forward as named future work.
 
 Shipped in **v1.0 — AgentOS v0** (2026-06-30). Full traceability archived in
 `.planning/milestones/v1.0-REQUIREMENTS.md`.
@@ -809,7 +840,19 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-12 after v1.5 "Slot-Type Binding Enforcement (T2)"
+*Last updated: 2026-07-17 after v1.6 "Security Hardening (close the residuals)"
+SHIPPED — all 5 phases (26-30) complete, turning the five standing TCB-local
+residuals v1.1–v1.5 documented as accepted caveats into enforced guarantees
+(HARDEN-01 demote-at-RequestFd, HARDEN-02 keyed-MAC audit chain, HARDEN-03
+Allowed-path replay CAS, HARDEN-04 compile-out forced-Active mint, HARDEN-05
+file.create contents slot), proven live on real Linux (bare mailpit-verify.sh
+331 passed/0 failed across 49 suites + a separate featureless-build gate for
+HARDEN-04) with true-exit-before-pipe discipline. Phase 26's DESIGN doc cleared
+a fresh non-self adversarial review before any TCB code; an independent
+adversarial code-trace of the final diff APPROVED (2 stale-comment fixes folded);
+milestone audit PASSED (8/8 requirements, 5/5 cross-phase seams wired). No git
+push yet (Ben's call).
+Prior: 2026-07-12 after v1.5 "Slot-Type Binding Enforcement (T2)"
 SHIPPED — all 3 phases (23-25) complete, closing v1.4's accepted residual #5.
 Phase 23's DESIGN doc cleared a fresh non-self adversarial review before any
 TCB code. Phase 24 threaded an additive `origin_role` mint-time tag through

@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: — Security Hardening
-current_phase: 30
-status: executing
+current_phase: 6
+status: Awaiting next milestone
 stopped_at: Completed 28-05-PLAN.md
-last_updated: "2026-07-17T18:14:25.018Z"
+last_updated: "2026-07-17T18:19:50.745Z"
 last_activity: 2026-07-17
-last_activity_desc: Phase 30 complete
+last_activity_desc: Milestone v1.6 completed and archived
 progress:
   total_phases: 5
   completed_phases: 5
@@ -28,12 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-12)
 
 ## Current Position
 
-Phase: 30
-Plan: Not started
-Status: Executing Phase 30
-Last activity: 2026-07-17 — Phase 30 complete
-
-Progress: [░░░░░░░░░░] 0%
+Phase: Milestone v1.6 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-17 — Milestone v1.6 completed and archived
 
 ## Performance Metrics
 
@@ -178,7 +176,7 @@ Items acknowledged and deferred at prior milestone closes:
 | uat | 03-UAT.md (Phase 03, v1.0 milestone — passed, 0 pending scenarios; benign stale artifact) | passed | 2026-07-01 |
 | todo | gsd-phases-clear-deletes-all-milestones (GSD tooling bug) | open | 2026-07-09 |
 | todo | gsd-executors-must-not-write-phase-completion-state (GSD tooling bug) | open | 2026-07-09 |
-| todo | v1.3-phase16-v2-security-obligations (5 v2 security items) | in progress — now v1.6's roadmap | 2026-07-09 |
+| todo | v1.3-phase16-v2-security-obligations (5 v2 security items) | ✓ DELIVERED — became v1.6's HARDEN-01..05, all shipped Phases 27-29 & proven live Phase 30 | closed 2026-07-17 |
 | requirement | T2 slot-type binding enforcement | ✓ DELIVERED — v1.5 Phases 23-25 (enforced in TCB, proven live on Linux) | closed 2026-07-12 |
 
 Re-acknowledged unchanged at v1.2 milestone close on 2026-07-07 (same
@@ -193,6 +191,11 @@ todos), none from v1.5 and none blocking; all v1.5 phases verified passed (11/11
 requirements). T2 slot-type binding now DELIVERED (no longer a deferred item).
 v1.6 roadmap created 2026-07-12 — the v1.3-phase16-v2-security-obligations todo
 moved from "open" to "in progress" as its 5 items became v1.6's HARDEN-01..05.
+Re-acknowledged at v1.6 milestone close on 2026-07-17 via `audit-open` (override_closeout):
+3 remaining open items — the 2 GSD-tooling todos (phases-clear, executors-must-not-write;
+both still-open upstream tooling bugs, not caprun product work) and the benign Phase-03
+UAT (passed, 0 pending). The v1.3-phase16 security-obligations todo is now DELIVERED
+(HARDEN-01..05 shipped, HARDEN-06 live-proven). None block v1.6's close.
 
 ## Session Continuity
 
@@ -202,4 +205,4 @@ Resume file: None
 
 ## Operator Next Steps
 
-- Run `/gsd-plan-phase 26` to plan the Security Hardening Design Gate phase.
+- Start the next milestone with /gsd-new-milestone
