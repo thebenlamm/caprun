@@ -210,3 +210,14 @@ None - no external service configuration required. Colima was already running; t
 ---
 *Phase: 32-process-exec-sink-broker-spawned-confined-child*
 *Completed: 2026-07-17*
+
+## Self-Check: PASSED
+
+All created/modified files verified present on disk; all six commit hashes
+(`61d90c3`, `57d30e7`, `b23fcff`, `aa03cfe`, `7426568`, `9b20374`) verified
+present in `git log`. `cargo build --workspace`, `cargo test --workspace
+--no-fail-fast` (Mac, full suite), and `./scripts/check-invariants.sh` (4/4
+gates) all green on Mac after the final commit. The mandatory Linux
+container run (`scripts/mailpit-verify.sh`) is green for both the compile
+check and the scoped test run (exec_child_confinement 4/4, process_exec_spawn
+3/3, s9_process_exec_block 4/4), real exit 0 captured before any pipe.
