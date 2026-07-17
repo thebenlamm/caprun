@@ -39,20 +39,20 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 
 ### Process Exec
 
-- [ ] **EXEC-01**: A `process.exec` plan-node sink runs a command **as a
+- [x] **EXEC-01**: A `process.exec` plan-node sink runs a command **as a
   broker-spawned confined child process** (mediated like the v1.4 caprun-planner
   sidecar / adapter-fs fd-pass), never via the confined worker's own `execve`.
 
-- [ ] **EXEC-02**: The child's stdout/stderr are captured and **taint-minted as
+- [x] **EXEC-02**: The child's stdout/stderr are captured and **taint-minted as
   untrusted**, producing a ValueNode whose provenance chain is genuinely rooted
   at the `exec` Event (the sole exec-output taint-mint site — no stapling).
 
-- [ ] **EXEC-03**: **Exec-output taint is I2-enforced** — a tainted exec-output
+- [x] **EXEC-03**: **Exec-output taint is I2-enforced** — a tainted exec-output
   value routed to a sensitive sink arg is deterministically **Blocked** by the
   executor, verifiable as an unbroken audit-DAG edge (exec Event → ValueNode →
   sink arg → block) with `verify_chain` true.
 
-- [ ] **EXEC-04**: The exec child is itself **kernel-confined** (Landlock +
+- [x] **EXEC-04**: The exec child is itself **kernel-confined** (Landlock +
   seccomp + default-deny net + resource/time limits), the sink is **fail-closed
   on arg-schema**, and a durable audit Event records the spawn and exit.
 
@@ -132,10 +132,10 @@ maps to exactly one phase (`/gsd-roadmapper`, 2026-07-17).
 |-------------|-------|--------|
 | DESIGN-13 | Phase 31 | Complete |
 | DESIGN-14 | Phase 31 | Complete |
-| EXEC-01 | Phase 32 | Pending |
-| EXEC-02 | Phase 32 | Pending |
-| EXEC-03 | Phase 32 | Pending |
-| EXEC-04 | Phase 32 | Pending |
+| EXEC-01 | Phase 32 | Complete |
+| EXEC-02 | Phase 32 | Complete |
+| EXEC-03 | Phase 32 | Complete |
+| EXEC-04 | Phase 32 | Complete |
 | FS-01 | Phase 33 | Pending |
 | FS-02 | Phase 33 | Pending |
 | FS-03 | Phase 33 | Pending |

@@ -13,6 +13,12 @@ seccompiler = { workspace = true }
 nix         = { workspace = true }
 libc        = "0.2"
 
+[dev-dependencies]
+# tests/exec_child_confinement.rs (32-06) JSON-encodes EXEC_ARGS_JSON for the
+# real caprun-exec-launcher binary — the same wire shape brokerd's
+# process.exec sink uses (DESIGN-effect-breadth-exec.md locked decision 1).
+serde_json = { workspace = true }
+
 [[bin]]
 name = "confine-probe"
 path = "src/bin/confine-probe.rs"

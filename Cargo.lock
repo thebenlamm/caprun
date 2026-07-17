@@ -1420,6 +1420,7 @@ dependencies = [
  "libc",
  "nix",
  "seccompiler",
+ "serde_json",
 ]
 
 [[package]]

@@ -135,15 +135,8 @@ pub async fn invoke_process_exec(
     })?;
     let cwd = resolve_arg_optional(value_store, plan_node, "cwd")?;
 
-    // The launcher is a sibling binary of the running `caprun` process image —
-    // `current_exe()` from this library crate still resolves to that image
-    // (brokerd is linked into the `caprun` binary), the SAME resolution
-    // `main.rs` uses for `caprun-worker`/`caprun-planner`.
-    let launcher_path = std::env::current_exe()
-        .context("process.exec: could not resolve current_exe()")?
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("process.exec: current_exe() has no parent directory"))?
-        .join("caprun-exec-launcher");
+    // The launcher is a sibling binary of the running process image.
+    let launcher_path = resolve_launcher_path()?;
 
     // Spawn + confine-handoff + capture + timeout, entirely lock-free — the
     // conn mutex is never held across this `.await`.
@@ -220,10 +213,23 @@ async fn run_launcher(
     _args: &[String],
 ) -> Result<(std::process::ExitStatus, String)> {
     let mut cmd = TokioCommand::new(launcher_path);
-    cmd.env("EXEC_COMMAND", command)
-        .env("EXEC_ARGS_JSON", args_json)
-        .env("EXEC_CWD", cwd.unwrap_or(""))
-        .env(
+    cmd.env("EXEC_COMMAND", command).env("EXEC_ARGS_JSON", args_json);
+    // Only set EXEC_CWD when a cwd was actually supplied (32-06 fix): setting
+    // it to an EMPTY STRING when `cwd` is `None` made the launcher call
+    // `Command::current_dir("")`, which performs `chdir("")` — POSIX
+    // `chdir("")` fails with ENOENT (empty path is not a valid path), so
+    // EVERY process.exec invocation with no explicit `cwd` arg failed the
+    // launcher's OWN subsequent `execve` with a misleading "No such file or
+    // directory" error attributed to the TARGET command, not the empty cwd.
+    // Reproduced and confirmed empirically in the 32-06 Linux container run
+    // (cfg-linux-test-blindness: this path never compiled/ran on Mac). Leaving
+    // the var UNSET when `cwd` is `None` makes the launcher's own
+    // `std::env::var("EXEC_CWD").ok()` correctly resolve to `None`, matching
+    // its doc comment's "EXEC_CWD (optional)" contract.
+    if let Some(dir) = cwd {
+        cmd.env("EXEC_CWD", dir);
+    }
+    cmd.env(
             "EXEC_WORKSPACE_ROOT",
             workspace_root.root_path().to_string_lossy().as_ref(),
         )
@@ -317,6 +323,59 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
         }
     }
     Ok(buf)
+}
+
+/// Resolve the `caprun-exec-launcher` sibling binary's path relative to the
+/// CURRENTLY RUNNING process image.
+///
+/// # Why this is not a single fixed-depth `.parent()` hop (32-06 fix)
+///
+/// In the PRODUCTION path, `current_exe()` resolves to the real `caprun`
+/// binary at `target/{debug,release}/caprun` — `caprun-exec-launcher` is a
+/// direct sibling in that SAME directory (`main.rs` uses the identical
+/// resolution for `caprun-worker`/`caprun-planner`).
+///
+/// But `invoke_process_exec` is ALSO exercised directly, in-process, by
+/// integration tests (`crates/brokerd/tests/process_exec_spawn.rs`, and
+/// `cli/caprun/tests/s9_process_exec_block.rs`) — and Cargo places a `cargo
+/// test` integration-test BINARY one directory level deeper, at
+/// `target/{debug,release}/deps/<test-name>-<hash>`, never at
+/// `target/{debug,release}/` directly (empirically confirmed: `[[bin]]`
+/// targets like `caprun-exec-launcher` are placed ONLY at the un-hashed
+/// `target/{debug,release}/<name>` path, never mirrored into `deps/`). A
+/// single fixed `.parent()` hop therefore resolves correctly in production
+/// but NEVER finds the launcher when this function runs inside a test binary
+/// (`current_exe().parent()` == `.../deps/`, which does not contain it) —
+/// this was a genuine, reproducible bug, caught by 32-06's mandatory Linux
+/// container run (a Mac build never compiles/runs this cfg(linux) path at
+/// all — cfg-linux-test-blindness).
+///
+/// The fix: walk up a SMALL, bounded number of ancestor directories from
+/// `current_exe()`'s parent, returning the first one that actually contains
+/// `caprun-exec-launcher` — this covers BOTH the production layout (found at
+/// depth 0) and the `cargo test` layout (found at depth 1, `deps/` ->
+/// `debug/`), fails closed (a bounded, explicit search — never an unbounded
+/// walk to the filesystem root) if neither is found.
+fn resolve_launcher_path() -> Result<std::path::PathBuf> {
+    let current_exe =
+        std::env::current_exe().context("process.exec: could not resolve current_exe()")?;
+    let mut dir = current_exe.parent().map(|p| p.to_path_buf());
+    for _ in 0..3 {
+        let Some(candidate_dir) = dir else { break };
+        let candidate = candidate_dir.join("caprun-exec-launcher");
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+        dir = candidate_dir.parent().map(|p| p.to_path_buf());
+    }
+    Err(anyhow::anyhow!(
+        "process.exec: could not locate sibling binary `caprun-exec-launcher` near \
+         current_exe() {current_exe:?} (checked current_exe()'s parent and up to 2 \
+         ancestor directories — covers both the production `caprun` binary layout and \
+         a `cargo test` integration-test binary under target/{{debug,release}}/deps/; \
+         run `cargo build --workspace` first if this is a fresh checkout — \
+         cargo-test-workspace-missing-sibling-binary)"
+    ))
 }
 
 /// Resolve a required named plan-node arg to its broker-owned literal.
