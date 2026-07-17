@@ -39,7 +39,7 @@ key-decisions:
 patterns-established:
   - "New untrusted TaintLabel variant requires updating every non-wildcard match over TaintLabel (compiler-enforced, no wildcard arm) — found and updated confirmation.rs's taint_label_display CLI-rendering match in addition to is_untrusted()"
 
-requirements-completed: [EXEC-01, EXEC-02, EXEC-03, EXEC-04]
+requirements-completed: []  # See "REQUIREMENTS.md Not Updated (Deliberate)" below — EXEC-01..04 span multiple plans (32-01..32-06) in this phase; not yet fully delivered
 
 coverage:
   - id: D1
@@ -148,6 +148,10 @@ None.
 ## TDD Gate Compliance
 
 This plan's tasks are marked `tdd="true"` at the task level (not `type: tdd` at the plan level, so the plan-level RED/GREEN/REFACTOR gate sequence in `execute-plan.md` does not strictly apply). Both tasks' `<behavior>` blocks describe additive table/enum entries with unit-test assertions authored in the same commit as the implementation (mirroring this codebase's existing precedent for `file.create`'s original schema/sensitivity table commits, which were also table-entries-only with tests alongside). No separate failing-test-first commit exists for either task. Flagging this here per the plan-level TDD gate-sequence validation instruction, even though this plan's frontmatter is `type: execute` (not `type: tdd`), for auditability.
+
+## REQUIREMENTS.md Not Updated (Deliberate)
+
+This plan's frontmatter lists `requirements: [EXEC-01, EXEC-02, EXEC-03, EXEC-04]`, and the standard workflow step would run `requirements mark-complete` for all four. **Deliberately skipped.** Every one of EXEC-01..04 is ALSO listed in the frontmatter of one or more of 32-02 through 32-06 (confinement primitives, the launcher binary, spawn+audit, the mint site, and the acceptance tests respectively) — this plan only lays the foundational types/tables; the actual confined-spawn, taint-mint, and audit mechanisms these requirements describe do not exist yet. Marking them `Complete` now would be factually false ("Substrate working ≠ v0 done" — project CLAUDE.md hard constraint #1). Left `.planning/REQUIREMENTS.md` untouched for the orchestrator/a later plan in this phase to mark complete once the full requirement is actually delivered.
 
 ## User Setup Required
 
