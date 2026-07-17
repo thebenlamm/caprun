@@ -161,3 +161,7 @@ None - no external service configuration required.
 ---
 *Phase: 32-process-exec-sink-broker-spawned-confined-child*
 *Completed: 2026-07-17*
+
+## Self-Check: PASSED
+
+All modified files and all task/summary commit hashes verified present on disk / in `git log`.
