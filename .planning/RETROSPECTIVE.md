@@ -209,6 +209,37 @@ Closed v1.4's accepted residual #5 (T2). Phase 23 authored `DESIGN-slot-type-bin
 - Wave-1 executors ran in parallel worktrees (~20-22 min each); the live-Linux gate (full-workspace compile in a `rust:1` container) was the long pole.
 - Notable: the independent verifier's initial `gaps_found` → reconcile → re-verify `passed` loop added one round but caught a real record inconsistency — a worthwhile trade, not a rubber-stamp.
 
+## Milestone: v1.6 — Security Hardening (close the residuals)
+
+**Shipped:** 2026-07-17
+**Phases:** 5 (26-30) | **Plans:** 14
+
+### What Was Built
+Turned the five standing TCB-local security residuals v1.1–v1.5 documented as accepted caveats into enforced, live-proven guarantees: HARDEN-01 (fd-release demotes the session via fstat inode identity + a folded-in X-04 shared-`session_status` fix), HARDEN-02 (keyed HMAC-SHA256 audit chain + MAC'd anchor truncation/orphan detection + pending_confirmations whole-row MAC), HARDEN-03 (content-derived idempotency-key CAS making a replayed Allowed `email.send` at-most-once), HARDEN-04 (forced-Active `CreateSession` mint compiled OUT of the production binary), HARDEN-05 (`file.create` `contents` role-checked + content-sensitive under I2). Phase 30 added `scripts/verify-harden04-featureless.sh` and re-ran the whole workspace green on real Linux (331/0, 49 suites).
+
+### What Worked
+- **Design-gate-first held again** (Phase 26): the DESIGN doc cleared a fresh non-self Fable-5 review that caught a real BLOCKER (HMAC key file worker-reachable via RequestFd) before any TCB code.
+- **Independent adversarial code-trace on the final diff** (Phase 29): a fresh reviewer traced all 14 claims and confirmed the CAS/chain/slot-type wiring — catching 2 stale TCB doc comments a passing verifier + green gates missed. The P26/27/28 pattern (adversarial trace finds what the verifier misses) held a fourth time.
+- **Orchestrator-run, non-laundered Linux gates** with true-exit-before-pipe: caught the real value of the milestone (criterion-4's *self-skipping* test) rather than rubber-stamping a laundered pass.
+- Parallel worktree waves + a warm Colima kept wall-clock down despite the container compile being the long pole.
+
+### What Was Inefficient
+- The criterion-2 command shipped in the plan (`cargo test ... a b c` without `--`) was wrong; caught at gate time. Minor, but a reminder that multi-filter cargo test needs `--`.
+- Two mtime-ordering `stale`-verification snags (writing SUMMARY after VERIFICATION) needed a `touch` — a freshness-contract artifact, not a real staleness.
+
+### Patterns Established
+- **False-assurance gate as a first-class deliverable**: a negative test whose skip path is triggered by the very thing it should catch (harden04 self-skip under `--workspace` feature unification) is worse than no test; the fix is a *scoped* gate script that FAILs on the skip sentinel and requires the named test's `ok` line.
+- Regression-audit sweep (`30-REGRESSION-AUDIT.md`) for `#[ignore]`/weakened-assertion drift across the milestone's prior test files.
+
+### Key Lessons
+- cfg(linux) test-blindness remains the sharpest recurring hazard: a green macOS build proves nothing about the Linux-gated tests; only the bare recipe on real Linux is authoritative.
+- The expected_base "record dispatch-time HEAD, not the executor's self-reported field" worktree discipline held clean across all 4 execution waves.
+
+### Cost Observations
+- Model mix: orchestrator Opus 4.8 (1M); executors + verifier + planner (opus) + checker + integration checker + researcher on Sonnet/Opus; the independent adversarial reviewer on Fable-5.
+- Sessions: 1 (single autonomous run, phase 29 → phase 30 → milestone close).
+- Notable: the whole milestone (Phase 29 execute → Phase 30 plan+execute → audit → close) ran autonomously in one session; the long poles were the two live-Linux container gates.
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Shipped | Notes |
@@ -219,3 +250,4 @@ Closed v1.4's accepted residual #5 (T2). Phase 23 authored `DESIGN-slot-type-bin
 | v1.3 Doc → Action Assistant | 6 | 21 | 2026-07-09 | Doc→action hero demo: genuine-taint extraction, collect-then-Block, full-set confirm binding, a real live email send, closed exfiltration path, composed confirm/deny/clean live acceptance, honest DOC-01 framing; independent live-run re-verification now 4/4, across two independent parties |
 | v1.4 Trust-Boundary Integrity & Adversarial Planner | 5 | 14 | 2026-07-11 | Fixed a live cross-connection trust bypass (one-way occupancy latch); real `Planner` trait + broker capability split; genuine OpenAI-backed adversarial planner in an isolated sidecar; HARD GATE proved the boundary holds regardless of planner intelligence; closing full-recipe re-run caught a real Cargo artifact-placement bug |
 | v1.5 Slot-Type Binding Enforcement (T2) | 3 | 8 | 2026-07-12 | Closed v1.4's T2 residual: fail-closed Step 1c slot-type check in the TCB; held-out swapped-handle deny test with genuine audit chain; 0-bypass regression audit; independent bare `mailpit-verify.sh` green on real Linux (309/0); independent verifier caught a close-time sign-off/traceability record lag before allowing close |
+| v1.6 Security Hardening (close the residuals) | 5 | 14 | 2026-07-17 | Enforced all 5 standing TCB-local residuals (fd-demote, keyed-MAC audit chain, replay CAS, compile-out forced-Active mint, file.create contents slot) + folded X-04; independent adversarial code-trace APPROVED the diff (found 2 stale TCB comments the verifier missed); closed a real false-assurance gap (harden04 self-skip) with a scoped featureless-build gate; full workspace green on real Linux (331/0, 49 suites); milestone audit PASSED 8/8, 5/5 seams; ran end-to-end autonomously in one session |
