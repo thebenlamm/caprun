@@ -244,6 +244,6 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
 | 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 3/3 | Complete    | 2026-07-17 |
 | 30. Regression & Live Proof | v1.6 | 2/2 | Complete    | 2026-07-17 |
 | 31. Effect-Breadth Design Gate | v1.7 | 2/2 | Complete    | 2026-07-17 |
-| 32. `process.exec` Sink — Broker-Spawned Confined Child | v1.7 | 6/6 | Complete   | 2026-07-17 |
+| 32. `process.exec` Sink — Broker-Spawned Confined Child | v1.7 | 6/6 | Complete    | 2026-07-17 |
 | 33. Filesystem Read/Write Breadth | v1.7 | 0/TBD | Not started | - |
 | 34. Regression & Live Proof (v1.7 DONE) | v1.7 | 0/TBD | Not started | - |
