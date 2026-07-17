@@ -583,7 +583,10 @@ async fn handle_connection(
                 .lock()
                 .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?
                 .clone();
-            let decision = evaluate_plan_node_and_record(
+            // The reduced planner wire (PlanNodeDecisionReduced) never carries
+            // the minted exec-output ValueId (T-04-02) — discard it here;
+            // the planner connection gets only the `blocked` projection.
+            let (decision, _output_value_id) = evaluate_plan_node_and_record(
                 plan_node,
                 &conn,
                 &key[..],
@@ -658,7 +661,10 @@ async fn evaluate_plan_node_and_record(
     session_status: &SessionStatus,
     last_event_id: &mut Uuid,
     last_event_hash: &mut String,
-) -> anyhow::Result<runtime_core::ExecutorDecision> {
+) -> anyhow::Result<(
+    runtime_core::ExecutorDecision,
+    Option<runtime_core::plan_node::ValueId>,
+)> {
     // The broker mints the effect identity (HARD-06) and passes it into the
     // executor — the executor never mints a Uuid (DESIGN §4 rule 2).
     let effect_id = Uuid::new_v4();
@@ -1028,7 +1034,46 @@ async fn evaluate_plan_node_and_record(
         }
     }
 
-    Ok(decision)
+    // 32-05 (EXEC-02/EXEC-03): on an Allowed `process.exec` decision, invoke
+    // the live sink (mirrors the file.create/email.send Allowed-dispatch arms
+    // above — same two-phase authorize-then-effect ordering, same head-
+    // advance discipline), then mint the captured combined output as a
+    // genuinely-rooted untrusted ValueNode (DESIGN §2.4/M1: the mint call
+    // site MUST live HERE in server.rs, never inside the sink module —
+    // `invoke_process_exec` itself never mints, Gate 3 stays clean for that
+    // module). `conn` is passed directly (never pre-locked) — invoke_process_exec
+    // locks internally only for its own append_event call, never across the
+    // spawn/capture/timeout `.await` sequence.
+    let mut output_value_id: Option<runtime_core::plan_node::ValueId> = None;
+    if matches!(decision, runtime_core::ExecutorDecision::Allowed)
+        && plan_node.sink.0 == "process.exec"
+    {
+        let (sink_event_id, sink_hash, combined_output) =
+            crate::sinks::process_exec::invoke_process_exec(
+                conn,
+                key,
+                value_store,
+                session_id,
+                effect_id,
+                plan_node,
+                workspace_root,
+                *last_event_id,
+                last_event_hash,
+            )
+            .await?;
+        *last_event_id = sink_event_id;
+        *last_event_hash = sink_hash;
+
+        // mint_from_exec roots provenance_chain[0] on `sink_event_id` — the
+        // SAME `process_exited` event id invoke_process_exec just appended
+        // above (does NOT append a fresh event of its own; the genuine,
+        // non-stapled "one event, both roles" anchor — DESIGN §2.1/§2.4).
+        let value_id =
+            crate::quarantine::mint_from_exec(value_store, session_id, combined_output, sink_event_id)?;
+        output_value_id = Some(value_id);
+    }
+
+    Ok((decision, output_value_id))
 }
 
 /// The `CreateSession`-over-IPC disabled-path `Error` response (v1.6
@@ -1503,7 +1548,7 @@ pub async fn dispatch_request(
             // `evaluate_plan_node_and_record` is the SAME evaluation-and-
             // durable-recording entry point both paths share; only the
             // RESPONSE shape differs by caller.
-            let decision = evaluate_plan_node_and_record(
+            let (decision, output_value_id) = evaluate_plan_node_and_record(
                 &plan_node,
                 conn,
                 key,
@@ -1517,14 +1562,14 @@ pub async fn dispatch_request(
             .await?;
 
             // Only send the decision AFTER the durable append (and any sink
-            // invocation) succeeded.
-            // output_value_id: None for now — Task 3 (32-05) replaces this
-            // with the real minted handle on an Allowed process.exec decision.
+            // invocation) succeeded. output_value_id is Some(..) ONLY on an
+            // Allowed process.exec decision (32-05) — None for every other
+            // sink/decision (zero behavior change for file.create/email.send).
             send_response(
                 stream,
                 &BrokerResponse::PlanNodeDecision {
                     decision,
-                    output_value_id: None,
+                    output_value_id,
                 },
             )
             .await?;
