@@ -41,7 +41,7 @@ pub mod seccomp;
 
 pub use landlock::{deny_all_filesystem, exec_child_ruleset};
 pub use rlimits::apply_rlimits;
-pub use seccomp::apply_worker_filter;
+pub use seccomp::{apply_worker_filter, exec_child_filter};
 
 /// Apply all confinement primitives to the calling process.
 ///

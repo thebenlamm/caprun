@@ -116,3 +116,98 @@ pub fn apply_worker_filter() -> std::io::Result<()> {
 pub fn apply_worker_filter() -> std::io::Result<()> {
     Ok(())
 }
+
+/// seccomp-bpf filter for a broker-spawned `process.exec` child (the
+/// `caprun-exec-launcher`, applied to itself post-fork, pre-exec — DESIGN
+/// §1.3 Option B).
+///
+/// Identical to `apply_worker_filter()` EXCEPT it drops the two
+/// `SYS_execve`/`SYS_execveat` deny entries: the launcher's own upcoming
+/// `execve` of the target binary must succeed. Denying execve here would
+/// prevent the launcher from ever running the target.
+///
+/// WHY execve is not denied: a stateless BPF filter cannot express
+/// "allow exactly one future execve, then deny all subsequent ones" — there
+/// is no recursion-deny realizable with seccomp-bpf alone (DESIGN §1.4 B1
+/// resolution). The bound on what a grandchild (spawned by the target
+/// binary itself) can do is NOT a seccomp execve-deny — it is the
+/// combination of Landlock's Execute allow-list (`exec_child_ruleset`, which
+/// only permits executing enumerated system-path binaries, never anything
+/// under the workspace) and this same persistent socket(AF_INET/AF_INET6)
+/// deny, which survives execve unchanged (kernel semantics: seccomp filters
+/// are inherited across execve — DESIGN §9 A5, the single load-bearing
+/// kernel-semantics assumption here, empirically confirmed by the 32-06
+/// confinement negative test).
+///
+/// The socket(AF_INET/AF_INET6) deny block below is copied byte-for-byte
+/// from `apply_worker_filter()` — same rules, same match/mismatch actions,
+/// same BpfProgram conversion, same `seccompiler::apply_filter` call (which
+/// still sets NO_NEW_PRIVS internally).
+#[cfg(target_os = "linux")]
+pub fn exec_child_filter() -> std::io::Result<()> {
+    use seccompiler::{
+        BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
+        SeccompRule,
+    };
+    use std::convert::TryInto;
+
+    let filter = SeccompFilter::new(
+        vec![
+            // NO execve/execveat deny here — the launcher's own upcoming
+            // execve() must succeed (DESIGN §1.4 B1 resolution: no seccomp
+            // recursion-deny is realizable with a stateless BPF program;
+            // grandchild bound is Landlock Execute allow-list + this same
+            // persistent net-deny, not a seccomp execve-deny).
+            //
+            // Deny socket(AF_INET, ...) — blocks outbound TCP/UDP IPv4
+            (
+                libc::SYS_socket,
+                vec![
+                    SeccompRule::new(vec![SeccompCondition::new(
+                        0,
+                        SeccompCmpArgLen::Dword,
+                        SeccompCmpOp::Eq,
+                        libc::AF_INET as u64,
+                    )
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?])
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::Other, format!("{e}"))
+                    })?,
+                    // Deny socket(AF_INET6, ...) — blocks outbound TCP/UDP IPv6
+                    SeccompRule::new(vec![SeccompCondition::new(
+                        0,
+                        SeccompCmpArgLen::Dword,
+                        SeccompCmpOp::Eq,
+                        libc::AF_INET6 as u64,
+                    )
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?])
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::Other, format!("{e}"))
+                    })?,
+                ],
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        SeccompAction::Allow, // mismatch: allow all other syscalls (including execve)
+        SeccompAction::Errno(libc::EPERM as u32), // match: deny with EPERM
+        std::env::consts::ARCH
+            .try_into()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?,
+    )
+    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?;
+
+    let program: BpfProgram = filter
+        .try_into()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?;
+
+    // apply_filter sets PR_SET_NO_NEW_PRIVS internally before installing the filter.
+    seccompiler::apply_filter(&program)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))
+}
+
+/// No-op stub on non-Linux targets.
+#[cfg(not(target_os = "linux"))]
+pub fn exec_child_filter() -> std::io::Result<()> {
+    Ok(())
+}
