@@ -200,12 +200,12 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
   2. A tainted value routed into `file.create`'s `contents` arg is now handled under the same I2/slot-type discipline as other sensitive args (blocked or slot-type-mismatched as appropriate), closing the previously-unconstrained gap.
   3. Existing trusted-content `file.create` flows continue to succeed unchanged — no false-positive block on legitimate `contents` values.
 
-**Plans**: 3 plans
+**Plans**: 2/3 plans executed
 
 **Wave 1** *(parallel — disjoint crates/files)*
 
-- [ ] 29-01-PLAN.md — HARDEN-03 groundwork (`audit.rs`): `sent_plan_nodes` CAS table + idempotent migration + content-derived `plan_node_idempotency_key` fn + unit tests
-- [ ] 29-03-PLAN.md — HARDEN-05 (`executor/sink_sensitivity.rs`): `file.create` `contents` → content-sensitive + `expected_role` `Some(&["path"])`, inverted test + over-widening guard
+- [x] 29-01-PLAN.md — HARDEN-03 groundwork (`audit.rs`): `sent_plan_nodes` CAS table + idempotent migration + content-derived `plan_node_idempotency_key` fn + unit tests
+- [x] 29-03-PLAN.md — HARDEN-05 (`executor/sink_sensitivity.rs`): `file.create` `contents` → content-sensitive + `expected_role` `Some(&["path"])`, inverted test + over-widening guard
 
 **Wave 2** *(depends on 29-01)*
 
@@ -258,5 +258,5 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 | 26. Security Hardening Design Gate | v1.6 | 2/2 | Complete    | 2026-07-12 |
 | 27. Session & Connection Integrity Hardening | v1.6 | 2/2 | Complete    | 2026-07-12 |
 | 28. Authenticated Audit Chain | v1.6 | 5/5 | Complete   | 2026-07-13 |
-| 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 0/3 | Not started | - |
+| 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 2/3 | In Progress|  |
 | 30. Regression & Live Proof | v1.6 | 0/? | Not started | - |

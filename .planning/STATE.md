@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: — Security Hardening
-current_phase: 28
+current_phase: 29
+current_phase_name: sink-path-hardening-replay-cas-contents-slot
 status: executing
 stopped_at: Completed 28-05-PLAN.md
-last_updated: "2026-07-17T17:00:30.330Z"
-last_activity: 2026-07-13
-last_activity_desc: Phase 28 marked complete
+last_updated: "2026-07-17T17:02:56.269Z"
+last_activity: 2026-07-17
+last_activity_desc: Phase 29 execution started
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 9
+  total_plans: 12
   completed_plans: 9
   percent: 60
-current_phase_name: authenticated-audit-chain
 ---
 
 # Project State
@@ -24,14 +24,14 @@ current_phase_name: authenticated-audit-chain
 See: .planning/PROJECT.md (updated 2026-07-12)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, (v1.5, SHIPPED) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into (closing the v1.4 T2 residual), and now (v1.6) hardening the standing residuals that made several of those guarantees "true only incidentally" into enforced guarantees.
-**Current focus:** Phase 28 — authenticated-audit-chain
+**Current focus:** Phase 29 — sink-path-hardening-replay-cas-contents-slot
 
 ## Current Position
 
-Phase: 28 — COMPLETE
-Plan: 5 of 5
-Status: Ready to execute
-Last activity: 2026-07-13 — Phase 28 marked complete
+Phase: 29 (sink-path-hardening-replay-cas-contents-slot) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 29
+Last activity: 2026-07-17 — Phase 29 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
