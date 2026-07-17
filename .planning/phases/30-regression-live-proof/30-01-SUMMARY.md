@@ -142,3 +142,12 @@ None - no external service configuration required.
 ---
 *Phase: 30-regression-live-proof*
 *Completed: 2026-07-17*
+
+## Self-Check: PASSED
+
+- FOUND: `scripts/verify-harden04-featureless.sh`
+- FOUND: `.planning/phases/30-regression-live-proof/30-REGRESSION-AUDIT.md`
+- FOUND: `.planning/phases/30-regression-live-proof/30-01-SUMMARY.md`
+- FOUND commit: `ce0f880` (Task 1)
+- FOUND commit: `bdcb78b` (Task 2)
+- FOUND commit: `777a781` (SUMMARY.md)
