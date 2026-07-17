@@ -365,6 +365,53 @@ fn migrate_sent_plan_nodes_schema(conn: &rusqlite::Connection) -> Result<()> {
     Ok(())
 }
 
+/// Content-derived idempotency key for the trusted (Allowed) sink-dispatch
+/// CAS row (v1.6 Phase 29, HARDEN-03).
+///
+/// Computed as `SHA256( sink.0 || sorted( (arg_name, value_id) pairs ) )` —
+/// content-derived from the RESOLVED plan-node handles the broker already
+/// owns, NEVER from `effect_id` (D-08/§c: `effect_id` is minted fresh via
+/// `Uuid::new_v4()` on every dispatch call, including every replay, so an
+/// `effect_id`-keyed CAS would catch zero replays — proven unsound, not a
+/// style choice).
+///
+/// Args are sorted by `name` before hashing (mirroring
+/// `confirmation::combined_digest`'s `sort_by(|a,b| a.0.cmp(b.0))`
+/// discipline) — this is the load-bearing step that buys order-invariance:
+/// `plan_node_idempotency_key(sink, [a, b])` ==
+/// `plan_node_idempotency_key(sink, [b, a])`.
+///
+/// Implementation-choice pin: this uses the SIMPLER direct-concatenation
+/// shape, NOT `combined_digest`'s fixed-width-inner-hash-per-field
+/// discipline. `combined_digest` hardens against a partition-blindness
+/// collision (`("ab","c")` vs `("a","bc")`) because it hashes
+/// ATTACKER-INFLUENCEABLE literal strings of arbitrary length. This function
+/// hashes `arg.value_id.0.to_string()`, which is ALWAYS a fixed-width
+/// 36-char hyphenated UUID string, and `arg.name`, which is schema-fixed
+/// (`sink_schema.rs`'s `required`/`allowed` sets) — neither field has
+/// variable-length attacker-controlled content, so there is no
+/// partition-blindness collision risk here (29-RESEARCH.md Assumption A2).
+/// The pre-hash sort is kept — it is what buys order-invariance.
+///
+/// # Scope caveat (D-08, stated unsoftened)
+/// This key is `value_id`-SCOPED (per-plan-node), NOT resolved-literal-
+/// scoped: it deliberately does NOT catch a worker that mints a NEW
+/// `value_id` resolving to the identical literal (e.g. re-resolving
+/// `mint_from_intent`/`mint_from_derivation` for "the same" recipient) — an
+/// attacker who can mint fresh `ValueId`s can still cause N distinct sends.
+/// This is out of v1.6 scope (tracked as a future effects-budget
+/// obligation), not a gap in this function's own correctness.
+pub(crate) fn plan_node_idempotency_key(
+    _sink: &runtime_core::SinkId,
+    _args: &[runtime_core::PlanArg],
+) -> String {
+    // RED stub (Task 2, TDD): deliberately WRONG — a constant, ignoring
+    // both inputs — so the order-invariance/sink-scoping/value-distinguishing/
+    // determinism tests below FAIL against this stub before the real
+    // content-derived implementation lands.
+    "RED-STUB-NOT-IMPLEMENTED".to_string()
+}
+
 /// Open (or create) the audit database at `path` and run schema DDL.
 ///
 /// Uses rusqlite with the `bundled` feature (no system SQLite dep).
@@ -1750,6 +1797,86 @@ mod tests {
             !verify_chain(&conn, &session_id.to_string(), TEST_KEY),
             "a session with events but NO chain_anchor row must fail closed \
              (untrusted until re-anchored) — never silently pass, never panic"
+        );
+    }
+
+    // ── Task 2 (HARDEN-03): plan_node_idempotency_key ──────────────────────
+
+    fn test_sink(s: &str) -> runtime_core::SinkId {
+        runtime_core::SinkId(s.to_string())
+    }
+
+    fn test_arg(name: &str, value_id: uuid::Uuid) -> runtime_core::PlanArg {
+        runtime_core::PlanArg {
+            name: name.to_string(),
+            value_id: runtime_core::ValueId(value_id),
+        }
+    }
+
+    /// Order-invariance: swapping the input arg order must not change the
+    /// key — this is what the pre-hash sort buys.
+    #[test]
+    fn idempotency_key_is_order_invariant() {
+        let sink = test_sink("email.send");
+        let v_to = Uuid::new_v4();
+        let v_body = Uuid::new_v4();
+        let arg_a = test_arg("to", v_to);
+        let arg_b = test_arg("body", v_body);
+
+        let forward = plan_node_idempotency_key(&sink, &[arg_a.clone(), arg_b.clone()]);
+        let reversed = plan_node_idempotency_key(&sink, &[arg_b, arg_a]);
+
+        assert_eq!(
+            forward, reversed,
+            "swapping arg order must not change the idempotency key"
+        );
+    }
+
+    /// Sink-scoping: identical args, different `sink.0`, must produce a
+    /// DIFFERENT key.
+    #[test]
+    fn idempotency_key_is_sink_scoped() {
+        let value_id = Uuid::new_v4();
+        let args = [test_arg("to", value_id)];
+
+        let key_email = plan_node_idempotency_key(&test_sink("email.send"), &args);
+        let key_other = plan_node_idempotency_key(&test_sink("file.create"), &args);
+
+        assert_ne!(
+            key_email, key_other,
+            "the same args under a different sink must produce a different key"
+        );
+    }
+
+    /// Value-distinguishing: same sink + arg name, different `value_id`,
+    /// must produce a DIFFERENT key.
+    #[test]
+    fn idempotency_key_distinguishes_value_id() {
+        let sink = test_sink("email.send");
+        let key_a = plan_node_idempotency_key(&sink, &[test_arg("to", Uuid::new_v4())]);
+        let key_b = plan_node_idempotency_key(&sink, &[test_arg("to", Uuid::new_v4())]);
+
+        assert_ne!(
+            key_a, key_b,
+            "the same sink + arg name with a DIFFERENT value_id must produce a different key"
+        );
+    }
+
+    /// Determinism: identical inputs (same sink, same args, same order)
+    /// produce the identical key across repeated calls.
+    #[test]
+    fn idempotency_key_is_deterministic() {
+        let sink = test_sink("email.send");
+        let v_to = Uuid::new_v4();
+        let v_body = Uuid::new_v4();
+        let args = [test_arg("to", v_to), test_arg("body", v_body)];
+
+        let key_first = plan_node_idempotency_key(&sink, &args);
+        let key_second = plan_node_idempotency_key(&sink, &args);
+
+        assert_eq!(
+            key_first, key_second,
+            "identical inputs must produce the identical key across calls"
         );
     }
 }
