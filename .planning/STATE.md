@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: — Security Hardening
-current_phase: 29
-current_phase_name: sink-path-hardening-replay-cas-contents-slot
+current_phase: 30
+current_phase_name: Regression & Live Proof
 status: executing
 stopped_at: Completed 28-05-PLAN.md
-last_updated: "2026-07-17T17:02:56.269Z"
+last_updated: "2026-07-17T17:41:41.692Z"
 last_activity: 2026-07-17
-last_activity_desc: Phase 29 execution started
+last_activity_desc: Phase 29 complete, transitioned to Phase 30
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 12
-  completed_plans: 9
-  percent: 60
+  completed_plans: 12
+  percent: 80
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-12)
 
 ## Current Position
 
-Phase: 29 (sink-path-hardening-replay-cas-contents-slot) — EXECUTING
-Plan: 1 of 3
+Phase: 30 — Regression & Live Proof
+Plan: Not started
 Status: Executing Phase 29
-Last activity: 2026-07-17 — Phase 29 execution started
+Last activity: 2026-07-17 — Phase 29 complete, transitioned to Phase 30
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -39,7 +39,7 @@ Progress: [░░░░░░░░░░] 0%
 
 **Velocity:**
 
-- Total plans completed: 51 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 [Phases 12-17] + v1.4: 14 [Phases 18-22]) + v1.5: 8 [Phases 23-25]
+- Total plans completed: 54 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 [Phases 12-17] + v1.4: 14 [Phases 18-22]) + v1.5: 8 [Phases 23-25]
 - Average duration: — min
 
 **By Phase (v1.2):**
@@ -65,6 +65,7 @@ Progress: [░░░░░░░░░░] 0%
 | 26-30 | 0 | - | - |
 | 26 | 2 | - | - |
 | 27 | 2 | - | - |
+| 29 | 3 | - | - |
 
 *Updated after each plan completion. v1.3 (phases 12-17) shipped 2026-07-09 — 21/21 plans complete. v1.4 (phases 18-22) shipped 2026-07-11 — 14/14 plans complete. v1.5 (phases 23-25) shipped 2026-07-12 — 8/8 plans complete. v1.6 (phases 26-30) roadmapped 2026-07-12, no plans yet.*
 | Phase 14 P02 | 50min | 3 tasks | 10 files |
