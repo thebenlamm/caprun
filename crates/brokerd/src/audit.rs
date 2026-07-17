@@ -198,6 +198,27 @@ CREATE TABLE IF NOT EXISTS chain_anchor (
     event_count    INTEGER NOT NULL,
     mac            TEXT NOT NULL
 ) STRICT;
+
+-- Replay-safe CAS row for the trusted (never-blocked) Allowed-dispatch sink
+-- path (v1.6 Phase 29, HARDEN-03). `idempotency_key` is the PRIMARY KEY — its
+-- value is `plan_node_idempotency_key(sink, args)` below, a CONTENT-derived
+-- digest over `sink.0` + sorted `(arg_name, value_id)` pairs, NEVER
+-- `effect_id` (D-08/§c: `effect_id` is minted fresh via `Uuid::new_v4()` on
+-- EVERY dispatch call, including every replay, so an `effect_id`-keyed CAS
+-- would never fire — it is proven unsound, not merely a style choice). A
+-- replayed `SubmitPlanNode` carrying the IDENTICAL resolved plan-node content
+-- computes the SAME key and hits the PRIMARY KEY constraint on `INSERT`,
+-- which is how the dispatch site (plan 29-02, `server.rs`) detects and
+-- suppresses the duplicate send BEFORE any SMTP socket opens. `effect_id`/
+-- `session_id`/`sent_at` are carried for audit legibility only (not part of
+-- the CAS identity). Deliberately NOT backfilled for a legacy (pre-Phase-29)
+-- database — see `migrate_sent_plan_nodes_schema`'s doc comment.
+CREATE TABLE IF NOT EXISTS sent_plan_nodes (
+    idempotency_key TEXT PRIMARY KEY,
+    effect_id       TEXT NOT NULL,
+    session_id      TEXT NOT NULL,
+    sent_at         TEXT NOT NULL
+) STRICT;
 ";
 
 /// Idempotently widen a pre-existing `pending_confirmations` table with the
@@ -303,6 +324,47 @@ fn migrate_chain_anchor_schema(conn: &rusqlite::Connection) -> Result<()> {
     Ok(())
 }
 
+/// Idempotently verify the `sent_plan_nodes` table exists (v1.6 Phase 29,
+/// HARDEN-03) — the presence-check half of a migration for a pre-existing
+/// (pre-Phase-29) database.
+///
+/// Mirrors `migrate_chain_anchor_schema` above verbatim: `sent_plan_nodes` is
+/// a WHOLE NEW table with all four columns present from its very first
+/// introduction — there is no column-widening case to handle. The single DDL
+/// statement in `SCHEMA_DDL` above (run via `execute_batch` on every
+/// `open_audit_db` call, BEFORE this function) is already idempotent and
+/// already creates the table on a legacy database missing it entirely — so
+/// this function's own job is the defensive, explicit `sqlite_master`-gated
+/// presence check: it fails loudly (never silently) if the table is somehow
+/// still absent after `SCHEMA_DDL` ran, rather than duplicating the DDL
+/// statement a second time in this file.
+///
+/// Deliberately does NOT backfill `sent_plan_nodes` rows for a legacy
+/// database's past Allowed-dispatch sends — a pre-Phase-29 send was never
+/// CAS-protected in the first place (this is forward-looking hardening, not
+/// retroactive), exactly analogous to `chain_anchor`'s own "no backfill" rule
+/// above: a legacy replayed plan node was never protected anyway (§c), and
+/// an idempotent migration that only ADDS a table cannot corrupt an existing
+/// chain.
+fn migrate_sent_plan_nodes_schema(conn: &rusqlite::Connection) -> Result<()> {
+    let table_exists: bool = match conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sent_plan_nodes'",
+        [],
+        |_row| Ok(()),
+    ) {
+        Ok(()) => true,
+        Err(rusqlite::Error::QueryReturnedNoRows) => false,
+        Err(e) => return Err(anyhow::Error::from(e)),
+    };
+
+    if !table_exists {
+        return Err(anyhow::anyhow!(
+            "sent_plan_nodes table missing after SCHEMA_DDL ran — open_audit_db invariant violated"
+        ));
+    }
+    Ok(())
+}
+
 /// Open (or create) the audit database at `path` and run schema DDL.
 ///
 /// Uses rusqlite with the `bundled` feature (no system SQLite dep).
@@ -317,6 +379,7 @@ pub fn open_audit_db(path: &str) -> Result<rusqlite::Connection> {
     conn.execute_batch(SCHEMA_DDL)?;
     migrate_pending_confirmations_schema(&conn)?;
     migrate_chain_anchor_schema(&conn)?;
+    migrate_sent_plan_nodes_schema(&conn)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     Ok(conn)
 }
@@ -1290,6 +1353,55 @@ mod tests {
             widened_again.is_ok(),
             "re-opening an already-migrated DB must not error, and a second \
              widened INSERT must still succeed: {widened_again:?}"
+        );
+
+        drop(conn2);
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// (Task 1, HARDEN-03) `sent_plan_nodes` is a WHOLE NEW table, unlike
+    /// `pending_confirmations`'s column-widening case above — the migration
+    /// idempotency question here is simpler: does re-running `open_audit_db`
+    /// on an already-migrated DB (with the table already present) error?
+    /// It must not — mirrors the `chain_anchor` presence-check discipline.
+    #[test]
+    fn sent_plan_nodes_migration_is_idempotent() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("caprun_sent_plan_nodes_{}.db", Uuid::new_v4()));
+
+        // First open: `open_audit_db` runs `SCHEMA_DDL` (creates the table
+        // fresh) then `migrate_sent_plan_nodes_schema`'s presence check.
+        let conn = open_audit_db(path.to_str().unwrap()).expect("open_audit_db (first)");
+
+        let inserted = conn.execute(
+            "INSERT INTO sent_plan_nodes (idempotency_key, effect_id, session_id, sent_at) \
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                "deadbeef-idempotency-key",
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+                Utc::now().to_rfc3339(),
+            ],
+        );
+        assert!(
+            inserted.is_ok(),
+            "sent_plan_nodes must accept an insert on the first-created table: {inserted:?}"
+        );
+        drop(conn);
+
+        // Second open (fresh connection, simulating a broker restart against
+        // the same DB file): re-running `open_audit_db` on an
+        // already-migrated DB must not error, and the prior row must still
+        // be present (no data loss / no table recreation).
+        let conn2 =
+            open_audit_db(path.to_str().unwrap()).expect("open_audit_db (second, already-migrated) must not error");
+
+        let count: i64 = conn2
+            .query_row("SELECT COUNT(*) FROM sent_plan_nodes", [], |row| row.get(0))
+            .expect("count sent_plan_nodes rows");
+        assert_eq!(
+            count, 1,
+            "the row inserted before the second open must survive re-migration"
         );
 
         drop(conn2);
