@@ -35,6 +35,44 @@ milestone audit PASSED (8/8 requirements, 5/5 cross-phase seams wired).
 
 Prior: v1.5 Slot-Type Binding (T2) — 2026-07-12; v1.4 Trust-Boundary Integrity — 2026-07-11.
 
+## Current Milestone: v1.7 — Effect Breadth I (`process.exec` + Filesystem Breadth)
+
+**Goal:** Give caprun the two effect primitives a coding agent minimally needs —
+running a command in the sandbox with **captured + tainted** output, and
+reading/editing repo files beyond single-file create — each routed through the
+same plan-node → taint → executor(I2) → audit discipline. First milestone toward
+the **Safe Coding Agent** anchor use case (confirmed with Ben 2026-07-17).
+
+**Target features:**
+- **`process.exec` sink** — a **broker-spawned** confined child process (the
+  confined worker cannot `execve` per seccomp deny-execve, so exec is mediated
+  like the v1.4 caprun-planner sidecar / adapter-fs fd-pass); stdout/stderr are
+  captured and **taint-minted** (raw output → untrusted, mirroring
+  `mint_from_read`), so exec output feeding a later sink arg is I2-governed.
+- **Filesystem breadth** — read many repo files + **write/edit existing** files
+  (beyond `file.create`'s `O_EXCL` new-file-only), via the adapter-fs fd-passing
+  seam, staying inside `WorkspaceRoot` / `openat2(RESOLVE_BENEATH)`.
+- **Design gate first (Phase 31):** a DESIGN doc for the confined-child-exec +
+  fs-write model, cleared by a **fresh non-self adversarial code-trace** before
+  ANY TCB code — standing precedent (v1.0 P2, v1.2 P8, v1.3 P12, v1.4 P18,
+  v1.5 P23, v1.6 P26). `process.exec` under Landlock+seccomp is the riskiest
+  primitive to date; the orchestrator (not a gsd-executor) owns that review spawn.
+- **Live proof on real Linux:** an exec whose tainted output routes to a
+  sensitive sink arg is deterministically **Blocked**; a clean path is Allowed;
+  the audit DAG shows a genuine (non-stapled) taint chain.
+
+**Explicitly deferred (NOT v1.7):** `git`/`github.pr` sink → v1.8 · `http.request`
+authorized egress → v1.8 · real LLM planner loop → v1.9 · declarative policy file /
+thin SDK / audit-DAG viewer / packaging → v1.10+. (Candidate sequence in
+`planning-docs/CANDIDATE-v1.7plus-productization-sketch.md`, treated as input, not
+locked scope.)
+
+**Key context:** `process.exec` fundamentally changes the confinement model — this
+is why it opens with a design gate + adversarial review rather than a bare "add a
+sink" plan. Anchor A (Safe Coding Agent) drives the priority: exec (build/test/lint)
++ fs edit are exactly the primitives an agent needs before git/PR (v1.8) makes the
+irreversible external effect worth gating.
+
 ## Shipped Milestone: v1.6 — Security Hardening (close the residuals)
 
 **✅ SHIPPED 2026-07-17 — all 8 requirements Complete, milestone audit PASSED, proven live on real Linux. Full detail archived in `milestones/v1.6-ROADMAP.md` + `milestones/v1.6-REQUIREMENTS.md` + `milestones/v1.6-MILESTONE-AUDIT.md`. Next milestone: run `/gsd-new-milestone` (a v1.7 productization sketch exists at `planning-docs/CANDIDATE-v1.7plus-productization-sketch.md`).**
@@ -522,32 +560,43 @@ traceability archived in `.planning/milestones/v1.5-REQUIREMENTS.md`.
 
 ### Active
 
-**v1.6 — Security Hardening (close the residuals).** Five TCB-local hardening
-items, each closing a standing DOC-01 caveat (no new external-effect surface):
+**v1.7 — Effect Breadth I (`process.exec` + Filesystem Breadth).** The first two
+effect primitives of the Safe Coding Agent anchor, each through the plan-node →
+taint → executor(I2) → audit path:
 
-- [ ] Demote-at-RequestFd — fd release itself carries the I1 draft-only
-  consequence, reconciled with the CONTROL-01 clean path
-- [ ] `verify_chain` authentication — keyed MAC and/or externally-anchored
-  chain head (forge-resistant, not just corruption-evident)
-- [ ] Allowed-path replay CAS — idempotency key / compare-and-swap on the
-  trusted `email.send` path (at-most-once)
-- [ ] Compile-out the `CreateSession` forced-Active mint — build-excluded
-  path, not a runtime default-deny flag
-- [ ] Constrain the `file.create` `contents` slot — expected-role /
-  sensitivity treatment for the currently-unconstrained arg
+- [ ] `process.exec` sink — broker-spawned confined child; captured stdout/stderr
+  taint-minted as untrusted (mirrors `mint_from_read`)
+- [ ] Exec-output taint enforcement — tainted exec output routed to a sensitive
+  sink arg is deterministically Blocked (I2), on a genuine audit-DAG chain
+- [ ] Filesystem read breadth — read many workspace files beyond the current
+  single-fd path, inside `WorkspaceRoot` / `RESOLVE_BENEATH`
+- [ ] Filesystem write/edit — modify existing files (beyond `file.create`'s
+  `O_EXCL` new-file-only), still fail-closed and confined to `WorkspaceRoot`
+- [ ] DESIGN gate — reviewed DESIGN doc (confined-child-exec + fs-write model)
+  clears a fresh non-self adversarial code-trace before any TCB code
+- [ ] Live proof on real Linux — exec-tainted Block + clean Allow + genuine
+  taint chain, via `scripts/mailpit-verify.sh` (or an exec-scoped equivalent)
 
-Per standing precedent, v1.6 opens with a design-gate phase before any TCB
-change. Breadth (Git/GitHub adapter, test adapter, patch/PR, workspace
-snapshots) deferred to **v1.7** (see Out of Scope).
+Per standing precedent, v1.7 opens with a design-gate phase before any TCB
+change. `git`/`github.pr`, `http.request`, the real LLM planner loop, and
+policy/SDK/packaging are deferred to **v1.8+** (see Out of Scope).
 
 ### Out of Scope
 
 Non-goals, reviewed at each milestone close (v0/v1.1/v1.2/v1.3) — still valid
 as of 2026-07-07 unless noted:
 
-- Git / GitHub adapters, test adapter, patch/PR, workspace snapshots — the
-  PLAN.md "v1" breadth bucket; **scoped for v1.7** (deferred out of v1.6 to
-  keep the security-hardening milestone coherent and right-sized, 2026-07-12)
+- `process.exec` sink + filesystem read/write breadth — **IN SCOPE as v1.7**
+  (Effect Breadth I; the first primitives of the Safe Coding Agent anchor,
+  2026-07-17)
+- Git / GitHub adapters (`github.pr`), `http.request` authorized egress, test
+  adapter, patch/PR, workspace snapshots — the PLAN.md "v1" breadth bucket;
+  **deferred to v1.8+** (git/PR is the irreversible external effect that makes
+  I2/confirmation worth gating, but it comes *after* the exec+fs primitives an
+  agent needs to produce the change — 2026-07-17)
+- Real LLM planner loop (multi-step tool-use on the v1.4 sidecar seam),
+  declarative policy file, thin SDK/CLI, audit-DAG viewer, packaging —
+  deferred to **v1.9/v1.10+** per the productization sketch (2026-07-17)
 - Cedar policy engine — simple TOML/rules for sink access is fine; I2 stays in
   Rust (still true through v1.3 — the executor's `sink_effect_class` table
   remains hardcoded, not policy-driven)
@@ -840,7 +889,16 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-17 after v1.6 "Security Hardening (close the residuals)"
+*Last updated: 2026-07-17 after starting v1.7 "Effect Breadth I
+(`process.exec` + Filesystem Breadth)" (`/gsd-new-milestone`). Anchor use case
+confirmed with Ben: **A — Safe Coding Agent**. v1.7 scope = the `process.exec`
+sink (broker-spawned confined child, tainted stdout/stderr) + filesystem
+read/write breadth beyond `file.create`, each through the plan-node →
+taint → executor(I2) → audit path, opened by a design-gate phase (Phase 31)
+per standing precedent. git/`github.pr`, `http.request`, the real LLM planner
+loop, and policy/SDK/packaging deferred to v1.8+. Phase numbering continues
+from 30.
+Prior: 2026-07-17 after v1.6 "Security Hardening (close the residuals)"
 SHIPPED — all 5 phases (26-30) complete, turning the five standing TCB-local
 residuals v1.1–v1.5 documented as accepted caveats into enforced guarantees
 (HARDEN-01 demote-at-RequestFd, HARDEN-02 keyed-MAC audit chain, HARDEN-03

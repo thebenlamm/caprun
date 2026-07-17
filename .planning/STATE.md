@@ -1,20 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.6
-milestone_name: — Security Hardening
-current_phase: 6
-status: Awaiting next milestone
-stopped_at: Completed 28-05-PLAN.md
-last_updated: "2026-07-17T18:19:50.745Z"
+milestone: v1.7
+milestone_name: Effect Breadth I (process.exec + Filesystem Breadth)
+status: planning
+last_updated: "2026-07-17T19:53:36.137Z"
 last_activity: 2026-07-17
-last_activity_desc: Milestone v1.6 completed and archived
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 14
-  completed_plans: 14
-  percent: 100
-current_phase_name: regression-live-proof
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -28,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-07-12)
 
 ## Current Position
 
-Phase: Milestone v1.6 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-07-17 — Milestone v1.6 completed and archived
+Status: Defining requirements
+Last activity: 2026-07-17 — Milestone v1.7 started
 
 ## Performance Metrics
 
