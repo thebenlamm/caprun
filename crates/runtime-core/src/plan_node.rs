@@ -21,15 +21,20 @@ pub enum TaintLabel {
     /// A raw path string read from a workspace-scoped source (untrusted origin —
     /// a tainted path routes `file.create` and MUST block on the `path` arg).
     PathRaw,
+    /// Raw stdout/stderr captured from a broker-spawned confined exec child
+    /// (untrusted origin — DESIGN-effect-breadth-exec.md §2.2). Always minted
+    /// paired with `ExternalUntrusted`, exactly like the other untrusted-origin
+    /// labels (e.g. `EmailRaw`, `PathRaw`).
+    ExecRaw,
 }
 
 impl TaintLabel {
     /// Returns `true` for labels that signal hostile/external origin.
     ///
     /// `UserTrusted` and `LocalWorkspace` are TRUSTED provenance labels — they do NOT block.
-    /// The six untrusted labels (`ExternalUntrusted`, `EmailRaw`, `PdfRaw`,
-    /// `LlmGenerated`, `WorkerExtracted`, `PathRaw`) return `true` and trigger an
-    /// executor block on routing-sensitive sink arguments (HARD-02).
+    /// The seven untrusted labels (`ExternalUntrusted`, `EmailRaw`, `PdfRaw`,
+    /// `LlmGenerated`, `WorkerExtracted`, `PathRaw`, `ExecRaw`) return `true` and
+    /// trigger an executor block on routing-sensitive sink arguments (HARD-02).
     ///
     /// # Security invariant — exhaustive match (Pitfall 5)
     ///
@@ -44,7 +49,8 @@ impl TaintLabel {
             | TaintLabel::PdfRaw
             | TaintLabel::LlmGenerated
             | TaintLabel::WorkerExtracted
-            | TaintLabel::PathRaw => true,
+            | TaintLabel::PathRaw
+            | TaintLabel::ExecRaw => true,
             TaintLabel::UserTrusted | TaintLabel::LocalWorkspace => false,
         }
     }

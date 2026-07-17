@@ -2,7 +2,7 @@
 ///
 /// Covers:
 ///   PLAN-02/PLAN-03: CaprunIntent typed enum serializes/deserializes correctly
-///   HARD-02: TaintLabel::is_untrusted() returns the correct value for all 8 variants
+///   HARD-02: TaintLabel::is_untrusted() returns the correct value for all 9 variants
 use runtime_core::{CaprunIntent, TaintLabel};
 
 // ── CaprunIntent serde ────────────────────────────────────────────────────────
@@ -76,5 +76,13 @@ fn is_untrusted_path_raw_returns_true() {
     assert!(
         TaintLabel::PathRaw.is_untrusted(),
         "PathRaw is an untrusted workspace-read path — must block on routing-sensitive args"
+    );
+}
+
+#[test]
+fn is_untrusted_exec_raw_returns_true() {
+    assert!(
+        TaintLabel::ExecRaw.is_untrusted(),
+        "ExecRaw is raw output captured from a broker-spawned confined exec child — untrusted origin, must block on sensitive args"
     );
 }
