@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: — Effect Breadth I
 current_phase: 32
-current_phase_name: `process.exec` Sink — Broker-Spawned Confined Child
+current_phase_name: process-exec-sink-broker-spawned-confined-child
 status: executing
 stopped_at: v1.7 roadmap created (Phases 31-34)
-last_updated: "2026-07-17T21:34:44.071Z"
+last_updated: "2026-07-17T21:40:54.180Z"
 last_activity: 2026-07-17
-last_activity_desc: Phase 31 complete, transitioned to Phase 32
+last_activity_desc: Phase 32 execution started
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 2
+  total_plans: 8
   completed_plans: 2
   percent: 25
 ---
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-17)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, (v1.5, SHIPPED) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into (closing the v1.4 T2 residual), (v1.6, SHIPPED) hardening the standing residuals that made several of those guarantees "true only incidentally" into enforced guarantees, and now (v1.7) extending the set of real sinks — `process.exec` (captured+tainted command output) and filesystem read/write breadth — each through the same plan-node → taint → executor(I2) → audit path, toward the Safe Coding Agent anchor.
-**Current focus:** Phase 31 — Effect-Breadth Design Gate
+**Current focus:** Phase 32 — process-exec-sink-broker-spawned-confined-child
 
 ## Current Position
 
-Phase: 32 — `process.exec` Sink — Broker-Spawned Confined Child
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-17 — Phase 31 complete, transitioned to Phase 32
+Phase: 32 (process-exec-sink-broker-spawned-confined-child) — EXECUTING
+Plan: 1 of 6
+Status: Executing Phase 32
+Last activity: 2026-07-17 — Phase 32 execution started
 
 ## Performance Metrics
 
