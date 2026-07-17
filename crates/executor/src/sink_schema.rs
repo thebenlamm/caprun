@@ -55,6 +55,16 @@ pub const KNOWN_SINKS: &[SinkSchema] = &[
         allowed: &["path", "contents"],
         required: &["path", "contents"],
     },
+    SinkSchema {
+        // DESIGN-effect-breadth-exec.md §1.5/§4.1: `command` is required;
+        // `args`/`cwd` are optional. Both `command` and `args` are
+        // routing- AND content-sensitive (sink_sensitivity.rs) — a tainted
+        // value Blocks rather than Denies here; this schema gate only
+        // enforces the arg NAME set, not taint.
+        sink: "process.exec",
+        allowed: &["command", "args", "cwd"],
+        required: &["command"],
+    },
 ];
 
 /// Test-fixture-only sink registry (RESEARCH.md Pitfall 3 / DESIGN §9 Pitfall
@@ -233,5 +243,63 @@ mod tests {
             validate_schema(&n),
             Err(DenyReason::UnknownSink(_))
         ));
+    }
+
+    // -----------------------------------------------------------------
+    // process.exec (EXEC-01/02, DESIGN-effect-breadth-exec.md §1.5/§4.1)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn process_exec_command_only_ok() {
+        let n = node("process.exec", vec![arg("command")]);
+        assert_eq!(validate_schema(&n), Ok(()));
+    }
+
+    #[test]
+    fn process_exec_full_args_ok() {
+        let n = node(
+            "process.exec",
+            vec![arg("command"), arg("args"), arg("cwd")],
+        );
+        assert_eq!(validate_schema(&n), Ok(()));
+    }
+
+    #[test]
+    fn process_exec_missing_command_denied() {
+        let n = node("process.exec", vec![arg("args")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::MissingArg("command".to_string()))
+        );
+    }
+
+    #[test]
+    fn process_exec_unknown_arg_denied() {
+        let n = node("process.exec", vec![arg("command"), arg("env")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::UnknownArg("env".to_string()))
+        );
+    }
+
+    #[test]
+    fn process_exec_duplicate_arg_denied() {
+        let n = node("process.exec", vec![arg("command"), arg("command")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::DuplicateArg("command".to_string()))
+        );
+    }
+
+    #[test]
+    fn exec_shell_fixture_remains_distinct_unknown_sink() {
+        // Regression guard (RESEARCH Pitfall): "exec.shell" is a permanently-
+        // rejected UnknownSink test fixture string (see unknown_sink_denied
+        // above), NOT a collision with the real "process.exec" sink id.
+        let n = node("exec.shell", vec![arg("cmd")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::UnknownSink("exec.shell".to_string()))
+        );
     }
 }
