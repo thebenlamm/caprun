@@ -224,7 +224,11 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
   4. A test/build check proves the forced-Active `CreateSession` path is absent from the built production binary.
   5. A test proves fd release (`RequestFd`) demotes the session, while the CONTROL-01 clean path still succeeds.
 
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 30-01-PLAN.md — Author `scripts/verify-harden04-featureless.sh` (criterion 4 formalized featureless-build proof) + regression-fixture audit sweep (`30-REGRESSION-AUDIT.md`)
+- [ ] 30-02-PLAN.md — Real-Linux live proof of all 5 criteria + fresh v1.6 baseline + `30-VERIFICATION.md` evidence table + human sign-off (orchestrator-run gates)
 
 ## Progress
 
