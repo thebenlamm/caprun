@@ -216,7 +216,20 @@ pub enum BrokerResponse {
     /// `DESIGN-session-trust-coherence.md` §7/§9 residual #3) — never sent to
     /// a `ConnectionRole::Planner` connection, which receives
     /// `PlanNodeDecisionReduced` instead.
-    PlanNodeDecision { decision: runtime_core::ExecutorDecision },
+    ///
+    /// `output_value_id` (32-05, EXEC-02/EXEC-03 wiring): the opaque `ValueId`
+    /// handle to a minted `process.exec` output, `Some(..)` ONLY when
+    /// `plan_node.sink.0 == "process.exec"` AND `decision` is `Allowed` —
+    /// `None` for every other sink/decision (zero behavior change for
+    /// `file.create`/`email.send`). A plain required field, deliberately NOT
+    /// `#[serde(default)]` (Pitfall 8): every construction/destructure site
+    /// must explicitly acknowledge it, so a future new sink cannot silently
+    /// forget to populate/consume the handle. The worker learns only this
+    /// opaque handle, never the raw captured bytes (I1).
+    PlanNodeDecision {
+        decision: runtime_core::ExecutorDecision,
+        output_value_id: Option<runtime_core::plan_node::ValueId>,
+    },
     /// Phase 20 (PLANNER-04) reduced decision signal: the ONLY decision shape
     /// a `ConnectionRole::Planner` connection ever receives for
     /// `SubmitPlanNode` (`DESIGN-session-trust-coherence.md` §7's ruling,

@@ -340,7 +340,7 @@ mod linux_tests {
                 "[REPRO][overlapping] conn#2 SubmitPlanNode response = {submit_resp:?}"
             );
             match submit_resp {
-                BrokerResponse::PlanNodeDecision { decision } => {
+                BrokerResponse::PlanNodeDecision { decision, .. } => {
                     conn2_decision = Some(decision);
                 }
                 other => panic!(
@@ -474,7 +474,7 @@ mod linux_tests {
                 "[REPRO][sequential] conn#2 SubmitPlanNode response = {submit_resp:?}"
             );
             match submit_resp {
-                BrokerResponse::PlanNodeDecision { decision } => {
+                BrokerResponse::PlanNodeDecision { decision, .. } => {
                     conn2_decision = Some(decision);
                 }
                 other => panic!(

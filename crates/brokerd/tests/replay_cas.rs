@@ -318,7 +318,7 @@ async fn allowed_email_send_replay_delivers_once() {
     .await;
     let first_resp = read_resp(&mut stream).await;
     let first_decision = match first_resp {
-        BrokerResponse::PlanNodeDecision { decision } => decision,
+        BrokerResponse::PlanNodeDecision { decision, .. } => decision,
         other => panic!("first SubmitPlanNode: expected PlanNodeDecision, got {other:?}"),
     };
     assert_eq!(
@@ -336,7 +336,7 @@ async fn allowed_email_send_replay_delivers_once() {
     .await;
     let second_resp = read_resp(&mut stream).await;
     let second_decision = match second_resp {
-        BrokerResponse::PlanNodeDecision { decision } => decision,
+        BrokerResponse::PlanNodeDecision { decision, .. } => decision,
         other => panic!("replayed SubmitPlanNode: expected PlanNodeDecision, got {other:?}"),
     };
     assert_eq!(

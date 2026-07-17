@@ -372,6 +372,7 @@ async fn second_dispatch_call_after_demotion_observes_draft_not_stale_active() {
             decision: ExecutorDecision::Denied {
                 reason: DenyReason::DraftOnlySessionDeniesCommitIrreversible { .. },
             },
+            ..
         } => {
             // Expected: connection 2 observed Draft via the shared cell.
         }

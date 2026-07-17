@@ -49,8 +49,11 @@
 ///      HARD-03). A benign (fragment-free) `SendEmailSummary` STILL submits
 ///      an all-UserTrusted plan node (finding #4 — CONTROL-01's clean half
 ///      survives; there is no early-exit here anymore).
-///  13. Receive `BrokerResponse::PlanNodeDecision { decision }`. If it is
-///      `BlockedPendingConfirmation`, exit 1 (non-success BEFORE any effect runs).
+///  13. Receive `BrokerResponse::PlanNodeDecision { decision, output_value_id }`.
+///      If it is `BlockedPendingConfirmation`, exit 1 (non-success BEFORE any
+///      effect runs). `output_value_id` is `Some(handle)` only on an Allowed
+///      `process.exec` decision (32-05) — the opaque handle to the minted
+///      exec output, never the raw bytes.
 ///  14. Otherwise exit 0.
 ///
 /// # Cross-Platform Notes
@@ -357,10 +360,21 @@ async fn main() -> anyhow::Result<()> {
     send_framed(&std_stream, &BrokerRequest::SubmitPlanNode { plan_node })?;
 
     // ── Receive the block/allow decision ─────────────────────────────────────
-    let decision = match recv_framed::<BrokerResponse>(&std_stream)? {
-        BrokerResponse::PlanNodeDecision { decision } => decision,
+    //
+    // `output_value_id` (32-05, EXEC-02/EXEC-03 wiring): Some(handle) only on
+    // an Allowed process.exec decision — the opaque ValueId handle to the
+    // minted exec output (never the raw captured bytes, I1). The worker holds
+    // it here so a LATER plan node can route it into a subsequent PlanArg
+    // (the routing Plan 06's acceptance test drives to a Block); unused for
+    // now beyond this binding is expected at this stage of the wiring.
+    let (decision, output_value_id) = match recv_framed::<BrokerResponse>(&std_stream)? {
+        BrokerResponse::PlanNodeDecision {
+            decision,
+            output_value_id,
+        } => (decision, output_value_id),
         other => anyhow::bail!("unexpected response to SubmitPlanNode: {other:?}"),
     };
+    let _ = &output_value_id;
 
     // ── Exit non-success unless the effect actually ran (durable audit event
     //    already recorded either way) ──────────────────────────────────────

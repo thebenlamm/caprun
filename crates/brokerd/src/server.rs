@@ -1518,7 +1518,16 @@ pub async fn dispatch_request(
 
             // Only send the decision AFTER the durable append (and any sink
             // invocation) succeeded.
-            send_response(stream, &BrokerResponse::PlanNodeDecision { decision }).await?;
+            // output_value_id: None for now — Task 3 (32-05) replaces this
+            // with the real minted handle on an Allowed process.exec decision.
+            send_response(
+                stream,
+                &BrokerResponse::PlanNodeDecision {
+                    decision,
+                    output_value_id: None,
+                },
+            )
+            .await?;
         }
 
         BrokerRequest::ReportDerivedClaim {
