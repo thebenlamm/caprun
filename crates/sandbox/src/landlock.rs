@@ -67,16 +67,43 @@ pub fn exec_child_ruleset(workspace_root: &std::path::Path) -> std::io::Result<(
 
     let abi = ABI::V3;
 
-    // System paths: ReadFile + Execute only (loading + running the target
-    // binary and its shared libs). Exact literal path list is an Open Item
-    // (DESIGN §8 item 1) — resolved against the verification container's
-    // real layout at 32-06.
+    // System paths: ReadFile + ReadDir + Execute (loading + running the
+    // target binary and its shared libs). Exact literal path list is an Open
+    // Item (DESIGN §8 item 1) — resolved against the verification
+    // container's real layout at 32-06.
+    //
+    // ReadDir (32-06 fix): the original ReadFile+Execute-only grant compiled
+    // fine but FAILED at runtime for any target more complex than a trivial
+    // single-binary (e.g. `/bin/echo`) — empirically discovered running
+    // `/usr/bin/python3` through the real launcher in the mandatory Linux
+    // container: CPython's own stdlib import bootstrap (`Fatal Python
+    // error: Failed to import encodings module`) needs to enumerate
+    // directory entries under its stdlib tree (`getdents`/`readdir`, a
+    // DISTINCT Landlock right from `ReadFile`, which only gates `open()` for
+    // reading a file's CONTENTS) while resolving `sys.path` module/package
+    // candidates. Without `ReadDir`, the OS-level directory-listing syscalls
+    // Landlock intercepts return EACCES, well before any individual
+    // `encodings/*.py` file is opened. `/bin/echo` never hit this because it
+    // needs no runtime directory enumeration — only a handful of shared libs
+    // resolved by their EXACT dlopen path (no scan). `ReadDir` grants
+    // directory-listing only — it does NOT grant write/create/delete rights
+    // on these system paths (still absent here), so this remains
+    // read+list+execute-only, never writable.
     let system_paths = ["/usr", "/bin", "/lib", "/lib64"];
-    let system_access = AccessFs::ReadFile | AccessFs::Execute;
+    let system_access = AccessFs::ReadFile | AccessFs::ReadDir | AccessFs::Execute;
 
-    // Workspace: ReadFile + WriteFile only — no Execute (never run a
+    // Workspace: ReadFile + WriteFile + MakeReg — no Execute (never run a
     // worker-planted binary), matching "narrowest that works."
-    let workspace_access = AccessFs::ReadFile | AccessFs::WriteFile;
+    //
+    // MakeReg (32-06 fix): `WriteFile` alone governs opening/truncating an
+    // EXISTING file; Landlock gates CREATING a brand-new file via the
+    // DISTINCT `MakeReg` right on the PARENT directory. Without it, any
+    // target that writes a NEW file under the workspace (the common case —
+    // `open(path, 'w')` on a path that doesn't yet exist) fails with EACCES
+    // even though `WriteFile` is granted — empirically discovered running a
+    // benign in-workspace write through the real launcher in the mandatory
+    // Linux container.
+    let workspace_access = AccessFs::ReadFile | AccessFs::WriteFile | AccessFs::MakeReg;
 
     let status = Ruleset::default()
         .handle_access(AccessFs::from_all(abi))
