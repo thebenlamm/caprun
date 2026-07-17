@@ -112,7 +112,7 @@ Full detail archived in [`milestones/v1.5-ROADMAP.md`](milestones/v1.5-ROADMAP.m
 - [x] **Phase 26: Security Hardening Design Gate** - A DESIGN doc specifies the mechanism + fail-closed default for all five residuals and clears a fresh adversarial review before any hardening code is written (completed 2026-07-12)
 - [x] **Phase 27: Session & Connection Integrity Hardening** - fd release itself carries the I1 draft-only consequence, and the CreateSession forced-Active mint arm is compiled out of the production binary (completed 2026-07-12)
 - [x] **Phase 28: Authenticated Audit Chain** - `verify_chain` becomes forge-resistant (keyed MAC and/or externally-anchored head), not just a corruption detector (completed 2026-07-13)
-- [ ] **Phase 29: Sink-Path Hardening — Replay CAS & contents Slot** - the Allowed email.send path is replay-safe (at-most-once), and `file.create`'s `contents` arg is no longer an unconstrained slot
+- [x] **Phase 29: Sink-Path Hardening — Replay CAS & contents Slot** - the Allowed email.send path is replay-safe (at-most-once), and `file.create`'s `contents` arg is no longer an unconstrained slot (completed 2026-07-17)
 - [ ] **Phase 30: Regression & Live Proof** - the full workspace regression is independently re-run green on real Linux with a dedicated negative test proving each closed residual, no regression to v1.1–v1.5 behavior
 
 ## Phase Details
@@ -200,7 +200,7 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
   2. A tainted value routed into `file.create`'s `contents` arg is now handled under the same I2/slot-type discipline as other sensitive args (blocked or slot-type-mismatched as appropriate), closing the previously-unconstrained gap.
   3. Existing trusted-content `file.create` flows continue to succeed unchanged — no false-positive block on legitimate `contents` values.
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 
 **Wave 1** *(parallel — disjoint crates/files)*
 
@@ -209,7 +209,7 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 
 **Wave 2** *(depends on 29-01)*
 
-- [ ] 29-02-PLAN.md — HARDEN-03 CAS wiring (`server.rs` Allowed `email.send` block) + Linux double-submit replay integration test (`replay_cas.rs`)
+- [x] 29-02-PLAN.md — HARDEN-03 CAS wiring (`server.rs` Allowed `email.send` block) + Linux double-submit replay integration test (`replay_cas.rs`)
 
 ### Phase 30: Regression & Live Proof
 
@@ -258,5 +258,5 @@ _All shipped milestone phases (1-25) are archived in `milestones/`. v1.6 phases 
 | 26. Security Hardening Design Gate | v1.6 | 2/2 | Complete    | 2026-07-12 |
 | 27. Session & Connection Integrity Hardening | v1.6 | 2/2 | Complete    | 2026-07-12 |
 | 28. Authenticated Audit Chain | v1.6 | 5/5 | Complete   | 2026-07-13 |
-| 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 2/3 | In Progress|  |
+| 29. Sink-Path Hardening — Replay CAS & contents Slot | v1.6 | 3/3 | Complete   | 2026-07-17 |
 | 30. Regression & Live Proof | v1.6 | 0/? | Not started | - |
