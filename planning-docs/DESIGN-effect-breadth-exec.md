@@ -3,8 +3,9 @@
 **Milestone:** v1.7 — Effect Breadth I
 **Phase:** 31 (Design Gate) — blocks all `crates/executor` / `crates/brokerd` /
 `crates/sandbox` / `crates/runtime-core` code for this milestone
-**Status:** Draft → pending fresh (non-self) adversarial review (see
-`DESIGN-GATE-RECORD-v1.7.md`, produced by Plan 31-02)
+**Status:** ✅ CLEARED (Round 1, 2026-07-17) — cleared a fresh non-self
+adversarial code-trace with all findings resolved; see
+`DESIGN-GATE-RECORD-v1.7.md` (Plan 31-02). Amendments folded in §11.
 **Author date:** 2026-07-17
 **Grounding:** `.planning/phases/31-effect-breadth-design-gate/31-RESEARCH.md` (every
 file:line below traces to a direct code read this session; re-verify if Phase 32
@@ -115,31 +116,40 @@ in the fork, **before** the child's own `execve` — via
 `std::os::unix::process::CommandExt`, not a new dependency). This is
 genuinely new: no `.pre_exec(` call exists anywhere in this codebase today.
 
-### 1.3 Spawn ownership — Option A (recommended) vs Option B (fallback)
+### 1.3 Spawn ownership — Option B (recommended) vs Option A (not recommended)
 
-- **Option A (RECOMMENDED, fail-closed default):** `brokerd`'s own dispatch
-  handler (already inside a `tokio::spawn`'d per-connection task,
+- **Option B (RECOMMENDED, fail-closed default — pinned Round 1):** a
+  dedicated `caprun-exec-launcher` helper binary, spawned unconfined
+  (mirroring `caprun-worker`'s separate-binary pattern), which receives the
+  target command over the same kind of env-var/UDS channel already used for
+  the worker and performs its OWN post-fork self-confinement (the SAME proven
+  ordering as `apply_confinement()`, `crates/sandbox/src/lib.rs:7-18`) before
+  its own `execve`. Confinement runs in the launcher's own address space,
+  long after its own fork, exactly as the worker's `apply_confinement()` does
+  today — so it does NOT require any code to be async-signal-safe inside a
+  `pre_exec` closure. Cost: one extra binary + an IPC round-trip.
+- **Option A (documented alternative — NOT recommended):** `brokerd`'s own
+  dispatch handler (inside a `tokio::spawn`'d per-connection task,
   `crates/brokerd/src/server.rs:271,308`) calls
   `std::process::Command::new(cmd).pre_exec(|| { ... }).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()`
-  inline. This is the exact `std::process::Command::spawn()` call shape
-  already exercised twice, unmodified, in this codebase (`main.rs:328,356`) —
-  only the `pre_exec` closure and `Stdio::piped()` capture are net-new.
-- **Option B (documented fallback):** a dedicated `caprun-exec-launcher`
-  helper binary, spawned unconfined (mirroring `caprun-worker`'s
-  separate-binary pattern), which receives the target command over the same
-  kind of env-var/UDS channel already used for the worker and performs its
-  OWN post-fork self-confinement (the SAME proven ordering as
-  `apply_confinement()`) before its own `execve`. This avoids requiring the
-  `pre_exec` closure itself to be async-signal-safe (§9), at the cost of an
-  extra binary + IPC round-trip.
-- **Ruling:** pin **Option A** as the v1.7 default. The rationale is that
-  `Command::spawn()` on Linux performs fork+exec as a single library call
-  (not a raw manual `fork()` inside caprun's own multi-threaded async
-  runtime), and this exact call shape already runs twice in production
-  without incident. This doc does NOT silently assume away the
-  async-signal-safety caveat that Option A's `pre_exec` closure raises — it
-  is a named, accepted residual risk (§9), with Option B as the documented
-  fallback if the fresh adversarial reviewer rules it a blocker.
+  inline, applying the confinement primitives from inside the `pre_exec`
+  closure. This is lighter (no extra binary) but requires the `pre_exec`
+  closure — running between `fork()` and `execve()` in a process that was
+  multi-threaded at fork — to invoke `landlock`/`seccompiler` setup that
+  allocates heap memory, which is NOT async-signal-safe (§2.5, §9). No real
+  `.pre_exec(` call site exists anywhere in this codebase today (verified by
+  full-tree grep during the Round-1 review); the two existing
+  `Command::spawn()` sites (`main.rs:328,356`) are the SAFE shape with **no**
+  `pre_exec` closure, so they provide no evidence for the dangerous shape.
+- **Ruling:** pin **Option B** as the v1.7 default. Rationale: the exec child
+  is the riskiest primitive in the project to date, and Option B confines it
+  using the SAME post-fork self-confinement ordering already proven for the
+  worker (`apply_confinement()`), with zero reliance on async-signal-safety
+  in a `pre_exec` window. Option A's fork-in-a-multi-threaded-tokio-task
+  `pre_exec` path is a real allocator-deadlock/async-signal-safety hazard
+  (§2.5) with no incident-free precedent in this codebase; it is retained
+  above only as a documented, explicitly-not-recommended alternative. This
+  ruling is the Round-1 resolution of review finding **M3** (see Amendments).
 
 ### 1.4 Kernel confinement of the exec child
 
@@ -149,11 +159,13 @@ reused verbatim.** `deny_all_filesystem()`
 `Ruleset::default().handle_access(AccessFs::from_all(ABI::V3)).create()...restrict_self()`
 with **zero allow-rules added** — everything, including the `Execute` access
 right, is denied. That ruleset was designed for the WORKER, which
-self-confines AFTER its own binary has already loaded and is running — a
-fundamentally different ordering than `pre_exec`, which must apply BEFORE the
-target's own `execve`. Reusing `deny_all_filesystem()` verbatim in a
-`pre_exec` closure would make the target binary itself fail to load
-(`EACCES`/`ENOEXEC` on the very first `execve`). This doc pins a **distinct,
+self-confines AFTER its own binary has already loaded and never itself
+`execve`s again. The exec child is different: its ruleset (applied by the
+launcher post-fork under Option B, BEFORE the launcher `execve`s the target)
+must still permit loading and executing the target binary. Reusing
+`deny_all_filesystem()` verbatim would make the target binary itself fail to
+load (`EACCES`/`ENOEXEC` on the launcher's `execve` of the target). This doc
+pins a **distinct,
 NEW ruleset constructor** — provisionally named `exec_child_ruleset()`,
 living beside `deny_all_filesystem()` in `crates/sandbox/src/landlock.rs` —
 with explicit allow-rules: `ReadFile`+`Execute` on standard system
@@ -175,19 +187,34 @@ for the worker, wrong for the exec child, which needs exactly ONE `execve` to
 run. This doc pins a NEW `exec_child_filter()` (beside
 `apply_worker_filter()` in `seccomp.rs`) that reuses the identical
 `socket(AF_INET/AF_INET6)` deny rule unchanged (default-deny net, §T-31-04),
-but does **NOT** add an execve deny for that one legitimate exec — the filter
-is installed inside `pre_exec`, BEFORE the child's own `execve` call, and
-persists across that `execve` per standard Linux seccomp-BPF inheritance
-semantics (an assumption, not re-verified against kernel source this session
-— §9 Assumption). Whether the exec child's OWN descendants may further
-`execve` (e.g. a shell script re-execing sub-commands) is a genuine open
-question (RESEARCH Open Question 2); this doc pins the fail-closed default:
-**deny recursion** — the child's own filter denies `execve`/`execveat` for
-anything AFTER its own initial one, closing the path where an unaudited
-grandchild makes network calls or spawns further processes the executor
-never scored. "Run a shell script" is explicitly out of scope for v1.7 (a
-v1.8+ decision alongside `git`/`http.request`, per REQUIREMENTS.md Future
-Requirements).
+but does **NOT** add an execve deny — under Option B the launcher applies this
+filter in its own address space and then performs its ONE legitimate `execve`
+of the target, so the filter must permit `execve`. The filter persists across
+that `execve` per standard Linux seccomp-BPF inheritance semantics (an
+assumption, not re-verified against kernel source this session — §9
+Assumption A5).
+
+**Recursion (grandchild `execve`) — NOT denied by the child's own seccomp
+filter; bounded by Landlock + persistent net-deny instead.** The Round-1
+review (finding **B1**) established that this cannot be done the way an
+earlier draft pinned it: `caprun`'s seccomp filters are **stateless**
+`seccompiler::SeccompFilter` BPF programs (`seccomp.rs:62`, unconditional
+`(SYS_execve, vec![])` always-match), and a stateless BPF program has no
+allow-the-first-execve-then-deny-subsequent construct. A filter that denies
+`execve` would kill the child's OWN initial `execve` (the target never
+loads, `spawn()` fails); a filter that allows `execve` lets grandchildren
+`execve` freely. There is no middle state. This doc therefore does NOT claim
+a seccomp recursion-deny. The real, verifiable bounds on what a grandchild
+can do are: (1) the NEW narrow-allow Landlock ruleset grants `Execute` ONLY
+on the enumerated system binary/library paths, so a grandchild can only
+`execve` those same already-enumerated binaries — no arbitrary binary; (2)
+the reused `socket(AF_INET/AF_INET6)` deny **persists across `execve`**, so
+the stated worry — an unaudited grandchild making network calls — is
+independently closed regardless of recursion; (3) inherited rlimits and the
+broker-side wall-clock timeout bound the whole process tree. "Run a shell
+script" remains explicitly out of scope for v1.7 (a v1.8+ decision alongside
+`git`/`http.request`, per REQUIREMENTS.md Future Requirements); a hardcoded
+command allowlist (§1.6 Option) would further bound this if adopted later.
 
 **rlimits — reused unchanged, PLUS a NEW wall-clock timeout.**
 `RLIMIT_AS`/`RLIMIT_CPU` (`crates/sandbox/src/rlimits.rs:13-27`) are reused
@@ -232,9 +259,11 @@ Pinned shape (RESEARCH Open Decision 4):
 
 ### 1.6 (Dis)allow posture — no command allowlist for v1.7
 
-**Option A (no allowlist — confinement is the sole control) is pinned as the
-v1.7 default**, over Option B (a hardcoded per-command allowlist mirroring
-`sink_sensitivity.rs`'s discipline). This matches the milestone's stated
+**The no-allowlist posture (confinement is the sole control) is pinned as the
+v1.7 default**, over a hardcoded per-command allowlist mirroring
+`sink_sensitivity.rs`'s discipline. (This allow/deny-posture decision is
+independent of §1.3's spawn-ownership choice — do not conflate the two.) This
+matches the milestone's stated
 scope — "the two effect primitives a coding agent minimally needs"
 (`.planning/REQUIREMENTS.md:10-13`) — a command allowlist would need
 product-level curation deferred to a later milestone alongside `POL-01`
@@ -344,6 +373,21 @@ call-site restriction is silently unenforced — a fresh adversarial reviewer
 must specifically confirm this extension exists before clearing the gate
 (§6, §7 of the RESEARCH Gate-Record Shape).
 
+**Mint call-site locus is pinned to `server.rs`, NOT the exec sink module
+(Round-1 finding M1).** Exec-output taint is minted when the broker captures
+the exited child's piped stdout/stderr — this is the exec analog of the
+`ReportClaims` capture point where the live `mint_from_read` production call
+already lives (`crates/brokerd/src/server.rs`), and it MUST live in
+`server.rs` for the same reason. It must NOT live in the `process.exec` sink
+module (e.g. a new `crates/brokerd/src/sinks/process_exec.rs`, which §3.3
+otherwise cites as the two-phase-audit template): that module is not in the
+Gate-3 sanctioned-loci allow-list, so a mint call there would FAIL the very
+Gate-3 extension this section mandates. The division is: the sink module owns
+spawn + confinement handoff + the two-phase `process_exited`/
+`process_spawn_failed` audit; `server.rs` owns the `mint_from_exec` of the
+captured output. This keeps the mandated Gate-3 allow-list and the code
+structure in agreement.
+
 ### 2.5 Named forward residual: async-signal-safety inside `pre_exec`
 
 `landlock::Ruleset::create()`/`restrict_self()` and
@@ -356,10 +400,12 @@ state inherited from a multi-threaded parent process can be inconsistent in
 the child under rare scheduling. This is a widely-accepted soft violation in
 the Rust sandboxing ecosystem, not exercised anywhere in THIS codebase
 before (the worker's self-confinement runs long after its own fork, never
-inside a `pre_exec` closure). This doc names it as an explicit, accepted
-residual risk rather than silently ignoring it — resolved fully in §9, with
-Option B (§1.3) as the documented fallback if the fresh adversarial reviewer
-rules it a blocker.
+inside a `pre_exec` closure). This hazard is precisely WHY §1.3 pins
+**Option B** (launcher post-fork self-confinement) as the v1.7 default
+rather than Option A: under Option B no confinement code runs inside a
+`pre_exec` window, so this async-signal-safety concern does not arise on the
+pinned path at all. It is documented here (and in §9) as the reason Option A
+is not recommended, not as an accepted residual of the pinned design.
 
 ---
 
@@ -463,15 +509,14 @@ sinks instead of a new mechanism.
 ### 4.2 The single highest-consequence decision: `process.exec` command/args are sensitivity-classified
 
 **`process.exec`'s own `command` AND `args` are classified BOTH
-routing-sensitive AND content-sensitive — explicitly NOT
-`expected_role = None` / unconstrained.** A tainted `command` is not a
-data-exfiltration risk (contrast `email.send`'s deliberately-scoped-out
-`attachment`, which was descoped for v1.3 and removed from both the sink
-schema and the content-sensitive set atomically,
+routing-sensitive AND content-sensitive, so a tainted value in either Blocks.**
+A tainted `command` is not a data-exfiltration risk (contrast `email.send`'s
+deliberately-scoped-out `attachment`, which was descoped for v1.3 and removed
+from both the sink schema and the content-sensitive set atomically,
 `sink_sensitivity.rs:73-78`) — it is **arbitrary code execution**, strictly
 worse than a tainted email recipient. A tainted `command`/`args` value MUST
 Block under the existing collect-then-Block loop (`lib.rs:150-197`), never
-fall through unconstrained. Concretely: `is_routing_sensitive(process.exec,
+fall through unblocked. Concretely: `is_routing_sensitive(process.exec,
 "command")`, `is_routing_sensitive(process.exec, "args")`,
 `is_content_sensitive(process.exec, "command")`, and
 `is_content_sensitive(process.exec, "args")` are all pinned `true` (the
@@ -479,6 +524,27 @@ routing/content distinction is academic here — the point is neither
 classification function returns `false` for these two args). `cwd` is
 routing-sensitive (it determines WHERE the command's relative-path resolution
 happens) but not content-sensitive.
+
+**Where the Block actually comes from — and why `command`/`args` carry
+`expected_role = None` (Round-1 finding M2).** The Block is delivered by the
+Step 2/3 sensitivity+taint check (`lib.rs:156-158`: `sensitive &&
+record.taint.iter().any(is_untrusted)`), which is **independent of**
+`expected_role`. `expected_role` governs a SEPARATE, earlier structural
+role-Deny at Step 1c (`lib.rs:133-148`): a slot with `expected_role =
+Some(list)` Denies any value whose `origin_role` is not in `list`, and a
+`None` origin_role at such a slot fails closed. There is no `origin_role`-
+producing mint site for a legitimately-authored exec `command` (it originates
+as a trusted intent literal, carrying `origin_role = None` or an intent
+role), so pinning `expected_role = Some(...)` for `command`/`args` would
+fail-closed-Deny the LEGITIMATE command at Step 1c — breaking the feature,
+not tightening it (the same trap HARDEN-05 navigated for `file.create`
+`contents` by reusing the `"path"` role, `sink_sensitivity.rs:163-176`).
+Therefore `command`/`args` are pinned `expected_role = None` (not role-checked
+at Step 1c); the security property — a tainted `command`/`arg` Blocks — is
+fully delivered by their `is_routing_sensitive`/`is_content_sensitive = true`
+classification plus the untrusted-taint check, exactly as intended. `None`
+here is NOT an I2 bypass: it only disables the structural role gate, never
+the sensitivity+taint Block.
 
 ### 4.3 fs write/edit slot roles
 
@@ -526,7 +592,7 @@ this doc).
 | `process.exec` `args` | routing- AND content-sensitive | `Vec<String>`, each a direct `execve` argv element | tainted → Block; same schema-gate Deny on malformed shape |
 | `process.exec` `cwd` | routing-sensitive | workspace-relative, `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS` | tainted → Block; escape attempt → kernel-level Deny (`EXDEV`) before I2 is even reached |
 | exec-output `ValueNode` (post-spawn) | untrusted origin | `TaintLabel::ExecRaw` + `ExternalUntrusted`; `origin_role = Some("exec_output")` | unknown/unrecognized exec-output shape → fail-closed mint error (mirrors T-07-47), never default-tagged |
-| exec child kernel confinement | n/a (infrastructure) | narrow-allow Landlock + seccomp net-deny + reused rlimits + NEW wall-clock timeout + output byte cap + recursion-exec-deny | any confinement primitive failing to apply → `pre_exec` returns `Err`, `Command::spawn()` fails, no child ever runs |
+| exec child kernel confinement | n/a (infrastructure) | narrow-allow Landlock (`Execute` only on enumerated system paths) + seccomp net-deny (persists across `execve`) + reused rlimits + NEW wall-clock timeout + output byte cap. NO seccomp recursion-exec-deny (unrealizable with a stateless BPF — B1); grandchild `execve` is bounded by the Landlock `Execute` allow-list + persistent net-deny instead | any confinement primitive failing to apply → the launcher (Option B) aborts before `execve`ing the target and exits non-zero, no target ever runs |
 | fs write/edit `path` | routing-sensitive | `expected_role = Some(&["path","relative_path"])`; `O_WRONLY\|O_TRUNC`, `RESOLVE_BENEATH\|RESOLVE_NO_SYMLINKS` | tainted → Block; missing target → `ENOENT` Deny (never silently creates); escape → kernel-level Deny |
 | fs write/edit `contents` | content-sensitive | `expected_role` accepts trusted-authored role AND `"exec_output"`/`"doc_fragment"` | tainted/exec-output-tagged in slot → Block, same as email `body` precedent |
 | fs read (multi-file) `path` | routing-sensitive (mirrors today's single-file read) | `RESOLVE_BENEATH\|RESOLVE_NO_SYMLINKS`; NEW explicit per-session read-count upper bound | escape → kernel-level Deny; count exceeded → Deny (resource-exhaustion guard, §3.1) |
@@ -552,9 +618,12 @@ a one-line justification, not asserted bare.
   (`KNOWN_SINKS`, `sink_effect_class`, `is_routing_sensitive`/
   `is_content_sensitive`, `expected_role`), zero new enforcement logic.
 - [x] **No I2 bypass** — §4.2: `process.exec`'s own `command`/`args` are
-  sensitivity-classified (routing- AND content-sensitive), never an
-  unconstrained `expected_role = None` pass-through that could carry a
-  tainted value into arbitrary code execution unblocked.
+  sensitivity-classified (routing- AND content-sensitive), so a tainted value
+  in either Blocks at the Step 2/3 sensitivity+taint check (`lib.rs:156-158`),
+  independent of `expected_role`. `command`/`args` carry `expected_role =
+  None` (no `origin_role`-producing mint site exists; `Some(...)` would
+  fail-closed-Deny the legitimate command at Step 1c — Round-1 M2), which
+  disables only the structural role gate, never the sensitivity+taint Block.
 - [x] **No raw `EffectRequest` path** — §4.4: both sinks are
   `PlanNode { sink, args }` from spawn; `check-invariants.sh` Gate 1 stays
   green with zero new hits (no `EffectRequest` token anywhere in this doc's
@@ -569,12 +638,16 @@ a one-line justification, not asserted bare.
   NOT catch a new `mint_from_exec(` call site as written. This doc mandates
   the extension as part of Phase 32, in the same commit that adds
   `mint_from_exec`.
-- [x] **Kernel-confined exec child** — §1.4: a NEW narrow-allow Landlock
-  ruleset (not `deny_all_filesystem()` verbatim) + reused seccomp
-  network-deny (no execve-deny for the one legitimate exec, recursion-deny
-  for further execs) + reused rlimits (`RLIMIT_AS`/`RLIMIT_CPU`) + a NEW
-  wall-clock timeout (`tokio::time::timeout` + existing `child.kill()` path)
-  + a captured-output byte cap.
+- [x] **Kernel-confined exec child** — §1.4: applied by the launcher
+  post-fork (Option B, §1.3) — a NEW narrow-allow Landlock ruleset (not
+  `deny_all_filesystem()` verbatim; grants `Execute` only on enumerated
+  system paths) + reused seccomp network-deny (no execve-deny, since the
+  launcher must perform its one legitimate `execve`; net-deny persists across
+  it) + reused rlimits (`RLIMIT_AS`/`RLIMIT_CPU`) + a NEW wall-clock timeout
+  (`tokio::time::timeout` + existing `child.kill()` path) + a captured-output
+  byte cap. Grandchild `execve` is NOT seccomp-denied (unrealizable with a
+  stateless BPF — Round-1 B1); it is bounded by the Landlock `Execute`
+  allow-list (only the enumerated binaries) + the persistent net-deny.
 - [x] **Fail-closed arg-schema** — §4.1, §5: both new sinks get `KNOWN_SINKS`
   entries with explicit `allowed`/`required` sets, mirroring `file.create`'s
   exact-match schema (`sink_schema.rs:40-58`); an unregistered sink or
@@ -644,15 +717,21 @@ each against the actual verification environment.
 
 ## §9. Accepted Residual Risks & Assumptions
 
+**Design decisions that RETIRE a residual (v1.7):**
+- **`pre_exec` async-signal-safety — AVOIDED, not accepted (Round-1 M3/§1.3,
+  §2.5).** An earlier draft pinned Option A (confinement applied inside a
+  `pre_exec` closure), for which `landlock`/`seccompiler` allocating heap
+  between `fork()` and `execve()` would be a real async-signal-safety soft
+  violation. The Round-1 review found the "runs twice without incident"
+  justification for Option A did not transfer (no real `.pre_exec(` site
+  exists in this codebase — the two `Command::spawn()` sites are the safe,
+  no-`pre_exec` shape). Resolution: **Option B is now the pinned default** —
+  the launcher self-confines post-fork in its own address space (the proven
+  `apply_confinement()` ordering), so NO confinement code runs in a
+  `pre_exec` window and this hazard does not arise on the pinned path.
+  Option A remains documented only as a not-recommended alternative.
+
 **Accepted residual risks (v1.7):**
-- **`pre_exec` async-signal-safety** (§1.3, §2.5) — `landlock`/`seccompiler`
-  internals likely allocate heap memory between `fork()` and `execve()`
-  inside the `pre_exec` closure, a widely-accepted soft violation in the
-  Rust sandboxing ecosystem not previously exercised in this codebase.
-  Documented, not silently assumed away. Option B (a dedicated
-  `caprun-exec-launcher` binary performing its own post-fork
-  self-confinement, §1.3) is the documented fallback if the fresh
-  adversarial reviewer rules this a blocker.
 - **No `process.exec` command allowlist for v1.7** (§1.6) — confinement
   (Landlock/seccomp/rlimits/network-deny) is the sole control on WHAT a
   command can do once spawned; there is no curated list of WHICH commands
@@ -666,15 +745,18 @@ each against the actual verification environment.
 silently):**
 - **A1** — `std::process::Command::spawn()`'s internal fork+exec is safe to
   call from within a `tokio::spawn`'d async task without a dedicated OS
-  thread, given this codebase already does so twice unconfined. If wrong,
-  the exec-child spawn path could intermittently hang under scheduler
-  pressure; Option B (§1.3) is already the documented mitigation.
+  thread, given this codebase already does so twice unconfined
+  (`main.rs:328,356`). Under the pinned Option B the broker's spawn of the
+  `caprun-exec-launcher` IS exactly this safe, unconfined shape (no
+  `pre_exec` closure), so A1 is on well-trodden ground; confinement happens
+  later, inside the launcher.
 - **A2** — `landlock::Ruleset::create()`/`restrict_self()` and
-  `seccompiler::apply_filter()` allocate heap memory internally (making
-  them not strictly async-signal-safe inside `pre_exec`). If this
-  allocation assumption is wrong (i.e. the calls are actually alloc-free),
-  the residual risk above overstates a non-issue — low-cost to be wrong in
-  this direction.
+  `seccompiler::apply_filter()` allocate heap memory internally. This mattered
+  only for the retired Option A (calling them inside `pre_exec`); under the
+  pinned Option B they run in the launcher's own address space AFTER its fork
+  (the same context the worker's `apply_confinement()` already uses), where
+  heap allocation is normal and safe. Retained as an assumption only to
+  document why Option A is not recommended.
 - **A3** — Landlock ABI negotiation (ABI::V3 down to ABI::V1, kernel ≥5.13)
   and `openat2` `RESOLVE_*` flags (kernel ≥5.6) version floors are training
   knowledge, not re-verified against kernel source this session (§8 item
@@ -682,10 +764,13 @@ silently):**
 - **A4** — no per-session `RequestFd` read-count limiter exists today,
   confirmed by a direct read of the full handler (§3.1) — not merely a grep
   miss.
-- **A5** — seccomp filters installed via `pre_exec` persist across the
-  child's own subsequent `execve` per standard Linux kernel semantics; if
-  wrong, the network-deny protection on the exec child would not actually
-  apply post-exec (§1.4, §9 residual risk above).
+- **A5** — the seccomp filter the launcher installs on itself (Option B)
+  persists across its own subsequent `execve` of the target, and across any
+  grandchild `execve`, per standard Linux kernel seccomp-BPF inheritance
+  semantics; if wrong, the network-deny protection on the exec child would
+  not actually apply post-exec (§1.4). This is the single load-bearing
+  kernel-semantics assumption behind the B1 resolution (grandchild egress is
+  bounded by the persistent net-deny) and MUST be confirmed in Phase 32.
 
 **Common pitfalls (for Phase 32/33 implementers, carried from RESEARCH.md
 Landmines, condensed):**
@@ -732,3 +817,66 @@ Phase 31's gate is cleared when ALL are true:
    and no `crates/executor` / `crates/brokerd` / `crates/sandbox` /
    `crates/runtime-core` code exists yet (`git diff` touches only
    `planning-docs/` + `.planning/`).
+
+---
+
+## §11. Amendments (post-review, Round 1)
+
+This section records the changes folded into the doc in response to the fresh,
+non-self Fable-5 adversarial code-trace review (see
+`planning-docs/DESIGN-GATE-RECORD-v1.7.md`). Every finding was independently
+re-verified against live code before folding; each was resolved by TIGHTENING
+the design, never by weakening an invariant.
+
+- **B1 (BLOCKER) — seccomp recursion-deny was unrealizable.** An earlier draft
+  pinned "the child's own seccomp filter denies `execve` for anything after its
+  own initial one." Re-verified against `crates/sandbox/src/seccomp.rs:62` —
+  the filters are stateless `seccompiler::SeccompFilter` BPF programs
+  (unconditional `(SYS_execve, vec![])` always-match); a stateless BPF has no
+  allow-first-then-deny construct. **Resolution:** §1.4 now states there is NO
+  seccomp recursion-deny and documents the real bound — Landlock `Execute`
+  granted only on enumerated system paths + the reused `socket` net-deny that
+  persists across `execve` (so grandchild egress is independently closed) +
+  rlimits + wall-clock timeout. §5 table and §6 checklist updated to match.
+- **M3 (MAJOR) — Option A pinned on evidence that did not transfer.** The
+  "runs twice without incident" justification for Option A (`pre_exec`
+  confinement) was re-verified false: a full-tree grep finds zero real
+  `.pre_exec(` sites; the two `Command::spawn()` sites (`main.rs:328,356`) are
+  the safe, no-`pre_exec` shape. **Resolution:** §1.3 now pins **Option B**
+  (dedicated `caprun-exec-launcher` self-confining post-fork, the proven
+  `apply_confinement()` ordering) as the v1.7 default; Option A is retained
+  only as a documented, not-recommended alternative. This also retires the
+  `pre_exec` async-signal-safety residual on the pinned path (§2.5, §9, A2).
+- **M1 (MAJOR) — mandated Gate-3 loci contradicted the natural mint site.**
+  Gate 3's sanctioned loci are `{quarantine.rs, server.rs}`
+  (`check-invariants.sh:133-135`), but a mint in a `sinks/process_exec.rs`
+  module (the §3.3 audit template) would fail that gate. **Resolution:** §2.4
+  now pins the `mint_from_exec` call-site locus to `server.rs` (the
+  exec-output capture point, mirroring the live `mint_from_read` production
+  call), explicitly NOT the sink module — so the mandated Gate-3 allow-list and
+  the code structure agree.
+- **M2 (MAJOR) — `command`/`args` `expected_role` was underspecified.**
+  Re-verified against `crates/executor/src/lib.rs:133-158`: `expected_role`
+  drives an independent Step-1c structural Deny (`None` origin_role fails
+  closed), separate from the Step 2/3 sensitivity+taint Block. Mandating
+  `Some(...)` for `command`/`args` (which have no `origin_role`-producing mint
+  site) would fail-closed-Deny the legitimate command. **Resolution:** §4.2 and
+  §6 now pin `expected_role = None` for `command`/`args` and state the Block is
+  delivered by their `is_routing_sensitive`/`is_content_sensitive = true`
+  classification + untrusted-taint check — `None` disables only the structural
+  role gate, never the sensitivity+taint Block (no I2 bypass).
+- **m1 (MINOR)** — §3.1's read-count upper bound modifies the EXISTING
+  single-read path, not only new multi-file code; noted so Phase 33 does not
+  treat it as additive-only.
+- **n1 (NIT)** — adding `TaintLabel::ExecRaw` forces an update to every
+  non-wildcard `match` over `TaintLabel` (compiler-caught), not only
+  `is_untrusted()`; Phase 32 note.
+
+The reviewer confirmed as sound (real code-trace): worker seccomp
+unconditional execve-deny; `deny_all_filesystem()` unusable verbatim; reused
+net-deny/rlimits; the v1.4 spawn + `child.kill()` teardown template; the
+`mint_from_exec` non-stapled-chain mirror of `mint_from_read`; Gate 3's
+three-token restriction; both sinks addable by table entries only; the
+`O_WRONLY|O_TRUNC` (no `O_CREAT`) write/edit sibling and its
+O_CREAT-reintroduction warning; the two-phase durable audit; and the
+no-raw-`EffectRequest` / I0 class-deny invariants.
