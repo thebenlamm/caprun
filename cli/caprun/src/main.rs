@@ -581,6 +581,40 @@ async fn main() -> anyhow::Result<()> {
     // Non-success propagation: a §9 block makes the worker exit non-zero, which
     // must surface as a non-zero caprun exit (BEFORE any effect runs).
     if !child_status.success() {
+        // ── Surface the blocked effect_id(s) + operator-loop pointer (WG-5, Matt #2) ─
+        // A non-zero worker exit is USUALLY an I2 Block: the broker durably
+        // recorded a `pending_confirmations` row awaiting a human decision.
+        // Read those rows (read-only — mints nothing, appends nothing) and
+        // print, for each, the blocked effect_id + sink + the three actionable
+        // pointers, using the REAL audit-db-path (not a placeholder), so the
+        // operator never has to grep the worker's Debug dump to reach
+        // confirm/deny. A non-Block non-zero exit (e.g. a schema Deny) leaves
+        // ZERO pending rows → nothing extra is printed, and the existing bail
+        // behavior below is unchanged.
+        let pending = {
+            let locked = conn.lock().unwrap();
+            brokerd::audit::list_pending_confirmations_for_session(&locked, &session_id.to_string())
+        };
+        match pending {
+            Ok(rows) if !rows.is_empty() => {
+                println!(
+                    "\n=== Blocked pending confirmation ({} effect{}) ===",
+                    rows.len(),
+                    if rows.len() == 1 { "" } else { "s" }
+                );
+                for (effect_id, sink) in &rows {
+                    println!("  effect_id={effect_id}  sink={sink}");
+                    println!("    review:  caprun review {effect_id} {audit_path}");
+                    println!("    confirm: caprun confirm {effect_id} {audit_path}");
+                    println!("    deny:    caprun deny {effect_id} {audit_path}");
+                }
+            }
+            Ok(_) => { /* non-Block non-zero exit: nothing extra to surface */ }
+            // A read failure here must NOT mask the underlying non-zero exit —
+            // note it and fall through to the bail below (fail-closed).
+            Err(e) => eprintln!("warning: could not list pending confirmations: {e}"),
+        }
+
         anyhow::bail!("caprun-worker exited with status: {child_status}");
     }
 

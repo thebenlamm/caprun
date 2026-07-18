@@ -1073,6 +1073,55 @@ pub fn query_events_by_session(
         .collect()
 }
 
+/// Return every `pending_confirmations` row still awaiting a human decision for
+/// `session_id`, as `(effect_id, sink)` pairs ordered by insertion (rowid).
+///
+/// # READ-ONLY POSTURE (WG-5, Matt #2)
+///
+/// A pure read: it SELECTs `effect_id, sink` from `pending_confirmations` WHERE
+/// `session_id = ?1 AND state = 'pending'` and NOTHING else — mints no
+/// ValueRecord, appends no audit event, performs no MAC transition, opens no
+/// sink. Mirrors the read-only posture of `query_events_by_session` above. It
+/// exists so the `caprun run` parent can surface each blocked `effect_id` + its
+/// `sink` + an actionable `caprun review/confirm/deny <effect_id> <db>` pointer
+/// after an I2 Block, closing the operator loop without touching state.
+///
+/// The `AND state = 'pending'` guard mirrors `find_pending_confirmation`'s own
+/// filter: a row already confirmed/denied (terminal) is excluded, so the
+/// operator is only ever pointed at effects that still have a live decision.
+///
+/// # Arguments
+/// * `conn` — open rusqlite connection.
+/// * `session_id` — the UUID of the session to query (as a string).
+pub fn list_pending_confirmations_for_session(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<Vec<(uuid::Uuid, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT effect_id, sink FROM pending_confirmations \
+         WHERE session_id = ?1 AND state = 'pending' \
+         ORDER BY rowid",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![session_id], |row| {
+            let effect_id: String = row.get(0)?;
+            let sink: String = row.get(1)?;
+            Ok((effect_id, sink))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    // Parse each effect_id string into a Uuid outside the row closure (rusqlite's
+    // FromSql for Uuid is feature-gated; a manual parse keeps the query dependency-
+    // free and fails closed on a malformed id rather than silently dropping it).
+    rows.into_iter()
+        .map(|(effect_id, sink)| {
+            let id = uuid::Uuid::parse_str(&effect_id)
+                .map_err(|e| anyhow::anyhow!("pending_confirmations.effect_id not a UUID: {e}"))?;
+            Ok((id, sink))
+        })
+        .collect()
+}
+
 /// Locate the first Event of `event_type` within `session_id`.
 ///
 /// Deserializes the `payload` column so the returned Event's `taint` reflects
@@ -1611,6 +1660,74 @@ mod tests {
             duplicate.is_err(),
             "duplicate effect_id insert must fail the PRIMARY KEY constraint"
         );
+    }
+
+    /// Insert a `pending_confirmations` row directly (test helper) — mirrors the
+    /// 9-column shape the sibling tests use.
+    fn insert_pending_row(
+        conn: &rusqlite::Connection,
+        effect_id: &str,
+        session_id: &str,
+        sink: &str,
+        state: &str,
+    ) {
+        conn.execute(
+            "INSERT INTO pending_confirmations \
+             (effect_id, session_id, blocked_event_id, sink, resolved_args, \
+              blocked_arg_names, combined_digest, workspace_root_path, state) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![
+                effect_id,
+                session_id,
+                Uuid::new_v4().to_string(),
+                sink,
+                "[]",
+                "[]",
+                "deadbeef",
+                "/workspace",
+                state,
+            ],
+        )
+        .expect("insert pending_confirmations row");
+    }
+
+    /// `list_pending_confirmations_for_session` returns exactly the `pending`
+    /// rows for the queried session, as `(effect_id, sink)` pairs in rowid order
+    /// — and excludes terminal (confirmed/denied) rows AND other sessions' rows.
+    /// This is the read-only surface the `caprun run` post-Block operator-loop
+    /// pointer is built from (WG-5).
+    #[test]
+    fn list_pending_confirmations_returns_only_pending_rows_for_session() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+        let other_session = Uuid::new_v4();
+
+        let e1 = Uuid::new_v4();
+        let e2 = Uuid::new_v4();
+        let e_terminal = Uuid::new_v4();
+        let e_other = Uuid::new_v4();
+
+        // Two pending rows for our session (distinct sinks), inserted in order.
+        insert_pending_row(&conn, &e1.to_string(), &session_id.to_string(), "email.send", "pending");
+        insert_pending_row(&conn, &e2.to_string(), &session_id.to_string(), "file.create", "pending");
+        // A terminal (confirmed) row for the SAME session — must be excluded.
+        insert_pending_row(&conn, &e_terminal.to_string(), &session_id.to_string(), "email.send", "confirmed");
+        // A pending row for a DIFFERENT session — must be excluded.
+        insert_pending_row(&conn, &e_other.to_string(), &other_session.to_string(), "email.send", "pending");
+
+        let rows = list_pending_confirmations_for_session(&conn, &session_id.to_string())
+            .expect("list_pending_confirmations_for_session");
+
+        assert_eq!(
+            rows,
+            vec![(e1, "email.send".to_string()), (e2, "file.create".to_string())],
+            "only the two pending rows for this session, in rowid order, as (effect_id, sink)"
+        );
+
+        // A session with no pending rows returns an empty vec (never an error).
+        let empty = list_pending_confirmations_for_session(&conn, &Uuid::new_v4().to_string())
+            .expect("query for an unknown session must succeed with no rows");
+        assert!(empty.is_empty(), "a session with no pending rows yields an empty vec");
     }
 
     /// (Task 2 migration test) A DB whose `pending_confirmations` table
