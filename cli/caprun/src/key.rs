@@ -69,30 +69,13 @@ pub(crate) fn load_or_create_key(
     let key_path_buf = PathBuf::from(format!("{audit_path}.key"));
 
     // F1 fail-closed refusal — runs BEFORE any key is generated, read, or
-    // returned. An unresolvable workspace root or candidate path is itself a
-    // refusal (fail-closed on absent/unresolvable path, never fail-open).
-    let canonical_root = std::fs::canonicalize(workspace_root).with_context(|| {
-        format!(
-            "F1 fail-closed refusal: cannot resolve workspace root {}",
-            workspace_root.display()
-        )
-    })?;
-
+    // returned. Delegates to the ONE shared containment predicate in adapter-fs
+    // (gate-record MAJOR-2: the check is lifted there so the broker policy
+    // binder shares the exact same implementation). Both candidate paths (the
+    // audit DB and its `.key` sibling) are refused if they resolve at or beneath
+    // the workspace root; an unresolvable root/candidate is itself a refusal.
     for candidate in [&audit_path_buf, &key_path_buf] {
-        let canonical_candidate = canonicalize_existing_or_parent(candidate).with_context(|| {
-            format!(
-                "F1 fail-closed refusal: cannot resolve {}",
-                candidate.display()
-            )
-        })?;
-        if canonical_candidate.starts_with(&canonical_root) {
-            anyhow::bail!(
-                "F1 fail-closed refusal: {} resolves beneath the workspace root {} \
-                 — the confined worker could RequestFd it; refusing to run",
-                canonical_candidate.display(),
-                canonical_root.display()
-            );
-        }
+        adapter_fs::containment::refuse_if_beneath_workspace(candidate, workspace_root)?;
     }
 
     // Idempotent read-first: a later, separate `caprun confirm`/`deny` process
@@ -156,26 +139,6 @@ fn write_key_file(key_path: &Path, key: &[u8; KEY_LEN]) -> anyhow::Result<()> {
 fn write_key_file(key_path: &Path, key: &[u8; KEY_LEN]) -> anyhow::Result<()> {
     std::fs::write(key_path, key)
         .with_context(|| format!("failed to write key file {}", key_path.display()))
-}
-
-/// Canonicalize `path`. `std::fs::canonicalize` requires an existing path, but
-/// the audit DB / key file may not exist yet on a first run — in that case,
-/// canonicalize the (existing) parent directory and rejoin the file name,
-/// which is sufficient for the F1 containment comparison without requiring
-/// the file itself to exist.
-fn canonicalize_existing_or_parent(path: &Path) -> std::io::Result<PathBuf> {
-    if let Ok(canonical) = std::fs::canonicalize(path) {
-        return Ok(canonical);
-    }
-    let file_name = path.file_name().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
-    })?;
-    let parent = match path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p,
-        _ => Path::new("."),
-    };
-    let canonical_parent = std::fs::canonicalize(parent)?;
-    Ok(canonical_parent.join(file_name))
 }
 
 #[cfg(test)]
