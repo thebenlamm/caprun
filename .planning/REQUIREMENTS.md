@@ -23,10 +23,10 @@ are new families starting at 01).
 
 ### GitHub
 
-- [ ] **GITHUB-01**: A `github.pr` sink creates a GitHub pull request via a broker-held session bearer token (the token is read from broker-local env only — never present in the confined worker, the planner sidecar, a ValueNode, or the audit-DAG literal), classified **CommitIrreversible**.
-- [ ] **GITHUB-02**: `github.pr` requires an explicit human auth-grant for the credential — a step beyond single-shot confirm (a token's authority exceeds one PR); confirming a PR body does not by itself authorize the token's use.
-- [ ] **GITHUB-03**: A tainted PR title/body section is deterministically Blocked (I2, reusing CONTENT-01 content-sensitivity) — the marquee secret-exfil-via-PR-text attack; the verbatim, provenance-annotated title/body is shown to the human at confirm.
-- [ ] **GITHUB-04**: A replayed `github.pr` submission creates at most one PR (content-derived idempotency CAS committed before the API call — mirroring the v1.6 HARDEN-03 Allowed-path replay defense).
+- [x] **GITHUB-01**: A `github.pr` sink creates a GitHub pull request via a broker-held session bearer token (the token is read from broker-local env only — never present in the confined worker, the planner sidecar, a ValueNode, or the audit-DAG literal), classified **CommitIrreversible**.
+- [x] **GITHUB-02**: `github.pr` requires an explicit human auth-grant for the credential — a step beyond single-shot confirm (a token's authority exceeds one PR); confirming a PR body does not by itself authorize the token's use.
+- [x] **GITHUB-03**: A tainted PR title/body section is deterministically Blocked (I2, reusing CONTENT-01 content-sensitivity) — the marquee secret-exfil-via-PR-text attack; the verbatim, provenance-annotated title/body is shown to the human at confirm.
+- [x] **GITHUB-04**: A replayed `github.pr` submission creates at most one PR (content-derived idempotency CAS committed before the API call — mirroring the v1.6 HARDEN-03 Allowed-path replay defense).
 
 ### HTTP Egress
 
@@ -83,10 +83,10 @@ Which phases cover which requirements. Populated during roadmap creation.
 | GIT-01 | Phase 36 | Complete |
 | GIT-02 | Phase 39 | Pending |
 | GIT-03 | Phase 39 | Pending |
-| GITHUB-01 | Phase 38 | Pending |
-| GITHUB-02 | Phase 38 | Pending |
-| GITHUB-03 | Phase 38 | Pending |
-| GITHUB-04 | Phase 38 | Pending |
+| GITHUB-01 | Phase 38 | Complete |
+| GITHUB-02 | Phase 38 | Complete |
+| GITHUB-03 | Phase 38 | Complete |
+| GITHUB-04 | Phase 38 | Complete |
 | HTTP-01 | Phase 37 | Complete |
 | HTTP-02 | Phase 37 | Complete |
 | HTTP-03 | Phase 37 | Complete |

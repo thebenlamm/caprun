@@ -213,11 +213,12 @@ Plans:
 **Plans**: 5 plans
 
 Plans:
-- [ ] 38-01-PLAN.md — executor rows: github.pr schema + CommitIrreversible + title/body content-sensitive, owner/repo/base/head routing-sensitive (wave 1)
-- [ ] 38-02-PLAN.md — session auth-grant capability model + duplicate-PR CAS table/key/reserve + `caprun grant` verb (wave 1)
-- [ ] 38-03-PLAN.md — pinned POST egress (reused §3.6 SSRF pin) + github.pr sink adapter (env-only token, opaque audit, prepare precheck) (wave 2)
-- [ ] 38-04-PLAN.md — server.rs Allowed-dispatch: grant gate + content CAS before POST + tests (wave 3)
-- [ ] 38-05-PLAN.md — confirmation.rs confirm-release: Step-4.75 guard + prepare_github_pr + Step-7 arm + no-dangling-confirm regression (wave 3)
+
+- [x] 38-01-PLAN.md — executor rows: github.pr schema + CommitIrreversible + title/body content-sensitive, owner/repo/base/head routing-sensitive (wave 1)
+- [x] 38-02-PLAN.md — session auth-grant capability model + duplicate-PR CAS table/key/reserve + `caprun grant` verb (wave 1)
+- [x] 38-03-PLAN.md — pinned POST egress (reused §3.6 SSRF pin) + github.pr sink adapter (env-only token, opaque audit, prepare precheck) (wave 2)
+- [x] 38-04-PLAN.md — server.rs Allowed-dispatch: grant gate + content CAS before POST + tests (wave 3)
+- [x] 38-05-PLAN.md — confirmation.rs confirm-release: Step-4.75 guard + prepare_github_pr + Step-7 arm + no-dangling-confirm regression (wave 3)
 
 #### Phase 39: `git.push` Sink
 
@@ -287,6 +288,6 @@ Plans:
 | 35. DESIGN Gate + Fresh Adversarial Code-Trace | v1.8 | 2/2 | Complete    | 2026-07-18 |
 | 36. `git.commit` Sink | v1.8 | 2/2 | Complete    | 2026-07-18 |
 | 37. `http.request` GET Egress | v1.8 | 4/3 | Complete    | 2026-07-18 |
-| 38. `github.pr` Sink | v1.8 | 0/TBD | Not started | - |
+| 38. `github.pr` Sink | v1.8 | 6/5 | Complete    | 2026-07-18 |
 | 39. `git.push` Sink | v1.8 | 0/TBD | Not started | - |
 | 40. CLI Compose, Sidecar env_clear() & Composed Live Proof (v1.8 DONE) | v1.8 | 0/TBD | Not started | - |
