@@ -210,7 +210,14 @@ Plans:
   3. A tainted PR title/body section is deterministically **Blocked** (I2, reusing CONTENT-01 content-sensitivity) — the verbatim, provenance-annotated title/body is shown to the human at confirm.
   4. A replayed `github.pr` submission creates **at most one PR** (content-derived idempotency CAS committed before the API call, mirroring HARDEN-03).
 
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+- [ ] 38-01-PLAN.md — executor rows: github.pr schema + CommitIrreversible + title/body content-sensitive, owner/repo/base/head routing-sensitive (wave 1)
+- [ ] 38-02-PLAN.md — session auth-grant capability model + duplicate-PR CAS table/key/reserve + `caprun grant` verb (wave 1)
+- [ ] 38-03-PLAN.md — pinned POST egress (reused §3.6 SSRF pin) + github.pr sink adapter (env-only token, opaque audit, prepare precheck) (wave 2)
+- [ ] 38-04-PLAN.md — server.rs Allowed-dispatch: grant gate + content CAS before POST + tests (wave 3)
+- [ ] 38-05-PLAN.md — confirmation.rs confirm-release: Step-4.75 guard + prepare_github_pr + Step-7 arm + no-dangling-confirm regression (wave 3)
 
 #### Phase 39: `git.push` Sink
 
