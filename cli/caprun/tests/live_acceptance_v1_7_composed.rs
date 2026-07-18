@@ -354,6 +354,7 @@ mod linux {
                 &plan_node1,
                 &store,
                 &SessionStatus::Active,
+                &runtime_core::SessionPolicy::allow_all(),
             );
             assert_eq!(
                 decision1,
@@ -425,6 +426,7 @@ mod linux {
                 &plan_node2,
                 &store,
                 &SessionStatus::Active,
+                &runtime_core::SessionPolicy::allow_all(),
             );
             let anchor = match decision2 {
                 ExecutorDecision::BlockedPendingConfirmation { anchors } => {
@@ -515,6 +517,7 @@ mod linux {
                 &plan_node,
                 &store,
                 &SessionStatus::Active,
+                &runtime_core::SessionPolicy::allow_all(),
             );
             assert_eq!(
                 decision,
@@ -592,6 +595,7 @@ mod linux {
                 &plan_node,
                 &store,
                 &SessionStatus::Active,
+                &runtime_core::SessionPolicy::allow_all(),
             );
             assert_eq!(
                 decision,

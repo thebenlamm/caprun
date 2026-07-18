@@ -177,6 +177,7 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
         &mut store,
         &ws_root(),
         &session_status,
+        &runtime_core::SessionPolicy::allow_all(),
         trusted_inode,
         &mut intent_provided,
         &mut fd_requested,

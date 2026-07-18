@@ -118,6 +118,7 @@ fn handle_from_other_connection_store_is_denied() {
         &email_plan(value_id.clone()),
         &store_a,
         &SessionStatus::Active,
+        &runtime_core::SessionPolicy::allow_all(),
     );
     assert!(
         matches!(decision_a, ExecutorDecision::BlockedPendingConfirmation { .. }),
@@ -132,6 +133,7 @@ fn handle_from_other_connection_store_is_denied() {
         &email_plan(value_id),
         &store_b,
         &SessionStatus::Active,
+        &runtime_core::SessionPolicy::allow_all(),
     );
     assert!(
         matches!(decision_b, ExecutorDecision::Denied { .. }),
@@ -218,6 +220,7 @@ async fn block_appends_durable_causal_sink_blocked() {
         &mut store,
         &ws_root(),
         &session_status,
+        &runtime_core::SessionPolicy::allow_all(),
         trusted_inode,
         &mut intent_provided,
         &mut fd_requested,
@@ -316,6 +319,7 @@ async fn append_failure_is_fail_closed() {
         &mut store,
         &ws_root(),
         &session_status,
+        &runtime_core::SessionPolicy::allow_all(),
         trusted_inode,
         &mut intent_provided,
         &mut fd_requested,

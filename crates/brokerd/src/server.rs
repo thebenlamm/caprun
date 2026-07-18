@@ -272,6 +272,26 @@ pub async fn run_broker_server(
     // no release-on-disconnect, no reconnect.
     let planner_slot_occupied = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+    // v1.9 Phase 42 (POLICY-01/POLICY-02/POLICY-03): the session's narrowing
+    // policy, constructed ONCE here (construct-once, mirroring the
+    // `session_status` cell + `trusted_inode` above) and cloned as a cheap Arc
+    // pointer per connection. Immutable for the session's life (DESIGN §5.3), so
+    // it is an `Arc<SessionPolicy>`, never `Arc<Mutex<..>>`.
+    //
+    // FOR THIS PLAN (42-03) ONLY: the value is `broker_default()` — the EXPLICIT
+    // deny-by-default allowlist of the seven production sinks (its own doc-string
+    // pins it as the value Plan 04's `bind_policy(None, ..)` returns; it is NOT
+    // the permissive `allow_all()`, whose documented purpose is the POLICY-02
+    // proof + policy-agnostic test default). Plan 04 (POLICY-03) REPLACES this
+    // with a trusted-source-bound policy passed into `run_broker_server` as a
+    // parameter and hash-recorded into the audit DAG at session creation; this
+    // construct-here keeps the end-to-end build green in the meantime. Because
+    // `broker_default()` permits every currently-callable production sink, every
+    // existing dispatch/e2e flow still PERMITS its sink (policy adds no new deny
+    // on the live path) — the only behavioral change is that a policy-denied node
+    // would now return Denied{PolicyDeny} before the I2 loop.
+    let policy = Arc::new(runtime_core::SessionPolicy::broker_default());
+
     loop {
         let (stream, _addr) = listener.accept().await?;
 
@@ -293,6 +313,8 @@ pub async fn run_broker_server(
             let session_status_clone = session_status.clone();
             // v1.6 Phase 28 (HARDEN-02): cloned per connection exactly like `conn`.
             let key_clone = key.clone();
+            // v1.9 Phase 42 (POLICY-01/02): cloned per connection exactly like `key`.
+            let policy_clone = policy.clone();
             tokio::spawn(async move {
                 // ConnectionRole::Worker — full capabilities, `permits`
                 // always `true` (Phase 20, PLANNER-02/04).
@@ -307,6 +329,7 @@ pub async fn run_broker_server(
                     trusted_inode,
                     ConnectionRole::Worker,
                     key_clone,
+                    policy_clone,
                 )
                 .await
                 {
@@ -330,6 +353,8 @@ pub async fn run_broker_server(
         let planner_slot_clone = planner_slot_occupied.clone();
         // v1.6 Phase 28 (HARDEN-02): cloned per connection exactly like `conn`.
         let key_clone = key.clone();
+        // v1.9 Phase 42 (POLICY-01/02): cloned per connection exactly like `key`.
+        let policy_clone = policy.clone();
         tokio::spawn(async move {
             classify_second_connection(
                 stream,
@@ -342,6 +367,7 @@ pub async fn run_broker_server(
                 trusted_inode,
                 planner_slot_clone,
                 key_clone,
+                policy_clone,
             )
             .await;
         });
@@ -390,6 +416,10 @@ async fn classify_second_connection(
     trusted_inode: Option<(u64, u64)>,
     planner_slot_occupied: Arc<std::sync::atomic::AtomicBool>,
     key: Arc<[u8; 32]>,
+    // v1.9 Phase 42 (POLICY-01/POLICY-02): forwarded unchanged to
+    // `handle_connection` — the planner connection enforces the SAME session
+    // policy as the worker connection.
+    policy: Arc<runtime_core::SessionPolicy>,
 ) {
     let first_frame = tokio::time::timeout(
         CLASSIFY_FIRST_FRAME_TIMEOUT,
@@ -429,6 +459,7 @@ async fn classify_second_connection(
             trusted_inode,
             ConnectionRole::Planner,
             key,
+            policy,
         )
         .await
         {
@@ -511,6 +542,10 @@ async fn handle_connection(
     trusted_inode: Option<(u64, u64)>,
     role: ConnectionRole,
     key: Arc<[u8; 32]>,
+    // v1.9 Phase 42 (POLICY-01/POLICY-02): the session's immutable narrowing
+    // policy, cloned per connection as a cheap Arc pointer clone exactly like
+    // `key` — it is never mutated (DESIGN §5.3), so it needs no Arc<Mutex<..>>.
+    policy: Arc<runtime_core::SessionPolicy>,
 ) -> anyhow::Result<()> {
     // Per-connection ValueStore — scoped to this session ONLY (HARD-03 fix).
     let mut value_store = ValueStore::default();
@@ -623,6 +658,7 @@ async fn handle_connection(
                 &mut value_store,
                 &workspace_root,
                 &status_snapshot,
+                &policy,
                 &mut last_event_id,
                 &mut last_event_hash,
             )
@@ -663,6 +699,7 @@ async fn handle_connection(
             &mut value_store,
             &workspace_root,
             &session_status,
+            &policy,
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
@@ -699,6 +736,13 @@ async fn evaluate_plan_node_and_record(
     value_store: &mut ValueStore,
     workspace_root: &Arc<adapter_fs::workspace::WorkspaceRoot>,
     session_status: &SessionStatus,
+    // v1.9 Phase 42 (POLICY-01/POLICY-02): the session's immutable narrowing
+    // policy. Forwarded read-only into `executor::submit_plan_node`, where the
+    // deny-only pre-I2 gate evaluates it BEFORE the collect-then-Block I2 loop.
+    // This function never mutates it (the policy is immutable for the session,
+    // DESIGN §5.3), so it is passed by shared reference exactly like
+    // `session_status`.
+    policy: &runtime_core::SessionPolicy,
     last_event_id: &mut Uuid,
     last_event_hash: &mut String,
 ) -> anyhow::Result<(
@@ -728,6 +772,7 @@ async fn evaluate_plan_node_and_record(
         plan_node,
         value_store,
         session_status,
+        policy,
     );
 
     // Durably record the decision BEFORE returning any response (ACC-02).
@@ -1504,6 +1549,9 @@ pub async fn evaluate_plan_node_and_record_for_test(
     value_store: &mut ValueStore,
     workspace_root: &Arc<adapter_fs::workspace::WorkspaceRoot>,
     session_status: &SessionStatus,
+    // v1.9 Phase 42 (POLICY-01/POLICY-02): mirrors the real signature (this
+    // wrapper's whole purpose per the Phase-38 finding) — forwarded unchanged.
+    policy: &runtime_core::SessionPolicy,
     last_event_id: &mut Uuid,
     last_event_hash: &mut String,
 ) -> anyhow::Result<(
@@ -1519,6 +1567,7 @@ pub async fn evaluate_plan_node_and_record_for_test(
         value_store,
         workspace_root,
         session_status,
+        policy,
         last_event_id,
         last_event_hash,
     )
@@ -1707,6 +1756,13 @@ pub async fn dispatch_request(
     value_store: &mut ValueStore,
     workspace_root: &Arc<adapter_fs::workspace::WorkspaceRoot>,
     session_status: &Arc<Mutex<SessionStatus>>,
+    // v1.9 Phase 42 (POLICY-01/POLICY-02): the session's immutable narrowing
+    // policy, threaded from `run_broker_server` (constructed once per session)
+    // down to the `SubmitPlanNode` arm's `evaluate_plan_node_and_record` call.
+    // Unlike `session_status`, nothing ever mutates it (DESIGN §5.3), so it needs
+    // no `Arc<Mutex<..>>` — a shared `&SessionPolicy` borrow of the per-connection
+    // `Arc<SessionPolicy>` handle suffices.
+    policy: &runtime_core::SessionPolicy,
     trusted_inode: Option<(u64, u64)>,
     intent_provided: &mut bool,
     fd_requested: &mut bool,
@@ -2044,6 +2100,7 @@ pub async fn dispatch_request(
                 value_store,
                 workspace_root,
                 &current_status,
+                policy,
                 last_event_id,
                 last_event_hash,
             )
@@ -2462,6 +2519,9 @@ mod tests {
             &mut store,
             &ws_root,
             &session_status,
+            // v1.9 Phase 42: policy-agnostic test — allow_all() permits every
+            // sink so these non-SubmitPlanNode dispatch paths are unchanged.
+            &runtime_core::SessionPolicy::allow_all(),
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
@@ -2503,6 +2563,9 @@ mod tests {
             &mut store,
             &ws_root,
             &session_status,
+            // v1.9 Phase 42: policy-agnostic test — allow_all() permits every
+            // sink so these non-SubmitPlanNode dispatch paths are unchanged.
+            &runtime_core::SessionPolicy::allow_all(),
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
@@ -2526,6 +2589,9 @@ mod tests {
             &mut store,
             &ws_root,
             &session_status,
+            // v1.9 Phase 42: policy-agnostic test — allow_all() permits every
+            // sink so these non-SubmitPlanNode dispatch paths are unchanged.
+            &runtime_core::SessionPolicy::allow_all(),
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
@@ -2589,6 +2655,9 @@ mod tests {
             &mut store,
             &ws_root,
             &session_status,
+            // v1.9 Phase 42: policy-agnostic test — allow_all() permits every
+            // sink so these non-SubmitPlanNode dispatch paths are unchanged.
+            &runtime_core::SessionPolicy::allow_all(),
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
@@ -2621,6 +2690,9 @@ mod tests {
             &mut store,
             &ws_root,
             &session_status,
+            // v1.9 Phase 42: policy-agnostic test — allow_all() permits every
+            // sink so these non-SubmitPlanNode dispatch paths are unchanged.
+            &runtime_core::SessionPolicy::allow_all(),
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
@@ -2678,6 +2750,9 @@ mod tests {
             &mut store,
             &ws_root,
             &session_status,
+            // v1.9 Phase 42: policy-agnostic test — allow_all() permits every
+            // sink so these non-SubmitPlanNode dispatch paths are unchanged.
+            &runtime_core::SessionPolicy::allow_all(),
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
@@ -2753,6 +2828,9 @@ mod tests {
                 &mut store,
                 &ws_root,
                 &session_status,
+                // v1.9 Phase 42: policy-agnostic test — allow_all() permits
+                // every sink so this dispatch path is unchanged.
+                &runtime_core::SessionPolicy::allow_all(),
                 trusted_inode,
                 &mut intent_provided,
                 &mut fd_requested,

@@ -316,6 +316,7 @@ mod linux {
                 &plan_node,
                 &store,
                 &SessionStatus::Active,
+                &runtime_core::SessionPolicy::allow_all(),
             );
             assert_eq!(
                 decision,
@@ -403,6 +404,7 @@ mod linux {
                 &plan_node,
                 &store,
                 &SessionStatus::Active,
+                &runtime_core::SessionPolicy::allow_all(),
             );
             assert_eq!(
                 decision,
@@ -474,6 +476,7 @@ mod linux {
                 &plan_node,
                 &store,
                 &SessionStatus::Active,
+                &runtime_core::SessionPolicy::allow_all(),
             );
             assert_eq!(
                 decision,
@@ -543,6 +546,7 @@ mod linux {
                 &plan_node,
                 &store,
                 &SessionStatus::Active,
+                &runtime_core::SessionPolicy::allow_all(),
             );
             assert_eq!(
                 allow,
@@ -791,6 +795,7 @@ mod linux {
                 &plan_node,
                 &store,
                 &SessionStatus::Active,
+                &runtime_core::SessionPolicy::allow_all(),
             );
             let anchor =
                 assert_blocked_on(decision, "github.pr", "title", resp_event_id);
@@ -840,6 +845,7 @@ mod linux {
                 &plan_node,
                 &store,
                 &SessionStatus::Active,
+                &runtime_core::SessionPolicy::allow_all(),
             );
             let anchor =
                 assert_blocked_on(decision, "http.request", "url", resp_event_id);
@@ -892,6 +898,7 @@ mod linux {
                 &plan_node,
                 &store,
                 &SessionStatus::Active,
+                &runtime_core::SessionPolicy::allow_all(),
             );
             let anchor =
                 assert_blocked_on(decision, "git.commit", "message", resp_event_id);

@@ -131,6 +131,7 @@ fn http_fetched_value_blocks_in_sensitive_slot_non_stapled() {
         &store,
         // Active isolates the Block as TAINT-driven (I2), not draft-only (I1).
         &SessionStatus::Active,
+        &runtime_core::SessionPolicy::allow_all(),
     );
     assert!(
         matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }),

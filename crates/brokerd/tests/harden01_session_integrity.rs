@@ -165,6 +165,7 @@ async fn request_fd_via_dispatch(
         store,
         ws_root,
         session_status,
+        &runtime_core::SessionPolicy::allow_all(),
         trusted_inode,
         &mut intent_provided,
         &mut fd_requested,
@@ -355,6 +356,7 @@ async fn second_dispatch_call_after_demotion_observes_draft_not_stale_active() {
         // THE SAME shared Arc<Mutex<SessionStatus>> handle conn1 used —
         // never a fresh clone of an owned SessionStatus.
         &session_status,
+        &runtime_core::SessionPolicy::allow_all(),
         trusted_inode,
         &mut conn2_intent_provided,
         &mut conn2_fd_requested,

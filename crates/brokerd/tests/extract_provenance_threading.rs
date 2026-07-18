@@ -278,6 +278,7 @@ async fn build_two_anchor_block_db(tag: &str) -> TwoAnchorFixture {
         &mut store,
         &ws_root(),
         &session_status,
+        &runtime_core::SessionPolicy::allow_all(),
         trusted_inode,
         &mut intent_provided,
         &mut fd_requested,

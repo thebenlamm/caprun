@@ -43,17 +43,24 @@ pub const TEST_FIXTURES_ACTIVE: bool = cfg!(feature = "test-fixtures");
 /// `session_status` is forwarded to `executor::submit_plan_node` unchanged
 /// (RESEARCH Open Question 1: extend rather than delete this wrapper). Callers
 /// preserving today's behavior pass `&SessionStatus::Active`.
+///
+/// `policy` (v1.9 Phase 42, POLICY-01/POLICY-02) is likewise forwarded unchanged
+/// to `executor::submit_plan_node`, where the deny-only pre-I2 narrowing gate
+/// evaluates it BEFORE the collect-then-Block I2 loop. Callers preserving today's
+/// behavior pass `&SessionPolicy::allow_all()` (or `broker_default()`); the live
+/// dispatch path constructs the session policy in `run_broker_server`.
 pub fn submit_plan_node(
     session_id: uuid::Uuid,
     plan: runtime_core::PlanNode,
     store: &executor::value_store::ValueStore,
     session_status: &runtime_core::SessionStatus,
+    policy: &runtime_core::SessionPolicy,
 ) -> runtime_core::ExecutorDecision {
     // The broker mints the effect identity (HARD-06, DESIGN §4 rule 2) — the
     // executor never mints a Uuid. The live dispatch path (server.rs) does the
     // same before appending the durable sink_blocked anchor.
     let effect_id = uuid::Uuid::new_v4();
-    executor::submit_plan_node(session_id, effect_id, &plan, store, session_status)
+    executor::submit_plan_node(session_id, effect_id, &plan, store, session_status, policy)
 }
 
 #[cfg(test)]
@@ -70,14 +77,20 @@ mod tests {
     /// registered sink to exercise the Allowed path.
     #[test]
     fn submit_plan_node_empty_args_returns_allowed() {
-        use runtime_core::SessionStatus;
+        use runtime_core::{SessionPolicy, SessionStatus};
         let session_id = Uuid::new_v4();
         let plan = PlanNode {
             sink: SinkId("email.send".into()),
             args: vec![],
         };
         let store = ValueStore::default();
-        let result = submit_plan_node(session_id, plan, &store, &SessionStatus::Active);
+        let result = submit_plan_node(
+            session_id,
+            plan,
+            &store,
+            &SessionStatus::Active,
+            &SessionPolicy::allow_all(),
+        );
         assert_eq!(result, ExecutorDecision::Allowed);
     }
 
@@ -85,14 +98,23 @@ mod tests {
     /// a sink absent from `KNOWN_SINKS` is denied BEFORE any resolve/sensitivity.
     #[test]
     fn submit_plan_node_unknown_sink_denied() {
-        use runtime_core::{DenyReason, SessionStatus};
+        use runtime_core::{DenyReason, SessionPolicy, SessionStatus};
         let session_id = Uuid::new_v4();
         let plan = PlanNode {
             sink: SinkId("test.sink".into()),
             args: vec![],
         };
         let store = ValueStore::default();
-        let result = submit_plan_node(session_id, plan, &store, &SessionStatus::Active);
+        // The Step-0 schema gate fires BEFORE the policy gate, so an unknown
+        // sink still Denies with UnknownSink (never PolicyDeny) even under the
+        // permissive allow_all() policy.
+        let result = submit_plan_node(
+            session_id,
+            plan,
+            &store,
+            &SessionStatus::Active,
+            &SessionPolicy::allow_all(),
+        );
         assert_eq!(
             result,
             ExecutorDecision::Denied {

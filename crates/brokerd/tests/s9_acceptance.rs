@@ -125,7 +125,7 @@ fn s9_acceptance() {
     // The broker mints the effect identity (HARD-06) and passes it to the executor.
     let effect_id = Uuid::new_v4();
     let decision =
-        executor::submit_plan_node(session_id, effect_id, &plan_node, &store, &SessionStatus::Active);
+        executor::submit_plan_node(session_id, effect_id, &plan_node, &store, &SessionStatus::Active, &runtime_core::SessionPolicy::allow_all());
 
     let (anchor, literal_value) = match decision {
         ExecutorDecision::BlockedPendingConfirmation { anchors } => {
@@ -343,6 +343,7 @@ fn clean_path_intent_value_evaluates_to_allowed() {
         &plan_node,
         &store,
         &SessionStatus::Active,
+        &runtime_core::SessionPolicy::allow_all(),
     );
 
     assert!(
@@ -468,7 +469,7 @@ fn s9_acceptance_file_create_path_block() {
 
     let effect_id = Uuid::new_v4();
     let decision =
-        executor::submit_plan_node(session_id, effect_id, &plan_node, &store, &SessionStatus::Active);
+        executor::submit_plan_node(session_id, effect_id, &plan_node, &store, &SessionStatus::Active, &runtime_core::SessionPolicy::allow_all());
     let (anchor, block_literal) = match decision {
         ExecutorDecision::BlockedPendingConfirmation { anchors } => {
             assert_eq!(anchors.len(), 1, "this scenario blocks exactly one arg (`path`)");
@@ -631,6 +632,7 @@ fn slot_type_binding_swapped_subject_recipient_denies() {
         &plan_node,
         &store,
         &SessionStatus::Active,
+        &runtime_core::SessionPolicy::allow_all(),
     );
 
     let (sink, arg, expected, found) = match decision {
@@ -757,6 +759,7 @@ fn slot_type_binding_correctly_routed_allows() {
         &plan_node,
         &store,
         &SessionStatus::Active,
+        &runtime_core::SessionPolicy::allow_all(),
     );
 
     assert!(

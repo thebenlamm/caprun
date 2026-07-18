@@ -454,6 +454,9 @@ async fn github_pr_without_grant_denies_via_real_dispatch() {
             &mut value_store,
             &workspace,
             &SessionStatus::Active,
+            // v1.9 Phase 42: policy-agnostic — allow_all() permits github.pr so
+            // this exercises the arm's grant gate, not a policy deny.
+            &runtime_core::SessionPolicy::allow_all(),
             &mut last_event_id,
             &mut last_event_hash,
         )

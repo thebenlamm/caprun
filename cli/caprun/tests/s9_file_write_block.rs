@@ -132,6 +132,7 @@ fn s9_file_write_tainted_path_blocks_with_genuine_anchor() {
         &plan_node,
         &store,
         &SessionStatus::Active,
+        &runtime_core::SessionPolicy::allow_all(),
     );
 
     let anchor = match decision {
@@ -252,6 +253,7 @@ fn s9_file_write_tainted_contents_blocks_with_genuine_anchor() {
         &plan_node,
         &store,
         &SessionStatus::Active,
+        &runtime_core::SessionPolicy::allow_all(),
     );
 
     let anchor = match decision {
@@ -333,6 +335,7 @@ fn s9_file_write_clean_trusted_pair_is_allowed() {
         &plan_node,
         &store,
         &SessionStatus::Active,
+        &runtime_core::SessionPolicy::allow_all(),
     );
 
     assert_eq!(
