@@ -16,46 +16,17 @@ Event → ValueNode → sensitive sink argument) deterministically blocks
 value-injection at the sink. If everything else fails, **I2 enforcement on a
 genuine taint chain must hold.**
 
-## Current Milestone: v1.8 — Git/GitHub Adapters (Effect Breadth II)
+## Shipped Milestone: v1.8 — Git/GitHub Adapters (Effect Breadth II)
 
-**Goal:** Add the external-effect sinks that make a coding agent's work durable
-and shareable — `git.commit`, `git.push`, `github.pr`, and `http.request`
-authorized egress — each through the locked plan-node → taint → executor(I2) →
-audit-DAG path, proving the Safe Coding Agent anchor end-to-end.
+**✅ SHIPPED 2026-07-18 — Phases 35-38,40 complete (Phase 39 `git.push` gate-authorized deferral to v1.9), proven live on real Linux. Full detail archived in `.planning/milestones/v1.8-ROADMAP.md` + `.planning/milestones/v1.8-REQUIREMENTS.md` + `.planning/milestones/v1.8-MILESTONE-AUDIT.md`. Next milestone: run `/gsd-new-milestone` (v1.9 — Git/GitHub Adapters continued: git.push).**
 
-**Anchor use case (confirmed 2026-07-18):** Anchor A — the Safe Coding Agent. An
-agent edits a repo, runs its test suite via `process.exec` (v1.7), commits,
-opens a GitHub PR, and (optionally) makes an allowlisted HTTP call — where every
-irreversible/external effect is I2-gated and value-injection into a sink arg
-(e.g. a tainted PR body, a tainted push target) is deterministically blocked.
-
-**Target features:**
-- `git.commit` sink — broker-mediated `git commit`, workspace-confined,
-  exec-like (returns exit code + stdout/stderr, output tainted).
-- `git.push` sink — broker-mediated `git push`, confined to the session's
-  intent-origin repo/remote (irreversible external effect → I2/confirmation).
-- `github.pr` sink — API-mediated GitHub PR creation via a session bearer token,
-  explicit human auth-grant required; tainted PR-body/title sections blocked.
-- `http.request` authorized egress — taint-governed outbound HTTP to an
-  allowlisted host, read-only first (write egress deferred). Absorbs the
-  deferred `caprun-planner` sidecar `env_clear()` todo at this TLS/egress
-  boundary.
-- Live proof on real Linux — a composed agent workflow (exec → fs → git →
-  github, plus an http leg) with every step gated, tainted, and audit-DAG-chained.
-
-**Key context:** Per this project's unbroken design-gate-first precedent (v1.0
-P2, v1.2 P8, v1.3 P12, v1.4 P18, v1.5 P23, v1.6 P26, v1.7 P31), v1.8 opens with a
-DESIGN doc for the git/github/http sinks that must clear a fresh **non-self**
-adversarial code-trace (orchestrator-owned, not a gsd-executor) before any
-`crates/{executor,brokerd,sandbox,runtime-core}` TCB code. Nothing weakens
-I0/I1/I2 or adds a raw `EffectRequest` path. Real LLM planner loop, declarative
-policy, SDK/packaging remain deferred to v1.9+.
+v1.8 delivered 3 of the 4 originally-scoped sinks: `git.commit` (broker-spawned confined-child `git commit`, MutateReversible, reusing the v1.7 exec-launcher + `mint_from_exec`, git config/hooks neutralized), read-only `http.request` GET (Observe, the new `mint_from_http` inbound-taint mechanism minting the response untrusted-on-arrival and demoting the session to draft-only, defended by an SSRF resolve-and-pin classifier), and `github.pr` (CommitIrreversible, a broker-held bearer token never present in the confined worker/planner sidecar/ValueNode/audit-literal, an explicit human auth-grant distinct from single-shot confirm, tainted PR title/body sections deterministically Blocked via CONTENT-01 content-sensitivity, and a content-derived duplicate-PR CAS mirroring HARDEN-03). **`git.push` (GIT-02/GIT-03) is DEFERRED to v1.9** — the Phase-35 design gate's fresh adversarial code-trace proved (BLOCKER-1) that a `git.push` confined child's network destination cannot be pinned by seccomp (it filters syscall numbers/scalars, not the `connect()` sockaddr behind a pointer; Landlock net rules need kernel 6.7 > the 5.13 floor); the sound alternative — a fully-unprivileged, broker-mediated, destination-pinned egress — is a genuinely new trust posture that the gate itself flagged as needing its own design-gate + fresh adversarial review, so `git.push` was deferred rather than shipped with arbitrary child egress (see `planning-docs/DECISION-git-push-deferral-v1.8.md`). ENV-01 closed the v1.7-deferred `caprun-planner` sidecar `env_clear()` gap-closure, hermetic via compiled-in `webpki-roots` (no `SSL_CERT_*` / readable system store required), live-verified against a real OpenAI HTTPS call. Proven end-to-end on real Linux: a composed workflow — `process.exec` (test) → filesystem edit → `git.commit` → `github.pr` (mock GitHub endpoint, standing in for the pushed-branch precondition) + an `http.request` GET leg — with every step gated, tainted, and audit-DAG-chained (`verify_chain` true across the run); three adversarial attack legs (tainted PR-body/title, tainted GET url/SSRF, tainted commit message) each deterministically Blocked; full-workspace regression green (498 passed/0 failed/60 binaries, no v1.0–v1.7 regression). Every TCB change cleared a fresh non-self adversarial code-trace (the DESIGN gate caught a real BLOCKER + 3 MAJORs; Phase 37's diff caught a MAJOR `aws-lc-rs`-in-workspace defect + a `git.commit` Landlock/exit-code defect). Honest scope: v1.8 proves edit→commit→open-PR (mock) + authorized HTTP fetch — real push is deferred, disclosed here and in the milestone audit, not papered over.
 
 ## Current State
 
-**v1.7 — Effect Breadth I shipped 2026-07-18:** `process.exec` broker-spawned confined-child sink with captured+tainted stdout/stderr, filesystem read/write breadth beyond single-file create, and EXEC-05 confirm-release for blocked process.exec human release. Proven on real Linux: LIVE-01 composed 4-leg acceptance + LIVE-02 full-workspace 391/0 regression. A fresh Fable-5 adversarial code-trace caught and fixed a real MAJOR (confirm-release audit gap), and post-close env_clear() closed broker-secret inheritance in exec-child + worker spawns.
+**v1.8 — Git/GitHub Adapters (Effect Breadth II) shipped 2026-07-18:** `git.commit`, `http.request` GET (+ the new `mint_from_http` inbound-taint mechanism), and `github.pr` (bearer-token auth-grant + duplicate-PR CAS) delivered — 3 of the 4 originally-scoped sinks. `git.push` (GIT-02/GIT-03) DEFERRED to v1.9: the Phase-35 design gate proved seccomp cannot pin a confined child's `connect()` destination, so a sound fully-unprivileged, destination-pinned egress needs its own design-gate first. Proven on real Linux: a composed exec→fs→git.commit→github.pr(mock)+http-GET workflow, 3 adversarial legs Blocked, full-workspace 498/0 regression. ENV-01 closed the v1.7-deferred planner-sidecar `env_clear()` gap.
 
-Prior: v1.6 Security Hardening (close the residuals) — 2026-07-17; v1.5 Slot-Type Binding (T2) — 2026-07-12; v1.4 Trust-Boundary Integrity — 2026-07-11.
+Prior: v1.7 Effect Breadth I (process.exec + fs breadth) — 2026-07-18; v1.6 Security Hardening (close the residuals) — 2026-07-17; v1.5 Slot-Type Binding (T2) — 2026-07-12.
 
 ## Shipped Milestone: v1.7 — Effect Breadth I (process.exec + Filesystem Breadth)
 
@@ -391,6 +362,33 @@ assessment). PLAN.md wins on any conflict.
 
 ### Validated
 
+Shipped in **v1.8 — Git/GitHub Adapters (Effect Breadth II)** (2026-07-18). Full traceability
+archived in `.planning/milestones/v1.8-REQUIREMENTS.md`.
+
+- ✓ DESIGN-15/16: `DESIGN-git-github-http-sinks.md` (per-sink effect-class, `mint_from_http`
+  mechanism, git config/hook neutralization, SSRF resolve-and-pin, auth-grant model, duplicate-PR
+  CAS, closing all 11 design-gate-blocking pitfalls) cleared a fresh non-self adversarial
+  code-trace (2 rounds, APPROVE) before any TCB code — v1.8
+- ✓ GIT-01: `git.commit` broker-spawned confined-child sink (MutateReversible, reuses v1.7
+  exec-launcher + `mint_from_exec`), git config/hooks neutralized, Linux-verified — v1.8
+- ✓ HTTP-01/02/03: `http.request` GET sink (Observe, allowlisted host only); new `mint_from_http`
+  mint site (non-stapled, rooted on `http_response_received`) demotes session to draft-only;
+  SSRF resolve-and-pin defense (loopback/RFC1918/link-local/metadata/userinfo@/redirects denied) — v1.8
+- ✓ GITHUB-01..04: `github.pr` sink via broker-held bearer token (never in worker/planner/
+  ValueNode/audit-literal), explicit human auth-grant distinct from single-shot confirm, tainted
+  title/body deterministically Blocked (CONTENT-01 reuse), content-derived duplicate-PR CAS — v1.8
+- ✓ ENV-01: `caprun-planner` sidecar `env_clear()`'d + minimal allowlist, hermetic under
+  compiled-in `webpki-roots`, live-verified against a real OpenAI HTTPS call — v1.8
+- ✓ LIVE-03/04: composed exec→fs→git.commit→github.pr(mock)+http-GET workflow proven on real
+  Linux, `verify_chain` true across the run; 3 adversarial legs (tainted PR-body/title, tainted
+  GET url/SSRF, tainted commit message) deterministically Blocked; full-workspace regression
+  green (498/0, 60 binaries), no v1.0–v1.7 regression — v1.8
+- ✓ **v1.8 DONE gate cleared:** 13/13 active requirements satisfied + wired; every TCB change
+  cleared a fresh non-self adversarial code-trace (DESIGN gate caught BLOCKER-1 + 3 MAJORs;
+  Phase 37 caught a MAJOR `aws-lc-rs`-in-workspace defect + a git.commit Landlock/exit-code
+  defect); milestone audit PASSED. Deferred: GIT-02/GIT-03 (`git.push`) → v1.9, a gate-authorized
+  deferral, not a gap.
+
 Shipped in **v1.7 — Effect Breadth I** (2026-07-18). Full traceability archived in
 `.planning/milestones/v1.7-REQUIREMENTS.md`.
 
@@ -559,15 +557,18 @@ traceability archived in `.planning/milestones/v1.5-REQUIREMENTS.md`.
 
 ### Active
 
-**v1.8 — Git/GitHub Adapters (breadth toward real-world coding agent).** Building on v1.7's exec + fs read/write primitives, add the external-effect sinks that make code changes durable and shareable:
+**v1.9 — Git/GitHub Adapters continued (git.push).** v1.8 shipped `git.commit` + `http.request` GET
++ `github.pr`; `git.push` was gate-authorized-deferred (Phase-35 design gate BLOCKER-1: seccomp
+cannot pin a confined child's `connect()` destination):
 
-- [ ] `git.commit` sink — broker-mediated `git commit` (workspace-confined, exec-like, returns exit code + stdout/stderr tainted)
-- [ ] `git.push` sink — broker-mediated `git push` (confined to the session's intent origin repo, verify remote + branch)
-- [ ] `github.pr` sink — broker-mediated GitHub PR creation (API-mediated via session bearer token, requires explicit auth-grant from human; PR template from planner + tainted body sections blocked)
-- [ ] `http.request` authorized egress — taint-governed outbound HTTP (read-only for now; write egress deferred)
-- [ ] Live proof on real Linux — a composed agent workflow: exec (test), fs (edit), git (commit), github (PR) — all gated, tainted, audit-DAG-chained
+- [ ] `git.push` sink — broker-mediated, destination-pinned egress (a fully-unprivileged mechanism
+  — e.g. pasta/netns egress-filter, broker-proxied git smart-HTTP, or SCM_RIGHTS pre-connected-fd
+  — is a new trust posture requiring its own design-gate + fresh adversarial review) (GIT-02)
+- [ ] Tainted push remote/refspec Block + confirm-release for git.push (GIT-03)
 
-Per standing precedent, v1.8 opens with a DESIGN doc for git/github/http sinks before any TCB change. Real LLM planner loop, policy/SDK/packaging deferred to **v1.9+**.
+The v1.8 DESIGN doc's §2 (git.push model), §2.5 (captured-output scrub), §2.7
+(payload-at-confirm) carry forward as v1.9's starting design. Real LLM planner loop, policy/SDK/
+packaging remain deferred beyond v1.9.
 
 ### Out of Scope
 
@@ -577,11 +578,11 @@ as of 2026-07-07 unless noted:
 - `process.exec` sink + filesystem read/write breadth — **IN SCOPE as v1.7**
   (Effect Breadth I; the first primitives of the Safe Coding Agent anchor,
   2026-07-17)
-- Git / GitHub adapters (`github.pr`), `http.request` authorized egress, test
-  adapter, patch/PR, workspace snapshots — the PLAN.md "v1" breadth bucket;
-  **deferred to v1.8+** (git/PR is the irreversible external effect that makes
-  I2/confirmation worth gating, but it comes *after* the exec+fs primitives an
-  agent needs to produce the change — 2026-07-17)
+- Git / GitHub adapters (`git.commit`, `github.pr`), `http.request` authorized
+  egress — **IN SCOPE as v1.8** (Effect Breadth II, shipped 2026-07-18). `git.push`
+  gate-authorized-deferred to **v1.9** (Phase-35 design gate BLOCKER-1: seccomp
+  cannot pin a confined child's `connect()` destination). Test adapter, patch/PR,
+  workspace snapshots remain deferred beyond v1.9.
 - Real LLM planner loop (multi-step tool-use on the v1.4 sidecar seam),
   declarative policy file, thin SDK/CLI, audit-DAG viewer, packaging —
   deferred to **v1.9/v1.10+** per the productization sketch (2026-07-17)
@@ -861,6 +862,8 @@ Python OK for non-TCB experiments only.
 | **v1.7: confirm-release path does NOT mint the released exec output** | Dead ceremony — no live ValueStore/consumer in the human-driven confirm process; durable non-stapled taint lives on the process_exited event only, a structural improvement over an audit-gap that a passing verifier + green gates missed until fresh Fable-5 adversarial review caught it | ✓ Good (34-03 reconciliation). |
 | **v1.7: env_clear() the confined exec-child AND worker spawns** | Neither should inherit broker secrets (OPENAI_API_KEY/CAPRUN_SMTP_*); planner-sidecar variant (TLS-env regression risk) deferred to v1.8 | ✓ Good. |
 | **v1.7: fresh non-self Fable-5 adversarial code-trace guardrail caught its 8th real defect** | The confirm-release audit-gap MAJOR (Step-7 dispatch burned the one-shot confirmation, leaving no terminal event in the DAG) that a passing verifier + green Linux gates both missed — reinforces [[fresh-context-adversarial-review]] as a standing architectural necessity | ✓ Good. |
+| **v1.8: defer `git.push` (GIT-02/GIT-03) to v1.9 rather than ship arbitrary child egress** | The Phase-35 design gate's fresh adversarial code-trace (BLOCKER-1) proved seccomp cannot pin a confined child's `connect()` destination — the only seccomp "relaxation" possible is all-or-nothing `AF_INET` allow, the exact exfiltration primitive the taint model exists to defeat. The sound alternative (fully-unprivileged, broker-mediated, destination-pinned egress) is a genuinely new trust posture that itself needs a design-gate + fresh adversarial review — not something to design, review, implement, and live-prove correctly in the same pass | ✓ Good (the gate did its job — see `planning-docs/DECISION-git-push-deferral-v1.8.md`). |
+| **v1.8 "Git/GitHub Adapters (Effect Breadth II)" SHIPPED** (2026-07-18) | `git.commit` + `http.request` GET (new `mint_from_http` inbound-taint mechanism) + `github.pr` (bearer-token auth-grant + duplicate-PR CAS) delivered and proven on real Linux via a composed exec→fs→git→github(+http) workflow with 3 adversarial legs Blocked and 498/0 full-workspace regression; every TCB change cleared a fresh non-self adversarial code-trace; `git.push` honestly disclosed as deferred, not papered over | — Shipped. |
 
 ## Evolution
 
@@ -880,7 +883,7 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-18 starting v1.8 (Git/GitHub Adapters — Effect Breadth II) milestone via `/gsd-new-milestone`. Anchor A (Safe Coding Agent) confirmed. Scope: `git.commit` + `git.push` + `github.pr` + `http.request` authorized egress (read-only first), all through the plan-node → taint → executor(I2) → audit path; live proof = a composed exec→fs→git→github(+http) workflow on real Linux. Opens with a DESIGN-gate phase (fresh non-self adversarial code-trace before any TCB code) per standing precedent; folds in the deferred `caprun-planner` sidecar `env_clear()` todo at the http egress boundary. Prior: 2026-07-18 after v1.7 (Effect Breadth I) SHIPPED — process.exec confined-child sink + filesystem read/write breadth + EXEC-05 confirm-release, proven on real Linux (LIVE-01 composed 4-leg + LIVE-02 391/0); env_clear gap-closure (exec-child + worker) fixed, planner-sidecar deferred to v1.8.*
+*Last updated: 2026-07-18 after v1.8 (Git/GitHub Adapters — Effect Breadth II) milestone SHIPPED. Delivered 3 of the 4 originally-scoped sinks — `git.commit`, `http.request` GET (new `mint_from_http` inbound-taint mechanism), `github.pr` (bearer-token human auth-grant + duplicate-PR CAS) — proven live on real Linux via a composed exec→fs→git.commit→github.pr(mock)+http-GET workflow with three adversarial legs deterministically Blocked and a 498/0 full-workspace regression, no v1.0–v1.7 regression. `git.push` (GIT-02/GIT-03) is DEFERRED to v1.9: the Phase-35 design gate's fresh adversarial code-trace proved (BLOCKER-1) that seccomp cannot pin a confined child's network destination, and the sound fully-unprivileged alternative is a genuinely new trust posture needing its own design-gate — a gate-authorized deferral, not a gap, disclosed in the milestone audit and here. Every TCB change cleared a fresh non-self adversarial code-trace (the DESIGN gate caught a real BLOCKER + 3 MAJORs; Phase 37's diff caught a MAJOR `aws-lc-rs`-in-workspace defect + a git.commit Landlock/exit-code defect). ENV-01 closed the v1.7-deferred `caprun-planner` sidecar `env_clear()` gap, hermetic via compiled-in `webpki-roots`. **NEXT: `/gsd-new-milestone`** (v1.9 — git.push, opening with its own destination-pinning design-gate). Prior: 2026-07-18 after v1.7 (Effect Breadth I) SHIPPED — process.exec confined-child sink + filesystem read/write breadth + EXEC-05 confirm-release, proven on real Linux (LIVE-01 composed 4-leg + LIVE-02 391/0); env_clear gap-closure (exec-child + worker) fixed, planner-sidecar deferred to v1.8.*
 
 Prior: 2026-07-17 after v1.6 "Security Hardening (close the residuals)"
 SHIPPED — all 5 phases (26-30) complete, turning the five standing TCB-local

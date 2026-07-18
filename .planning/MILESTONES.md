@@ -1,5 +1,26 @@
 # Milestones
 
+## v1.8 Git/GitHub Adapters (Effect Breadth II) (Shipped: 2026-07-18)
+
+**Phases completed:** 5 phases, 16 plans, 23 tasks
+
+**Key accomplishments:**
+
+- A 658-line, §0-§12 design contract (DESIGN-15) pinning the dispatch pattern, effect-class, I2-sensitive args, taint flow, and confinement for git.commit (MutateReversible), git.push (net-allowed confined child, FORK 1), read-only http.request GET (Observe + the new mint_from_http/HttpRaw mechanism), and github.pr (session-scoped auth-grant + duplicate-PR CAS) — closing all 11 design-gate-blocking pitfalls with a named mechanism each, ready for the fresh non-self adversarial code-trace.
+- DESIGN-16 — the v1.8 DESIGN doc clears a fresh, non-self,
+- TaintLabel::HttpRaw (compile-forced untrusted) plus the hardcoded executor rows that make http.request a callable, Observe-classified GET sink whose single `url` arg is routing- AND content-sensitive with an unconstrained role gate — no network, mint, or dispatch code (those are Plans 02/03).
+- Task 1 — brokerd net deps (broker-only).
+- Task 1 — `mint_from_http` + Gate-3 extension (quarantine.rs, check-invariants.sh).
+- Added a `KNOWN_SINKS` row for `github.pr` with `allowed == required == {owner,repo,base,head,title,body}` (exact-match, all six required — mirrors `file.write`, not `process.exec`'s optional-arg asymmetry). Any extra arg (`draft`, `headers`, `method`, …) is `Denied(UnknownArg)` at Step 0; a repeat is `DuplicateArg`; any of the six absent is `MissingArg`. Doc comment states the schema gate enforces only the arg NAME set, not taint.
+- Session-scoped github.pr auth-grant (session_grants + has_github_grant gate) and a content-derived duplicate-PR CAS (created_prs + combined_digest-keyed reserve_created_pr), plus the distinct `caprun grant` human CLI verb — the two independent gates and the replay defense Plans 38-04/38-05 consume.
+- Task 1 — the Allowed `github.pr` arm
+- 1. [Rule 3 - Blocking] Shared env lock across test modules
+- A never-default cargo feature that adds EXACTLY one checked-in test CA + one test host (`github-mock.caprun.test`) to the broker egress under gate — with the release build provably webpki-roots-only + `[api.github.com]`-only, and the SSRF resolve-and-pin path untouched.
+- A stdlib-only HTTPS mock GitHub endpoint plus a sibling `compose-verify.sh` that stands up Mailpit + the mock on ONE public-range docker network, add-hosts only the mock (api.github.com untouched), and runs the unprivileged rust:1 suite with the `mock-egress-ca` feature and a leading workspace build — true exit code captured before any pipe.
+- The v1.8 DONE gate passes on real Linux: a composed exec -> file.write -> git.commit (real confined) -> github.pr (mock 201) -> http GET (real api.github.com) workflow, three deterministic adversarial Blocks/Denies, and the ENV-01 hermetic-env_clear live-HTTPS proof — full workspace 498 passed / 0 failed, TRUE_RC=0.
+
+---
+
 ## v1.7 Effect Breadth I (Shipped: 2026-07-18)
 
 **Phases completed:** 4 phases, 17 plans, 38 tasks

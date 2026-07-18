@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Git/GitHub Adapters
-current_phase: 40
-status: planning
+current_phase: 8
+status: Awaiting next milestone
 stopped_at: v1.8 roadmap created (Phases 35-40)
-last_updated: "2026-07-18T11:22:12.233Z"
+last_updated: "2026-07-18T11:26:04.817Z"
 last_activity: 2026-07-18
-last_activity_desc: Phase 40 complete
+last_activity_desc: Milestone v1.8 completed and archived
 progress:
   total_phases: 6
   completed_phases: 5
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 ## Current Position
 
-Phase: 40
-Plan: Not started
-Status: Roadmapped, ready to plan Phase 35
-Last activity: 2026-07-18 — Phase 40 complete
+Phase: Milestone v1.8 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-18 — Milestone v1.8 completed and archived
 
 ## Performance Metrics
 
@@ -122,7 +122,7 @@ Resume file: None
 
 ## Operator Next Steps
 
-- Plan Phase 35 (the design gate) with `/gsd-plan-phase 35`.
+- Start the next milestone with /gsd-new-milestone
 
 ## Deferred Items
 
