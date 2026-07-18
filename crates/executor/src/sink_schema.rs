@@ -102,6 +102,22 @@ pub const KNOWN_SINKS: &[SinkSchema] = &[
         allowed: &["url"],
         required: &["url"],
     },
+    SinkSchema {
+        // GITHUB-01/03 (Phase 38 Plan 01), DESIGN-git-github-http-sinks.md
+        // §4.1/§4.4 / CONTEXT decisions 1/4: exact-match, all-six-required
+        // schema. `allowed` and `required` are BOTH exactly
+        // {owner,repo,base,head,title,body} — mirroring file.write's
+        // exact-match shape, NOT process.exec's optional-arg asymmetry. No
+        // draft/maintainer_can_modify/headers/method args are modeled this
+        // milestone (PR-create scope), so a plan node carrying any is
+        // Denied(UnknownArg) here at Step 0. title/body are content-sensitive
+        // and owner/repo/base/head routing-sensitive per sink_sensitivity.rs —
+        // a tainted value Blocks downstream, it does NOT Deny here; this schema
+        // gate enforces only the arg NAME set, not taint.
+        sink: "github.pr",
+        allowed: &["owner", "repo", "base", "head", "title", "body"],
+        required: &["owner", "repo", "base", "head", "title", "body"],
+    },
 ];
 
 /// Test-fixture-only sink registry (RESEARCH.md Pitfall 3 / DESIGN §9 Pitfall
