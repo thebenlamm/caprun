@@ -275,9 +275,14 @@ Full detail archived in [`milestones/v1.8-ROADMAP.md`](milestones/v1.8-ROADMAP.m
   1. A composed workflow — `process.exec` (test) → filesystem edit → `git.commit` → `git.push` → `github.pr` PLUS an `http.request` POST leg — runs on real Linux (mock git remote + mock endpoint), **DRIVEN and INSPECTED via the new CLI + audit-DAG viewer**, with every step gated/tainted/audit-DAG-chained and `verify_chain` true across the run.
   2. Five **independently attributable** negative legs each deterministically Block/refuse: (1) a tainted push remote/refspec (I2 Blocks); (2) a tainted POST body (I2 Blocks); (3) a policy-deny leg (an off-allowlist sink refused via the distinct policy-deny outcome) — where the I2-Block legs run a sink+arg the policy explicitly PERMITS (distinct machine-checkable terminal-event tags asserted separately); (4) a destination-pin negative (a push/POST redirected/off-pin refused at the broker/application layer); (5) a credential-absence assertion (after a real push, no credential or remote-URL material in the value store or audit chain).
   3. Full-workspace regression green on real Linux, no v1.0–v1.8 regression.
-  4. If GIT-02 deferred, the `git.push` leg auto-descopes AND the deferral is recorded as a disclosed milestone gap requiring explicit user sign-off — never an orchestrator-autonomous silent drop.
+  4. If GIT-02 deferred, the `git.push` leg auto-descopes AND the deferral is recorded as a disclosed milestone gap requiring explicit user sign-off — never an orchestrator-autonomous silent drop. (GIT-02 SHIPPED in Phase 44 — safety-valve does NOT apply; the `git.push` leg IS in the composed proof.)
 
-**Plans**: TBD
+**Plans**: 4 plans (waves: 01 → 02 ∥ 03 → 04)
+
+- [ ] 46-01-PLAN.md — G3: add `POST /ingest` → 201 (+ receipt ledger) to the mock GitHub server so the clean composed http.request.write POST delivers (`http_write_succeeded`) [LIVE-05]
+- [ ] 46-02-PLAN.md — composed SUCCESS proof (`live_acceptance_v1_9_composed.rs`): process.exec → file edit → git.commit → git.push (confirm-release) → github.pr → http.request.write POST over one shared audit.db through the REAL broker arms; genuine `caprun audit` inspection + a genuine `caprun run` Block leg; framing-honesty doc (G1) [LIVE-05]
+- [ ] 46-03-PLAN.md — the 5 independently-attributable negative legs (`s46_negative_legs_composed.rs`): tainted remote/refspec + tainted POST body I2-Block (sink_blocked); policy-deny distinct tag (code()=="policy_deny", G2); redirect destination-pin refusal; credential-absence incl. broker log (G4) [LIVE-06]
+- [ ] 46-04-PLAN.md — full compose-verify regression gate (no v1.0–v1.8 regression) + v1.9 milestone DONE record (blunt framing honesty, git.push-shipped, pack-cap deferral) + human sign-off [LIVE-05, LIVE-06]
 
 ## Progress
 
