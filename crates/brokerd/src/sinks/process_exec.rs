@@ -373,6 +373,11 @@ pub(crate) fn prepare_process_exec(resolved_args: &[ResolvedArg]) -> Result<Prep
 /// exit status + combined output on success. `_args` is passed for
 /// documentation/parity only — the launcher itself decodes `EXEC_ARGS_JSON`;
 /// the broker never invokes the target directly.
+/// Minimal `PATH` handed to the confined exec child after `env_clear()` — enough
+/// to resolve bare-name commands (`/usr/bin`, `/bin`, `/usr/local/bin`) without
+/// re-introducing any of the broker's own environment. See `run_launcher`.
+const SAFE_EXEC_PATH: &str = "/usr/bin:/bin:/usr/local/bin";
+
 async fn run_launcher(
     launcher_path: &std::path::Path,
     command: &str,
@@ -382,6 +387,18 @@ async fn run_launcher(
     _args: &[String],
 ) -> Result<(std::process::ExitStatus, String)> {
     let mut cmd = TokioCommand::new(launcher_path);
+    // SECURITY (todo 2026-07-17-exec-child-env-clear / Phase 34 gap-closure):
+    // clear the broker's environment so the confined child inherits NONE of the
+    // unconfined `caprun` process's env — notably `OPENAI_API_KEY` and
+    // `CAPRUN_SMTP_*`. Without this, a UserTrusted `env`/`printenv` target would
+    // capture those secrets into `combined_output`, which is minted/audited and
+    // shown verbatim in the confirmation UX. Pass ONLY a minimal safe `PATH` (so
+    // the launcher's `execve` of a bare-name target command still resolves
+    // standard binaries) plus the `EXEC_*` vars the launcher itself reads — those
+    // are non-secret command metadata (command/args/cwd/workspace root), already
+    // known to any human confirmer.
+    cmd.env_clear();
+    cmd.env("PATH", SAFE_EXEC_PATH);
     cmd.env("EXEC_COMMAND", command).env("EXEC_ARGS_JSON", args_json);
     // Only set EXEC_CWD when a cwd was actually supplied (32-06 fix): setting
     // it to an EMPTY STRING when `cwd` is `None` made the launcher call
@@ -788,6 +805,66 @@ mod from_resolved_tests {
         assert!(
             verify_chain(&conn, &session_id.to_string(), TEST_KEY),
             "the causal chain must stay intact after appending process_spawn_failed"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Phase 34 gap-closure (todo 2026-07-17-exec-child-env-clear): the confined
+    /// exec child must NOT inherit the broker's environment. A secret set in the
+    /// broker (this test process) — standing in for `OPENAI_API_KEY` /
+    /// `CAPRUN_SMTP_*` — must be ABSENT from a UserTrusted `/usr/bin/env` target's
+    /// captured output (which is minted, audited, and shown verbatim on confirm).
+    /// `run_launcher`'s `env_clear()` + minimal `PATH` guarantees this. A sanity
+    /// assertion confirms the clear did not leave an empty env (PATH survives).
+    #[tokio::test]
+    async fn run_launcher_env_clear_prevents_broker_secret_leak() {
+        let (root, ws) = temp_workspace("envclear");
+        let (conn, session_id, parent_id, parent_hash) = seed_root();
+        let effect_id = Uuid::new_v4();
+
+        // A unique sentinel "secret" in the broker's (this process's)
+        // environment — mirrors OPENAI_API_KEY / CAPRUN_SMTP_* being present in
+        // the unconfined caprun process. Unique name so it cannot collide with
+        // any real var another concurrent test reads.
+        let sentinel_key = "CAPRUN_ENV_LEAK_SENTINEL_34GAP";
+        let sentinel_val = "s3cr3t-broker-value-must-not-leak-9x7q";
+        std::env::set_var(sentinel_key, sentinel_val);
+
+        // `/usr/bin/env` prints the child's full environment.
+        let resolved_args = resolved_args_for("/usr/bin/env", &[]);
+        let result = invoke_process_exec_from_resolved(
+            &conn,
+            TEST_KEY,
+            session_id,
+            effect_id,
+            &resolved_args,
+            &ws,
+            parent_id,
+            &parent_hash,
+        )
+        .await;
+        std::env::remove_var(sentinel_key);
+
+        let (_evt_id, _hash, combined_output) =
+            result.expect("/usr/bin/env must run in the confined child");
+
+        assert!(
+            !combined_output.contains(sentinel_key),
+            "the confined child inherited the broker var NAME `{sentinel_key}` — env_clear() failed:\n{combined_output}"
+        );
+        assert!(
+            !combined_output.contains(sentinel_val),
+            "the confined child inherited the broker SECRET VALUE — env_clear() failed:\n{combined_output}"
+        );
+        assert!(
+            !combined_output.contains("OPENAI_API_KEY"),
+            "the confined child inherited OPENAI_API_KEY from the broker env — the exact leak this fix closes:\n{combined_output}"
+        );
+        // Sanity: env_clear() did not strip the minimal PATH the child needs.
+        assert!(
+            combined_output.contains("PATH="),
+            "expected the minimal SAFE_EXEC_PATH in the child env, got:\n{combined_output}"
         );
 
         std::fs::remove_dir_all(&root).ok();
