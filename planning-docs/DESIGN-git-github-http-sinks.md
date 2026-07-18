@@ -464,3 +464,195 @@ run** — the only place a TLS-env regression manifests; offline/mocked tests do
 NOT catch a missing-cert-root failure (§11, §12).
 
 ---
+
+## §6. Threat Model — 11 Design-Gate-Blocking Pitfalls → Named Mechanism
+
+Each pitfall is closed by a NAMED mechanism, cross-referenced to the § that pins
+it. All 11 from `35-CONTEXT.md` (the source the fresh reviewer cross-checks
+against `.planning/research/PITFALLS.md`):
+
+| # | Pitfall | Named mechanism | § |
+|---|---------|-----------------|---|
+| 1 | Tainted PR-body / commit-message exfil (marquee) | `title`/`body`/`message` are I2 content-sensitive sink args (CONTENT-01, `sink_sensitivity.rs:140`); taint genuinely propagated (not stapled); verbatim provenance shown at confirm | §1.3, §4.4 |
+| 2 | git config/hook RCE | Hardcoded launcher neutralization: `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `-c core.hooksPath=/dev/null`, no aliases, `GIT_TERMINAL_PROMPT=0`, `env_clear()`'d child (`process_exec.rs:400`) | §1.5 |
+| 3 | Swapped-remote push | `remote`+`branch` captured from trusted intent at session creation, passed explicitly to the child — NEVER resolved from the untrusted repo's `.git/config` (D-04 sourcing analog, `email_smtp.rs:43-56`) | §2.2 |
+| 4 | `--force` / destructive refspec | Hard-denied regardless of confirmation (no `--force`/`--force-with-lease`, no `:refspec` deletion, no `+` force-refspec); `remote`+`refspec` I2-gated | §2.4 |
+| 5 | Credential leak / flow | Token/push-cred in broker-local env ONLY (D-04, `email_smtp.rs:87-112`); never a ValueNode/plan-arg/audit-literal/worker/planner; short-lived injection to the push child only, `env_clear()`'d otherwise (`process_exec.rs:390-402`) | §2.5, §4.2 |
+| 6 | Token over-scoping | Minimal fine-grained PAT scopes (`Pull requests: write` + `Contents: read`), operator responsibility surfaced at grant time | §4.4 |
+| 7 | http SSRF | Resolve-and-pin the IP; deny loopback/RFC1918/link-local/CGNAT/metadata(`169.254.169.254`)/ULA/IPv6-mapped; no redirects; reject `userinfo@`/non-`https`/IP-encoding; host allowlist | §3.6 |
+| 8 | http response not minted / stapled taint | `mint_from_http` at arrival rooted on a real `http_response_received` Event + session demotion (I1); anti-staple test proving the downstream Block | §3.3, §3.5 |
+| 9 | net-deny widening | Confined WORKER never gains net; egress is broker/confined-net-child only; the git.push child gets a single-pinned-host:port minimal relaxation | §2.3, §3.1 |
+| 10 | push/PR effect-class | Pinned per §1.2/§2.1/§4.1; `git.commit`'s `MutateReversible` exception explicitly justified | §1.2 |
+| 11 | Replay / duplicate-PR CAS | Content-derived idempotency key committed to a CAS table BEFORE the GitHub API call (mirrors HARDEN-03, `DESIGN-security-hardening.md` §c) → at-most-one PR | §4.5 |
+
+---
+
+## §7. Invariant Preservation
+
+Each item is checked with a one-line justification (mirroring
+`DESIGN-effect-breadth-exec.md` §6 / `DESIGN-slot-type-binding.md`):
+
+- [x] **I0 unaffected** — no new session-creation path exists in this model; a
+  session seeded from external/untrusted content still starts draft-only and
+  cannot auto-authorize a `CommitIrreversible` push/PR.
+- [x] **I1 preserved AND extended** — `mint_from_http` demotes the session on an
+  inbound HTTP response (§3.3), exactly the I1 direction, using
+  `mint_from_read`'s atomic in-`conn` demotion pattern
+  (`quarantine.rs:391-401`). No sink reads raw untrusted bytes into the worker.
+- [x] **I2 NOT weakened or bypassed** — all four sinks are `PlanNode{sink,args}`
+  from spawn and route through the UNMODIFIED `submit_plan_node`
+  collect-then-Block loop. The ONLY executor changes are table rows
+  (`KNOWN_SINKS`, `sink_effect_class`, `is_routing_sensitive` /
+  `is_content_sensitive`, `expected_role`) — no new `ExecutorDecision` variant,
+  no new enforcement step. Same discipline as v1.5/v1.7.
+- [x] **No new raw effect-request-to-sink path** — the plan-node path is
+  preserved (DEC-architectural-lock-plan-nodes, `plan_node.rs:1-9`); this doc
+  introduces no such token anywhere, so `check-invariants.sh` Gate 1
+  (`check-invariants.sh:29-36`) stays green with zero new hits.
+- [x] **Sink sensitivity stays HARDCODED in the executor** — the new sinks add
+  `is_routing_sensitive` / `is_content_sensitive` / `expected_role` / `sink_effect_class`
+  TABLE ROWS ONLY (`sink_sensitivity.rs:40-253`), never a swappable policy file.
+  Sensitivity is a security property, not a config knob (CON-i2-non-bypassable,
+  `sink_sensitivity.rs:1-8`).
+- [x] **Genuine, non-stapled taint** — HTTP taint is minted ONLY inside
+  `mint_from_http` at the `http_response_received` Event
+  (`provenance_chain[0]` == that Event id); git output via the existing
+  `mint_from_exec` (`quarantine.rs:838-853`). The executor never mints, never
+  sets taint (it only `value_store.resolve()`s).
+
+---
+
+## §8. Fail-Closed Defaults Table
+
+| Sink arg | Sensitivity | Default posture | Fail-closed behavior |
+|---|---|---|---|
+| `git.commit` `message` | content-sensitive | taint carrier, never re-minted clean; `MutateReversible` survives I1 | tainted → Block (collect-then-Block); unknown/missing → Deny at Step 0 schema gate |
+| `git.push` `remote` | routing-sensitive | from TRUSTED intent only, never repo `.git/config` | tainted → Block; not-from-trusted-intent → Deny |
+| `git.push` `refspec` | routing-sensitive | `--force`/deletion/`+`-force hard-denied regardless of confirm | tainted → Block; force/delete shape → hard Deny |
+| `http.request` `url` | routing-sensitive | I2-gated; host allowlist; resolve-and-pin | non-allowlisted host or SSRF range → Deny; tainted → Block |
+| `http.request` response `ValueNode` | untrusted origin | `HttpRaw`+`ExternalUntrusted`, `origin_role="http_response"`; demotes session | unknown/unrecognized shape → fail-closed mint error (mirrors T-07-47), never default-tagged |
+| `github.pr` `title`/`body` | content-sensitive (CONTENT-01) | verbatim + provenance shown at confirm | tainted → Block; unknown/missing → Deny at Step 0 |
+| `github.pr` `owner`/`repo`/`base`/`head` | routing-sensitive | I2-gated | tainted → Block |
+| `github.pr` credential use | capability | requires session auth-grant AND per-effect I2 confirm — BOTH gates | absent grant → Deny (a bare confirm cannot create a PR) |
+| duplicate submission (git.push/github.pr) | idempotency | content-derived CAS committed before the API call | CAS hit → at-most-once (no second effect) |
+| unregistered sink, or unknown/duplicate/missing arg | structural | `KNOWN_SINKS` exact-match schema, Step 0 gate | Deny at Step 0, before any resolve / sensitivity / role check runs |
+
+---
+
+## §9. Confirm-Release Audit-Gap Discipline (P33/P34 — MANDATORY)
+
+`git.push` and `github.pr` are BOTH `CommitIrreversible` + confirm-releasable.
+For EACH, this doc MANDATES: the confirm-release path writes the **TERMINAL
+AUDIT EVENT before the terminal state** — NEVER a terminal STATE (e.g.
+`Confirmed`, `confirm_granted` appended) before the terminal EVENT that
+justifies it (the effect's `..._succeeded`/`..._failed`). Each MUST have a
+`prepare_*` precheck — `prepare_git_push` and `prepare_github_pr` — that runs
+BEFORE `confirm()` appends `confirm_granted` (Step 5) and burns the one-shot
+(Step 6 CAS→Confirmed), folding every fallible pre-effect leg through the single
+terminal-event branch. This is the EXACT pattern `process.exec` already ships:
+`prepare_process_exec` at confirm()'s Step 4.8 (`confirmation.rs:847-866`),
+called by BOTH the precheck and the sink dispatch so they cannot drift
+(`process_exec.rs:346-369`), with every `?` leg on the dispatch side folded into
+the branch that appends `process_spawn_failed` FIRST (`process_exec.rs:265-333`).
+
+This is the RECURRING MAJOR audit-gap class that a passing verifier + green
+gates missed TWICE — v1.7 P33 (file.write) and P34 (process.exec, the exact
+"pre-spawn `?` legs burned the one-shot AFTER Step 5/6 with no terminal event"
+MAJOR-1) — and that only the fresh adversarial code-trace caught. Phases 38/39
+MUST implement `prepare_github_pr`/`prepare_git_push` with a regression test
+asserting NO dangling `confirm_granted`-without-terminal-event (mirroring
+`confirm_on_process_exec_malformed_args_does_not_burn_confirmation`,
+`confirmation.rs:1965`).
+
+---
+
+## §10. New-Mechanism Symbol Summary + Gate 3 Mandate
+
+**New symbols the implementation phases introduce** (each appears ONLY in
+DESIGN-doc prose this phase, NEVER under `crates/` or `cli/`):
+
+| Symbol | Phase | Locus |
+|--------|-------|-------|
+| `TaintLabel::HttpRaw` | 37 | `runtime-core/src/plan_node.rs` (compile-forced into `is_untrusted()`) |
+| `mint_from_http` + `http_response_received` Event | 37 | `crates/brokerd/src/quarantine.rs` (mint) + `server.rs` (call site) |
+| duplicate-PR CAS table (`created_prs` or similar) | 38 | `crates/brokerd/src/audit.rs` migration + `server.rs` |
+| session auth-grant event + `caprun grant` verb | 38 | `crates/brokerd` (grant event) + `cli/caprun` (verb) |
+| `prepare_git_push` / `prepare_github_pr` | 39 / 38 | `crates/brokerd/src/sinks/*` + `confirmation.rs` precheck |
+| `git.commit`=`MutateReversible`, `http.request`=`Observe`, new `KNOWN_SINKS`/sensitivity rows | 36-39 | `crates/executor/src/{sink_schema,sink_sensitivity}.rs` |
+
+**Gate 3 mandate.** `scripts/check-invariants.sh` Gate 3 TODAY restricts exactly
+four call-site tokens — `mint_from_read(`, `mint_from_derivation(`,
+`mint_from_exec(`, `.mint(` — to the sanctioned loci `quarantine.rs`,
+`server.rs` (+ `value_store.rs` for `.mint(`) (`check-invariants.sh:134-137`). A
+new `mint_from_http(` call site will **NOT** be caught by Gate 3 as written
+today. This doc **MANDATES** that Phase 37 extend Gate 3 with a fifth
+`check_mint_token "mint_from_http("` call restricted to the SAME sanctioned loci
+(`quarantine.rs`, `server.rs`), in the SAME commit that introduces
+`mint_from_http` — exactly as Phase 32 extended it for `mint_from_exec(`. Without
+this extension the new mint site's call-site restriction is silently unenforced;
+the fresh reviewer must confirm the extension exists before clearing.
+
+---
+
+## §11. Open Items & Accepted Residual Risks
+
+**OPEN (model pinned, deployment constants deferred — NOT model gaps):**
+
+1. **The exact single-pinned-host:port seccomp net-relaxation syscall set for
+   the `git.push` child.** §2.3 pins the METHOD (narrowest relaxation to reach
+   the ONE resolved remote endpoint, worker never gains net); the exact syscall
+   list + host:port resolution are a Phase 39 constant.
+2. **The exact `caprun grant` lifetime/verb surface.** §4.3 pins session-scoped
+   as the model; the precise CLI surface is finalized at Phase 38.
+3. **The `webpki-roots` surviving-env allowlist confirmation via a live HTTPS
+   run.** §5.2 pins the policy; Phase 40's live run confirms `env_clear()` is
+   hermetic (offline/mocked tests do not catch a cert-root regression).
+4. **git binary floor** (≥2.30, §1.5) and the **SSRF host allowlist** contents
+   (§3.6) — environment-dependent constants resolved at implementation.
+
+**Accepted residual risks (mirroring prior DESIGN docs' convention):**
+
+- **The `git.push` net-relaxation is the riskiest surface in the project to
+  date** — explicitly the TOP item for the fresh adversarial review to
+  pressure-test (§2.1). A confined child WITH network is a genuinely new trust
+  posture; the mitigation (single pinned host:port, no arbitrary egress,
+  Landlock still workspace-confined, short-lived credential) is pinned but must
+  be traced against real code by the reviewer.
+- **An Allowed `http.request` GET in a network-scoped context is inert** unless
+  the host allowlist permits it — deliberately scoped, mirroring
+  DESIGN-effect-breadth-exec.md §1.6's "an Allowed `curl` in a network-denied
+  child is inert" residual.
+- **Duplicate-PR CAS is at-most-once PER PLAN NODE, not a per-session budget**
+  (D-08, inherited from HARDEN-03) — a statically-compromised worker submitting
+  N distinct plan nodes gets N distinct keys.
+
+---
+
+## §12. Acceptance Predicate — Done When
+
+Phase 35's gate is cleared when ALL are true:
+
+1. This doc pins, per sink, the dispatch pattern, effect-class
+   (`git.commit`=`MutateReversible`, `git.push`/`github.pr`=`CommitIrreversible`,
+   `http.request` GET=`Observe`), the I2-sensitive sink args, the taint flow,
+   and the confinement (§1-§4). **(DESIGN-15, this plan.)**
+2. This doc pins the `mint_from_http` inbound-taint + session demotion, the
+   `TaintLabel::HttpRaw` variant, the git config/hook neutralization, git.push
+   destination-pinning + credential injection, the SSRF resolve-and-pin model,
+   the github.pr session-scoped auth-grant, the env_clear() webpki-roots TLS
+   policy, and the duplicate-PR CAS (§1-§5). **(DESIGN-15, this plan.)**
+3. This doc closes all 11 design-gate-blocking pitfalls with a NAMED mechanism
+   each (§6); nothing disables/bypasses I2 and no new raw effect-request-to-sink
+   path is introduced; sink sensitivity stays hardcoded in the executor (§7);
+   the P33/P34 confirm-release discipline (`prepare_git_push`/`prepare_github_pr`)
+   is mandated (§9); and the Gate 3 `mint_from_http(` extension is mandated
+   (§10).
+4. `scripts/check-invariants.sh` exits 0 against this doc's presence (no
+   architectural-invariant regression from its prose).
+5. This doc has cleared a fresh, non-self adversarial code-trace (traced against
+   real code, not prose-read) with every finding resolved, recorded in
+   `planning-docs/DESIGN-GATE-RECORD-v1.8.md` (Plan 35-02) — and no
+   `crates/executor` / `crates/brokerd` / `crates/sandbox` / `crates/runtime-core`
+   code exists yet (`git diff` touches only `planning-docs/` + `.planning/`).
+
+---
