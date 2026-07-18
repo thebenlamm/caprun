@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::plan_node::SinkId;
 
-/// The seven currently-callable production sinks (the `KNOWN_SINKS` surface in
+/// The eight currently-callable production sinks (the `KNOWN_SINKS` surface in
 /// `crates/executor/src/sink_schema.rs`). `broker_default()` allowlists exactly
 /// these — an EXPLICIT allowlist, never allow-everything: a future/unknown sink
 /// is NOT in this list and is therefore NOT callable under `broker_default()`.
@@ -39,6 +39,13 @@ const PRODUCTION_SINKS: &[&str] = &[
     "git.commit",
     "http.request",
     "github.pr",
+    // HTTP-W-01 (Phase 43), DESIGN-v1.9-egress-policy §2.0/§7: the DISTINCT
+    // WRITE (POST/PUT) egress sink id — separate from the GET `http.request`
+    // row above. Adding it here keeps `broker_default()` permitting the intended
+    // I2 path for a policy-permitted WRITE (never a PolicyDeny for the new sink
+    // under the default policy, T-43-04), while a future/unknown sink stays
+    // deny-by-default.
+    "http.request.write",
 ];
 
 /// A coarse allowlist constraint on a single sink argument (POLICY-01).
@@ -529,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn broker_default_permits_the_seven_production_sinks_and_denies_unlisted() {
+    fn broker_default_permits_the_eight_production_sinks_and_denies_unlisted() {
         // broker_default() is an EXPLICIT allowlist, never allow-everything.
         let policy = SessionPolicy::broker_default();
         for s in [
@@ -540,6 +547,7 @@ mod tests {
             "git.commit",
             "http.request",
             "github.pr",
+            "http.request.write",
         ] {
             assert!(policy.permits_sink(&sink(s)), "broker_default should permit {s}");
         }
@@ -548,6 +556,19 @@ mod tests {
         assert_eq!(
             policy.evaluate(&sink("git.push"), "remote", "origin"),
             Err(PolicyDenyKind::SinkNotAllowed)
+        );
+    }
+
+    #[test]
+    fn broker_default_permits_http_request_write() {
+        // HTTP-W-01 (§2.0/§7): the DISTINCT WRITE sink id is on the default
+        // production allowlist, so a policy-permitted WRITE reaches the unmodified
+        // I2 loop (never a PolicyDeny for the new sink under the default policy).
+        let policy = SessionPolicy::broker_default();
+        assert!(policy.permits_sink(&sink("http.request.write")));
+        assert_eq!(
+            policy.evaluate(&sink("http.request.write"), "method", "POST"),
+            Ok(())
         );
     }
 

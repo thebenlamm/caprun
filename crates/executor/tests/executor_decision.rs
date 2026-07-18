@@ -850,3 +850,225 @@ fn file_create_contents_role_mismatch_denies() {
         ),
     }
 }
+
+// ---------------------------------------------------------------------------
+// http.request.write method-enum gate (HTTP-W-01, DESIGN-v1.9-egress-policy §2.6)
+// ---------------------------------------------------------------------------
+
+/// Build a full `http.request.write` plan node from three already-minted handles.
+fn http_write_node(url_id: ValueId, body_id: ValueId, method_id: ValueId) -> PlanNode {
+    PlanNode {
+        sink: SinkId("http.request.write".to_string()),
+        args: vec![
+            PlanArg { name: "url".to_string(), value_id: url_id },
+            PlanArg { name: "body".to_string(), value_id: body_id },
+            PlanArg { name: "method".to_string(), value_id: method_id },
+        ],
+    }
+}
+
+/// Mint a clean (UserTrusted, unconstrained-role) value.
+fn mint_clean(store: &mut ValueStore, literal: &str) -> ValueId {
+    store
+        .mint(
+            literal.to_string(),
+            vec![TaintLabel::UserTrusted],
+            vec![Uuid::new_v4()],
+            None,
+        )
+        .expect("valid mint")
+}
+
+/// A resolved `method` literal that is not exactly POST/PUT → Denied(InvalidMethod),
+/// fail-closed before the node can reach Allowed (§2.6). Here the method is a clean
+/// (UserTrusted) but wrong verb — proving the enum gate fires on the VALUE, not taint.
+#[test]
+fn http_write_invalid_method_denies() {
+    let mut store = ValueStore::default();
+    let url_id = mint_clean(&mut store, "https://api.example.com/v1/x");
+    let body_id = mint_clean(&mut store, "hello");
+    let method_id = mint_clean(&mut store, "GET"); // not a write verb
+
+    let plan = http_write_node(url_id, body_id, method_id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
+
+    match decision {
+        ExecutorDecision::Denied {
+            reason: DenyReason::InvalidMethod { sink, method },
+        } => {
+            assert_eq!(sink, "http.request.write");
+            assert_eq!(method, "GET");
+        }
+        other => panic!("expected Denied(InvalidMethod) for method=GET, got {other:?}"),
+    }
+}
+
+/// A mis-cased method Denies (case-sensitive exact match — "post" != "POST").
+#[test]
+fn http_write_miscased_method_denies() {
+    let mut store = ValueStore::default();
+    let url_id = mint_clean(&mut store, "https://api.example.com/v1/x");
+    let body_id = mint_clean(&mut store, "hello");
+    let method_id = mint_clean(&mut store, "post");
+
+    let plan = http_write_node(url_id, body_id, method_id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
+    assert!(
+        matches!(decision, ExecutorDecision::Denied { reason: DenyReason::InvalidMethod { .. } }),
+        "mis-cased method must Deny (case-sensitive enum); got {decision:?}"
+    );
+}
+
+/// An empty / whitespace-only method Denies (fail-closed, trimmed-empty rejected).
+#[test]
+fn http_write_empty_method_denies() {
+    let mut store = ValueStore::default();
+    let url_id = mint_clean(&mut store, "https://api.example.com/v1/x");
+    let body_id = mint_clean(&mut store, "hello");
+    let method_id = mint_clean(&mut store, "   ");
+
+    let plan = http_write_node(url_id, body_id, method_id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
+    assert!(
+        matches!(decision, ExecutorDecision::Denied { reason: DenyReason::InvalidMethod { .. } }),
+        "whitespace-only method must Deny; got {decision:?}"
+    );
+}
+
+/// A TAINTED, garbage method literal Denies (§2.6: method is never a free tainted
+/// literal — a tainted non-POST/PUT value fails the enum gate before any routing).
+#[test]
+fn http_write_tainted_garbage_method_denies() {
+    let mut store = ValueStore::default();
+    let url_id = mint_clean(&mut store, "https://api.example.com/v1/x");
+    let body_id = mint_clean(&mut store, "hello");
+    let method_id = store
+        .mint(
+            "POST\r\nHost: evil".to_string(),
+            vec![TaintLabel::ExternalUntrusted, TaintLabel::HttpRaw],
+            vec![Uuid::new_v4()],
+            None,
+        )
+        .expect("valid mint");
+
+    let plan = http_write_node(url_id, body_id, method_id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
+    match decision {
+        ExecutorDecision::Denied {
+            reason: DenyReason::InvalidMethod { sink, method },
+        } => {
+            assert_eq!(sink, "http.request.write");
+            assert_eq!(method, "POST\r\nHost: evil");
+        }
+        other => panic!("expected Denied(InvalidMethod) for a tainted garbage method, got {other:?}"),
+    }
+}
+
+/// A VALID method (POST) with a CLEAN body reaches Allowed on an Active session —
+/// the enum gate passes and no sensitive arg is tainted (the clean differential leg).
+#[test]
+fn http_write_valid_post_clean_body_allowed() {
+    let mut store = ValueStore::default();
+    let url_id = mint_clean(&mut store, "https://api.example.com/v1/x");
+    let body_id = mint_clean(&mut store, "clean payload");
+    let method_id = mint_clean(&mut store, "POST");
+
+    let plan = http_write_node(url_id, body_id, method_id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
+    assert_eq!(
+        decision,
+        ExecutorDecision::Allowed,
+        "valid POST + clean body must be Allowed on an Active session"
+    );
+}
+
+/// A VALID method (PUT) with a CLEAN body is also Allowed — both write verbs pass.
+#[test]
+fn http_write_valid_put_clean_body_allowed() {
+    let mut store = ValueStore::default();
+    let url_id = mint_clean(&mut store, "https://api.example.com/v1/x");
+    let body_id = mint_clean(&mut store, "clean payload");
+    let method_id = mint_clean(&mut store, "PUT");
+
+    let plan = http_write_node(url_id, body_id, method_id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
+    assert_eq!(decision, ExecutorDecision::Allowed, "valid PUT + clean body must be Allowed");
+}
+
+/// The differential proof: a VALID method (POST) with a TAINTED body still BLOCKS
+/// — the method gate NEVER masks the body I2 Block. Identical to the Allowed leg
+/// except the body's taint (the sole variable, §2.5).
+#[test]
+fn http_write_valid_method_tainted_body_still_blocks() {
+    let mut store = ValueStore::default();
+    let url_id = mint_clean(&mut store, "https://api.example.com/v1/x");
+    let body_id = store
+        .mint(
+            "secret-exfil".to_string(),
+            vec![TaintLabel::ExternalUntrusted, TaintLabel::HttpRaw],
+            vec![Uuid::new_v4()],
+            None,
+        )
+        .expect("valid mint");
+    let method_id = mint_clean(&mut store, "POST");
+
+    let plan = http_write_node(url_id, body_id, method_id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
+    match decision {
+        ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+            assert_eq!(anchors.len(), 1, "exactly the tainted body should Block");
+            assert_eq!(anchors[0].anchor.arg, "body");
+            assert_eq!(anchors[0].literal, "secret-exfil");
+        }
+        other => panic!("expected BlockedPendingConfirmation for a tainted body, got {other:?}"),
+    }
+}
+
+/// A tainted URL (routing+content-sensitive) also Blocks under a valid method —
+/// the url arm of the sensitivity table is live for the WRITE sink too.
+#[test]
+fn http_write_valid_method_tainted_url_still_blocks() {
+    let mut store = ValueStore::default();
+    let url_id = store
+        .mint(
+            "https://evil.example.net/collect".to_string(),
+            vec![TaintLabel::ExternalUntrusted, TaintLabel::HttpRaw],
+            vec![Uuid::new_v4()],
+            None,
+        )
+        .expect("valid mint");
+    let body_id = mint_clean(&mut store, "clean payload");
+    let method_id = mint_clean(&mut store, "PUT");
+
+    let plan = http_write_node(url_id, body_id, method_id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
+    match decision {
+        ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+            assert_eq!(anchors.len(), 1);
+            assert_eq!(anchors[0].anchor.arg, "url");
+        }
+        other => panic!("expected BlockedPendingConfirmation for a tainted url, got {other:?}"),
+    }
+}
+
+/// I0 gate: a DRAFT session I0-denies the CommitIrreversible WRITE sink even with
+/// a valid method and clean args (the MAJOR-1 I0-escape fix — a POST is NOT
+/// Observe). Contrast: the GET `http.request` (Observe) would fall through.
+#[test]
+fn http_write_draft_session_denies_commit_irreversible() {
+    let mut store = ValueStore::default();
+    let url_id = mint_clean(&mut store, "https://api.example.com/v1/x");
+    let body_id = mint_clean(&mut store, "clean payload");
+    let method_id = mint_clean(&mut store, "POST");
+
+    let plan = http_write_node(url_id, body_id, method_id);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Draft, &SessionPolicy::allow_all());
+    match decision {
+        ExecutorDecision::Denied {
+            reason: DenyReason::DraftOnlySessionDeniesCommitIrreversible { sink },
+        } => {
+            assert_eq!(sink, SinkId("http.request.write".to_string()));
+        }
+        other => panic!("expected Draft I0-deny for the CommitIrreversible WRITE sink, got {other:?}"),
+    }
+}

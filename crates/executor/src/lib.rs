@@ -85,6 +85,38 @@ pub fn submit_plan_node(
         return ExecutorDecision::Denied { reason };
     }
 
+    // Step 0.3 (HTTP-W-01, DESIGN-v1.9-egress-policy §2.6): method-enum
+    // fail-closed gate. Scoped to the DISTINCT WRITE sink id `http.request.write`
+    // ONLY (a no-op for every other sink). The `method` arg MUST resolve to a
+    // literal EQUAL to exactly `"POST"` or `"PUT"` (case-sensitive; a mis-cased,
+    // whitespace-padded, empty, garbage, or tainted-literal method fails the exact
+    // match). Runs AFTER the Step-0 schema gate (which already guarantees `method`
+    // is present for this sink) and BEFORE the collect-then-Block loop, so an
+    // invalid method Denies before the node can reach `Allowed`. This is a
+    // STRUCTURAL fail-closed Deny (like Step-1c's role check), NEVER a confirmable
+    // Block — the method must never be a free/tainted literal. Because the sink id
+    // is already distinct, the method cannot steer host/effect-class, so an
+    // exact-enum match is the sufficient gate (§2.6). It is deliberately scoped to
+    // INVALID methods only: a VALID method falls through to the UNMODIFIED loop, so
+    // a valid-method + tainted-body node still Blocks (the gate never masks a body
+    // Block — the differential-acceptance leg, §2.5). An UNRESOLVABLE method handle
+    // falls through to the loop below, which Denies it as a `DanglingHandle` (still
+    // fail-closed — never `Allowed`).
+    if plan_node.sink.0 == "http.request.write" {
+        if let Some(method_arg) = plan_node.args.iter().find(|a| a.name == "method") {
+            if let Some(record) = value_store.resolve(&method_arg.value_id) {
+                if record.literal != "POST" && record.literal != "PUT" {
+                    return ExecutorDecision::Denied {
+                        reason: DenyReason::InvalidMethod {
+                            sink: plan_node.sink.0.clone(),
+                            method: record.literal.clone(),
+                        },
+                    };
+                }
+            }
+        }
+    }
+
     // Collect-then-Block (Phase 14, D-14): accumulate EVERY sensitive+tainted arg
     // across the whole plan node before returning any Block decision. Never
     // return from inside this loop on the first match — a plan node with both a

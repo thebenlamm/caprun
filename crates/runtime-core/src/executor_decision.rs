@@ -92,6 +92,24 @@ pub enum DenyReason {
     /// deny; `constraint` = a short machine-readable tag of which rule refused
     /// (e.g. `sink-not-allowed`, `arg-not-allowlisted`).
     PolicyDeny { sink: String, arg: Option<String>, constraint: String },
+
+    // ── v1.9 Phase 43 addition (HTTP-W-01, DESIGN-v1.9-egress-policy §2.6) ─────
+    /// The `http.request.write` `method` arg resolved to a literal that is NOT
+    /// exactly one of the fixed `{POST, PUT}` write-verb enum. Fail-closed at the
+    /// method-enum gate in `submit_plan_node` (`crates/executor/src/lib.rs`),
+    /// BEFORE the node can reach `Allowed` — a garbage, mis-cased, empty, or
+    /// tainted-literal method Denies here (`[rev: MINOR-5]`, §2.6). This is a
+    /// structural fail-closed Deny (like `SlotTypeMismatch`), NEVER a confirmable
+    /// `BlockedPendingConfirmation`: the method must never be a free/tainted
+    /// literal that could steer routing. An append to the ONE denial taxonomy —
+    /// never a second, parallel denial error type.
+    ///
+    /// Field types follow the `SlotTypeMismatch`/`PolicyDeny` precedent EXACTLY:
+    /// plain owned `String`, never borrowed `&'static str` — this enum derives
+    /// `Deserialize` and the decision crosses the IPC wire (worker.rs
+    /// deserializes it); borrowed references are not deserializable (DESIGN F1,
+    /// MAJOR). `sink` = the offending sink id; `method` = the rejected literal.
+    InvalidMethod { sink: String, method: String },
 }
 
 impl DenyReason {
@@ -113,6 +131,7 @@ impl DenyReason {
             }
             DenyReason::SlotTypeMismatch { .. } => "slot_type_mismatch",
             DenyReason::PolicyDeny { .. } => "policy_deny",
+            DenyReason::InvalidMethod { .. } => "invalid_method",
         }
     }
 }
@@ -164,6 +183,10 @@ impl std::fmt::Display for DenyReason {
                 ),
                 None => write!(f, "policy denies sink `{sink}` ({constraint})"),
             },
+            DenyReason::InvalidMethod { sink, method } => write!(
+                f,
+                "sink `{sink}` method `{method}` is not a permitted write verb (expected POST or PUT)"
+            ),
         }
     }
 }
@@ -315,5 +338,35 @@ mod tests {
             decision,
             ExecutorDecision::BlockedPendingConfirmation { .. }
         ));
+    }
+
+    #[test]
+    fn invalid_method_code_and_display() {
+        let reason = DenyReason::InvalidMethod {
+            sink: "http.request.write".to_string(),
+            method: "DELETE".to_string(),
+        };
+        assert_eq!(reason.code(), "invalid_method");
+        let rendered = reason.to_string();
+        assert!(!rendered.is_empty());
+        assert!(rendered.contains("http.request.write"));
+        assert!(rendered.contains("DELETE"));
+
+        // A method Deny is a Denied outcome, never a BlockedPendingConfirmation.
+        let decision = ExecutorDecision::Denied { reason };
+        assert!(matches!(decision, ExecutorDecision::Denied { .. }));
+        assert!(!matches!(
+            decision,
+            ExecutorDecision::BlockedPendingConfirmation { .. }
+        ));
+
+        // Serde round-trips (crosses the IPC wire).
+        let serialized = serde_json::to_string(&DenyReason::InvalidMethod {
+            sink: "http.request.write".to_string(),
+            method: "GET".to_string(),
+        })
+        .expect("serialize");
+        let back: DenyReason = serde_json::from_str(&serialized).expect("deserialize");
+        assert_eq!(back.code(), "invalid_method");
     }
 }
