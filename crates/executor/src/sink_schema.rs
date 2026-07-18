@@ -73,6 +73,22 @@ pub const KNOWN_SINKS: &[SinkSchema] = &[
         allowed: &["command", "args", "cwd"],
         required: &["command"],
     },
+    SinkSchema {
+        // GIT-01 (Phase 36 Plan 01), DESIGN-git-github-http-sinks.md §1.3 /
+        // CONTEXT decision 3: exact-match, single-arg schema. `message` is the
+        // sole arg — both allowed AND required, mirroring file.write's
+        // exact-match shape (NOT process.exec's optional-arg asymmetry). No
+        // paths/pathspec arg is modeled: Phase 36 commits already-STAGED
+        // workspace changes (ROADMAP Phase 36 success criterion 1), so
+        // `git commit -m <message>` needs no pathspec — keeping the arg set to a
+        // single exact-match arg tightens the Step-0 fail-closed gate. `message`
+        // is content-sensitive (sink_sensitivity.rs) — a tainted value Blocks
+        // rather than Denies here; this schema gate enforces only the arg NAME
+        // set, not taint.
+        sink: "git.commit",
+        allowed: &["message"],
+        required: &["message"],
+    },
 ];
 
 /// Test-fixture-only sink registry (RESEARCH.md Pitfall 3 / DESIGN §9 Pitfall
@@ -324,6 +340,54 @@ mod tests {
         assert_eq!(
             validate_schema(&n),
             Err(DenyReason::MissingArg("contents".to_string()))
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // git.commit (GIT-01, DESIGN-git-github-http-sinks.md §1.2/§1.3)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn git_commit_is_registered_sink() {
+        // Registered => schema_for returns Some => never UnknownSink at Step 0.
+        assert!(
+            schema_for("git.commit").is_some(),
+            "git.commit must be a registered sink (never UnknownSink)"
+        );
+    }
+
+    #[test]
+    fn git_commit_exact_args_ok() {
+        let n = node("git.commit", vec![arg("message")]);
+        assert_eq!(validate_schema(&n), Ok(()));
+    }
+
+    #[test]
+    fn git_commit_unknown_arg_denied() {
+        // `paths`/pathspec is NOT modeled — Phase 36 commits already-staged
+        // changes, so `git commit -m <message>` needs no pathspec arg.
+        let n = node("git.commit", vec![arg("message"), arg("paths")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::UnknownArg("paths".to_string()))
+        );
+    }
+
+    #[test]
+    fn git_commit_duplicate_arg_denied() {
+        let n = node("git.commit", vec![arg("message"), arg("message")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::DuplicateArg("message".to_string()))
+        );
+    }
+
+    #[test]
+    fn git_commit_missing_required_arg_denied() {
+        let n = node("git.commit", vec![]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::MissingArg("message".to_string()))
         );
     }
 
