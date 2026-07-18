@@ -223,7 +223,7 @@ fn addresses(detail: &serde_json::Value, field: &str) -> Vec<String> {
 /// the SAME entry point `caprun confirm <effect_id>` uses, proving the send
 /// comes from the broker/confirm process, never a test-only bypass.
 #[cfg(target_os = "linux")]
-fn seed_and_confirm_email_send(
+async fn seed_and_confirm_email_send(
     conn: &mut rusqlite::Connection,
     to: &str,
     subject: &str,
@@ -326,7 +326,9 @@ fn seed_and_confirm_email_send(
     std::fs::create_dir_all(&root_dir).unwrap();
     let ws = WorkspaceRoot::open(&root_dir).unwrap();
 
-    let outcome = confirm(conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
+    let outcome = confirm(conn, TEST_KEY, &effect_id.to_string(), &ws)
+        .await
+        .expect("confirm");
     std::fs::remove_dir_all(&root_dir).ok();
     outcome
 }
@@ -338,14 +340,14 @@ fn seed_and_confirm_email_send(
 /// global count, since this inbox is shared with other concurrently-running
 /// test binaries.
 #[cfg(target_os = "linux")]
-#[test]
-fn smtp_03_confirmed_send_captured_by_mailpit() {
+#[tokio::test]
+async fn smtp_03_confirmed_send_captured_by_mailpit() {
     let _guard = MAILPIT_TEST_LOCK.lock().unwrap();
     let host = mailpit_host();
     let recipient = format!("smtp03-{}@example.test", Uuid::new_v4());
     let mut conn = open_audit_db(":memory:").expect("open_audit_db");
 
-    let outcome = seed_and_confirm_email_send(&mut conn, &recipient, "hello", "hi there");
+    let outcome = seed_and_confirm_email_send(&mut conn, &recipient, "hello", "hi there").await;
     assert_eq!(
         outcome,
         ConfirmOutcome::Released,
@@ -374,15 +376,16 @@ fn smtp_03_confirmed_send_captured_by_mailpit() {
 /// boundary) — this fixture targets the OTHER half of D-22: a clean
 /// recipient with a CRLF-injected BODY.
 #[cfg(target_os = "linux")]
-#[test]
-fn smtp_05_crlf_body_cannot_smuggle_recipient() {
+#[tokio::test]
+async fn smtp_05_crlf_body_cannot_smuggle_recipient() {
     let _guard = MAILPIT_TEST_LOCK.lock().unwrap();
     let host = mailpit_host();
     let recipient = format!("smtp05-{}@example.test", Uuid::new_v4());
     let mut conn = open_audit_db(":memory:").expect("open_audit_db");
 
     let malicious_body = "hi there\r\nBcc: attacker@evil.com";
-    let outcome = seed_and_confirm_email_send(&mut conn, &recipient, "hello", malicious_body);
+    let outcome =
+        seed_and_confirm_email_send(&mut conn, &recipient, "hello", malicious_body).await;
     assert_eq!(
         outcome,
         ConfirmOutcome::Released,

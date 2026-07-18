@@ -96,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
                 .get(2)
                 .cloned()
                 .unwrap_or_else(|| ":memory:".to_string());
-            let code = match run_confirm_or_deny(verb, effect_id, &audit_path) {
+            let code = match run_confirm_or_deny(verb, effect_id, &audit_path).await {
                 Ok(code) => code,
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -414,7 +414,7 @@ async fn main() -> anyhow::Result<()> {
 /// at all, since it never invokes any sink (CONFIRM-03). `review` (MAJOR-8)
 /// likewise never opens the workspace root — it is a read-only pre-decision
 /// display and MUST NOT invoke any sink either.
-fn run_confirm_or_deny(verb: &str, effect_id: &str, audit_path: &str) -> anyhow::Result<i32> {
+async fn run_confirm_or_deny(verb: &str, effect_id: &str, audit_path: &str) -> anyhow::Result<i32> {
     use brokerd::confirmation::{confirm, deny, find_pending_confirmation, review, ConfirmOutcome};
 
     let mut conn = open_audit_db(audit_path).context("open_audit_db")?;
@@ -446,7 +446,7 @@ fn run_confirm_or_deny(verb: &str, effect_id: &str, audit_path: &str) -> anyhow:
                         Path::new(&pc.workspace_root_path),
                     )
                     .context("load_or_create_key (F1 fail-closed MAC-key custody, confirm)")?;
-                    confirm(&mut conn, &key, effect_id, &ws)?
+                    confirm(&mut conn, &key, effect_id, &ws).await?
                 }
             }
         }
