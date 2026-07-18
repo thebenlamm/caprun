@@ -100,6 +100,10 @@ test-fixtures = []
 brokerd      = { path = ".", features = ["test-fixtures"] }
 runtime-core = { path = "../runtime-core" }
 executor     = { path = "../executor" }
+# Phase 38 finding #2: s38_github_pr.rs's real-dispatch test constructs the
+# `Arc<WorkspaceRoot>` arg that `evaluate_plan_node_and_record_for_test` takes.
+# Dev-only — never linked into a production build.
+adapter-fs   = { path = "../adapter-fs" }
 rusqlite     = { workspace = true }
 uuid         = { workspace = true }
 chrono       = { workspace = true }

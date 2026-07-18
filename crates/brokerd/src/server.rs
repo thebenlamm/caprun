@@ -1479,6 +1479,52 @@ async fn evaluate_plan_node_and_record(
     Ok((decision, output_value_id, session_demoted))
 }
 
+/// Test-fixtures-gated VERBATIM delegate to the real
+/// `evaluate_plan_node_and_record` above, existing solely so integration tests
+/// in `tests/` can drive the ACTUAL production dispatch arms (e.g. the
+/// `github.pr` grant gate) rather than a hand-rolled mirror — closing the
+/// Phase-38 adversarial finding #2 (a mirror test cannot catch drift between
+/// itself and the real arm). It adds NO logic: every argument is forwarded
+/// unchanged and the real function's tuple is returned as-is, so any change to
+/// the real arm's ordering/behavior is exercised HERE.
+///
+/// Gated behind `#[cfg(any(test, feature = "test-fixtures"))]` — IDENTICAL
+/// discipline to the `CreateSession`-IPC mint arm (HARDEN-04): it is ABSENT
+/// from every production build (`test-fixtures` is never a default feature,
+/// enforced by `check-invariants.sh` Gate 4), so this widens NO production API
+/// surface. The self dev-dependency with `test-fixtures` enabled
+/// (crates/brokerd/Cargo.toml) makes it visible to the integration binaries.
+#[cfg(any(test, feature = "test-fixtures"))]
+#[allow(clippy::too_many_arguments)]
+pub async fn evaluate_plan_node_and_record_for_test(
+    plan_node: &runtime_core::PlanNode,
+    conn: &Arc<Mutex<rusqlite::Connection>>,
+    key: &[u8],
+    session_id: Uuid,
+    value_store: &mut ValueStore,
+    workspace_root: &Arc<adapter_fs::workspace::WorkspaceRoot>,
+    session_status: &SessionStatus,
+    last_event_id: &mut Uuid,
+    last_event_hash: &mut String,
+) -> anyhow::Result<(
+    runtime_core::ExecutorDecision,
+    Option<runtime_core::plan_node::ValueId>,
+    bool,
+)> {
+    evaluate_plan_node_and_record(
+        plan_node,
+        conn,
+        key,
+        session_id,
+        value_store,
+        workspace_root,
+        session_status,
+        last_event_id,
+        last_event_hash,
+    )
+    .await
+}
+
 /// The `CreateSession`-over-IPC disabled-path `Error` response (v1.6
 /// HARDEN-04). Shared verbatim by both `create_session_arm` siblings below so
 /// the wire behavior on this negative path is IDENTICAL whether the mint arm

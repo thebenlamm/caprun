@@ -119,7 +119,14 @@ fn setup() -> (Connection, Uuid) {
 /// Mirror the server.rs Allowed-`github.pr` arm's ordering against the PUBLIC
 /// primitives (grant gate FIRST; then the content CAS + divergent
 /// attempt/replay marker BEFORE the socket; then the POST on the fresh branch
-/// only). Reads the current chain head from the db each call so it threads
+/// only). NOTE (Phase-38 adversarial finding #2): this is a HAND-ROLLED MIRROR
+/// — the no-grant Deny leg it models is ALSO covered against the REAL
+/// production `evaluate_plan_node_and_record` arm by
+/// `github_pr_without_grant_denies_via_real_dispatch` below, so drift between
+/// this mirror and the real grant gate is caught. The replay/CAS leg's
+/// real-arm behavioral coverage is the Phase-40 composed live-proof (its POST
+/// leg needs the Linux UDS + a live/mock GitHub). Reads the current chain head
+/// from the db each call so it threads
 /// linearly onto whatever came before (including `record_github_grant`'s own
 /// `github_grant_authorized` event). Returns nothing — every property is
 /// asserted from the durable audit afterward.
@@ -364,4 +371,144 @@ async fn github_pr_replay_creates_at_most_one() {
         "the audit chain must remain intact across two submits + the failed POST"
     );
     assert_absent_from_all_event_payloads(&conn, session_id, SECRET_TOKEN);
+}
+
+/// GITHUB-02 via the REAL production dispatch path (Phase-38 adversarial
+/// finding #2): drive `brokerd::server::evaluate_plan_node_and_record_for_test`
+/// — the `test-fixtures`-gated VERBATIM delegate to the ACTUAL server.rs
+/// `evaluate_plan_node_and_record` `github.pr` arm — for the no-grant Deny
+/// case. This path DENIES at the grant gate BEFORE any content key, CAS row,
+/// or GitHub socket, so it is fully HOST-PORTABLE (no live GitHub, no
+/// Linux-only UDS). Unlike `dispatch_github_pr_like_arm` (a hand-rolled
+/// mirror), any drift between the mirror's grant-gate ordering and the real
+/// arm's is caught HERE: the executor first Allows the untainted node
+/// (never-blocked), and ONLY the real arm's own grant gate turns that Allowed
+/// decision into an opaque `github_pr_denied` — proving a bare Allowed
+/// decision cannot create a PR (§4.3/§8) through the production code itself.
+#[tokio::test]
+async fn github_pr_without_grant_denies_via_real_dispatch() {
+    use executor::value_store::ValueStore;
+    use runtime_core::{ExecutorDecision, PlanArg, PlanNode, SessionStatus, SinkId};
+    use std::sync::{Arc, Mutex};
+
+    let (conn, session_id) = setup();
+    let session_id_str = session_id.to_string();
+
+    // Thread the dispatch onto the seeded `session_created` root — the real
+    // arm appends `github_pr_denied` with `Some(*last_event_id)` as its causal
+    // parent and `Some(last_event_hash)` as the chain link.
+    let (head_id, head_hash) = current_chain_head(&conn, &session_id_str)
+        .expect("current_chain_head query")
+        .expect("a chain head must exist (session_created root was seeded)");
+
+    // Build a per-connection ValueStore holding six UserTrusted (untainted)
+    // args and a `github.pr` PlanNode of opaque handles to them. All-UserTrusted
+    // + role-unconstrained github.pr slots => the executor returns Allowed
+    // (never-blocked), so the ONLY thing that can deny is the arm's grant gate.
+    let resolved = well_formed_args();
+    let mut value_store = ValueStore::default();
+    let provenance_anchor = Uuid::new_v4(); // non-empty provenance (mint invariant)
+    let mut args = Vec::with_capacity(resolved.len());
+    for r in &resolved {
+        let vid = value_store
+            .mint(
+                r.literal.clone(),
+                vec![TaintLabel::UserTrusted],
+                vec![provenance_anchor],
+                None,
+            )
+            .expect("mint UserTrusted arg");
+        args.push(PlanArg {
+            name: r.name.clone(),
+            value_id: vid,
+        });
+    }
+    let plan_node = PlanNode {
+        sink: SinkId("github.pr".to_string()),
+        args,
+    };
+
+    // Precondition: NO github.pr grant recorded for this session.
+    assert!(
+        !has_github_grant(&conn, &session_id_str),
+        "precondition: an ungranted session must report no github.pr grant"
+    );
+
+    // Wrap for the real function's `&Arc<Mutex<Connection>>` contract. The
+    // no-grant path never touches the workspace fd, but the signature requires
+    // one — open a throwaway root at the OS temp dir (host-portable).
+    let conn = Arc::new(Mutex::new(conn));
+    let workspace = Arc::new(
+        adapter_fs::workspace::WorkspaceRoot::open(&std::env::temp_dir())
+            .expect("open temp workspace root"),
+    );
+    let mut last_event_id = head_id;
+    let mut last_event_hash = head_hash;
+
+    let (decision, output_value_id, session_demoted) =
+        brokerd::server::evaluate_plan_node_and_record_for_test(
+            &plan_node,
+            &conn,
+            TEST_KEY,
+            session_id,
+            &mut value_store,
+            &workspace,
+            &SessionStatus::Active,
+            &mut last_event_id,
+            &mut last_event_hash,
+        )
+        .await
+        .expect("real github.pr dispatch must not error on the no-grant deny path");
+
+    // The executor ALLOWED the untainted node — the Deny is the arm's grant
+    // gate, NOT an executor block (proves the gate stands independent of the
+    // executor decision).
+    assert!(
+        matches!(decision, ExecutorDecision::Allowed),
+        "an untainted github.pr node must be Allowed by the executor; the arm's \
+         grant gate — not a block — is what denies the PR"
+    );
+    assert!(
+        output_value_id.is_none(),
+        "github.pr CONSUMES — it mints nothing, so no output ValueId"
+    );
+    assert!(
+        !session_demoted,
+        "the github.pr deny path performs no I1 session demotion"
+    );
+
+    // Durable audit assertions against the REAL arm's writes.
+    let locked = conn.lock().expect("lock conn");
+
+    assert_eq!(
+        count_events(&locked, session_id, "github_pr_denied"),
+        1,
+        "the REAL arm must record exactly one opaque github_pr_denied for an \
+         ungranted github.pr"
+    );
+    assert_eq!(
+        count_events(&locked, session_id, "github_pr_attempted"),
+        0,
+        "the REAL arm must record NO github_pr_attempted (denied before the CAS)"
+    );
+
+    let content_key = github_pr_content_key(
+        lit(&resolved, "owner"),
+        lit(&resolved, "repo"),
+        lit(&resolved, "base"),
+        lit(&resolved, "head"),
+        lit(&resolved, "title"),
+        lit(&resolved, "body"),
+    );
+    assert_eq!(
+        count_created_prs(&locked, &content_key),
+        0,
+        "the REAL arm must create NO created_prs CAS row when denied (no POST \
+         was ever attempted)"
+    );
+
+    assert!(
+        verify_chain(&locked, &session_id_str, TEST_KEY),
+        "the audit chain must remain intact after the real-arm denied dispatch"
+    );
 }
