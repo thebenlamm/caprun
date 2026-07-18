@@ -212,13 +212,15 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
 
 #### Phase 34: Regression & Live Proof (v1.7 DONE)
 
-**Goal**: On real Linux, the new sinks are proven end-to-end and the full workspace regresses green with no regression to v1.0–v1.6.
+**Goal**: On real Linux, the new sinks are proven end-to-end and the full workspace regresses green with no regression to v1.0–v1.6, and a blocked `process.exec` can be human-released (EXEC-05) before the composed proof exercises it.
 **Depends on**: Phase 32, Phase 33
-**Requirements**: LIVE-01, LIVE-02
+**Requirements**: EXEC-05, LIVE-01, LIVE-02
 **Success Criteria** (what must be TRUE):
 
-  1. A composed acceptance run on **real Linux** proves end-to-end: an `exec` whose tainted output is routed to a sensitive sink arg is **Blocked** (I2, genuine non-stapled taint chain, `verify_chain` true); a clean exec/fs path is **Allowed**; a fs write/edit within `WorkspaceRoot` succeeds and is audited — via `scripts/mailpit-verify.sh` or an exec-scoped equivalent, true-exit-before-pipe.
-  2. **Full-workspace regression** re-runs green on real Linux with **no regression to v1.0–v1.6**, asserted on counts + named tests (not exit 0 through a pipe), plus a dedicated negative test per new sink.
+  1. **`process.exec` confirm-release (EXEC-05) — lands FIRST, before the composed live proof.** A `process.exec` blocked by I2 (`BlockedPendingConfirmation`) is human-released by `caprun confirm` via `invoke_process_exec_from_resolved` + a `"process.exec"` arm in `confirmation.rs` Step-7, re-applying the exact Allowed-path discipline (confined child, non-stapled `mint_from_exec`, `output_value_id`, two-phase audit chained onto the `confirm_granted` head); the command runs **exactly once**, output is taint-minted, the sink Event is durably chained (`verify_chain` true); the P33 entry-guard's fail-closed-recoverable behavior is preserved for any still-un-dispatchable sink. No new `ExecutorDecision`/`submit_plan_node`/raw `EffectRequest` (Gate 1) and no new Gate-3 mint site.
+  2. A composed acceptance run on **real Linux** proves end-to-end: an `exec` whose tainted output is routed to a sensitive sink arg is **Blocked** (I2, genuine non-stapled taint chain, `verify_chain` true); a clean exec/fs path is **Allowed**; a fs write/edit within `WorkspaceRoot` succeeds and is audited — via `scripts/mailpit-verify.sh` or an exec-scoped equivalent, true-exit-before-pipe.
+  3. **Full-workspace regression** re-runs green on real Linux with **no regression to v1.0–v1.6**, asserted on counts + named tests (not exit 0 through a pipe), plus a dedicated negative test per new sink.
+  4. **MANDATORY release gates (orchestrator-owned, not a gsd-executor):** after the EXEC-05 TCB slice lands and before the composed live proof, (a) the Linux compile-check (`cargo build --tests --workspace --keep-going` via `scripts/mailpit-verify.sh`, true-exit-0 before any pipe) passes, and (b) a fresh non-self **Fable-5 adversarial code-trace** of the confirm-release TCB diff returns APPROVED (or its findings are resolved). v1.7 close additionally requires a human DONE sign-off (v1.5/v1.6 precedent); not pushed unless requested.
 
 **Plans**: TBD
 

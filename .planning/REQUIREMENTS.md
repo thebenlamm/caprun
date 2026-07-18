@@ -56,6 +56,24 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   seccomp + default-deny net + resource/time limits), the sink is **fail-closed
   on arg-schema**, and a durable audit Event records the spawn and exit.
 
+- [ ] **EXEC-05** *(Phase 34 — closes the P33 adversarial-trace open item)*: A
+  **blocked `process.exec` can be human-released**. A `process.exec` blocked by
+  I2 yields `BlockedPendingConfirmation`; `caprun confirm` releases it via
+  `invoke_process_exec_from_resolved` (re-invoking the sink from the frozen
+  `PendingConfirmation.resolved_args`, mirroring `invoke_file_write_from_resolved`
+  / `invoke_file_create_from_resolved`) plus a `"process.exec"` arm in
+  `confirmation.rs` Step-7 dispatch. The released run re-applies the **exact
+  Allowed-path discipline** — broker-spawned confined child (Landlock + seccomp +
+  net-deny + rlimits + wall-clock timeout + byte cap), stdout/stderr captured and
+  taint-minted via the **sanctioned** `mint_from_exec` (untrusted, non-stapled,
+  provenance anchored at the exec Event), `output_value_id` populated, and the
+  two-phase `process_exited` / `process_spawn_failed` audit chained onto the
+  `confirm_granted` head — the command runs **exactly once**, `verify_chain` true.
+  No new `ExecutorDecision`, no `submit_plan_node` change, no new raw
+  `EffectRequest` (Gate 1 green), no new Gate-3 mint site (reuses `mint_from_exec`).
+  The Phase-33 pre-Step-5 entry-guard's **fail-closed-recoverable** behavior is
+  preserved for any still-un-dispatchable sink.
+
 ### Filesystem Breadth
 
 - [x] **FS-01**: The worker can **read multiple workspace files** beyond the
@@ -136,6 +154,7 @@ maps to exactly one phase (`/gsd-roadmapper`, 2026-07-17).
 | EXEC-02 | Phase 32 | Complete |
 | EXEC-03 | Phase 32 | Complete |
 | EXEC-04 | Phase 32 | Complete |
+| EXEC-05 | Phase 34 | Pending |
 | FS-01 | Phase 33 | Complete |
 | FS-02 | Phase 33 | Complete |
 | FS-03 | Phase 33 | Complete |
@@ -144,9 +163,13 @@ maps to exactly one phase (`/gsd-roadmapper`, 2026-07-17).
 
 **Coverage:**
 
-- v1.7 requirements: 11 total
-- Mapped to phases: 11/11 ✓ (Phase 31 design gate: 2; Phase 32 exec: 4; Phase 33 fs: 3; Phase 34 live proof: 2)
+- v1.7 requirements: 12 total
+- Mapped to phases: 12/12 ✓ (Phase 31 design gate: 2; Phase 32 exec: 4; Phase 33 fs: 3; Phase 34 live proof + exec confirm-release: 3)
 - Unmapped: 0 ✓ — no orphans, no duplicates
+- EXEC-05 folded into Phase 34 (2026-07-18) as the TCB slice that must land
+  before the composed live proof; recorded in
+  `.planning/phases/33-filesystem-read-write-breadth/33-ADVERSARIAL-REVIEW.md`
+  and `33-05-SUMMARY.md` as the open follow-up.
 
 ---
 *Requirements defined: 2026-07-17*
