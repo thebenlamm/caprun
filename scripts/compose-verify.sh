@@ -81,6 +81,28 @@ MOCK_GITHUB_HOST="github-mock.caprun.test"
 # cargo feature unification propagates it into the spawned `caprun` binary.
 COMPOSE_VERIFY_CMD="${COMPOSE_VERIFY_CMD:-cargo build --workspace && cargo test --workspace --no-fail-fast --features brokerd/mock-egress-ca}"
 
+# Feature-OFF guard (v1.9 Phase 44 Plan 05, HYG-01 / T-40-03 / T-44-23): a
+# build/test run with NO `mock-egress-ca` feature proving the mock hosts + anchor
+# (the mock-GitHub host, the WG-9 git-receive-pack host, and the mock CA) are
+# ABSENT from a release-shaped build. Runs FIRST, in the SAME container (before
+# the feature-ON suite unifies the feature back in), reusing the persisted
+# CARGO_TARGET_DIR so the no-feature build unit is materialised exactly once:
+#
+#   1. the `not(mock-egress-ca)` invariant unit tests must pass — they assert the
+#      GET/WRITE/PUSH allowlists are their base sets (NO mock host) and the egress
+#      trust store is webpki-roots ONLY (NO mock CA);
+#   2. the default-feature `caprun` binary (which hosts the in-process broker
+#      egress) must NOT contain the mock host literal — the cfg-gated
+#      MOCK_EGRESS_HOST / MOCK_GIT_PUSH_HOST consts + the mock-CA `include_bytes!`
+#      are compiled OUT, so the string cannot appear in a release build.
+#
+# Override with FEATURE_OFF_GUARD_CMD; set it to `true` to skip (not recommended).
+# One flat `&&` chain (no nested `${}` / no `{ }` / no `if fi`, all of which
+# would collide with this outer `${VAR:-...}` brace-matching). `! grep -aq`
+# succeeds iff the mock host string is ABSENT from the default caprun binary;
+# `$CARGO_TARGET_DIR` is always set on the verification container (`-e` above).
+FEATURE_OFF_GUARD_CMD="${FEATURE_OFF_GUARD_CMD:-cargo build -p caprun && cargo test -p brokerd --lib -- sinks::http_request::tests::allowlist_default_build_is_api_github_only sinks::http_request::tests::egress_root_store_default_build_is_webpki_roots_only sinks::http_request::tests::write_allowlist_default_build_is_empty_base_set sinks::git_push::cred::push_allowlist_default_build_is_empty_base_set && ! grep -aq github-mock.caprun.test \$CARGO_TARGET_DIR/debug/caprun && echo feature-OFF-guard-passed:mock-host+anchor-absent-from-release-build}"
+
 cleanup() {
     echo "Cleaning up sidecars (${MAILPIT_NAME}, ${MOCK_GITHUB_NAME}) ..."
     docker stop "${MAILPIT_NAME}"     >/dev/null 2>&1 || true
@@ -173,7 +195,7 @@ fi
 set +e
 docker run "${docker_args[@]}" \
     rust:1 \
-    bash -c "apt-get update && apt-get install -y libssl-dev pkg-config && ${COMPOSE_VERIFY_CMD}"
+    bash -c "apt-get update && apt-get install -y libssl-dev pkg-config && ${FEATURE_OFF_GUARD_CMD} && ${COMPOSE_VERIFY_CMD}"
 rc=$?
 set -e
 

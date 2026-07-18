@@ -172,20 +172,37 @@ fi
 
 # Same never-default discipline for the Phase-40 `mock-egress-ca` feature
 # (LIVE-03 / T-40-03). It adds a test CA trust anchor + a test host to the
-# broker egress. Its release-trust-unchanged guard tests are gated
+# broker egress (and, from v1.9 Phase 44, the mock git-receive-pack push host,
+# WG-9). Its release-trust-unchanged guard tests are gated
 # `#[cfg(not(feature = "mock-egress-ca"))]`, so if the feature ever became a
 # `default` those guards would silently compile OUT instead of failing — the
 # same false-assurance hazard Gate 4 protects test-fixtures against. Forbid it
-# as a default so the mock CA + mock host can NEVER ship in a production build.
-echo "Gate 4b: checking mock-egress-ca is never a default feature of crates/brokerd ..."
-if [ -f "$BROKERD_TOML" ] && \
-   awk '/^\[features\]/{f=1; next} /^\[/{f=0} f' "$BROKERD_TOML" \
-     | grep -E '^\s*default\s*=' \
-     | grep -q 'mock-egress-ca'; then
-    echo "  FAIL — crates/brokerd/Cargo.toml declares mock-egress-ca within its default feature set"
-    overall=$FAIL
+# as a default so the mock CA + mock hosts can NEVER ship in a production build.
+#
+# WORKSPACE-WIDE (v1.9 Phase 44 Plan 05, HYG-01): checked over EVERY member
+# Cargo.toml under crates/ and cli/, not just brokerd. Under resolver-3 feature
+# unification, ANY workspace member that put `mock-egress-ca` in its own
+# `default` list — or in a `default` that forwards to `brokerd/mock-egress-ca`
+# — would re-activate the mock CA + mock hosts on the shared brokerd build unit
+# for the whole graph, shipping the test egress surface in a release build. A
+# brokerd-only scope would miss that. So scan all members.
+echo "Gate 4b: checking mock-egress-ca is never a default feature anywhere in the workspace ..."
+gate4b_fail=0
+while IFS= read -r member_toml; do
+    [ -f "$member_toml" ] || continue
+    # The member's own `[features]` default list — does it name mock-egress-ca
+    # directly, or forward to `<crate>/mock-egress-ca`?
+    if awk '/^\[features\]/{f=1; next} /^\[/{f=0} f' "$member_toml" \
+         | grep -E '^\s*default\s*=' \
+         | grep -q 'mock-egress-ca'; then
+        echo "  FAIL — $member_toml declares mock-egress-ca within its default feature set"
+        gate4b_fail=1
+    fi
+done < <(find crates cli -name Cargo.toml 2>/dev/null)
+if [ "$gate4b_fail" -eq 0 ]; then
+    echo "  PASS — mock-egress-ca is not a default feature of any workspace member"
 else
-    echo "  PASS — mock-egress-ca is not a default feature of crates/brokerd"
+    overall=$FAIL
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
