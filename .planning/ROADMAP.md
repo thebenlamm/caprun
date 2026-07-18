@@ -222,7 +222,7 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
   3. **Full-workspace regression** re-runs green on real Linux with **no regression to v1.0–v1.6**, asserted on counts + named tests (not exit 0 through a pipe), plus a dedicated negative test per new sink.
   4. **MANDATORY release gates (orchestrator-owned, not a gsd-executor):** after the EXEC-05 TCB slice lands and before the composed live proof, (a) the Linux compile-check (`cargo build --tests --workspace --keep-going` via `scripts/mailpit-verify.sh`, true-exit-0 before any pipe) passes, and (b) a fresh non-self **Fable-5 adversarial code-trace** of the confirm-release TCB diff returns APPROVED (or its findings are resolved). v1.7 close additionally requires a human DONE sign-off (v1.5/v1.6 precedent); not pushed unless requested.
 
-**Plans**: 3/4 plans executed
+**Plans**: 4/4 plans complete
 
 **Wave 1**
 
@@ -238,7 +238,7 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 34-04-PLAN.md — LIVE-01 composed acceptance (`live_acceptance_v1_7_composed.rs`, real Linux) + LIVE-02 full-workspace regression + per-new-sink negative tests; D-17 human sign-off closeout flagged (LIVE-01, LIVE-02)
+- [x] 34-04-PLAN.md — LIVE-01 composed acceptance (`live_acceptance_v1_7_composed.rs`, real Linux) + LIVE-02 full-workspace regression + per-new-sink negative tests; D-17 human sign-off closeout flagged (LIVE-01, LIVE-02)
 
 ## Progress
 
@@ -277,4 +277,4 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
 | 31. Effect-Breadth Design Gate | v1.7 | 2/2 | Complete    | 2026-07-17 |
 | 32. `process.exec` Sink — Broker-Spawned Confined Child | v1.7 | 6/6 | Complete    | 2026-07-17 |
 | 33. Filesystem Read/Write Breadth | v1.7 | 5/5 | Complete    | 2026-07-18 |
-| 34. Regression & Live Proof (v1.7 DONE) | v1.7 | 3/4 | In Progress|  |
+| 34. Regression & Live Proof (v1.7 DONE) | v1.7 | 4/4 | Complete   | 2026-07-18 |
