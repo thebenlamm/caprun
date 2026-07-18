@@ -41,6 +41,7 @@ pub fn sink_effect_class(sink: &SinkId) -> EffectClass {
     match sink.0.as_str() {
         "email.send" => EffectClass::CommitIrreversible,
         "file.create" => EffectClass::CommitIrreversible,
+        "file.write" => EffectClass::CommitIrreversible,
         "process.exec" => EffectClass::CommitIrreversible,
         // Test-fixture-only arm (DESIGN §9 Pitfall m2 / RESEARCH Pitfall 3): the
         // ONLY vehicle that makes TAINT-03 (Draft + Observe still Allowed)
@@ -85,6 +86,17 @@ pub const EMAIL_SEND_CONTENT_SENSITIVE: &[&str] = &["subject", "body"];
 /// over-widening).
 pub const FILE_CREATE_CONTENT_SENSITIVE: &[&str] = &["contents"];
 
+/// Args of file.write that determine WHERE the effect writes.
+/// A tainted value in `path` → `ExecutorDecision::BlockedPendingConfirmation`.
+/// `contents` is content-sensitive (WHAT is written), not routing-sensitive —
+/// same split as file.create.
+pub const FILE_WRITE_ROUTING_SENSITIVE: &[&str] = &["path"];
+
+/// Args of file.write that determine WHAT is written (payload), not WHERE.
+/// A tainted value here Blocks via the same collect-then-Block loop as any
+/// other content-sensitive arg (FS-03). Scoped to `contents` ONLY.
+pub const FILE_WRITE_CONTENT_SENSITIVE: &[&str] = &["contents"];
+
 /// Args of process.exec that determine WHAT command runs and WHERE (routing
 /// sense: `cwd` determines where the command's relative-path resolution
 /// happens; `command`/`args` determine what runs). DESIGN-effect-breadth-exec.md
@@ -111,6 +123,7 @@ pub fn is_routing_sensitive(sink: &SinkId, arg_name: &str) -> bool {
     match sink.0.as_str() {
         "email.send" => EMAIL_SEND_ROUTING_SENSITIVE.contains(&arg_name),
         "file.create" => FILE_CREATE_ROUTING_SENSITIVE.contains(&arg_name),
+        "file.write" => FILE_WRITE_ROUTING_SENSITIVE.contains(&arg_name),
         "process.exec" => PROCESS_EXEC_ROUTING_SENSITIVE.contains(&arg_name),
         // v0: all other sinks — no routing-sensitive args defined yet.
         _ => false,
@@ -128,6 +141,7 @@ pub fn is_content_sensitive(sink: &SinkId, arg_name: &str) -> bool {
     match sink.0.as_str() {
         "email.send" => EMAIL_SEND_CONTENT_SENSITIVE.contains(&arg_name),
         "file.create" => FILE_CREATE_CONTENT_SENSITIVE.contains(&arg_name),
+        "file.write" => FILE_WRITE_CONTENT_SENSITIVE.contains(&arg_name),
         "process.exec" => PROCESS_EXEC_CONTENT_SENSITIVE.contains(&arg_name),
         _ => false,
     }
@@ -195,6 +209,25 @@ pub fn expected_role(sink: &SinkId, arg_name: &str) -> Option<&'static [&'static
             "contents" => Some(&["path"]),
             _ => None,
         },
+        "file.write" => match arg_name {
+            // Mirrors file.create's `path` role list verbatim (DESIGN §4.3).
+            "path" => Some(&["path", "relative_path"]),
+            // WIDER than file.create's `contents` role list
+            // (`Some(&["path"])`) by design: unlike file.create, file.write
+            // is the live sink target of a chained process.exec -> file.write
+            // flow (Phase 32 EXEC-01..04). A tainted exec output is minted
+            // with `origin_role = "exec_output"`, and hostile-extracted doc
+            // content reuses the `"doc_fragment"` vocabulary already admitted
+            // for email.send's `body` slot. Excluding either would
+            // fail-closed-Deny that LEGITIMATE-shape flow at this structural
+            // Step 1c role gate instead of letting it reach I2's
+            // content-sensitivity Block (RESEARCH A4 / DESIGN §4.3) — the
+            // security property still holds because `contents` is
+            // content-sensitive above, so a tainted value here Blocks
+            // regardless of role match.
+            "contents" => Some(&["path", "exec_output", "doc_fragment"]),
+            _ => None,
+        },
         "process.exec" => match arg_name {
             // DESIGN-effect-breadth-exec.md §4.2 (Round-1 finding M2): `command`
             // and `args` are DELIBERATELY unconstrained here. There is no
@@ -238,6 +271,10 @@ mod tests {
 
     fn process_exec() -> SinkId {
         SinkId("process.exec".to_string())
+    }
+
+    fn file_write() -> SinkId {
+        SinkId("file.write".to_string())
     }
 
     #[test]
@@ -471,5 +508,76 @@ mod tests {
             expected_role(&process_exec(), "cwd"),
             Some(&["path", "relative_path"][..])
         );
+    }
+
+    // -----------------------------------------------------------------
+    // file.write (FS-03, DESIGN-effect-breadth-exec.md §4.1/§4.3)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn file_write_path_is_routing_sensitive() {
+        assert!(
+            is_routing_sensitive(&file_write(), "path"),
+            "file.write `path` routes the write — must be routing-sensitive"
+        );
+    }
+
+    #[test]
+    fn file_write_contents_not_routing_sensitive() {
+        assert!(
+            !is_routing_sensitive(&file_write(), "contents"),
+            "file.write `contents` is WHAT is written, not WHERE — not routing-sensitive"
+        );
+    }
+
+    #[test]
+    fn file_write_contents_is_content_sensitive() {
+        assert!(
+            is_content_sensitive(&file_write(), "contents"),
+            "file.write `contents` must be content-sensitive"
+        );
+    }
+
+    #[test]
+    fn file_write_path_not_content_sensitive() {
+        assert!(
+            !is_content_sensitive(&file_write(), "path"),
+            "file.write `path` must NOT become content-sensitive (no over-widening)"
+        );
+    }
+
+    #[test]
+    fn file_write_is_commit_irreversible() {
+        assert_eq!(
+            sink_effect_class(&file_write()),
+            EffectClass::CommitIrreversible
+        );
+    }
+
+    #[test]
+    fn file_write_path_expects_path_or_relative_path() {
+        assert_eq!(
+            expected_role(&file_write(), "path"),
+            Some(&["path", "relative_path"][..])
+        );
+    }
+
+    #[test]
+    fn file_write_contents_expects_path_exec_output_or_doc_fragment() {
+        // WIDER than file.create's contents role list (Some(&["path"])) —
+        // admits Phase 32's exec_output origin_role (chained
+        // process.exec -> file.write) and the doc_fragment vocabulary, so a
+        // tainted value here reaches I2's content-sensitivity Block rather
+        // than a structural Step-1c Deny (DESIGN §4.3, RESEARCH A4).
+        assert_eq!(
+            expected_role(&file_write(), "contents"),
+            Some(&["path", "exec_output", "doc_fragment"][..]),
+            "file.write `contents` must expect [path, exec_output, doc_fragment]"
+        );
+    }
+
+    #[test]
+    fn file_write_unknown_arg_is_unconstrained() {
+        assert_eq!(expected_role(&file_write(), "mode"), None);
     }
 }

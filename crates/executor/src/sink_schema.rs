@@ -56,6 +56,14 @@ pub const KNOWN_SINKS: &[SinkSchema] = &[
         required: &["path", "contents"],
     },
     SinkSchema {
+        // FS-03 (Phase 33 Plan 02): mirrors file.create exactly — both args
+        // required, exact-match. No optional-arg asymmetry like
+        // process.exec's args/cwd.
+        sink: "file.write",
+        allowed: &["path", "contents"],
+        required: &["path", "contents"],
+    },
+    SinkSchema {
         // DESIGN-effect-breadth-exec.md §1.5/§4.1: `command` is required;
         // `args`/`cwd` are optional. Both `command` and `args` are
         // routing- AND content-sensitive (sink_sensitivity.rs) — a tainted
@@ -288,6 +296,34 @@ mod tests {
         assert_eq!(
             validate_schema(&n),
             Err(DenyReason::DuplicateArg("command".to_string()))
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // file.write (FS-03, DESIGN-effect-breadth-exec.md §4.1/§4.3)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn file_write_exact_args_ok() {
+        let n = node("file.write", vec![arg("path"), arg("contents")]);
+        assert_eq!(validate_schema(&n), Ok(()));
+    }
+
+    #[test]
+    fn file_write_unknown_arg_denied() {
+        let n = node("file.write", vec![arg("path"), arg("contents"), arg("mode")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::UnknownArg("mode".to_string()))
+        );
+    }
+
+    #[test]
+    fn file_write_missing_required_arg_denied() {
+        let n = node("file.write", vec![arg("path")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::MissingArg("contents".to_string()))
         );
     }
 
