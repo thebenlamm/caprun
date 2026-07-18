@@ -173,7 +173,9 @@ Full detail archived in [`milestones/v1.7-ROADMAP.md`](milestones/v1.7-ROADMAP.m
   2. A tainted commit message routed through the sink genuinely propagates downstream (not re-minted clean) — verifiable as an unbroken audit-DAG edge.
   3. git system config and hooks are neutralized in the child (`GIT_CONFIG_NOSYSTEM`, `core.hooksPath=/dev/null`, no aliases, `env_clear()`'d) — a planted malicious hook/alias in the workspace repo does not execute.
 
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 36-01-PLAN.md — executor TCB rows: KNOWN_SINKS git.commit schema + MutateReversible effect-class + message content-sensitivity (wave 1)
+- [ ] 36-02-PLAN.md — brokerd git.commit sink dispatch (Pattern B launcher reuse + git config/hook neutralization) + mint_from_exec wiring + Linux-gated spawn tests (wave 2)
 
 #### Phase 37: `http.request` GET Egress
 
