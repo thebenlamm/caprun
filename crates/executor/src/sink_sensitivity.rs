@@ -748,4 +748,76 @@ mod tests {
         // is NOT an I2 bypass.
         assert_eq!(expected_role(&http_request(), "url"), None);
     }
+
+    // -----------------------------------------------------------------
+    // github.pr (GITHUB-01/03, DESIGN-git-github-http-sinks.md §4.1/§4.4/§8)
+    // -----------------------------------------------------------------
+
+    fn github_pr() -> SinkId {
+        SinkId("github.pr".to_string())
+    }
+
+    #[test]
+    fn github_pr_is_commit_irreversible() {
+        // A PR is an external, irreversible effect — an explicit arm, never the
+        // `_` fail-closed default reached only incidentally (GITHUB-01, §4.1).
+        assert_eq!(
+            sink_effect_class(&github_pr()),
+            EffectClass::CommitIrreversible,
+            "github.pr is an external irreversible effect (explicit arm, not `_` default)"
+        );
+    }
+
+    #[test]
+    fn github_pr_title_body_content_sensitive() {
+        // title/body are the payload that leaves the boundary — the marquee
+        // secret-exfil-via-PR-text arg (GITHUB-03/§4.4). A tainted value Blocks
+        // under the unmodified collect-then-Block loop.
+        for arg in ["title", "body"] {
+            assert!(
+                is_content_sensitive(&github_pr(), arg),
+                "github.pr `{arg}` must be content-sensitive (exfil carrier)"
+            );
+        }
+    }
+
+    #[test]
+    fn github_pr_owner_repo_base_head_routing_sensitive() {
+        // owner/repo/base/head determine WHERE the PR lands — a tainted value
+        // mis-routes the PR and must Block (routing-sensitive).
+        for arg in ["owner", "repo", "base", "head"] {
+            assert!(
+                is_routing_sensitive(&github_pr(), arg),
+                "github.pr `{arg}` must be routing-sensitive (PR destination)"
+            );
+        }
+    }
+
+    #[test]
+    fn github_pr_routing_args_not_content_sensitive() {
+        // No over-widening: routing args stay routing-only.
+        for arg in ["owner", "repo", "base", "head"] {
+            assert!(
+                !is_content_sensitive(&github_pr(), arg),
+                "github.pr `{arg}` is WHERE the PR lands, not payload — not content-sensitive"
+            );
+        }
+    }
+
+    #[test]
+    fn github_pr_expected_role_is_none() {
+        // All six args deliberately unconstrained at the structural Step-1c role
+        // gate (reuse the process.exec/git.commit/http.request rationale): no
+        // origin_role-producing mint site exists for a legitimately-authored PR
+        // field, so pinning Some(...) would fail-closed-Deny the legit flow. The
+        // Block for a tainted value comes entirely from routing/content-
+        // sensitivity + the untrusted-taint check — this None is NOT an I2 bypass.
+        for arg in ["owner", "repo", "base", "head", "title", "body"] {
+            assert_eq!(
+                expected_role(&github_pr(), arg),
+                None,
+                "github.pr `{arg}` must be role-unconstrained (None)"
+            );
+        }
+    }
 }
