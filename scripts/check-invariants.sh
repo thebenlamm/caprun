@@ -170,6 +170,24 @@ else
     echo "  PASS — test-fixtures is not a default feature of crates/brokerd"
 fi
 
+# Same never-default discipline for the Phase-40 `mock-egress-ca` feature
+# (LIVE-03 / T-40-03). It adds a test CA trust anchor + a test host to the
+# broker egress. Its release-trust-unchanged guard tests are gated
+# `#[cfg(not(feature = "mock-egress-ca"))]`, so if the feature ever became a
+# `default` those guards would silently compile OUT instead of failing — the
+# same false-assurance hazard Gate 4 protects test-fixtures against. Forbid it
+# as a default so the mock CA + mock host can NEVER ship in a production build.
+echo "Gate 4b: checking mock-egress-ca is never a default feature of crates/brokerd ..."
+if [ -f "$BROKERD_TOML" ] && \
+   awk '/^\[features\]/{f=1; next} /^\[/{f=0} f' "$BROKERD_TOML" \
+     | grep -E '^\s*default\s*=' \
+     | grep -q 'mock-egress-ca'; then
+    echo "  FAIL — crates/brokerd/Cargo.toml declares mock-egress-ca within its default feature set"
+    overall=$FAIL
+else
+    echo "  PASS — mock-egress-ca is not a default feature of crates/brokerd"
+fi
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Gate 5: no aws-lc-rs C-crypto provider anywhere in the workspace build graph
 # (Phase 37 FIX 1 — supply-chain / TCB integrity).

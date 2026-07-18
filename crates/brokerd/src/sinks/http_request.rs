@@ -43,6 +43,21 @@
 //! store (`env_clear()`-hermetic). We deliberately do NOT use reqwest's default
 //! `rustls` feature (it pulls the aws-lc-rs C provider) or
 //! rustls-platform-verifier (system store).
+//!
+//! # `mock-egress-ca` feature (NON-DEFAULT, test-only — LIVE-03/T-40-03)
+//!
+//! The DEFAULT/RELEASE build trusts EXACTLY the `webpki-roots` anchors and
+//! allowlists EXACTLY `api.github.com`. Under the NON-DEFAULT `mock-egress-ca`
+//! cargo feature (Plan 40-03 compose-verify harness ONLY) the egress path
+//! ADDITIONALLY trusts ONE checked-in self-signed test CA
+//! (`tests/fixtures/mock-egress-ca.der`) and ADDITIONALLY allowlists ONE test
+//! host (`github-mock.caprun.test`) — so the composed live-proof can POST to a
+//! local TLS mock over REAL TLS while riding the SAME `validate_url` →
+//! allowlist → `resolve_and_pin` path. The feature adds ONLY that one anchor +
+//! one host; it NEVER relaxes https-only, `ssrf_check`, the IP pin, or
+//! redirect-none, and both additions are ABSENT from every production build.
+//! The closing fresh adversarial code-trace MUST confirm the release trust set
+//! is unchanged — see the `not(mock-egress-ca)` invariant tests below.
 use anyhow::{bail, Result};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -85,11 +100,31 @@ fn check_body_cap(total: usize, cap: usize) -> Result<()> {
 /// broker-local trusted config, NOT a swappable policy file.
 const HOST_ALLOWLIST: &[&str] = &["api.github.com"];
 
+/// NON-DEFAULT `mock-egress-ca` feature ONLY: the single extra test host the
+/// Plan 40-03 composed live-proof POSTs to over the local TLS mock. Compiled
+/// OUT of — and thus absent from — every production/default build; the release
+/// allowlist is `HOST_ALLOWLIST` (= `["api.github.com"]`) ONLY.
+#[cfg(feature = "mock-egress-ca")]
+const MOCK_EGRESS_HOST: &str = "github-mock.caprun.test";
+
 /// True iff `host` is on the hardcoded allowlist (case-insensitive). A
 /// non-allowlisted host is rejected by `invoke_http_get` BEFORE any DNS
 /// resolve. Pure, host-portable.
+///
+/// The default/release allowlist is `HOST_ALLOWLIST` (= `["api.github.com"]`)
+/// ONLY. Under the NON-DEFAULT `mock-egress-ca` feature a SINGLE extra host
+/// (`MOCK_EGRESS_HOST`) is additionally accepted — the ONLY egress relaxation
+/// the feature makes. It does NOT touch `validate_url` (https-only),
+/// `ssrf_check`, the IP pin, or redirect-none.
 fn is_host_allowlisted(host: &str) -> bool {
-    HOST_ALLOWLIST.iter().any(|allowed| allowed.eq_ignore_ascii_case(host))
+    if HOST_ALLOWLIST.iter().any(|allowed| allowed.eq_ignore_ascii_case(host)) {
+        return true;
+    }
+    #[cfg(feature = "mock-egress-ca")]
+    if MOCK_EGRESS_HOST.eq_ignore_ascii_case(host) {
+        return true;
+    }
+    false
 }
 
 /// Validate a fetch URL and return its DNS hostname. Rejects a `userinfo@`
@@ -333,9 +368,24 @@ fn build_pinned_client(host: &str, pinned: SocketAddr) -> Result<reqwest::Client
 fn egress_root_store() -> rustls::RootCertStore {
     // `mut` is used ONLY under the mock-egress-ca feature (the `roots.add`
     // below); it is genuinely unused in the default build.
-    let roots = rustls::RootCertStore {
+    // `mut` is used ONLY under the mock-egress-ca feature (the `roots.add`
+    // below); it is genuinely unused in the default/release build.
+    #[allow(unused_mut)]
+    let mut roots = rustls::RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
+    // NON-DEFAULT feature ONLY: add the single test CA trust anchor. Gated so
+    // it is compiled OUT of — and thus absent from — every production/default
+    // build. No PEM parser, no new dependency: the DER is embedded verbatim.
+    #[cfg(feature = "mock-egress-ca")]
+    {
+        let der = rustls::pki_types::CertificateDer::from(
+            &include_bytes!("../../tests/fixtures/mock-egress-ca.der")[..],
+        );
+        roots
+            .add(der)
+            .expect("mock-egress-ca: checked-in test CA is a valid DER trust anchor");
+    }
     roots
 }
 
