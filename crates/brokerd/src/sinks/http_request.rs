@@ -1,13 +1,48 @@
 //! sinks/http_request — the broker-side, read-only `http.request` GET egress
 //! (HTTP-01/HTTP-03, DESIGN §3.1 Pattern A).
 //!
-//! # RED PHASE (TDD) — stubs only
+//! # Security role (Pattern A, broker-resident — NEVER the confined worker)
 //!
-//! This file is committed first as failing `todo!()` stubs plus the full
-//! host-portable test suite (RED), then filled in (GREEN). Do not ship the
-//! `todo!()` bodies.
-use anyhow::Result;
-use std::net::{IpAddr, SocketAddr};
+//! This is the ONLY code path that performs an outbound HTTP GET, and it lives
+//! in the broker exactly like `email_smtp.rs`'s SMTP call — the confined worker
+//! stays fully net-denied. The `reqwest`/`rustls`/`ring`/`webpki-roots` deps are
+//! broker-only (see `Cargo.toml`).
+//!
+//! # SSRF resolve-and-pin (DESIGN §3.6, threats T-37-01/03/04)
+//!
+//! The fetch is defended in depth, all before/around the single socket:
+//!   1. `validate_url` — reject `userinfo@`, any non-`https` scheme, and
+//!      IP-encoding tricks (decimal/octal/hex/plain IP-literal hosts); only a
+//!      DNS domain host survives.
+//!   2. host allowlist — the domain MUST be on the hardcoded `HOST_ALLOWLIST`,
+//!      checked BEFORE any DNS resolve (fail-closed, DESIGN §8).
+//!   3. `ssrf_check` — every resolved IP is classified; loopback / RFC1918 /
+//!      link-local (incl. cloud-metadata) / CGNAT / ULA / IPv6-mapped-v4 /
+//!      unspecified are denied. A mixed DNS answer denies the whole request.
+//!   4. resolve-and-pin — reqwest connects to the SAME SSRF-vetted IP via
+//!      `.resolve(host, pinned)` (SNI/Host = original hostname), so the checked
+//!      IP equals the connected IP (DNS-rebind TOCTOU close), with redirect
+//!      following DISABLED (a 30x cannot bounce to a denied range).
+//!
+//! # NO mint / NO demotion here (DESIGN §10, Gate 3)
+//!
+//! This module performs NO `ValueStore::mint`, appends NO audit `Event`, and
+//! never touches session status — Plan 03 (`server.rs` Allowed-GET dispatch)
+//! owns the `mint_from_http` genesis + I1 demotion. Keeping this module free of
+//! any mint token is what keeps it out of `check-invariants.sh` Gate 3's
+//! mint-site restriction.
+//!
+//! # TLS trust anchors (DESIGN §5.1/§5.2)
+//!
+//! The reqwest client is built with a preconfigured rustls `ClientConfig` using
+//! the pure-Rust `ring` crypto provider and the compiled-in `webpki-roots`
+//! trust anchors — so validation needs no `SSL_CERT_*` env var or system cert
+//! store (`env_clear()`-hermetic). We deliberately do NOT use reqwest's default
+//! `rustls` feature (it pulls the aws-lc-rs C provider) or
+//! rustls-platform-verifier (system store).
+use anyhow::{bail, Result};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 
 /// The fetch-target host allowlist (DESIGN §3.6 + §11 — an operator-surfaced
 /// deployment CONSTANT, never runtime-configurable from a plan node /
@@ -19,8 +54,8 @@ const HOST_ALLOWLIST: &[&str] = &["api.github.com"];
 /// True iff `host` is on the hardcoded allowlist (case-insensitive). A
 /// non-allowlisted host is rejected by `invoke_http_get` BEFORE any DNS
 /// resolve. Pure, host-portable.
-fn is_host_allowlisted(_host: &str) -> bool {
-    todo!("GREEN")
+fn is_host_allowlisted(host: &str) -> bool {
+    HOST_ALLOWLIST.iter().any(|allowed| allowed.eq_ignore_ascii_case(host))
 }
 
 /// Validate a fetch URL and return its DNS hostname. Rejects a `userinfo@`
@@ -28,8 +63,29 @@ fn is_host_allowlisted(_host: &str) -> bool {
 /// (decimal/octal/hex-packed or plain IP-literal hosts — the WHATWG URL parser
 /// normalizes those to an `Ipv4`/`Ipv6` host, which we reject: only a DNS
 /// domain host is allowed). Pure, host-portable.
-fn validate_url(_url: &str) -> Result<String> {
-    todo!("GREEN")
+fn validate_url(url: &str) -> Result<String> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("invalid URL: {e}"))?;
+
+    if parsed.scheme() != "https" {
+        bail!("http.request: only https is allowed, got scheme {:?}", parsed.scheme());
+    }
+
+    // Reject any userinfo (`user@` or `user:pass@`) — SSRF/credential smuggling.
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        bail!("http.request: URL userinfo component is not allowed");
+    }
+
+    // The WHATWG URL parser normalizes decimal/octal/hex-packed and plain IP
+    // literals into a typed `Host::Ipv4`/`Host::Ipv6`; only a DNS `Domain` host
+    // is accepted — this rejects every IP-encoding trick in one check.
+    match parsed.host() {
+        Some(url::Host::Domain(d)) if !d.is_empty() => Ok(d.to_string()),
+        Some(url::Host::Domain(_)) => bail!("http.request: empty host"),
+        Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_)) => {
+            bail!("http.request: IP-literal / IP-encoded hosts are not allowed (use a DNS name)")
+        }
+        None => bail!("http.request: URL has no host"),
+    }
 }
 
 /// The load-bearing SSRF classifier (DESIGN §3.6). Returns `Err` for a resolved
@@ -37,16 +93,72 @@ fn validate_url(_url: &str) -> Result<String> {
 /// 169.254.169.254), CGNAT, ULA, IPv6-mapped-IPv4 (embedded v4 re-checked),
 /// unspecified. `Ok` for an ordinary public IP. Pure over `IpAddr`,
 /// host-portable — the same check that runs on the IP reqwest is then pinned to.
-pub fn ssrf_check(_ip: IpAddr) -> Result<()> {
-    todo!("GREEN")
+pub fn ssrf_check(ip: IpAddr) -> Result<()> {
+    let denied = match ip {
+        IpAddr::V4(v4) => ipv4_denied(v4),
+        IpAddr::V6(v6) => ipv6_denied(v6),
+    };
+    if denied {
+        bail!("http.request: resolved IP {ip} is in a denied SSRF range");
+    }
+    Ok(())
+}
+
+/// DESIGN §3.6 IPv4 denials: loopback (127/8), RFC1918 (10/8, 172.16/12,
+/// 192.168/16), link-local (169.254/16, incl. cloud-metadata 169.254.169.254),
+/// CGNAT (100.64/10), unspecified (0.0.0.0), broadcast (255.255.255.255).
+fn ipv4_denied(ip: Ipv4Addr) -> bool {
+    ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_unspecified()
+        || ip.is_broadcast()
+        || is_cgnat(ip)
+}
+
+/// 100.64.0.0/10 (RFC 6598 carrier-grade NAT).
+fn is_cgnat(ip: Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 100 && (0x40..=0x7f).contains(&o[1])
+}
+
+/// DESIGN §3.6 IPv6 denials: loopback (::1), unspecified (::), ULA (fc00::/7),
+/// link-local (fe80::/10), and IPv6-mapped-IPv4 (::ffff:0:0/96) whose embedded
+/// v4 is re-checked against the v4 ranges.
+fn ipv6_denied(ip: Ipv6Addr) -> bool {
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return ipv4_denied(v4);
+    }
+    ip.is_loopback() || ip.is_unspecified() || is_ula(ip) || is_v6_link_local(ip)
+}
+
+/// fc00::/7 (RFC 4193 unique local address).
+fn is_ula(ip: Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xfe00) == 0xfc00
+}
+
+/// fe80::/10 (link-local unicast).
+fn is_v6_link_local(ip: Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xffc0) == 0xfe80
 }
 
 /// Vet a set of resolved socket addresses and return the one to pin. Fail-closed:
 /// if the set is empty, or if ANY resolved IP is in a denied SSRF range, returns
 /// `Err` (a mixed good/bad DNS answer denies the whole request). Pure over the
 /// resolved list (no DNS) → host-portable and unit-testable.
-fn vet_resolved(_addrs: &[SocketAddr]) -> Result<SocketAddr> {
-    todo!("GREEN")
+// Consumed by the Linux `do_pinned_get` and by host-portable unit tests; on a
+// non-test macOS build (stub `do_pinned_get`) it is unreferenced.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn vet_resolved(addrs: &[SocketAddr]) -> Result<SocketAddr> {
+    if addrs.is_empty() {
+        bail!("http.request: host resolved to no addresses");
+    }
+    // Fail-closed: EVERY resolved IP must pass ssrf_check. A mixed answer
+    // (one public + one internal) denies the whole request.
+    for a in addrs {
+        ssrf_check(a.ip())?;
+    }
+    Ok(addrs[0])
 }
 
 /// Build the redirect-free, IP-pinned reqwest client for a vetted destination.
@@ -54,8 +166,33 @@ fn vet_resolved(_addrs: &[SocketAddr]) -> Result<SocketAddr> {
 /// wiring on macOS. `redirect(Policy::none())` (T-37-04) + `.resolve(host,
 /// pinned)` pins the connect target to the SSRF-vetted IP (SNI/Host = original
 /// hostname), closing the DNS-rebind TOCTOU (T-37-03).
-fn build_pinned_client(_host: &str, _pinned: SocketAddr) -> Result<reqwest::Client> {
-    todo!("GREEN")
+// Consumed by the Linux `do_pinned_get` and by a host-portable unit test; on a
+// non-test macOS build it is unreferenced.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn build_pinned_client(host: &str, pinned: SocketAddr) -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .use_preconfigured_tls(ring_webpki_tls_config())
+        .resolve(host, pinned)
+        .build()
+        .map_err(|e| anyhow::anyhow!("http.request: failed to build client: {e}"))
+}
+
+/// Preconfigured rustls `ClientConfig`: pure-Rust `ring` provider (DESIGN §5.1)
+/// + compiled-in `webpki-roots` trust anchors (DESIGN §5.2 — `env_clear()`
+/// hermetic, no system cert store / SSL_CERT_* / platform verifier).
+// Consumed transitively via `build_pinned_client`; same platform-gated
+// unreferenced-on-macOS-non-test situation.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn ring_webpki_tls_config() -> rustls::ClientConfig {
+    let roots = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .expect("ring provider supports rustls default protocol versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth()
 }
 
 /// Broker-side read-only GET egress. Order: validate_url → allowlist gate
@@ -65,8 +202,53 @@ fn build_pinned_client(_host: &str, _pinned: SocketAddr) -> Result<reqwest::Clie
 /// This function performs NO minting, appends NO audit event, and does NOT
 /// touch session status — Plan 03 owns all of that (keeps this module out of
 /// Gate 3's mint-site restriction, DESIGN §10).
-pub async fn invoke_http_get(_url: &str) -> Result<String> {
-    todo!("GREEN")
+pub async fn invoke_http_get(url: &str) -> Result<String> {
+    let host = validate_url(url)?;
+    // Allowlist gate — BEFORE any DNS resolve or socket (DESIGN §8 fail-closed).
+    if !is_host_allowlisted(&host) {
+        bail!("http.request: host {host:?} is not on the allowlist");
+    }
+    do_pinned_get(url, &host).await
+}
+
+/// Linux: resolve → vet all resolved IPs → pin to the vetted IP → redirect-free
+/// GET → response body text. The real DNS-resolve + socket-connect leg is
+/// Linux-gated per the project's Linux-only pattern (CLAUDE.md); live-HTTPS
+/// behavior is deferred to Phase 40.
+#[cfg(target_os = "linux")]
+async fn do_pinned_get(url: &str, host: &str) -> Result<String> {
+    use std::net::ToSocketAddrs;
+
+    // Resolve on a blocking thread (std resolver) — the resolved IPs are the
+    // EXACT set that will be vetted and pinned (no re-resolve later).
+    let host_owned = host.to_string();
+    let addrs: Vec<SocketAddr> = tokio::task::spawn_blocking(move || {
+        (host_owned.as_str(), 443u16)
+            .to_socket_addrs()
+            .map(|it| it.collect::<Vec<_>>())
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("http.request: resolver task join error: {e}"))?
+    .map_err(|e| anyhow::anyhow!("http.request: DNS resolution failed: {e}"))?;
+
+    let pinned = vet_resolved(&addrs)?;
+    let client = build_pinned_client(host, pinned)?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("http.request: GET failed: {e}"))?;
+    resp.text()
+        .await
+        .map_err(|e| anyhow::anyhow!("http.request: reading response body failed: {e}"))
+}
+
+/// Non-Linux (dev macOS) no-op stub: the pure classifiers + client-build wiring
+/// above are host-portable and fully tested here, but the real socket leg is
+/// Linux-only (CLAUDE.md); live-HTTPS behavior is deferred to Phase 40.
+#[cfg(not(target_os = "linux"))]
+async fn do_pinned_get(_url: &str, _host: &str) -> Result<String> {
+    bail!("http.request live GET is Linux-only (macOS no-op stub); deferred to Phase 40")
 }
 
 #[cfg(test)]

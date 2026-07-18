@@ -70,6 +70,10 @@ rustls       = { version = "0.23", default-features = false, features = ["ring",
 # Compiled-in CA trust anchors (DESIGN §5.2, ENV-01) so TLS validation needs no
 # SSL_CERT_* env var or readable system cert store — `env_clear()`-hermetic.
 webpki-roots = "1.0.8"
+# The WHATWG URL parser (already a reqwest transitive dep). `http_request.rs`
+# uses its typed `Host` determination to reject IP-literal / IP-encoded fetch
+# hosts with the SAME parser reqwest uses — the SSRF url-validation check.
+url          = "2.5"
 
 [features]
 # Gates the CreateSession-IPC forced-Active mint arm (HARDEN-04) so it is
