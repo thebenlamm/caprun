@@ -39,6 +39,37 @@ chrono       = { workspace = true }
 # `boring-tls` backend (RUSTSEC-2026-0141: silently disables TLS hostname
 # verification). Mailpit needs no TLS at all; builder_dangerous bypasses it.
 lettre       = "0.11.22"
+# Phase 37 (HTTP-01/03): broker-side, read-only `http.request` GET egress
+# (Pattern A, DESIGN §3.1). BROKER-ONLY — reqwest/rustls/ring/webpki-roots are
+# NEVER a dependency of the confined worker (which stays fully net-denied); the
+# egress leg lives in the broker exactly like `email_smtp.rs`'s SMTP call.
+#
+# Supply-chain evidence (crates.io, verified 2026-07-18): reqwest is already
+# vetted in-workspace at cli/caprun-planner (PLANNER-04) — seanmonstar/hyper,
+# not yanked, ~573M downloads; pinned `=0.13.4` identical to the planner. ring
+# (0.17, briansmith) and webpki-roots (1.0.8, rustls project) are the canonical
+# rustls-ecosystem crates the Phase-35 DESIGN gate selected at §5.1/§5.2. NO
+# native-tls / boring-tls / openssl feature is enabled (RUSTSEC hazard class,
+# same class as the lettre warning above); asserted with
+# `cargo tree -p brokerd -i openssl-sys` (not-found) — see 37-02-SUMMARY.md.
+#
+# Feature choice (DESIGN §5.1 "lean ring first"): reqwest 0.13.4's `rustls`
+# feature transitively enables `__rustls-aws-lc-rs` (the aws-lc-rs C-crypto
+# provider) — verified via `cargo add --dry-run`. To honor §5.1 "minimize
+# untrusted C in the TCB" we instead select `rustls-no-provider` (reqwest
+# bundles NO crypto provider and NO default root store) and supply BOTH
+# explicitly in Task 2's ClientBuilder: the pure-Rust `ring` provider (via the
+# `rustls` crate's `ring` feature) and the compiled-in `webpki-roots` trust
+# anchors (DESIGN §5.2 — hermetic under `env_clear()`, no SSL_CERT_* / system
+# store / rustls-platform-verifier). GET-only, broker-side egress scope.
+reqwest      = { version = "=0.13.4", default-features = false, features = ["rustls-no-provider"] }
+# Pure-Rust `ring` crypto provider for the reqwest client's preconfigured
+# rustls ClientConfig (DESIGN §5.1 FORK 2). `default-features = false` drops
+# rustls's default `aws-lc-rs` provider so only `ring` C-free crypto is wired.
+rustls       = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# Compiled-in CA trust anchors (DESIGN §5.2, ENV-01) so TLS validation needs no
+# SSL_CERT_* env var or readable system cert store — `env_clear()`-hermetic.
+webpki-roots = "1.0.8"
 
 [features]
 # Gates the CreateSession-IPC forced-Active mint arm (HARDEN-04) so it is
