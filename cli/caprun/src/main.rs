@@ -307,7 +307,10 @@ async fn main() -> anyhow::Result<()> {
     // has a head start on its own bind(); the worker-side `LlmPlanner` proxy
     // still carries its own bounded connect-retry (cli/caprun/src/planner.rs)
     // to cover any residual scheduling race. `OPENAI_API_KEY` is forwarded to
-    // the sidecar ONLY — the worker's env never receives it (T-21-10).
+    // the sidecar ONLY — the worker's env never receives it (T-21-10). This
+    // holds by construction: the worker spawn below (step 4) `env_clear()`s and
+    // passes only an explicit non-secret allowlist, so the worker inherits
+    // NEITHER the explicitly-set key NOR any ambient broker secret.
     let mut planner_sidecar: Option<std::process::Child> = None;
     let mut worker_planner_env: Vec<(&'static str, String)> = Vec::new();
     if std::env::var("CAPRUN_PLANNER").as_deref() == Ok("llm") {
@@ -338,6 +341,21 @@ async fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("caprun has no parent dir"))?
         .join("caprun-worker");
     let mut child = std::process::Command::new(&worker_binary)
+        // SECURITY (Phase 34 gap-closure, env_clear adversarial-review follow-up):
+        // clear the inherited environment so the confined worker receives NONE of
+        // the unconfined caprun process's env — notably OPENAI_API_KEY and
+        // CAPRUN_SMTP_*. The worker processes untrusted content by design (I1
+        // dynamic taint), so a prompt-injected worker could otherwise `getenv` a
+        // secret (a pure memory read seccomp/Landlock cannot block) and embed it
+        // into a draft-email body or an artifact write. Pass ONLY the explicit,
+        // non-secret vars the worker actually reads (BROKER_SOCK, SESSION_ID,
+        // WORKSPACE_FILE, INTENT, + the optional planner seam) plus a minimal PATH.
+        // This makes the T-21-10 guarantee ("the worker's env never receives
+        // OPENAI_API_KEY") TRUE by construction — it was previously false via
+        // inheritance. The worker never `execve`s (seccomp-denied), so PATH is
+        // belt-and-suspenders, not required.
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin:/usr/local/bin")
         // Abstract socket name WITHOUT the leading NUL (worker prepends it)
         .env("BROKER_SOCK", format!("/agentos/{session_id}"))
         .env("SESSION_ID", session_id.to_string())
