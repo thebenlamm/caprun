@@ -43,6 +43,16 @@ pub fn sink_effect_class(sink: &SinkId) -> EffectClass {
         "file.create" => EffectClass::CommitIrreversible,
         "file.write" => EffectClass::CommitIrreversible,
         "process.exec" => EffectClass::CommitIrreversible,
+        // GIT-01 (Phase 36), DESIGN-git-github-http-sinks.md §1.2: the FIRST
+        // non-CommitIrreversible REAL sink and a DELIBERATE, justified exception
+        // to the fail-closed `_ => CommitIrreversible` default below. A local
+        // commit is reversible (git reset / commit --amend / branch delete) and
+        // causes NO external effect — only push/pr leave the trust boundary —
+        // matching `ReversibleEffect` in the locked 3-class Effect ontology
+        // (runtime-core/src/effect.rs). This is what lets an Allowed git.commit
+        // survive an I1-demoted (Draft) session, exactly as a reversible
+        // workspace file.write would.
+        "git.commit" => EffectClass::MutateReversible,
         // Test-fixture-only arm (DESIGN §9 Pitfall m2 / RESEARCH Pitfall 3): the
         // ONLY vehicle that makes TAINT-03 (Draft + Observe still Allowed)
         // testable end-to-end, since both live sinks are CommitIrreversible.
@@ -113,6 +123,15 @@ pub const PROCESS_EXEC_ROUTING_SENSITIVE: &[&str] = &["command", "args", "cwd"];
 /// here (routing-sensitive only — it doesn't determine WHAT runs, only WHERE).
 pub const PROCESS_EXEC_CONTENT_SENSITIVE: &[&str] = &["command", "args"];
 
+/// Args of git.commit that determine WHAT irreversible payload the message
+/// carries. GIT-01, DESIGN-git-github-http-sinks.md §1.3: `message` is the
+/// taint CARRIER — a tainted value (e.g. assembled from untrusted file content
+/// or exec output) Blocks under the UNMODIFIED collect-then-Block loop, exactly
+/// like an email.send `body`. It must genuinely propagate downstream and MUST
+/// NEVER be re-minted clean. git.commit has NO routing-sensitive arg (no
+/// path/destination), so there is no matching `GIT_COMMIT_ROUTING_SENSITIVE`.
+pub const GIT_COMMIT_CONTENT_SENSITIVE: &[&str] = &["message"];
+
 /// Returns `true` iff `arg_name` is a routing-sensitive argument of `sink`.
 ///
 /// Routing-sensitive means: the attacker who controls this arg value redirects
@@ -143,6 +162,7 @@ pub fn is_content_sensitive(sink: &SinkId, arg_name: &str) -> bool {
         "file.create" => FILE_CREATE_CONTENT_SENSITIVE.contains(&arg_name),
         "file.write" => FILE_WRITE_CONTENT_SENSITIVE.contains(&arg_name),
         "process.exec" => PROCESS_EXEC_CONTENT_SENSITIVE.contains(&arg_name),
+        "git.commit" => GIT_COMMIT_CONTENT_SENSITIVE.contains(&arg_name),
         _ => false,
     }
 }
@@ -248,6 +268,19 @@ pub fn expected_role(sink: &SinkId, arg_name: &str) -> Option<&'static [&'static
             "cwd" => Some(&["path", "relative_path"]),
             _ => None,
         },
+        "git.commit" => match arg_name {
+            // GIT-01, DESIGN-git-github-http-sinks.md §1.3: `message` is
+            // DELIBERATELY unconstrained at the structural Step-1c role gate —
+            // reuse the process.exec command/args rationale. There is no
+            // origin_role-producing mint site for a legitimately-authored commit
+            // message, so pinning Some(...) would fail-closed-Deny the legit
+            // UserTrusted-message flow. The Block for a tainted message comes
+            // entirely from is_content_sensitive + the untrusted-taint check —
+            // this `None` disables ONLY the structural role gate; it is NOT an
+            // I2 bypass.
+            "message" => None,
+            _ => None,
+        },
         _ => None, // any other sink: unconstrained, out of v1.5 scope
     }
 }
@@ -275,6 +308,10 @@ mod tests {
 
     fn file_write() -> SinkId {
         SinkId("file.write".to_string())
+    }
+
+    fn git_commit() -> SinkId {
+        SinkId("git.commit".to_string())
     }
 
     #[test]
@@ -579,5 +616,53 @@ mod tests {
     #[test]
     fn file_write_unknown_arg_is_unconstrained() {
         assert_eq!(expected_role(&file_write(), "mode"), None);
+    }
+
+    // -----------------------------------------------------------------
+    // git.commit (GIT-01, DESIGN-git-github-http-sinks.md §1.2/§1.3)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn git_commit_is_mutate_reversible() {
+        // The FIRST non-CommitIrreversible REAL sink: a local commit is
+        // reversible (git reset/amend/branch-delete) with no external effect,
+        // so it survives an I1-demoted (Draft) session.
+        assert_eq!(
+            sink_effect_class(&git_commit()),
+            EffectClass::MutateReversible,
+            "git.commit is a reversible local mutation, not a commit-irreversible effect"
+        );
+    }
+
+    #[test]
+    fn git_commit_message_is_content_sensitive() {
+        // `message` is the taint CARRIER — a tainted message Blocks under the
+        // unmodified collect-then-Block loop, exactly like an email.send body.
+        assert!(
+            is_content_sensitive(&git_commit(), "message"),
+            "git.commit `message` must be content-sensitive (taint carrier)"
+        );
+    }
+
+    #[test]
+    fn git_commit_message_not_routing_sensitive() {
+        // git.commit has NO routing-sensitive arg (no path/destination) — the
+        // message falls through to the `_ => false` default rather than a table
+        // row.
+        assert!(
+            !is_routing_sensitive(&git_commit(), "message"),
+            "git.commit `message` is WHAT is committed, not WHERE — not routing-sensitive"
+        );
+    }
+
+    #[test]
+    fn git_commit_message_expected_role_is_none() {
+        // `message` is deliberately unconstrained at the structural Step-1c role
+        // gate (reuse the process.exec command/args rationale): no
+        // origin_role-producing mint site exists for a legitimately-authored
+        // commit message, so pinning Some(...) would fail-closed-Deny the legit
+        // UserTrusted-message flow. The Block for a tainted message comes
+        // entirely from is_content_sensitive + the untrusted-taint check.
+        assert_eq!(expected_role(&git_commit(), "message"), None);
     }
 }
