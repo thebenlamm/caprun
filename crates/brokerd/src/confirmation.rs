@@ -531,6 +531,7 @@ fn taint_label_display(label: &TaintLabel) -> &'static str {
         TaintLabel::WorkerExtracted => "worker.extracted",
         TaintLabel::PathRaw => "path.raw",
         TaintLabel::ExecRaw => "exec.raw",
+        TaintLabel::HttpRaw => "http.raw",
     }
 }
 

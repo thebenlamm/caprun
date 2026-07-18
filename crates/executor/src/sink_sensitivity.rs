@@ -53,6 +53,15 @@ pub fn sink_effect_class(sink: &SinkId) -> EffectClass {
         // survive an I1-demoted (Draft) session, exactly as a reversible
         // workspace file.write would.
         "git.commit" => EffectClass::MutateReversible,
+        // HTTP-01 (Phase 37), DESIGN-git-github-http-sinks.md §3.2: the FIRST
+        // real `Observe` sink (only the test-only `test.observe` is Observe
+        // today). A read-only GET observes external state and causes no
+        // outbound mutation, so it is Allowed even in a Draft session — but its
+        // inbound response body is untrusted (HttpRaw) and DEMOTES the session
+        // to Draft at mint time (wired in Plan 03). Classifying it Observe here
+        // is a table row only; it introduces NO new ExecutorDecision variant
+        // and does not weaken I2.
+        "http.request" => EffectClass::Observe,
         // Test-fixture-only arm (DESIGN §9 Pitfall m2 / RESEARCH Pitfall 3): the
         // ONLY vehicle that makes TAINT-03 (Draft + Observe still Allowed)
         // testable end-to-end, since both live sinks are CommitIrreversible.
@@ -132,6 +141,19 @@ pub const PROCESS_EXEC_CONTENT_SENSITIVE: &[&str] = &["command", "args"];
 /// path/destination), so there is no matching `GIT_COMMIT_ROUTING_SENSITIVE`.
 pub const GIT_COMMIT_CONTENT_SENSITIVE: &[&str] = &["message"];
 
+/// Args of http.request that determine WHERE the GET goes. HTTP-01,
+/// DESIGN-git-github-http-sinks.md §8: `url` is routing-sensitive — a tainted
+/// url (e.g. assembled from untrusted file/exec/http content) redirects the
+/// request to an attacker-chosen host and MUST Block on the `url` arg.
+pub const HTTP_REQUEST_ROUTING_SENSITIVE: &[&str] = &["url"];
+
+/// Args of http.request that determine WHAT data leaves the trust boundary.
+/// HTTP-01, DESIGN-git-github-http-sinks.md §8 / DESIGN-GATE-RECORD-v1.8
+/// NIT-6: `url` is ALSO content-sensitive (defense-in-depth) — a secret
+/// assembled into the query string is exfiltration, so a tainted url Blocks
+/// under the content classifier too, not only routing.
+pub const HTTP_REQUEST_CONTENT_SENSITIVE: &[&str] = &["url"];
+
 /// Returns `true` iff `arg_name` is a routing-sensitive argument of `sink`.
 ///
 /// Routing-sensitive means: the attacker who controls this arg value redirects
@@ -144,6 +166,7 @@ pub fn is_routing_sensitive(sink: &SinkId, arg_name: &str) -> bool {
         "file.create" => FILE_CREATE_ROUTING_SENSITIVE.contains(&arg_name),
         "file.write" => FILE_WRITE_ROUTING_SENSITIVE.contains(&arg_name),
         "process.exec" => PROCESS_EXEC_ROUTING_SENSITIVE.contains(&arg_name),
+        "http.request" => HTTP_REQUEST_ROUTING_SENSITIVE.contains(&arg_name),
         // v0: all other sinks — no routing-sensitive args defined yet.
         _ => false,
     }
@@ -163,6 +186,7 @@ pub fn is_content_sensitive(sink: &SinkId, arg_name: &str) -> bool {
         "file.write" => FILE_WRITE_CONTENT_SENSITIVE.contains(&arg_name),
         "process.exec" => PROCESS_EXEC_CONTENT_SENSITIVE.contains(&arg_name),
         "git.commit" => GIT_COMMIT_CONTENT_SENSITIVE.contains(&arg_name),
+        "http.request" => HTTP_REQUEST_CONTENT_SENSITIVE.contains(&arg_name),
         _ => false,
     }
 }
@@ -279,6 +303,19 @@ pub fn expected_role(sink: &SinkId, arg_name: &str) -> Option<&'static [&'static
             // this `None` disables ONLY the structural role gate; it is NOT an
             // I2 bypass.
             "message" => None,
+            _ => None,
+        },
+        "http.request" => match arg_name {
+            // HTTP-01, DESIGN-git-github-http-sinks.md §8: `url` is DELIBERATELY
+            // unconstrained at the structural Step-1c role gate — reuse the
+            // process.exec/git.commit rationale. There is no origin_role-
+            // producing mint site for a legitimately-authored url, so pinning
+            // Some(...) would fail-closed-Deny the legit UserTrusted-url flow.
+            // The Block for a tainted url comes entirely from
+            // is_routing_sensitive/is_content_sensitive + the untrusted-taint
+            // check — this `None` disables ONLY the structural role gate; it is
+            // NOT an I2 bypass.
+            "url" => None,
             _ => None,
         },
         _ => None, // any other sink: unconstrained, out of v1.5 scope
@@ -664,5 +701,51 @@ mod tests {
         // UserTrusted-message flow. The Block for a tainted message comes
         // entirely from is_content_sensitive + the untrusted-taint check.
         assert_eq!(expected_role(&git_commit(), "message"), None);
+    }
+
+    // -----------------------------------------------------------------
+    // http.request (HTTP-01, DESIGN-git-github-http-sinks.md §3.2/§8)
+    // -----------------------------------------------------------------
+
+    fn http_request() -> SinkId {
+        SinkId("http.request".to_string())
+    }
+
+    #[test]
+    fn http_request_is_observe() {
+        // The FIRST real Observe sink (only the test-only test.observe is
+        // Observe today): a GET is a read, Allowed even in a Draft session.
+        // Its inbound response demotes the session at mint time (Plan 03).
+        assert_eq!(
+            sink_effect_class(&http_request()),
+            EffectClass::Observe,
+            "http.request is a read-only Observe GET, not a commit-irreversible effect"
+        );
+    }
+
+    #[test]
+    fn http_request_url_is_routing_and_content_sensitive() {
+        // url decides WHERE the GET goes (routing) AND can smuggle a secret
+        // in the query string (content, NIT-6/§8 defense-in-depth) — a tainted
+        // url Blocks under either classifier.
+        assert!(
+            is_routing_sensitive(&http_request(), "url"),
+            "http.request `url` decides WHERE the GET goes — routing-sensitive"
+        );
+        assert!(
+            is_content_sensitive(&http_request(), "url"),
+            "http.request `url` can exfiltrate a secret in the query string — content-sensitive"
+        );
+    }
+
+    #[test]
+    fn http_request_url_expected_role_is_none() {
+        // `url` is deliberately unconstrained at the structural Step-1c role
+        // gate (reuse the process.exec/git.commit rationale): no
+        // origin_role-producing mint site exists for a legitimately-authored
+        // url. The Block for a tainted url comes entirely from
+        // routing/content-sensitivity + the untrusted-taint check — this None
+        // is NOT an I2 bypass.
+        assert_eq!(expected_role(&http_request(), "url"), None);
     }
 }

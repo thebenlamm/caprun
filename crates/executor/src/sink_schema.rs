@@ -89,6 +89,19 @@ pub const KNOWN_SINKS: &[SinkSchema] = &[
         allowed: &["message"],
         required: &["message"],
     },
+    SinkSchema {
+        // HTTP-01 (Phase 37 Plan 01), DESIGN-git-github-http-sinks.md §3.1/§3.2
+        // / CONTEXT decision 2: exact-match, single-arg schema. `url` is the
+        // sole arg — both allowed AND required. GET only this milestone: NO
+        // method/headers/body args are modeled (DESIGN §0/§3.1), so a plan node
+        // carrying any of those is Denied(UnknownArg) here at Step 0. `url` is
+        // routing- AND content-sensitive (sink_sensitivity.rs) — a tainted url
+        // Blocks downstream, it does NOT Deny here; this schema gate enforces
+        // only the arg NAME set, not taint.
+        sink: "http.request",
+        allowed: &["url"],
+        required: &["url"],
+    },
 ];
 
 /// Test-fixture-only sink registry (RESEARCH.md Pitfall 3 / DESIGN §9 Pitfall
@@ -388,6 +401,53 @@ mod tests {
         assert_eq!(
             validate_schema(&n),
             Err(DenyReason::MissingArg("message".to_string()))
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // http.request (HTTP-01, DESIGN-git-github-http-sinks.md §3.1/§3.2)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn http_request_is_registered_sink() {
+        // Registered => schema_for returns Some => never UnknownSink at Step 0.
+        assert!(
+            schema_for("http.request").is_some(),
+            "http.request must be a registered sink (never UnknownSink)"
+        );
+    }
+
+    #[test]
+    fn http_request_exact_args_ok() {
+        let n = node("http.request", vec![arg("url")]);
+        assert_eq!(validate_schema(&n), Ok(()));
+    }
+
+    #[test]
+    fn http_request_unknown_arg_denied() {
+        // GET only this milestone — no method/headers/body args modeled.
+        let n = node("http.request", vec![arg("url"), arg("method")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::UnknownArg("method".to_string()))
+        );
+    }
+
+    #[test]
+    fn http_request_duplicate_arg_denied() {
+        let n = node("http.request", vec![arg("url"), arg("url")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::DuplicateArg("url".to_string()))
+        );
+    }
+
+    #[test]
+    fn http_request_missing_required_arg_denied() {
+        let n = node("http.request", vec![]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::MissingArg("url".to_string()))
         );
     }
 
