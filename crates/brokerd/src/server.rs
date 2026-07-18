@@ -1530,6 +1530,41 @@ async fn evaluate_plan_node_and_record(
         }
     }
 
+    // 43-03 (HTTP-W-01, DESIGN-v1.9-egress-policy §2): on an Allowed (untainted,
+    // never-blocked) `http.request.write` decision, invoke the live WRITE egress.
+    // SIMPLER than the github.pr arm above: DESIGN §2 defines NO auth-grant gate
+    // and NO content CAS for http.request.write (a single confirm-releasable
+    // write), so a bare Allowed decision dispatches directly.
+    // `invoke_http_write_sink` resolves the three args from the broker-owned
+    // ValueStore, POSTs/PUTs via the DISTINCT SSRF-pinned write egress, and
+    // appends its OWN opaque http_write_succeeded/http_write_failed terminal
+    // event FIRST — so the `?` here propagates AFTER a durable terminal event
+    // (the P33/P34 confirm-release audit-gap discipline, mirroring the
+    // github.pr/process.exec `?` legs, never a burned dispatch with no terminal
+    // event). It locks `conn` internally ONLY for that synchronous terminal
+    // append, NEVER across the write `.await`. http.request.write CONSUMES — it
+    // mints nothing (Gate 3 unchanged), so `output_value_id` stays `None` on this
+    // branch (exactly as the file.create/file.write/github.pr arms leave it).
+    // Only an `Allowed` decision reaches here; a Block/Deny never matches this
+    // arm and never opens the write socket (T-43-09).
+    if matches!(decision, runtime_core::ExecutorDecision::Allowed)
+        && plan_node.sink.0 == "http.request.write"
+    {
+        let (sink_event_id, sink_hash) = crate::sinks::http_write::invoke_http_write_sink(
+            conn,
+            key,
+            value_store,
+            session_id,
+            effect_id,
+            plan_node,
+            *last_event_id,
+            last_event_hash,
+        )
+        .await?;
+        *last_event_id = sink_event_id;
+        *last_event_hash = sink_hash;
+    }
+
     Ok((decision, output_value_id, session_demoted))
 }
 
@@ -2870,5 +2905,115 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&ws_dir).ok();
+    }
+
+    /// 43-03 (HTTP-W-01, DESIGN-v1.9-egress-policy §2, T-43-09): an Allowed
+    /// `http.request.write` node with an UNTAINTED body reaches the live WRITE
+    /// dispatch arm and records an OPAQUE terminal `http_write_*` event, minting
+    /// nothing. Drives the REAL `evaluate_plan_node_and_record` — the same
+    /// evaluate-and-dispatch entry point the SubmitPlanNode arm calls — so the
+    /// executor's own Allowed decision (never a hand-rolled mirror) is what
+    /// reaches the arm. On this host the live write cannot succeed (macOS stubs
+    /// the egress; the default build's WRITE_HOST_ALLOWLIST is empty), so the
+    /// sink appends its opaque `http_write_failed` terminal event FIRST, then
+    /// propagates Err — which the arm surfaces per the dispatch `?` convention
+    /// (mirroring the github.pr/process.exec arms). The mere existence of an
+    /// `http_write_failed` event proves the node was Allowed (a Block would append
+    /// `sink_blocked`, never `http_write_*`) AND reached the write dispatch.
+    #[tokio::test]
+    async fn allowed_http_request_write_reaches_dispatch_records_terminal_event_no_mint() {
+        use runtime_core::plan_node::TaintLabel;
+        use runtime_core::{PlanArg, PlanNode, SessionStatus, SinkId};
+
+        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, _session_status, ws_root, _trusted_inode) =
+            harness();
+
+        // Mint the three UNTAINTED (UserTrusted) args into the broker-owned store.
+        // An untainted body => the executor Allows (never I2-blocks) and the
+        // method-enum gate passes (POST), so the Allowed decision reaches the
+        // http.request.write dispatch arm.
+        let provenance = Uuid::new_v4();
+        let mut args = Vec::new();
+        for (name, literal) in [
+            ("url", "https://write-mock.caprun.test/ingest"),
+            ("method", "POST"),
+            ("body", "{\"k\":\"v\"}"),
+        ] {
+            let vid = store
+                .mint(
+                    literal.to_string(),
+                    vec![TaintLabel::UserTrusted],
+                    vec![provenance],
+                    None,
+                )
+                .expect("mint UserTrusted arg");
+            args.push(PlanArg {
+                name: name.to_string(),
+                value_id: vid,
+            });
+        }
+        let plan_node = PlanNode {
+            sink: SinkId("http.request.write".to_string()),
+            args,
+        };
+
+        let result = evaluate_plan_node_and_record(
+            &plan_node,
+            &conn,
+            TEST_KEY,
+            session_id,
+            &mut store,
+            &ws_root,
+            &SessionStatus::Active,
+            // allow_all permits http.request.write, so this exercises the live
+            // write dispatch — not a policy deny.
+            &runtime_core::SessionPolicy::allow_all(),
+            &mut last_event_id,
+            &mut last_event_hash,
+        )
+        .await;
+
+        // The host write fails; the sink propagates Err AFTER appending its
+        // opaque terminal event (never a swallowed failure).
+        assert!(
+            result.is_err(),
+            "the host write must fail (macOS stub / empty default WRITE_HOST_ALLOWLIST) \
+             and the sink must propagate Err after its terminal event"
+        );
+
+        let locked = conn.lock().expect("lock conn");
+        let sid = session_id.to_string();
+
+        // Exactly the terminal opaque failure event — proving the Allowed
+        // decision reached the live write dispatch (T-43-09).
+        assert!(
+            crate::audit::find_event_by_type(&locked, &sid, "http_write_failed")
+                .expect("query http_write_failed")
+                .is_some(),
+            "an Allowed http.request.write must reach the write dispatch and append an \
+             opaque http_write_failed terminal event"
+        );
+        assert!(
+            crate::audit::find_event_by_type(&locked, &sid, "http_write_succeeded")
+                .expect("query http_write_succeeded")
+                .is_none(),
+            "no success event on the host-failure path"
+        );
+        // The node was Allowed, not blocked (a Block would append sink_blocked and
+        // never reach the write dispatch).
+        assert!(
+            crate::audit::find_event_by_type(&locked, &sid, "sink_blocked")
+                .expect("query sink_blocked")
+                .is_none(),
+            "the untainted-body node was Allowed by the executor, never blocked"
+        );
+        // http.request.write CONSUMES — the arm mints nothing (Gate 3): no
+        // GET-style http_response_received mint event is ever appended.
+        assert!(
+            crate::audit::find_event_by_type(&locked, &sid, "http_response_received")
+                .expect("query http_response_received")
+                .is_none(),
+            "http.request.write mints no value (Gate 3) — no http_response_received event"
+        );
     }
 }
