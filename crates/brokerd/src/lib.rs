@@ -16,6 +16,7 @@ pub mod quarantine;
 pub mod server;
 pub mod session;
 pub mod audit;
+pub mod policy;
 pub mod provenance_proof;
 pub mod confirmation;
 pub mod sinks;
