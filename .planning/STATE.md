@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Git/GitHub Adapters
-current_phase: 39
-current_phase_name: `git.push` Sink
+current_phase: 40
+current_phase_name: CLI Compose, Sidecar env_clear() & Composed Live Proof (v1.8 DONE)
 status: planning
-stopped_at: v1.8 roadmap created (Phases 35-40)
-last_updated: "2026-07-18T09:51:13.861Z"
+stopped_at: Phase 38 complete; Phase 39 (git.push) deferred to v1.9; advancing to Phase 40
+last_updated: "2026-07-18T10:00:00.000Z"
 last_activity: 2026-07-18
-last_activity_desc: Phase 38 complete, transitioned to Phase 39
+last_activity_desc: Phase 38 complete; git.push (Phase 39, GIT-02/03) deferred to v1.9 per DESIGN-gate BLOCKER-1 constraint; advanced to Phase 40
 progress:
-  total_phases: 6
+  total_phases: 5
   completed_phases: 4
   total_plans: 12
-  completed_plans: 14
-  percent: 67
+  completed_plans: 16
+  percent: 80
 ---
 
 # Project State

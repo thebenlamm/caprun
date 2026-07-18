@@ -220,29 +220,33 @@ Plans:
 - [x] 38-04-PLAN.md — server.rs Allowed-dispatch: grant gate + content CAS before POST + tests (wave 3)
 - [x] 38-05-PLAN.md — confirmation.rs confirm-release: Step-4.75 guard + prepare_github_pr + Step-7 arm + no-dangling-confirm regression (wave 3)
 
-#### Phase 39: `git.push` Sink
+#### Phase 39: `git.push` Sink — ⛔ DEFERRED TO v1.9
 
-**Goal**: caprun can push to a remote pinned to the session's trusted intent-origin, with a tainted remote/refspec deterministically blocked and human-releasable.
-**Depends on**: Phase 38 (the credential boundary is proven incrementally by `github.pr` before `git.push`'s credential-injection path is built)
-**Requirements**: GIT-02, GIT-03
-**Success Criteria** (what must be TRUE):
+**Status: DEFERRED** — see `planning-docs/DECISION-git-push-deferral-v1.8.md`.
+The Phase-35 design gate proved (BLOCKER-1, fresh adversarial code-trace) that a `git.push`
+confined child's network destination **cannot be pinned by seccomp** (it filters syscall
+numbers/scalars, not the `connect()` sockaddr behind a pointer; Landlock net rules need kernel
+6.7 > the 5.13 floor). The sound alternative — a fully-unprivileged, broker-mediated,
+destination-pinned egress (pasta/netns egress-filter, broker-proxied git smart-HTTP, or
+SCM_RIGHTS pre-connected-fd) — is a genuinely new trust posture the gate flagged for its OWN
+design-gate + fresh adversarial review. Per the gate's HARD CONSTRAINT, `git.push` is deferred
+rather than shipped with arbitrary child egress. **GIT-02/GIT-03 → v1.9** (which opens with the
+git.push egress design-gate). The v1.8 DESIGN doc §2 (model), §2.5 (captured-output scrub),
+§2.7 (payload-at-confirm) carry forward as v1.9's starting design.
+**Requirements**: GIT-02, GIT-03 (deferred to v1.9)
 
-  1. A `git.push` sink pushes to a remote+branch pinned to the session's trusted intent-origin and passed explicitly (never resolved from the untrusted repo's `.git/config`), classified **CommitIrreversible**.
-  2. `--force` and ref-deletion are hard-denied regardless of confirmation.
-  3. A tainted push remote/refspec is deterministically **Blocked** at the sink (I2) and releasable only by single-shot human confirmation, with the confirm-release path writing the terminal audit event **before** the terminal state (the recurring P33/P34 audit-gap discipline).
-
-**Plans**: TBD
+**Plans**: none (deferred)
 
 #### Phase 40: CLI Compose, Sidecar `env_clear()` & Composed Live Proof (v1.8 DONE)
 
-**Goal**: The full Safe Coding Agent workflow is proven end-to-end on real Linux, the planner sidecar's `env_clear()` is hermetic under compiled-in TLS roots, and every adversarial attack leg is deterministically blocked.
-**Depends on**: Phase 36, Phase 37, Phase 38, Phase 39
+**Goal**: The Safe Coding Agent workflow (edit → commit → open PR, plus an authorized HTTP fetch) is proven end-to-end on real Linux, the planner sidecar's `env_clear()` is hermetic under compiled-in TLS roots, and every adversarial attack leg is deterministically blocked. (Rescoped: `git.push` deferred to v1.9 — see Phase 39 / `DECISION-git-push-deferral-v1.8.md`.)
+**Depends on**: Phase 36, Phase 37, Phase 38 (Phase 39 `git.push` deferred to v1.9)
 **Requirements**: ENV-01, LIVE-03, LIVE-04
 **Success Criteria** (what must be TRUE):
 
   1. The `caprun-planner` sidecar spawn is `env_clear()`'d and given only the minimal env it needs; all new broker-side TLS egress uses compiled-in `webpki-roots` so `env_clear()` is hermetic (no `SSL_CERT_*` / readable system store required), validated by a **live** HTTPS run.
-  2. A composed agent workflow is proven on **real Linux** — `process.exec` (test) → filesystem edit → `git.commit` → `git.push` → `github.pr`, plus an `http.request` GET leg — with every step gated, tainted, and audit-DAG-chained, and `verify_chain` true across the run.
-  3. Each adversarial attack leg — (a) tainted push remote/refspec, (b) tainted PR-body section, (c) tainted GET url (SSRF/exfil) — is deterministically **Blocked** with `verify_chain` true, plus a post-`env_clear()` **live** HTTPS call succeeds.
+  2. A composed agent workflow is proven on **real Linux** — `process.exec` (test) → filesystem edit → `git.commit` → `github.pr` (mock GitHub endpoint accepts the PR head), plus an `http.request` GET leg — with every step gated, tainted, and audit-DAG-chained, and `verify_chain` true across the run. (The real `git.push` step is deferred to v1.9; the mock endpoint stands in for the pushed-branch precondition.)
+  3. Each adversarial attack leg — (a) tainted PR-body/title section, (b) tainted GET url (SSRF/exfil), (c) tainted commit message — is deterministically **Blocked** with `verify_chain` true, plus a post-`env_clear()` **live** HTTPS call succeeds. (The tainted-push-remote/refspec leg moves to v1.9 with git.push.)
   4. Full-workspace regression is green on real Linux with **no regression to v1.0–v1.7**.
 
 **Plans**: TBD
@@ -289,5 +293,5 @@ Plans:
 | 36. `git.commit` Sink | v1.8 | 2/2 | Complete    | 2026-07-18 |
 | 37. `http.request` GET Egress | v1.8 | 4/3 | Complete    | 2026-07-18 |
 | 38. `github.pr` Sink | v1.8 | 6/5 | Complete    | 2026-07-18 |
-| 39. `git.push` Sink | v1.8 | 0/TBD | Not started | - |
+| 39. `git.push` Sink | v1.8 | — | ⛔ Deferred → v1.9 | 2026-07-18 |
 | 40. CLI Compose, Sidecar env_clear() & Composed Live Proof (v1.8 DONE) | v1.8 | 0/TBD | Not started | - |

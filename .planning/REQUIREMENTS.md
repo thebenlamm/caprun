@@ -18,8 +18,7 @@ are new families starting at 01).
 ### Git Sinks
 
 - [x] **GIT-01**: A `git.commit` sink commits staged workspace changes via the broker-spawned confined-child launcher (reusing the v1.7 `caprun-exec-launcher` + `mint_from_exec` pattern), classified **MutateReversible** (survives an I1-demoted session); the commit message's taint genuinely propagates downstream (not re-minted clean); git system config and hooks are neutralized in the child (`GIT_CONFIG_NOSYSTEM`, `core.hooksPath=/dev/null`, no aliases, `env_clear()`'d).
-- [ ] **GIT-02**: A `git.push` sink pushes to a remote, classified **CommitIrreversible**; the remote + branch are pinned to the session's trusted intent-origin and passed explicitly (never resolved from the untrusted repo's `.git/config`); `--force` and ref-deletion are hard-denied; remote + refspec are I2-gated sink args.
-- [ ] **GIT-03**: A tainted `git.push` remote/refspec is deterministically Blocked at the sink (I2) and releasable only by single-shot human confirmation; the confirm-release path writes the terminal audit event **before** the terminal state (the recurring P33/P34 audit-gap discipline).
+- **GIT-02 / GIT-03 — DEFERRED to v1.9** (see `planning-docs/DECISION-git-push-deferral-v1.8.md`). The Phase-35 design gate proved (BLOCKER-1) that a `git.push` confined child's network destination cannot be pinned by seccomp; the sound mechanism (broker-mediated fully-unprivileged destination-pinned egress) is a new trust posture the gate flagged for its own design-gate + adversarial review, so per the gate's HARD CONSTRAINT git.push is deferred rather than shipped with arbitrary child egress. Moved to Future/v1.9 below.
 
 ### GitHub
 
@@ -40,12 +39,17 @@ are new families starting at 01).
 
 ### Live Proof
 
-- [ ] **LIVE-03**: A composed agent workflow proven on real Linux — `process.exec` (test) → filesystem edit → `git.commit` → `git.push` → `github.pr`, plus an `http.request` GET leg — with every step gated, tainted, and audit-DAG-chained, and `verify_chain` true across the run.
-- [ ] **LIVE-04**: The composed run carries adversarial attack legs, each deterministically Blocked with `verify_chain` true — (a) tainted push remote/refspec, (b) tainted PR-body section, (c) tainted GET url (SSRF/exfil) — plus a post-`env_clear()` **live** HTTPS call that succeeds; the full-workspace regression is green on real Linux with no regression to v1.0–v1.7.
+- [ ] **LIVE-03**: A composed agent workflow proven on real Linux — `process.exec` (test) → filesystem edit → `git.commit` → `github.pr` (mock GitHub endpoint), plus an `http.request` GET leg — with every step gated, tainted, and audit-DAG-chained, and `verify_chain` true across the run. (Rescoped: the `git.push` step is deferred with GIT-02/03 to v1.9 — see `planning-docs/DECISION-git-push-deferral-v1.8.md`; the mock accepts the PR head so the composed edit→commit→open-PR flow is proven end-to-end without a real push.)
+- [ ] **LIVE-04**: The composed run carries adversarial attack legs, each deterministically Blocked with `verify_chain` true — (a) tainted PR-body/title section, (b) tainted GET url (SSRF/exfil), (c) tainted commit message — plus a post-`env_clear()` **live** HTTPS call that succeeds (ENV-01); the full-workspace regression is green on real Linux with no regression to v1.0–v1.7. (The tainted-push-remote/refspec leg moves to v1.9 with git.push.)
 
 ## Future Requirements
 
 Deferred to v1.9+. Tracked but not in this roadmap.
+
+### Git push (deferred from v1.8 — see `planning-docs/DECISION-git-push-deferral-v1.8.md`)
+
+- **GIT-02**: A `git.push` sink pushes to a remote, classified **CommitIrreversible**; remote + branch pinned to the session's trusted intent-origin (never from the untrusted repo's `.git/config`); `--force`/ref-deletion hard-denied; remote + refspec I2-gated. **Opens with a dedicated v1.9 design-gate for the fully-unprivileged, broker-mediated, destination-pinned egress mechanism + fresh adversarial review** (the v1.8 gate proved seccomp cannot pin a connect() destination — BLOCKER-1).
+- **GIT-03**: A tainted `git.push` remote/refspec is deterministically Blocked (I2), releasable only by single-shot human confirmation with the terminal-event-before-terminal-state (P33/P34) discipline. (v1.8 DESIGN §2.5/§2.7 — captured-output scrub + payload-at-confirm — carry forward as the starting design.)
 
 ### HTTP / GitHub breadth
 
@@ -81,8 +85,8 @@ Which phases cover which requirements. Populated during roadmap creation.
 | DESIGN-15 | Phase 35 | Complete |
 | DESIGN-16 | Phase 35 | Complete |
 | GIT-01 | Phase 36 | Complete |
-| GIT-02 | Phase 39 | Pending |
-| GIT-03 | Phase 39 | Pending |
+| GIT-02 | v1.9 (deferred) | Deferred |
+| GIT-03 | v1.9 (deferred) | Deferred |
 | GITHUB-01 | Phase 38 | Complete |
 | GITHUB-02 | Phase 38 | Complete |
 | GITHUB-03 | Phase 38 | Complete |
