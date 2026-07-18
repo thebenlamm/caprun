@@ -83,18 +83,36 @@ mod linux {
         PendingConfirmationState, ResolvedArg,
     };
     use brokerd::quarantine::mint_from_exec;
+    use brokerd::session::persist_session;
     use brokerd::sinks::file_write::invoke_file_write;
     use brokerd::sinks::process_exec::invoke_process_exec;
     use chrono::Utc;
     use executor::value_store::ValueStore;
     use runtime_core::executor_decision::SinkBlockedAnchor;
     use runtime_core::plan_node::{PlanArg, SinkId, TaintLabel, ValueId};
-    use runtime_core::{Event, ExecutorDecision, PlanNode, SessionStatus};
+    use runtime_core::{Event, ExecutorDecision, PlanNode, Session, SessionStatus};
     use sha2::{Digest, Sha256};
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::{Arc, Mutex};
     use uuid::Uuid;
+
+    /// Persist a `sessions` table row with a CALLER-CHOSEN `session_id`
+    /// (`session::create_session` mints its own fresh id, which this
+    /// composed test cannot use — each leg needs a known, pre-determined
+    /// session id to thread through its own event-seeding calls). Mirrors
+    /// `session::persist_session`'s exact row shape; only the id-selection
+    /// step differs.
+    fn persist_known_session(conn: &rusqlite::Connection, session_id: Uuid) {
+        let session = Session {
+            id: session_id,
+            intent_id: Uuid::new_v4(),
+            status: SessionStatus::Active,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        persist_session(conn, &session).expect("persist_session (composed-test known id)");
+    }
 
     /// Mint a trusted literal directly into the store — mirrors
     /// `s9_process_exec_block.rs`/`s9_file_write_block.rs`'s own
@@ -187,6 +205,7 @@ mod linux {
         let conn = open_audit_db(db_path.to_str().unwrap()).expect("open_audit_db for seeding");
 
         let session_id = Uuid::new_v4();
+        persist_known_session(&conn, session_id);
         let effect_id = Uuid::new_v4();
         let read_event_id = Uuid::new_v4();
 
@@ -312,6 +331,7 @@ mod linux {
             ));
             let (root_id, root_hash) = {
                 let locked = conn.lock().expect("lock conn");
+                persist_known_session(&locked, leg_a_session_id);
                 seed_root_event(&locked, &key, leg_a_session_id)
             };
 
@@ -472,6 +492,7 @@ mod linux {
             ));
             let (root_id, root_hash) = {
                 let locked = conn.lock().expect("lock conn");
+                persist_known_session(&locked, leg_b_session_id);
                 seed_root_event(&locked, &key, leg_b_session_id)
             };
 
@@ -550,6 +571,7 @@ mod linux {
                 .expect("pre-create leg (c) target file");
 
             let conn = open_audit_db(audit_db_str).expect("open audit db (leg c)");
+            persist_known_session(&conn, leg_c_session_id);
             let (root_id, root_hash) = seed_root_event(&conn, &key, leg_c_session_id);
 
             let mut store = ValueStore::default();
