@@ -368,10 +368,12 @@ fn ipv4_compatible_embedded(ip: Ipv6Addr) -> Option<Ipv4Addr> {
 /// if the set is empty, or if ANY resolved IP is in a denied SSRF range, returns
 /// `Err` (a mixed good/bad DNS answer denies the whole request). Pure over the
 /// resolved list (no DNS) → host-portable and unit-testable.
-// Consumed by the Linux `do_pinned_get` and by host-portable unit tests; on a
-// non-test macOS build (stub `do_pinned_get`) it is unreferenced.
+// Consumed by the Linux `do_pinned_get`/`resolve_and_vet` and by host-portable
+// unit tests; on a non-test macOS build it is unreferenced. `pub(crate)` (WG-1)
+// so `sinks::git_push` can vet a resolved set when freezing one IP across the
+// two-request push exchange — logic UNCHANGED.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn vet_resolved(addrs: &[SocketAddr]) -> Result<SocketAddr> {
+pub(crate) fn vet_resolved(addrs: &[SocketAddr]) -> Result<SocketAddr> {
     if addrs.is_empty() {
         bail!("http.request: host resolved to no addresses");
     }
@@ -389,9 +391,11 @@ fn vet_resolved(addrs: &[SocketAddr]) -> Result<SocketAddr> {
 /// pinned)` pins the connect target to the SSRF-vetted IP (SNI/Host = original
 /// hostname), closing the DNS-rebind TOCTOU (T-37-03).
 // Consumed by the Linux `do_pinned_get` and by a host-portable unit test; on a
-// non-test macOS build it is unreferenced.
+// non-test macOS build it is unreferenced. `pub(crate)` (WG-1, DESIGN §1.5) so
+// `sinks::git_push` can build the ONE frozen-IP client both push requests ride —
+// logic UNCHANGED (redirect-none, ring TLS, `.resolve(host, pinned)`).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn build_pinned_client(host: &str, pinned: SocketAddr) -> Result<reqwest::Client> {
+pub(crate) fn build_pinned_client(host: &str, pinned: SocketAddr) -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .use_preconfigured_tls(ring_webpki_tls_config())
@@ -504,6 +508,53 @@ async fn resolve_and_pin(host: &str) -> Result<reqwest::Client> {
 
     let pinned = vet_resolved(&addrs)?;
     build_pinned_client(host, pinned)
+}
+
+/// WG-1 (DESIGN §1.5): resolve `host` ONCE and RETURN the single SSRF-vetted
+/// `SocketAddr` — the frozen IP a caller pins BOTH requests of the two-request
+/// `git-push` exchange to. This is exactly the resolve + `vet_resolved`
+/// fail-close half of `resolve_and_pin`, but it RETURNS the addr that
+/// `resolve_and_pin` discards. A caller (`sinks::git_push`, Plan 44-03) then
+/// builds ONE `build_pinned_client(host, addr)` client and issues both the
+/// `info/refs` GET and the `git-receive-pack` POST through it — NO re-resolve
+/// between requests, so a DNS answer that flips cannot move the POST
+/// (redirect-none is already in force on that one client).
+///
+/// FORBIDDEN for the git flow: `invoke_pinned_post` — it calls `resolve_and_pin`
+/// internally and therefore RE-RESOLVES, reopening the exact DNS-rebind window
+/// this primitive exists to close (RESEARCH A7, DESIGN §1.5 [rev: MINOR-3]).
+///
+/// The SSRF classifier is NEVER re-implemented: this delegates to the shipped
+/// `vet_resolved` → `ssrf_check` fail-close, identical to `resolve_and_pin`.
+// Consumed by `sinks::git_push`'s two-request driver in Plan 44-03; until that
+// lands it is reachable only from the Linux gate, so a non-test build sees it as
+// unused (mirrors the shipped platform-gated `allow(dead_code)` discipline).
+#[cfg(target_os = "linux")]
+#[allow(dead_code)]
+pub(crate) async fn resolve_and_vet(host: &str) -> Result<SocketAddr> {
+    use std::net::ToSocketAddrs;
+
+    let host_owned = host.to_string();
+    let addrs: Vec<SocketAddr> = tokio::task::spawn_blocking(move || {
+        (host_owned.as_str(), 443u16)
+            .to_socket_addrs()
+            .map(|it| it.collect::<Vec<_>>())
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("http.request: resolver task join error: {e}"))?
+    .map_err(|e| anyhow::anyhow!("http.request: DNS resolution failed: {e}"))?;
+
+    vet_resolved(&addrs)
+}
+
+/// Non-Linux (dev macOS) no-op stub — mirrors `do_pinned_get`'s cfg split: the
+/// pure vetting half (`vet_resolved` → `ssrf_check`) is host-portable and tested,
+/// but the real DNS-resolve leg is Linux-only (CLAUDE.md). Consumed by
+/// `sinks::git_push` (Plan 44-03) on Linux; unreferenced on macOS.
+#[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
+pub(crate) async fn resolve_and_vet(_host: &str) -> Result<SocketAddr> {
+    bail!("resolve_and_vet live DNS is Linux-only (macOS no-op stub); exercised on the Linux gate")
 }
 
 /// Linux: resolve → vet all resolved IPs → pin to the vetted IP → redirect-free
@@ -1014,6 +1065,38 @@ mod tests {
         let a: SocketAddr = "140.82.112.3:443".parse().unwrap();
         let b: SocketAddr = "140.82.113.4:443".parse().unwrap();
         assert_eq!(vet_resolved(&[a, b]).unwrap(), a);
+    }
+
+    // ---- WG-1 (DESIGN §1.5): resolve_and_vet's vetting/freeze half ----
+    // resolve_and_vet's DNS-resolve leg is Linux-gated (a macOS no-op stub), so
+    // its host-portable, unit-testable contract is the resolve+vet HALF it shares
+    // with resolve_and_pin: it returns the SINGLE SSRF-vetted SocketAddr (the one
+    // a caller freezes and pins BOTH git-push requests to) and fail-closes on any
+    // denied IP exactly as resolve_and_pin does — reusing the shipped ssrf
+    // fixtures. build_pinned_client(host, that-addr) then yields ONE redirect-none
+    // client for both requests (no re-resolve).
+
+    #[test]
+    fn resolve_and_vet_freezes_a_single_vetted_addr() {
+        // The vetted return is exactly ONE addr — the frozen IP reused across the
+        // info/refs GET + receive-pack POST (WG-1). A public set yields it; that
+        // same addr builds the one pinned client both requests ride.
+        let a: SocketAddr = "140.82.112.3:443".parse().unwrap();
+        let b: SocketAddr = "140.82.113.4:443".parse().unwrap();
+        let frozen = vet_resolved(&[a, b]).unwrap();
+        assert_eq!(frozen, a);
+        // The frozen addr builds a redirect-none pinned client (no second resolve).
+        assert!(build_pinned_client("api.github.com", frozen).is_ok());
+    }
+
+    #[test]
+    fn resolve_and_vet_vetting_fail_closes_on_internal_range() {
+        // The half resolve_and_vet returns fail-closes on a denied/internal IP
+        // (mixed answer or all-internal) — identical to resolve_and_pin.
+        let public: SocketAddr = "140.82.112.3:443".parse().unwrap();
+        let metadata: SocketAddr = "169.254.169.254:443".parse().unwrap();
+        assert!(vet_resolved(&[public, metadata]).is_err());
+        assert!(vet_resolved(&[metadata]).is_err());
     }
 
     // ---- response body cap (FIX 3, host-portable) ----
