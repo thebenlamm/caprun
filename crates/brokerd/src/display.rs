@@ -7,9 +7,17 @@
 /// ANSI escapes (ESC `0x1b`, the CSI sequence) or other C0/C1 control bytes to
 /// SPOOF or HIDE audit lines in the human's terminal. Every `char::is_control()`
 /// byte (C0 incl. ESC/CR/LF/TAB, the C1 range, and DEL) is replaced with a
-/// visible `\xNN` / `\u{NNNN}` escape; ordinary printable text — including
-/// non-ASCII UTF-8 — is preserved verbatim so the human still reads the real
-/// value. Pure/deterministic; performs no I/O.
+/// visible `\xNN` / `\u{NNNN}` escape. In addition, the Unicode "Trojan Source"
+/// spoofing class (CVE-2021-42574) — BiDi overrides/embeddings/isolates and
+/// zero-width joiners — is ALSO escaped even though those codepoints are
+/// category `Cf` (format), not `Cc` (control), so `char::is_control()` returns
+/// false for them: `U+200B..=U+200F` (ZWSP/ZWNJ/ZWJ/LRM/RLM), `U+202A..=U+202E`
+/// (LRE/RLE/PDF/LRO/RLO), `U+2066..=U+2069` (LRI/RLI/FSI/PDI), and `U+FEFF`
+/// (ZWNBSP/BOM). A tainted refspec/remote/filename carrying `U+202E` would
+/// otherwise reach the human's confirm terminal with its visual order reversed —
+/// a decision-surface spoof this fn exists to prevent. Ordinary printable text —
+/// including non-ASCII UTF-8 — is preserved verbatim so the human still reads
+/// the real value. Pure/deterministic; performs no I/O.
 ///
 /// This is the single shared implementation reachable by BOTH
 /// `brokerd::confirmation` (the confirm prompt) and the `cli/caprun` read-only
@@ -20,7 +28,7 @@
 pub fn neutralize_control_chars(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
-        if c.is_control() {
+        if c.is_control() || is_format_spoof_char(c) {
             let cp = c as u32;
             if cp <= 0xff {
                 out.push_str(&format!("\\x{cp:02x}"));
@@ -32,6 +40,21 @@ pub fn neutralize_control_chars(s: &str) -> String {
         }
     }
     out
+}
+
+/// The Unicode "Trojan Source" (CVE-2021-42574) spoofing class: BiDi
+/// overrides/embeddings/isolates and zero-width joiners. These are category
+/// `Cf` (format), NOT `Cc` (control), so `char::is_control()` misses them, yet
+/// they reorder or hide terminal text — a decision-surface spoof on the confirm
+/// prompt. Neutralized alongside the control chars.
+fn is_format_spoof_char(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x200B..=0x200F   // ZWSP, ZWNJ, ZWJ, LRM, RLM
+        | 0x202A..=0x202E // LRE, RLE, PDF, LRO, RLO
+        | 0x2066..=0x2069 // LRI, RLI, FSI, PDI
+        | 0xFEFF          // ZWNBSP / BOM
+    )
 }
 
 #[cfg(test)]
@@ -85,5 +108,33 @@ mod tests {
     fn neutralize_empty_and_control_free_unchanged() {
         assert_eq!(neutralize_control_chars(""), "");
         assert_eq!(neutralize_control_chars("plain text 123"), "plain text 123");
+    }
+
+    /// The Trojan-Source (CVE-2021-42574) spoofing class — BiDi overrides,
+    /// isolates, and zero-width joiners (Unicode category `Cf`, which
+    /// `char::is_control()` does NOT catch) — is escaped to a visible `\u{NNNN}`
+    /// so a tainted refspec/remote cannot reorder or hide the confirm prompt.
+    #[test]
+    fn neutralize_escapes_bidi_and_zero_width_spoof_chars() {
+        // RIGHT-TO-LEFT OVERRIDE (the canonical Trojan-Source char).
+        assert_eq!(neutralize_control_chars("\u{202e}"), "\\u{202e}");
+        assert!(!neutralize_control_chars("a\u{202e}b").contains('\u{202e}'));
+        // Zero-width space, ZWJ, BOM, and a BiDi isolate.
+        assert_eq!(neutralize_control_chars("\u{200b}"), "\\u{200b}");
+        assert_eq!(neutralize_control_chars("\u{200d}"), "\\u{200d}");
+        assert_eq!(neutralize_control_chars("\u{feff}"), "\\u{feff}");
+        assert_eq!(neutralize_control_chars("\u{2066}"), "\\u{2066}");
+        // A realistic spoofed remote: the ESC-free BiDi override is caught.
+        let spoofed = neutralize_control_chars("https://evil.com/\u{202e}gpk.git");
+        assert!(!spoofed.contains('\u{202e}'), "raw RLO must not survive");
+        assert!(spoofed.contains("\\u{202e}"));
+    }
+
+    /// Ordinary format-adjacent but non-spoofing text is preserved: a normal
+    /// combining mark and a currency sign are NOT in the spoof set.
+    #[test]
+    fn neutralize_preserves_non_spoof_non_ascii() {
+        assert_eq!(neutralize_control_chars("e\u{0301}"), "e\u{0301}"); // combining acute
+        assert_eq!(neutralize_control_chars("€"), "€");
     }
 }
