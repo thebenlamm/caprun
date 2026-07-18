@@ -11,6 +11,7 @@
 ///   - `session` — Session lifecycle (create, persist)
 ///   - `audit`   — SQLite hash-linked audit DAG
 
+pub mod display;
 pub mod proto;
 pub mod quarantine;
 pub mod server;
