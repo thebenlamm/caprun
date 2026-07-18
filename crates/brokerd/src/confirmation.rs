@@ -563,32 +563,6 @@ fn short_evt(id: &Uuid) -> String {
     format!("evt_{}", &id.to_string()[..8])
 }
 
-/// Neutralize terminal control characters in an attacker-influenceable literal
-/// BEFORE it is written to the confirm prompt (WG-8 / T-44-19, mirrors the U1 /
-/// VIEW-01 viewer discipline): a tainted refspec / remote / filename could embed
-/// ANSI escapes (ESC `0x1b`, the CSI sequence) or other C0/C1 control bytes to
-/// SPOOF or HIDE audit lines in the human's terminal. Every `char::is_control()`
-/// byte (C0 incl. ESC/CR/LF/TAB, the C1 range, and DEL) is replaced with a
-/// visible `\xNN` / `\u{NNNN}` escape; ordinary printable text — including
-/// non-ASCII UTF-8 — is preserved verbatim so the human still reads the real
-/// value. Pure/deterministic; performs no I/O.
-fn neutralize_control_chars(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        if c.is_control() {
-            let cp = c as u32;
-            if cp <= 0xff {
-                out.push_str(&format!("\\x{cp:02x}"));
-            } else {
-                out.push_str(&format!("\\u{{{cp:04x}}}"));
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
 /// Render the git.push payload-provenance summary appended to the confirm prompt
 /// (WG-8, DESIGN-v1.9-egress-policy §1.6, GIT-03). Empty string for any
 /// non-git.push confirmation (so every other sink's block is UNAFFECTED).
@@ -627,7 +601,7 @@ fn render_git_push_payload_summary(pc: &PendingConfirmation) -> String {
         per_arg.push_str(&format!(
             "  {name:<8} {flag}  value: \"{literal}\"  taint: [{taint_str}]\n",
             name = arg.name,
-            literal = neutralize_control_chars(&arg.literal),
+            literal = crate::display::neutralize_control_chars(&arg.literal),
         ));
     }
 
@@ -644,7 +618,7 @@ fn render_git_push_payload_summary(pc: &PendingConfirmation) -> String {
          content derived from untrusted taint: confirming authorizes pushing to a\n\
          destination influenced by untrusted content. The pushed PACK is frozen to\n\
          this exact commit oid (anti-TOCTOU, WG-7).\n",
-        frozen = neutralize_control_chars(&pc.frozen_new_oid),
+        frozen = crate::display::neutralize_control_chars(&pc.frozen_new_oid),
     )
 }
 
@@ -716,7 +690,7 @@ pub fn render_block_display(pc: &PendingConfirmation) -> String {
         // unaffected). Neutralization escapes control bytes to visible `\xNN` —
         // it never truncates/elides, so the full value is still shown.
         let shown_literal = if pc.sink.0 == "git.push" {
-            neutralize_control_chars(&arg.literal)
+            crate::display::neutralize_control_chars(&arg.literal)
         } else {
             arg.literal.clone()
         };
@@ -2575,6 +2549,41 @@ mod tests {
         );
         assert!(!out.contains('\r'), "the raw CR MUST be neutralized");
         assert!(out.contains("\\x1b"), "ESC is shown as a visible \\x1b escape: {out}");
+    }
+
+    /// ANTI-DRIFT (T-45-05, mirrors the Phase-42 F1 shared-helper anti-drift
+    /// test in `crates/adapter-fs/src/containment.rs`): the confirmation
+    /// git.push display path and the shared `crate::display::neutralize_control_chars`
+    /// MUST agree byte-for-byte on a `\x1b[2K`-bearing literal — proving both
+    /// callers (the confirm prompt here + the read-only viewer in Plan 45-03)
+    /// resolve to the ONE implementation, so a second divergent copy that
+    /// escaped weaker (or not at all) cannot be reintroduced silently.
+    #[test]
+    fn git_push_display_and_shared_neutralizer_do_not_drift() {
+        const FROZEN: &str = "abcdef0123456789abcdef0123456789abcdef01";
+        // A tainted remote literal carrying an ANSI CSI erase-line sequence.
+        let evil = "https://x.test/\u{1b}[2KHACKED.git";
+        let pc = git_push_pc_for_render(evil, vec![TaintLabel::ExternalUntrusted], FROZEN);
+        let out = render_block_display(&pc);
+
+        // The shared fn's escaping is exactly what the display relies on.
+        let shared = crate::display::neutralize_control_chars(evil);
+        assert_eq!(
+            shared, "https://x.test/\\x1b[2KHACKED.git",
+            "the shared neutralizer must escape ESC to a visible \\x1b (no drift)"
+        );
+        // The confirm-prompt display path routes the git.push literal through
+        // that SAME shared fn — so the escaped form appears and the raw ESC does
+        // not. If a divergent copy were reintroduced in confirmation.rs, this
+        // exact-substring assertion would fail.
+        assert!(
+            out.contains(&shared),
+            "the git.push display must contain the SHARED-fn escaping of the literal: {out}"
+        );
+        assert!(
+            !out.contains('\u{1b}'),
+            "no raw ESC may reach the terminal via the display path"
+        );
     }
 
     /// A CLEAN (all-UserTrusted) git.push renders [trusted] and NO
