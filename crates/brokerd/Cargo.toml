@@ -91,6 +91,21 @@ url          = "2.5"
 # default feature, so the mint arm is absent from any production build.
 test-fixtures = []
 
+# Phase 40 (LIVE-03): gates a SINGLE test-only egress trust anchor + a SINGLE
+# test-only allowlisted host (`github-mock.caprun.test`) into
+# `sinks::http_request`, so the Plan 40-03 composed live-proof can POST to a
+# local TLS mock GitHub endpoint over REAL TLS while riding the SHIPPED
+# validate_url → allowlist → resolve-and-pin path UNCHANGED. NEVER a `default`
+# feature and NOT enabled via the self dev-dependency below — it is opt-in ONLY
+# via the compose-verify harness (`--features mock-egress-ca`), so the mock CA
+# and mock host are ABSENT from every production/default build. The
+# feature-OFF egress trust set stays webpki-roots ONLY and the allowlist stays
+# [api.github.com] ONLY, asserted by a default-build unit test in
+# `http_request.rs`. It relaxes NOTHING else (https-only, ssrf_check, the IP
+# pin, redirect-none are untouched). Mirrors the `test-fixtures` never-default
+# discipline above.
+mock-egress-ca = []
+
 [dev-dependencies]
 # Self dev-dependency with `test-fixtures` enabled: Cargo unifies this with
 # the `brokerd` lib target when building this package's own test targets
