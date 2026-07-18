@@ -720,7 +720,15 @@ fn append_digest_mismatch_event(
 /// durability guarantee). NEVER calls `executor::submit_plan_node`, constructs a
 /// `ValueStore`, or reads/writes any allowlist/standing-policy structure
 /// (CONFIRM-02, T-10-05, "Confirm MUST NOT Re-Invoke submit_plan_node").
-pub fn confirm(
+///
+/// NOTE (Plan 34-02): a throwaway `executor::value_store::ValueStore` IS
+/// constructed inside the `"process.exec"` Step-7 arm below, solely to call
+/// the sanctioned `quarantine::mint_from_exec` helper — there is no live
+/// worker at confirm time to hand `output_value_id` to (the Allowed-path
+/// worker already discards it too). This is NOT the "re-invoke the executor
+/// / re-decide" `ValueStore` this doc comment warns against; `confirm()`
+/// still never calls `submit_plan_node`.
+pub async fn confirm(
     conn: &mut rusqlite::Connection,
     key: &[u8],
     effect_id: &str,
@@ -813,17 +821,16 @@ pub fn confirm(
     // refuse to proceed for any sink this dispatch cannot actually invoke,
     // BEFORE Step 5 appends confirm_granted or Step 6 transitions state.
     // Without this guard, `caprun confirm` on a blocked sink with no
-    // dispatch arm (e.g. `process.exec`, Phase 32) would durably burn the
-    // one-shot confirmation (`confirm_granted` appended, state -> Confirmed)
-    // with no write ever performed and no terminal `sink_executed`/
-    // `sink_execution_failed` event — an audit-DAG gap. This list MUST stay
-    // in sync with the sink match arms in Step 7 below. Fail-closed-
-    // RECOVERABLE: the row is left `Pending` (never transitioned), so a
-    // corrected `confirm()` call — once the sink IS wired — can still
-    // succeed. Full `process.exec` confirm-release dispatch remains a
-    // documented follow-up (not wired this pass).
+    // dispatch arm would durably burn the one-shot confirmation
+    // (`confirm_granted` appended, state -> Confirmed) with no write ever
+    // performed and no terminal `sink_executed`/`sink_execution_failed`
+    // event — an audit-DAG gap. This list MUST stay in sync with the sink
+    // match arms in Step 7 below. Fail-closed-RECOVERABLE: the row is left
+    // `Pending` (never transitioned), so a corrected `confirm()` call — once
+    // the sink IS wired — can still succeed. `process.exec` confirm-release
+    // dispatch is wired below (Plan 34-02, EXEC-05).
     match pc.sink.0.as_str() {
-        "file.create" | "email.send" | "file.write" => {}
+        "file.create" | "email.send" | "file.write" | "process.exec" => {}
         other => {
             return Err(anyhow::anyhow!(
                 "confirm: sink `{other}` has no confirm-release dispatch wired \
@@ -958,16 +965,57 @@ pub fn confirm(
                 Err(_) => Ok(ConfirmOutcome::EmailSendFailed),
             }
         }
+        // Plan 34-02 (EXEC-05): process.exec confirm-release. The sink is
+        // async (unlike the other three arms, which are sync internally), so
+        // this arm — and only this arm — awaits. On success, the released
+        // command's captured output is minted via the sanctioned
+        // `quarantine::mint_from_exec` helper, rooted on the REAL
+        // `process_exited` Event id `invoke_process_exec_from_resolved` just
+        // appended (non-stapled, D-03). The mint site lives HERE (never in
+        // sinks/process_exec.rs, which never mints, and never in server.rs,
+        // which is not on this path) — authorized by the inline exemption
+        // marker below since confirmation.rs is not in Gate 3's two-file
+        // allow-list array (that array MUST stay byte-identical, D-03).
+        "process.exec" => {
+            match crate::sinks::process_exec::invoke_process_exec_from_resolved(
+                conn,
+                key,
+                pc.session_id,
+                pc.effect_id,
+                &pc.resolved_args,
+                workspace_root,
+                granted_event_id,
+                &granted_hash,
+            )
+            .await
+            {
+                Ok((sink_event_id, _hash, combined_output)) => {
+                    let mut throwaway_store = executor::value_store::ValueStore::default();
+                    match crate::quarantine::mint_from_exec( // planner-discipline-allow: mint_from_exec
+                        &mut throwaway_store,
+                        pc.session_id,
+                        combined_output,
+                        sink_event_id,
+                    ) {
+                        Ok(_) => Ok(ConfirmOutcome::Released),
+                        Err(_) => Ok(ConfirmOutcome::ConfirmedButSinkFailed),
+                    }
+                }
+                // Spawn failed (D-06/Pitfall 5): the sink adapter already
+                // appended a durable `process_spawn_failed` event chained on
+                // `granted_event_id` — the process may have genuinely run
+                // (byte-cap trip, etc.) and is durably audited either way, no
+                // retry (DESIGN Step 4a.5).
+                Err(_) => Ok(ConfirmOutcome::ConfirmedButSinkFailed),
+            }
+        }
         // Phase 33 adversarial-review MAJOR-1 fix: this arm IS reachable in
         // principle (the match is exhaustive over `&str`), but the Step 4.75
         // entry guard above already refuses any sink outside
-        // {"file.create","email.send","file.write"} BEFORE reaching here —
-        // so hitting this arm means the guard's allow-list and this match's
-        // arms have drifted out of sync (a broker-internal invariant
-        // violation, not a normal runtime path). `process.exec`'s full
-        // confirm-release dispatch remains a documented follow-up (Phase 32,
-        // not wired this pass) — it is refused earlier, at the guard, with
-        // the row left `Pending` rather than reaching this arm at all.
+        // {"file.create","email.send","file.write","process.exec"} BEFORE
+        // reaching here — so hitting this arm means the guard's allow-list
+        // and this match's arms have drifted out of sync (a broker-internal
+        // invariant violation, not a normal runtime path).
         other => Err(anyhow::anyhow!(
             "confirm: unreachable — sink `{other}` passed the Step 4.75 entry \
              guard but has no Step 7 dispatch arm (guard/match drift)"
@@ -1548,8 +1596,8 @@ mod tests {
     /// (a) confirm on a Pending file.create block releases exactly once: the
     /// file is created, a confirm_granted event exists chained onto the
     /// sink_blocked event, and the row transitions to Confirmed.
-    #[test]
-    fn confirm_on_pending_file_create_releases_and_creates_file() {
+    #[tokio::test]
+    async fn confirm_on_pending_file_create_releases_and_creates_file() {
         let mut root = std::env::temp_dir();
         root.push(format!("caprun_confirm_ok_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -1559,7 +1607,7 @@ mod tests {
         let (effect_id, session_id, blocked_event_id) =
             seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
 
-        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("confirm");
         assert_eq!(outcome, ConfirmOutcome::Released);
 
         let on_disk = std::fs::read_to_string(root.join("out.txt")).unwrap();
@@ -1581,8 +1629,8 @@ mod tests {
 
     /// (b) a second confirm on the same effect_id refuses (AlreadyTerminal) and
     /// creates no new file (CONFIRM-03).
-    #[test]
-    fn confirm_twice_returns_already_terminal_and_creates_no_new_file() {
+    #[tokio::test]
+    async fn confirm_twice_returns_already_terminal_and_creates_no_new_file() {
         let mut root = std::env::temp_dir();
         root.push(format!("caprun_confirm_twice_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -1592,10 +1640,10 @@ mod tests {
         let (effect_id, _session_id, _blocked_event_id) =
             seed_pending_file_create_block(&conn, "out.txt", "hello", &root.to_string_lossy());
 
-        let first = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("first confirm");
+        let first = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("first confirm");
         assert_eq!(first, ConfirmOutcome::Released);
 
-        let second = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("second confirm");
+        let second = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("second confirm");
         assert_eq!(second, ConfirmOutcome::AlreadyTerminal);
 
         let entries: Vec<_> = std::fs::read_dir(&root).unwrap().collect();
@@ -1716,8 +1764,8 @@ mod tests {
     /// exists chained onto the sink_blocked event, a chained sink_executed
     /// event exists, `verify_chain` is true, and the row transitions to
     /// Confirmed (MAJOR-1 fix — previously this dispatch arm did not exist).
-    #[test]
-    fn confirm_on_pending_file_write_releases_and_writes_file() {
+    #[tokio::test]
+    async fn confirm_on_pending_file_write_releases_and_writes_file() {
         let mut root = std::env::temp_dir();
         root.push(format!("caprun_confirm_fw_ok_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -1733,7 +1781,7 @@ mod tests {
             &root.to_string_lossy(),
         );
 
-        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("confirm");
         assert_eq!(outcome, ConfirmOutcome::Released);
 
         let on_disk = std::fs::read_to_string(root.join("existing.txt")).unwrap();
@@ -1765,13 +1813,16 @@ mod tests {
     }
 
     /// Entry-guard (Step 4.75): an un-dispatchable sink's blocked confirmation
-    /// (e.g. `process.exec`, which has no Step 7 dispatch arm) must NOT be
-    /// burned by `confirm()` — the row must remain `Pending`, no
-    /// `confirm_granted` event may exist, and the state-transitioning function
-    /// must return `Err` rather than silently succeeding or leaving an
-    /// orphaned `confirm_granted`-with-no-terminal-event audit gap.
-    #[test]
-    fn confirm_on_undispatchable_sink_does_not_burn_confirmation() {
+    /// (a still-unwired sink name — `process.exec` was the example here
+    /// through Phase 33, but Plan 34-02 wires its Step 7 dispatch arm, so
+    /// this test now uses a deliberately fictitious, never-wired sink name to
+    /// keep exercising the guard mechanism itself) must NOT be burned by
+    /// `confirm()` — the row must remain `Pending`, no `confirm_granted`
+    /// event may exist, and the state-transitioning function must return
+    /// `Err` rather than silently succeeding or leaving an orphaned
+    /// `confirm_granted`-with-no-terminal-event audit gap.
+    #[tokio::test]
+    async fn confirm_on_undispatchable_sink_does_not_burn_confirmation() {
         let mut root = std::env::temp_dir();
         root.push(format!("caprun_confirm_guard_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -1800,7 +1851,7 @@ mod tests {
         };
         let anchor = SinkBlockedAnchor {
             effect_id,
-            sink: SinkId("process.exec".into()),
+            sink: SinkId("sink.never-wired".into()),
             arg: "command".into(),
             value_id: ValueId::new(),
             literal_sha256,
@@ -1840,7 +1891,7 @@ mod tests {
             effect_id,
             session_id,
             blocked_event_id,
-            sink: SinkId("process.exec".into()),
+            sink: SinkId("sink.never-wired".into()),
             resolved_args,
             blocked_arg_names,
             combined_digest: digest,
@@ -1850,7 +1901,7 @@ mod tests {
         };
         insert_pending_confirmation(&conn, TEST_KEY, &pc).unwrap();
 
-        let result = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws);
+        let result = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await;
         assert!(
             result.is_err(),
             "confirm on an un-dispatchable sink must fail closed, not silently succeed"
@@ -1882,8 +1933,8 @@ mod tests {
     /// (c) deny on a fresh Pending block records a durable denial: a
     /// confirm_denied event exists, state is Denied, and a subsequent confirm
     /// refuses (durable deny, CONFIRM-03). The sink is never invoked.
-    #[test]
-    fn deny_on_pending_block_is_durable() {
+    #[tokio::test]
+    async fn deny_on_pending_block_is_durable() {
         let mut root = std::env::temp_dir();
         root.push(format!("caprun_deny_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -1907,7 +1958,7 @@ mod tests {
             .unwrap();
         assert_eq!(pc.state, PendingConfirmationState::Denied);
 
-        let later = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm after deny");
+        let later = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("confirm after deny");
         assert_eq!(later, ConfirmOutcome::AlreadyTerminal);
         assert!(
             !root.join("out.txt").exists(),
@@ -1928,8 +1979,8 @@ mod tests {
     /// THEN `confirm()` — proving the MAC (bound to the OLD `denied` state)
     /// rejects the row even though the SQL-level `state` column reads
     /// `pending`.
-    #[test]
-    fn flip_back_denied_to_pending_caught_by_mac() {
+    #[tokio::test]
+    async fn flip_back_denied_to_pending_caught_by_mac() {
         let mut root = std::env::temp_dir();
         root.push(format!("caprun_flipback_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -1963,7 +2014,7 @@ mod tests {
             .unwrap();
         assert_eq!(raw_state, "pending");
 
-        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("confirm");
         assert_eq!(
             outcome,
             ConfirmOutcome::DigestMismatch,
@@ -2022,8 +2073,8 @@ mod tests {
 
     /// (d) confirm on an effect_id whose blocked_literals row was redacted
     /// refuses to release and creates no file (T-10-09 fail-closed).
-    #[test]
-    fn confirm_with_redacted_blocked_literal_refuses_to_release() {
+    #[tokio::test]
+    async fn confirm_with_redacted_blocked_literal_refuses_to_release() {
         let mut root = std::env::temp_dir();
         root.push(format!("caprun_confirm_redacted_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -2035,7 +2086,7 @@ mod tests {
 
         redact_blocked_literal(&conn, &blocked_event_id.to_string()).unwrap();
 
-        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("confirm");
         assert_eq!(outcome, ConfirmOutcome::BlockedLiteralRedacted);
         assert!(
             !root.join("out.txt").exists(),
@@ -2046,8 +2097,8 @@ mod tests {
     }
 
     /// (e) confirm/deny on an unknown effect_id return UnknownEffect (T-10-03).
-    #[test]
-    fn confirm_and_deny_on_unknown_effect_id_return_unknown_effect() {
+    #[tokio::test]
+    async fn confirm_and_deny_on_unknown_effect_id_return_unknown_effect() {
         let mut root = std::env::temp_dir();
         root.push(format!("caprun_unknown_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -2057,7 +2108,7 @@ mod tests {
         let unknown = Uuid::new_v4().to_string();
 
         assert_eq!(
-            confirm(&mut conn, TEST_KEY, &unknown, &ws).expect("confirm"),
+            confirm(&mut conn, TEST_KEY, &unknown, &ws).await.expect("confirm"),
             ConfirmOutcome::UnknownEffect
         );
         assert_eq!(
@@ -2220,8 +2271,8 @@ mod tests {
     /// to a blocked-subset-only digest; confirm() must fail closed
     /// (DigestMismatch), invoke NO sink, and append a durable
     /// `confirm_digest_mismatch` event.
-    #[test]
-    fn confirm_fails_closed_with_digest_mismatch_when_trusted_arg_tampered() {
+    #[tokio::test]
+    async fn confirm_fails_closed_with_digest_mismatch_when_trusted_arg_tampered() {
         let mut root = std::env::temp_dir();
         root.push(format!("caprun_confirm_tamper_trusted_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -2233,7 +2284,7 @@ mod tests {
 
         mutate_resolved_arg_literal(&conn, effect_id, "contents", "attacker-injected contents");
 
-        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("confirm");
         assert_eq!(outcome, ConfirmOutcome::DigestMismatch);
         assert!(
             !root.join("out.txt").exists(),
@@ -2251,8 +2302,8 @@ mod tests {
     /// (b') Round-6 name-binding proof: renaming a resolved_arg post-Block
     /// (`body` -> `cc`) with an OTHERWISE UNCHANGED literal set is caught —
     /// the digest binds the name, not just the literal.
-    #[test]
-    fn confirm_fails_closed_with_digest_mismatch_when_arg_renamed_post_block() {
+    #[tokio::test]
+    async fn confirm_fails_closed_with_digest_mismatch_when_arg_renamed_post_block() {
         let mut conn = open_audit_db(":memory:").unwrap();
         let root = std::env::temp_dir().join(format!("caprun_confirm_rename_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -2263,7 +2314,7 @@ mod tests {
 
         rename_resolved_arg(&conn, effect_id, "body", "cc");
 
-        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("confirm");
         assert_eq!(outcome, ConfirmOutcome::DigestMismatch);
         assert_eq!(
             count_events_of_type(&conn, session_id, "email_send_attempted"),
@@ -2282,8 +2333,8 @@ mod tests {
     /// together, so a BARE compare would pass) is caught by `verify_chain`
     /// instead — proving the chain-verify step is doing REAL work, distinct
     /// from the plain digest-compare tests above.
-    #[test]
-    fn confirm_fails_closed_via_verify_chain_when_literal_and_event_digest_edited_self_consistently()
+    #[tokio::test]
+    async fn confirm_fails_closed_via_verify_chain_when_literal_and_event_digest_edited_self_consistently()
     {
         let mut root = std::env::temp_dir();
         root.push(format!("caprun_confirm_chain_tamper_{}", Uuid::new_v4()));
@@ -2329,7 +2380,7 @@ mod tests {
             "sanity: the Event payload edit must break verify_chain"
         );
 
-        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("confirm");
         assert_eq!(outcome, ConfirmOutcome::DigestMismatch);
         assert!(!root.join("out.txt").exists());
 
@@ -2341,8 +2392,8 @@ mod tests {
     /// tamper reverted, so it succeeds — leaves `audit::verify_chain` STILL
     /// TRUE throughout. The mismatch event chained onto the CURRENT HEAD
     /// (not `blocked_event_id`), so the retry never forks the DAG.
-    #[test]
-    fn digest_mismatch_then_retry_does_not_fork_dag_verify_chain_stays_true() {
+    #[tokio::test]
+    async fn digest_mismatch_then_retry_does_not_fork_dag_verify_chain_stays_true() {
         let mut root = std::env::temp_dir();
         root.push(format!("caprun_confirm_mismatch_retry_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -2354,7 +2405,7 @@ mod tests {
 
         mutate_resolved_arg_literal(&conn, effect_id, "contents", "attacker-injected");
 
-        let first = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("first confirm");
+        let first = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("first confirm");
         assert_eq!(first, ConfirmOutcome::DigestMismatch);
         assert!(
             crate::audit::verify_chain(&conn, &session_id.to_string(), TEST_KEY),
@@ -2364,7 +2415,7 @@ mod tests {
         // The row is left Pending (an alarm, not a deny) — revert the tamper
         // and retry; the recompute now matches the ORIGINAL digest again.
         mutate_resolved_arg_literal(&conn, effect_id, "contents", "hello");
-        let second = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("second confirm");
+        let second = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("second confirm");
         assert_eq!(second, ConfirmOutcome::Released);
         assert!(
             crate::audit::verify_chain(&conn, &session_id.to_string(), TEST_KEY),
@@ -2564,8 +2615,8 @@ mod tests {
     /// (AlreadyTerminal) and does NOT append a second `email_send_attempted` —
     /// exactly ONE exists in the audit DAG for this effect_id, proving the CAS
     /// + attempt-append atomicity closes the double-fire window.
-    #[test]
-    fn confirm_email_send_twice_records_exactly_one_attempted_event() {
+    #[tokio::test]
+    async fn confirm_email_send_twice_records_exactly_one_attempted_event() {
         let _guard = crate::sinks::email_smtp::SMTP_ENV_LOCK.lock().unwrap();
 
         let port = spawn_fake_smtp_accept_server();
@@ -2581,14 +2632,14 @@ mod tests {
         let (effect_id, session_id, _blocked_event_id) =
             seed_pending_email_send_block(&conn, "recipient@example.com", "hello", "hi there");
 
-        let first = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("first confirm");
+        let first = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("first confirm");
         assert_eq!(
             first,
             ConfirmOutcome::Released,
             "first confirm of a Pending email.send block must Release (real send succeeded)"
         );
 
-        let second = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("second confirm");
+        let second = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("second confirm");
         assert_eq!(
             second,
             ConfirmOutcome::AlreadyTerminal,
@@ -2618,8 +2669,8 @@ mod tests {
     /// (atomically, before the socket was ever opened) — a durable
     /// `email_send_failed` event also exists, and NO `email_send_succeeded`
     /// event was ever appended. No auto-retry: this is a one-shot decision.
-    #[test]
-    fn confirm_email_send_adapter_failure_yields_email_send_failed() {
+    #[tokio::test]
+    async fn confirm_email_send_adapter_failure_yields_email_send_failed() {
         let _guard = crate::sinks::email_smtp::SMTP_ENV_LOCK.lock().unwrap();
 
         // Bind an ephemeral port then immediately drop the listener — nothing
@@ -2641,7 +2692,7 @@ mod tests {
         let (effect_id, session_id, _blocked_event_id) =
             seed_pending_email_send_block(&conn, "recipient@example.com", "hello", "hi there");
 
-        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("confirm");
         assert_eq!(
             outcome,
             ConfirmOutcome::EmailSendFailed,
@@ -2666,7 +2717,7 @@ mod tests {
 
         // A re-confirm must not retry the send — it is already terminal
         // (Confirmed), refusing per the CAS (no auto-retry, SEND-02).
-        let second = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("second confirm");
+        let second = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await.expect("second confirm");
         assert_eq!(second, ConfirmOutcome::AlreadyTerminal);
         assert_eq!(
             count_events_of_type(&conn, session_id, "email_send_attempted"),
