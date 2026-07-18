@@ -74,31 +74,39 @@ Explicitly excluded from v1.9. Documented to prevent scope creep.
 
 ## Traceability
 
-Which phases cover which requirements. Populated during roadmap creation.
+Which phases cover which requirements. Populated during roadmap creation (`/gsd-roadmapper`, 2026-07-18). Phase numbering CONTINUES from v1.8 (last phase = 40); v1.9 spans Phases 41-46.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DESIGN-17 | Phase [TBD] | Pending |
-| DESIGN-18 | Phase [TBD] | Pending |
-| GIT-02 | Phase [TBD] | Pending |
-| GIT-03 | Phase [TBD] | Pending |
-| HTTP-W-01 | Phase [TBD] | Pending |
-| POLICY-01 | Phase [TBD] | Pending |
-| POLICY-02 | Phase [TBD] | Pending |
-| POLICY-03 | Phase [TBD] | Pending |
-| SDK-01 | Phase [TBD] | Pending |
-| U1 | Phase [TBD] | Pending |
-| HYG-01 | Phase [TBD] | Pending |
-| LIVE-05 | Phase [TBD] | Pending |
-| LIVE-06 | Phase [TBD] | Pending |
+| DESIGN-17 | Phase 41 | Pending |
+| DESIGN-18 | Phase 41 | Pending |
+| POLICY-01 | Phase 42 | Pending |
+| POLICY-02 | Phase 42 | Pending |
+| POLICY-03 | Phase 42 | Pending |
+| HTTP-W-01 | Phase 43 | Pending |
+| GIT-02 | Phase 44 | Pending |
+| GIT-03 | Phase 44 | Pending |
+| HYG-01 | Phase 44 | Pending |
+| SDK-01 | Phase 45 | Pending |
+| U1 | Phase 45 | Pending |
+| LIVE-05 | Phase 46 | Pending |
+| LIVE-06 | Phase 46 | Pending |
 
 **Coverage:**
 - v1 requirements: 13 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 13 ⚠️ (filled by roadmapper)
+- Mapped to phases: 13 ✓ (Phases 41-46, 6 phases)
+- Unmapped: 0 ✓ (no orphans, no duplicates)
 
-**Suggested sequencing (both reviewers agree):** DESIGN-17/18 gate FIRST (blocks all TCB code) → POLICY-01 + POLICY-03 binding as the foundation (sinks get gated by it; live legs need it) → GIT-02/03 ∥ HTTP-W-01 (shared already-shipped transport stack) → POLICY-02 proof (needs a sink + policy live) → SDK-01 + U1 → LIVE-05/06. SDK-01 + U1 are the driver+inspector LIVE-05 requires — critical path, not trailing tooling.
+**Phase → requirement rollup:**
+- **Phase 41** (DESIGN gate): DESIGN-17, DESIGN-18
+- **Phase 42** (Policy layer): POLICY-01, POLICY-02, POLICY-03
+- **Phase 43** (http-write egress): HTTP-W-01
+- **Phase 44** (git.push egress + hygiene): GIT-02, GIT-03, HYG-01
+- **Phase 45** (CLI/SDK + audit-DAG viewer): SDK-01, U1
+- **Phase 46** (composed live proof — v1.9 DONE): LIVE-05, LIVE-06
+
+**Sequencing (both reviewers agree):** DESIGN-17/18 gate FIRST (blocks all TCB code) → POLICY-01 + POLICY-03 binding as the foundation, POLICY-02 invariant enforced with them (sinks get gated by it; live legs need it) → GIT-02/03 ∥ HTTP-W-01 (shared already-shipped transport stack, split by blast radius so a git.push deferral leaves http-write untouched) → SDK-01 + U1 (the driver+inspector LIVE-05 requires — critical path, not trailing tooling) → LIVE-05/06 (composed proof; POLICY-02's non-bypass and the 5 negative legs re-demonstrated live).
 
 ---
 *Requirements defined: 2026-07-18*
-*Last updated: 2026-07-18 — hardened by matt-essentialist + Fable-5 adversarial reviews (POLICY-03 added, 12→13 reqs; credential-custody/viewer-hardening/differential-proof folds)*
+*Last updated: 2026-07-18 — hardened by matt-essentialist + Fable-5 adversarial reviews (POLICY-03 added, 12→13 reqs; credential-custody/viewer-hardening/differential-proof folds); traceability populated by `/gsd-roadmapper` (13/13 mapped to Phases 41-46, 0 orphans).*

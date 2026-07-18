@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: Authorized Egress + Policy & Audit Surface
-status: planning
-last_updated: "2026-07-18T13:27:40.852Z"
+status: roadmapped
+last_updated: "2026-07-18T00:00:00.000Z"
 last_activity: 2026-07-18
 progress:
-  total_phases: 0
+  total_phases: 6
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -19,115 +19,140 @@ progress:
 
 See: .planning/PROJECT.md (updated 2026-07-18)
 
-**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, (v1.5, SHIPPED) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into (closing the v1.4 T2 residual), (v1.6, SHIPPED) hardening the standing residuals that made several of those guarantees "true only incidentally" into enforced guarantees, (v1.7, SHIPPED) extending the set of real sinks — `process.exec` (captured+tainted command output) and filesystem read/write breadth, and now (v1.8) adding the external-effect sinks that make a coding agent's work durable and shareable — `git.commit`, `git.push`, `github.pr`, and read-only `http.request` egress — proving the Safe Coding Agent anchor end-to-end.
-**Current focus:** Phase 35 — DESIGN Gate + Fresh Adversarial Code-Trace (DESIGN-15/16, `DESIGN-git-github-http-sinks.md` + fresh non-self adversarial code-trace)
+**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3) with content-sensitive body blocking + a real broker-mediated SMTP send, (v1.4) with coherent cross-connection trust state + a boundary proven indifferent to planner intelligence, (v1.5) with slot-type binding (T2), (v1.6) hardening the standing residuals into enforced guarantees, (v1.7) extending the real sinks — `process.exec` + filesystem read/write breadth, (v1.8) adding `git.commit` + read-only `http.request` GET + `github.pr` (git.push gate-deferred), and now (v1.9) completing the authorized-write-egress loop (git.push + http-write) and adding the first trust-surface layer (a minimal per-session policy + a CLI/audit-DAG viewer) toward a design-partner-runnable slice — without weakening I0/I1/I2 or adding any raw `EffectRequest` path.
+**Current focus:** Phase 41 — v1.9 DESIGN Gate + Fresh Adversarial Code-Trace (DESIGN-17/18: one DESIGN doc pinning git.push egress + http-write egress + the policy-vs-I2 boundary incl. POLICY-03 binding, cleared by a fresh non-self orchestrator-owned adversarial code-trace before any TCB code)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Not started (v1.9 roadmap created — Phases 41-46)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-07-18 — Milestone v1.9 started
+Status: Roadmapped, awaiting Phase 41 planning
+Last activity: 2026-07-18 — Milestone v1.9 roadmapped (6 phases, 13/13 requirements mapped)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 115 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 + v1.4: 14 + v1.5: 8 + v1.6: 14 + v1.7: 17)
+- Total plans completed: 132 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 + v1.4: 14 + v1.5: 8 + v1.6: 14 + v1.7: 17 + v1.8: 17)
 - Average duration: — min
 
-*Updated after each plan completion. v1.7 (phases 31-34) shipped 2026-07-18 — 17/17 plans complete. v1.8 (phases 35-40) roadmapped 2026-07-18, no plans yet.*
+*Updated after each plan completion. v1.8 (phases 35-38,40) shipped 2026-07-18. v1.9 (phases 41-46) roadmapped 2026-07-18, no plans yet.*
 
 ## Accumulated Context
 
 ### Decisions
 
-**v1.8 roadmap phase structure (`/gsd-roadmapper`, 2026-07-18):** 6 phases
-(35-40), 15/15 requirements mapped, 0 orphans, 0 duplicates. Continues numbering
-from v1.7's Phase 34 (does NOT reset). Mirrors this project's established
-design-gate → implementation → live-proof precedent (v1.0 P2, v1.2 P8, v1.3 P12,
-v1.4 P18, v1.5 P23, v1.6 P26, v1.7 P31 — each a standalone reviewed DESIGN doc
-before any TCB code, followed by implementation, followed by a separate
-live-proof phase). Dependency-forced ordering per research (`research/SUMMARY.md`,
-HIGH confidence):
+**v1.9 roadmap phase structure (`/gsd-roadmapper`, 2026-07-18):** 6 phases
+(41-46), 13/13 requirements mapped, 0 orphans, 0 duplicates. Continues numbering
+from v1.8's Phase 40 (does NOT reset; v1.8's deferred git.push was Phase 39).
+Mirrors this project's unbroken design-gate → foundation → implementation →
+live-proof precedent (v1.0 P2, v1.2 P8, v1.3 P12, v1.4 P18, v1.5 P23, v1.6 P26,
+v1.7 P31, v1.8 P35 — each a standalone reviewed DESIGN doc before any TCB code,
+followed by implementation, followed by a separate live-proof phase). Ordering
+follows both reviewers' agreed sequencing + the GIT-PUSH-EGRESS research
+(candidate (b) broker-performed smart-HTTP transfer, git.push FEASIBLE):
 
-- **Phase 35** is the design gate (DESIGN-15/16 — `DESIGN-git-github-http-sinks.md`
-  pinning effect-class per sink, `mint_from_http` inbound-taint + demotion, git
-  config/hook neutralization, git.push destination pinning + credential-injection
-  mechanism, the SSRF resolve-and-pin model, the github.pr human auth-grant model,
-  the env_clear() TLS-cert allowlist policy, duplicate-PR CAS semantics, and new
-  TaintLabel variants — closing all 11 design-gate-blocking pitfalls). HARD-BLOCKS
-  Phases 36-40. The ORCHESTRATOR (not a gsd-executor) owns the review spawn. No
-  `crates/executor`/`brokerd`/`sandbox`/`runtime-core` TCB code before this gate
-  clears.
+- **Phase 41** is the design gate (DESIGN-17/18 — one DESIGN doc covering all
+  three TCB pieces: git.push egress mechanism, http-write egress, AND the
+  policy-vs-I2 boundary incl. POLICY-03 provenance/binding). HARD-BLOCKS Phases
+  42-46. The ORCHESTRATOR (not a gsd-executor) owns the fresh non-self
+  adversarial-trace spawn. The trace re-runs if the git.push trust-posture or
+  transport-dep choice changes mid-implementation. No `crates/{executor,brokerd,
+  sandbox,runtime-core}` TCB code before this gate clears.
 
-- **Phase 36** is `git.commit` alone (GIT-01) — lowest risk, reuses the v1.7
-  `caprun-exec-launcher` + `mint_from_exec` pattern near-verbatim.
+- **Phase 42** is the policy foundation (POLICY-01/02/03) — bound BEFORE the
+  sinks it gates. POLICY-02's enforcement (I2 is a non-bypassable, hardcoded,
+  post-policy-narrowing gate) is coded inseparably from POLICY-01's policy-deny
+  outcome, so all three POLICY reqs land here; the LOCKED I2-non-bypass invariant
+  is re-demonstrated live in Phase 46 (LIVE-06 leg 3).
 
-- **Phase 37** is `http.request` GET (HTTP-01..03) — establishes the NEW
-  `mint_from_http` inbound-taint mechanism that `github.pr` reuses; must land
-  before Phase 38.
+- **Phase 43** is `http.request` WRITE (HTTP-W-01) — the simpler write-egress
+  sink, extending the shipped `http.request` GET path to POST/PUT on a DISTINCT
+  write-allowlist, taint-governed body, differential proof. Split from git.push
+  so a git.push deferral leaves it untouched.
 
-- **Phase 38** is `github.pr` (GITHUB-01..04) — reuses the Phase-37 http egress
-  infra + inbound mint; adds the bearer token, the new human auth-grant, and
-  duplicate-PR CAS.
+- **Phase 44** is `git.push` (GIT-02/03) + HYG-01 — the riskiest surface;
+  broker-performed smart-HTTP transfer (net-denied child, application-layer
+  destination pin), credential custody, redirect-refusal, payload-vs-destination
+  confirm anti-TOCTOU, confirm-release. HYG-01 lands here because the transport-dep
+  choice + its supply-chain absence re-run belong with git.push. Carries the
+  gate-authorized SAFETY-VALVE: if Phase 41 proved no sound fully-unprivileged
+  destination-pinning mechanism, GIT-02/03 defer a 3rd time (disclosed +
+  sign-off-gated) and the other three tracks still ship.
 
-- **Phase 39** is `git.push` (GIT-02/03) — hardest: network-from-confined-child +
-  push-credential injection; done after the credential boundary is proven by
-  Phase 38's `github.pr`.
+- **Phase 45** is the trust surface — thin CLI/SDK (SDK-01) + read-only
+  audit-DAG viewer (U1). ON THE ACCEPTANCE CRITICAL PATH (LIVE-05 requires the
+  composed proof be DRIVEN and INSPECTED via this CLI + viewer), NOT trailing
+  tooling. Binds the trusted policy (POLICY-03 enforcement point); escapes
+  tainted display bytes; fails closed on absent MAC key.
 
-- **Phase 40** is CLI compose + sidecar env_clear() (ENV-01) + the composed live
-  Linux proof with adversarial attack legs (LIVE-03/04). Mirrors v1.2 P11, v1.3
-  P17, v1.4 P22, v1.5 P25, v1.6 P30, v1.7 P34. Depends on Phases 36-39 all
-  landing.
+- **Phase 46** is the composed live proof (LIVE-05/06) — the v1.9 DONE gate.
+  Composed exec→fs→git.commit→git.push→github.pr + http POST on real Linux,
+  driven & inspected via the new CLI+viewer, with 5 independently-attributable
+  negative legs (tainted push refspec, tainted POST body, policy-deny,
+  destination-pin negative, credential-absence). Mirrors v1.2 P11, v1.3 P17,
+  v1.4 P22, v1.5 P25, v1.6 P30, v1.7 P34, v1.8 P40. Depends on Phases 42-45.
 
 ### Blockers/Concerns
 
-- Phases 36-39 (implementation) and Phase 40 (regression/live proof) are
-  hard-blocked on Phase 35's DESIGN doc (`planning-docs/DESIGN-git-github-http-sinks.md`)
-  clearing a fresh (non-self) adversarial code-trace. No `crates/executor` /
-  `crates/brokerd` / `crates/sandbox` / `crates/runtime-core` TCB code before that
-  gate.
+- Phases 42-46 are hard-blocked on Phase 41's DESIGN doc clearing a fresh
+  (non-self, ORCHESTRATOR-owned) adversarial code-trace. No
+  `crates/{executor,brokerd,sandbox,runtime-core}` TCB code before that gate.
 
-- Phase 38 (`github.pr`) is hard-blocked on Phase 37 (`http.request`) landing
-  first — `github.pr` reuses `mint_from_http`, which does not exist until Phase 37.
+- **git.push (Phase 44) safety-valve:** research (`research/GIT-PUSH-EGRESS.md`,
+  HIGH confidence) assesses candidate (b) — a broker-performed smart-HTTP
+  transfer reusing the already-shipped reqwest+rustls(ring)+webpki-roots+SSRF
+  stack (ZERO new crates) — FEASIBLE, so git.push is planned to SHIP, not defer.
+  BUT if the Phase-41 gate cannot pin a sound fully-unprivileged
+  destination-pinning mechanism, GIT-02/03 defer a 3rd time — a disclosed,
+  sign-off-gated deferral (the git.push leg auto-descopes from LIVE-05/06), never
+  a silent drop and never shipping arbitrary net-allowed child egress
+  (v1.8 BLOCKER-1: seccomp cannot pin a `connect()` destination).
 
-- Phase 39 (`git.push`) is hard-blocked on Phase 38 (`github.pr`) landing first —
-  the push-credential-injection design is meant to be proven incrementally after
-  the bearer-token boundary is proven by `github.pr`.
+- **The #1 adversarial-trace risk = the policy-vs-I2 boundary (POLICY-02/03).**
+  Policy may only NARROW which sinks/args are callable (a pre-I2 gate); it can
+  NEVER disable/override I2, and it must be bound from a trusted source outside
+  the confined worker's reach (F1 containment, reused verbatim from `key.rs`).
+  Phase 41's design gate must pin this; Phase 42 enforces it; Phase 46 proves it
+  live.
 
-- The DESIGN doc must settle two genuine forks before it can clear review: the
-  `git.push` network path (net-allowed confined child vs. in-broker git lib —
-  reopens default-deny-net) and the rustls crypto provider (aws-lc-rs vs. ring).
+- **HYG-01 supply-chain re-run:** the workspace-scoped absence assertion
+  (`cargo tree --workspace -i <dep>` = absent for aws-lc-rs/openssl-sys) must
+  re-run AFTER the git.push transport-dep choice, enumerating any NEW transport
+  deps — the resolver-3 feature-unification lesson (v1.8 aws-lc-rs-in-workspace
+  MAJOR). Any new dep must honor the ring-only recipe.
 
 ### Standing GSD-tooling mitigations (carried forward)
 
-- `phases.clear --confirm` deletes ALL prior phase dirs from disk (documented bug,
-  4-for-4 across v1.3–v1.6 scoping) — git-status-check `.planning/phases/`
+- `phases.clear --confirm` deletes ALL prior phase dirs from disk (documented
+  bug, 5-for-5 across v1.3–v1.8 scoping) — git-status-check `.planning/phases/`
   immediately after any `phases.clear`; restore if needed.
 
 - The last-wave executor's doc-completion commit has historically flipped
   ROADMAP.md's phase checkbox before verification (Phases 15/16) — never let ANY
   executor touch ROADMAP.md/STATE.md; the orchestrator owns phase-completion state.
 
+- The DESIGN-gate adversarial-trace spawn is ORCHESTRATOR-owned, not a
+  gsd-executor (fresh, non-self) — the [[fresh-context-adversarial-review]]
+  guardrail that has caught 9+ real BLOCKER/MAJOR defects through v1.8.
+
 ## Session Continuity
 
 Last session: 2026-07-18
-Stopped at: v1.8 roadmap created (Phases 35-40)
+Stopped at: v1.9 roadmap created (Phases 41-46, 13/13 requirements mapped)
 Resume file: None
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Plan Phase 41 (the v1.9 DESIGN gate) with `/gsd-plan-phase 41`
 
 ## Deferred Items
 
-Items acknowledged and deferred at the v1.7 milestone close (2026-07-18), re-reviewed at v1.8 roadmap creation (2026-07-18).
+Items acknowledged and deferred at prior milestone closes, re-reviewed at v1.9 roadmap creation (2026-07-18).
 
 | Category | Item | Status |
 |----------|------|--------|
-| todo (security) | planner-sidecar-env-clear — env_clear() the caprun-planner sidecar spawn | in progress — directly in scope as v1.8 ENV-01 (Phase 40); close this todo once v1.8 ships |
+| requirement | GIT-02/GIT-03 (`git.push`) — deferred at v1.8 (Phase 39) via gate-authorized deferral | now IN SCOPE as v1.9 Phase 44 (research assesses FEASIBLE; ships unless the Phase-41 gate proves no sound mechanism) |
 | todo (security) | v1.3-phase16-v2-security-obligations — deferred v2 security obligations (recorded, not dropped) | pending |
 | todo (tooling) | gsd-executors-must-not-write-phase-completion-state | pending (GSD process, not caprun product) |
 | todo (tooling) | gsd-phases-clear-deletes-all-milestones | pending (GSD process, not caprun product) |
-| uat | Phase 03 UAT — passed, 0 pending scenarios (stale audit flag, v1.0-era) | passed |
