@@ -1251,9 +1251,39 @@ async fn evaluate_plan_node_and_record(
                 session_demoted = true;
             }
             Err(e) => {
+                // FIX 4 (audit completeness): a failed/denied GET after a durable
+                // `plan_node_evaluated` (Allowed) previously left NO terminal event
+                // — the DAG ended on an Allowed decision with no record the effect
+                // did not occur. Append an OPAQUE-payload `http_request_failed`
+                // terminal EVENT (email_smtp's `_failed` convention): NO url and NO
+                // error text in the hashed payload (that raw text stays on the
+                // eprintln logger line only, T-13-02 discipline). This is audit
+                // completeness ONLY — NOT the P33/P34 "state-before-event" class:
+                // no terminal STATE (no mint, no demotion, no session-status write)
+                // is produced on failure, so there is no state that could precede
+                // this event. The event chains on the current head and advances it
+                // so verify_chain's linear walk stays unbroken.
                 eprintln!(
                     "[brokerd] http.request GET denied/failed (no mint, no demotion): {e}"
                 );
+                let failed_event = Event::new(
+                    Uuid::new_v4(),
+                    Some(*last_event_id),
+                    session_id,
+                    format!("sink:http.request:{effect_id}"),
+                    "http_request_failed".into(),
+                    Utc::now(),
+                    vec![],
+                );
+                let failed_hash = {
+                    let locked = conn
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                    append_event(&locked, key, &failed_event, Some(last_event_hash))
+                        .map_err(|e| anyhow::anyhow!("append http_request_failed: {e}"))?
+                };
+                *last_event_id = failed_event.id;
+                *last_event_hash = failed_hash;
             }
         }
     }
