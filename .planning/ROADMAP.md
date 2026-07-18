@@ -154,7 +154,9 @@ Full detail archived in [`milestones/v1.7-ROADMAP.md`](milestones/v1.7-ROADMAP.m
   1. `planning-docs/DESIGN-git-github-http-sinks.md` exists and pins: per-sink effect-class (`git.commit`=MutateReversible, `git.push`/`github.pr`=CommitIrreversible, `http.request`=Observe); the `mint_from_http` inbound-taint mechanism + session demotion; the git config/hook neutralization surface; `git.push` destination-pinning + credential-injection mechanism; the SSRF resolve-and-pin model; the `github.pr` human auth-grant model; the `env_clear()` TLS-cert allowlist policy; duplicate-PR CAS semantics; and the new `TaintLabel` variants.
   2. The doc explicitly closes all 11 design-gate-blocking pitfalls identified in research (git config/hook RCE, swapped-remote push, tainted PR-body/commit-message exfil, SSRF, credential leak, replay, etc.) with a named mechanism per pitfall — nothing in it disables or bypasses I2, and no new raw `EffectRequest` path is introduced.
   3. A fresh, **non-self** adversarial code-trace review (orchestrator-owned, not a gsd-executor) clears the doc (all findings resolved), recorded in a gate record; no `crates/executor`/`brokerd`/`sandbox`/`runtime-core` TCB code is written before this gate clears.
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 35-01-PLAN.md — Author `DESIGN-git-github-http-sinks.md` (all four sinks, 11 pitfall closures, three forks, mint_from_http/HttpRaw/CAS/auth-grant, invariant preservation) [DESIGN-15]
+- [ ] 35-02-PLAN.md — Orchestrator-owned fresh non-self adversarial code-trace + `DESIGN-GATE-RECORD-v1.8.md` clearance [DESIGN-16]
 
 #### Phase 36: `git.commit` Sink
 **Goal**: caprun can commit staged workspace changes via a broker-spawned confined-child `git`, with the commit message's taint genuinely propagated and git config/hooks neutralized.
@@ -247,7 +249,7 @@ Full detail archived in [`milestones/v1.7-ROADMAP.md`](milestones/v1.7-ROADMAP.m
 | 32. `process.exec` Sink — Broker-Spawned Confined Child | v1.7 | 6/6 | Complete    | 2026-07-17 |
 | 33. Filesystem Read/Write Breadth | v1.7 | 5/5 | Complete    | 2026-07-18 |
 | 34. Regression & Live Proof (v1.7 DONE) | v1.7 | 4/4 | Complete    | 2026-07-18 |
-| 35. DESIGN Gate + Fresh Adversarial Code-Trace | v1.8 | 0/TBD | Not started | - |
+| 35. DESIGN Gate + Fresh Adversarial Code-Trace | v1.8 | 0/2 | Not started | - |
 | 36. `git.commit` Sink | v1.8 | 0/TBD | Not started | - |
 | 37. `http.request` GET Egress | v1.8 | 0/TBD | Not started | - |
 | 38. `github.pr` Sink | v1.8 | 0/TBD | Not started | - |
