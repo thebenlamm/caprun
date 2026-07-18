@@ -195,12 +195,12 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
   2. A filesystem **write/edit sink modifies an existing file** within `WorkspaceRoot` (beyond `file.create`'s `O_EXCL` new-file-only), fail-closed on path schema, kernel-confined, and durably audited.
   3. The fs write/edit sink args are governed by the executor under the **same I2 / slot-type-binding discipline** — a tainted path or contents in a sensitive slot Blocks; there is no I2 bypass and no new raw `EffectRequest` path.
 
-**Plans**: 5 plans (3 waves)
+**Plans**: 3/5 plans executed
 **Wave 1**
 
-- [ ] 33-01-PLAN.md — adapter-fs `write_within` (existing-file-only, O_WRONLY|O_TRUNC) + NOT-inherited negative test set (FS-02)
-- [ ] 33-02-PLAN.md — executor `file.write` schema/sensitivity/slot-role table rows (FS-03)
-- [ ] 33-03-PLAN.md — brokerd per-session `RequestFd` count limiter (FS-01)
+- [x] 33-01-PLAN.md — adapter-fs `write_within` (existing-file-only, O_WRONLY|O_TRUNC) + NOT-inherited negative test set (FS-02)
+- [x] 33-02-PLAN.md — executor `file.write` schema/sensitivity/slot-role table rows (FS-03)
+- [x] 33-03-PLAN.md — brokerd per-session `RequestFd` count limiter (FS-01)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -258,5 +258,5 @@ Full detail archived in [`milestones/v1.6-ROADMAP.md`](milestones/v1.6-ROADMAP.m
 | 30. Regression & Live Proof | v1.6 | 2/2 | Complete    | 2026-07-17 |
 | 31. Effect-Breadth Design Gate | v1.7 | 2/2 | Complete    | 2026-07-17 |
 | 32. `process.exec` Sink — Broker-Spawned Confined Child | v1.7 | 6/6 | Complete    | 2026-07-17 |
-| 33. Filesystem Read/Write Breadth | v1.7 | 0/TBD | Not started | - |
+| 33. Filesystem Read/Write Breadth | v1.7 | 3/5 | In Progress|  |
 | 34. Regression & Live Proof (v1.7 DONE) | v1.7 | 0/TBD | Not started | - |
