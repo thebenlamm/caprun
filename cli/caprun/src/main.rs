@@ -402,7 +402,7 @@ async fn main() -> anyhow::Result<()> {
         // dynamic taint), so a prompt-injected worker could otherwise `getenv` a
         // secret (a pure memory read seccomp/Landlock cannot block) and embed it
         // into a draft-email body or an artifact write. Pass ONLY the explicit,
-        // non-secret vars the worker actually reads (BROKER_SOCK, SESSION_ID,
+        // non-secret vars the worker actually reads (BROKER_SOCK,
         // WORKSPACE_FILE, INTENT, + the optional planner seam) plus a minimal PATH.
         // This makes the T-21-10 guarantee ("the worker's env never receives
         // OPENAI_API_KEY") TRUE by construction — it was previously false via
@@ -412,7 +412,6 @@ async fn main() -> anyhow::Result<()> {
         .env("PATH", "/usr/bin:/bin:/usr/local/bin")
         // Abstract socket name WITHOUT the leading NUL (worker prepends it)
         .env("BROKER_SOCK", format!("/agentos/{session_id}"))
-        .env("SESSION_ID", session_id.to_string())
         // Root-RELATIVE basename: the worker echoes this verbatim into
         // RequestFd { path }, which the broker resolves BENEATH the workspace
         // dirfd (HARD-04). Sending the full path would defeat RESOLVE_BENEATH.
