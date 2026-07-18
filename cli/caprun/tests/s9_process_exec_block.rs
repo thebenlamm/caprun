@@ -47,13 +47,23 @@
 #[cfg(target_os = "linux")]
 mod linux {
     use adapter_fs::workspace::WorkspaceRoot;
-    use brokerd::audit::{append_event, find_event_by_type, open_audit_db, verify_chain};
+    use brokerd::audit::{
+        append_event, find_event_by_type, insert_blocked_literal, open_audit_db, verify_chain,
+    };
+    use brokerd::confirmation::{
+        combined_digest, find_pending_confirmation, insert_pending_confirmation,
+        PendingConfirmation, PendingConfirmationState, ResolvedArg,
+    };
     use brokerd::quarantine::{mint_from_exec, mint_from_read, Claim};
     use brokerd::sinks::process_exec::invoke_process_exec;
     use chrono::Utc;
     use executor::value_store::ValueStore;
+    use runtime_core::executor_decision::SinkBlockedAnchor;
     use runtime_core::plan_node::{PlanArg, SinkId, TaintLabel, ValueId};
     use runtime_core::{Event, ExecutorDecision, PlanNode, SessionStatus};
+    use sha2::{Digest, Sha256};
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::sync::{Arc, Mutex};
     use uuid::Uuid;
 
@@ -483,6 +493,378 @@ mod linux {
             "a tainted command must Block BEFORE any spawn — no process_exited event \
              may exist"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // (d)/(e) Plan 34-02, EXEC-05 — confirm-release + entry-guard fail-closed
+    // (D-11)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Test-local mirror of `cli/caprun/src/key.rs`'s idempotent
+    /// read-existing-first custody — `cli/caprun` has no lib target, so this
+    /// external integration-test crate cannot import it directly. Duplicates
+    /// ONLY the read-or-create-and-persist behavior (mirrors
+    /// `tests/confirm.rs::seed_test_key` verbatim; that helper lives in a
+    /// SEPARATE integration-test crate and cannot be imported across
+    /// `tests/*.rs` binaries).
+    fn seed_test_key(db_path: &Path) -> Vec<u8> {
+        let key_path = PathBuf::from(format!("{}.key", db_path.to_str().unwrap()));
+        if let Ok(bytes) = std::fs::read(&key_path) {
+            return bytes;
+        }
+        let mut key = Uuid::new_v4().as_bytes().to_vec();
+        key.extend_from_slice(Uuid::new_v4().as_bytes());
+        std::fs::write(&key_path, &key).expect("write test MAC key file");
+        key
+    }
+
+    /// Run `caprun confirm <effect_id> <db_path>` as a REAL separate OS
+    /// process (mirrors `tests/confirm.rs::run_caprun_verb`). Returns
+    /// `(exit_code, stdout)`.
+    fn run_caprun_confirm(effect_id: Uuid, db_path: &Path) -> (i32, String) {
+        let caprun_bin = env!("CARGO_BIN_EXE_caprun");
+        let output = Command::new(caprun_bin)
+            .arg("confirm")
+            .arg(effect_id.to_string())
+            .arg(db_path.to_str().unwrap())
+            .output()
+            .unwrap_or_else(|e| panic!("spawn caprun confirm: {e}"));
+        (
+            output.status.code().expect("process must exit with a code"),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+        )
+    }
+
+    /// Seed a Pending `process.exec` block directly via brokerd's API against
+    /// the persistent DB at `db_path` — mirrors `tests/confirm.rs`'s
+    /// `seed_pending_file_create_block`/`seed_pending_email_send_block`, but
+    /// for the `process.exec` sink (Plan 34-02, EXEC-05): the blocked arg is
+    /// `command`; `args` is a trusted JSON array carrying the marker-file
+    /// path. Returns `(effect_id, session_id, blocked_event_id)`.
+    fn seed_pending_process_exec_block(
+        db_path: &Path,
+        key: &[u8],
+        command: &str,
+        args_json: &str,
+        workspace_root: &Path,
+    ) -> (Uuid, Uuid, Uuid) {
+        let conn = open_audit_db(db_path.to_str().unwrap()).expect("open_audit_db for seeding");
+
+        let session_id = Uuid::new_v4();
+        let effect_id = Uuid::new_v4();
+        let read_event_id = Uuid::new_v4();
+
+        let root = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "session_created".into(),
+            Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(&conn, key, &root, None).expect("append session_created");
+
+        let literal_sha256 = {
+            let mut hasher = Sha256::new();
+            hasher.update(command.as_bytes());
+            hex::encode(hasher.finalize())
+        };
+        let anchor = SinkBlockedAnchor {
+            effect_id,
+            sink: SinkId("process.exec".into()),
+            arg: "command".into(),
+            value_id: ValueId::new(),
+            literal_sha256,
+            taint: vec![TaintLabel::ExecRaw],
+            provenance_chain: vec![read_event_id],
+            read_event_id,
+        };
+
+        let resolved_args = vec![
+            ResolvedArg {
+                name: "command".into(),
+                value_id: ValueId::new(),
+                literal: command.to_string(),
+                taint: vec![TaintLabel::ExecRaw],
+                provenance_chain: vec![read_event_id],
+            },
+            ResolvedArg {
+                name: "args".into(),
+                value_id: ValueId::new(),
+                literal: args_json.to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![],
+            },
+        ];
+        let digest = combined_digest(
+            &resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let blocked_arg_names = vec!["command".to_string()];
+
+        let blocked_event = Event::sink_blocked(
+            Uuid::new_v4(),
+            Some(root.id),
+            session_id,
+            Utc::now(),
+            vec![anchor],
+            Some(digest.clone()),
+            blocked_arg_names.clone(),
+        );
+        let blocked_event_id = blocked_event.id;
+        append_event(&conn, key, &blocked_event, Some(&root_hash)).expect("append sink_blocked");
+        insert_blocked_literal(&conn, &blocked_event_id.to_string(), "command", command)
+            .expect("insert_blocked_literal");
+
+        let pc = PendingConfirmation {
+            effect_id,
+            session_id,
+            blocked_event_id,
+            sink: SinkId("process.exec".into()),
+            resolved_args,
+            blocked_arg_names,
+            combined_digest: digest,
+            workspace_root_path: workspace_root.to_string_lossy().into_owned(),
+            state: PendingConfirmationState::Pending,
+            mac: String::new(),
+        };
+        insert_pending_confirmation(&conn, key, &pc).expect("insert_pending_confirmation");
+
+        (effect_id, session_id, blocked_event_id)
+    }
+
+    /// (d) EXEC-05 confirm-release acceptance leg (D-11): a Blocked
+    /// `process.exec` is released by a REAL `caprun confirm` subprocess —
+    /// the command runs EXACTLY ONCE (a marker file appears under the
+    /// workspace, and exactly one durable `process_exited` event exists for
+    /// the whole session), the sink Event is durably chained onto the
+    /// `confirm_granted` head, and `verify_chain` is true. A second `caprun
+    /// confirm` on the same effect_id returns the already-terminal exit code
+    /// (5) — proving no double-spawn (D-06).
+    #[tokio::test]
+    async fn s9_process_exec_confirm_release_runs_once_and_second_confirm_is_terminal() {
+        let run_id = Uuid::new_v4();
+        let tmp = std::env::temp_dir().join(format!("caprun_exec_confirm_release_{run_id}"));
+        let workspace = tmp.join("workspace");
+        std::fs::create_dir_all(&workspace).expect("create workspace dir");
+        let db_path = tmp.join("audit.db");
+        let key = seed_test_key(&db_path);
+
+        // `touch <marker>` — a regular-file create under the workspace,
+        // permitted by the exec-child Landlock ruleset's ReadFile+WriteFile+
+        // MakeReg grant (crates/sandbox/src/landlock.rs). Never a shell —
+        // `command` is executed directly (caprun-exec-launcher's argv
+        // discipline, DESIGN §1.5).
+        let marker = workspace.join("released.marker");
+        let args_json =
+            serde_json::to_string(&vec![marker.to_string_lossy().into_owned()]).unwrap();
+
+        let (effect_id, session_id, blocked_event_id) = seed_pending_process_exec_block(
+            &db_path,
+            &key,
+            "/usr/bin/touch",
+            &args_json,
+            &workspace,
+        );
+
+        // First confirm: releases exactly once.
+        let (code, stdout) = run_caprun_confirm(effect_id, &db_path);
+        assert_eq!(code, 0, "first confirm on a Pending process.exec block must exit 0 (Released)");
+        assert!(
+            stdout.contains("Taint:"),
+            "stdout must show the CONFIRM-01 block display; got:\n{stdout}"
+        );
+        assert!(
+            marker.exists(),
+            "the released command must have run exactly once, creating the marker file"
+        );
+
+        // Durable audit-DAG proof: exactly one process_exited event, chained
+        // onto confirm_granted (the real head at release time — never
+        // blocked_event_id directly, MAJOR-7), and verify_chain holds over
+        // the whole session.
+        let reconn = open_audit_db(db_path.to_str().unwrap()).expect("reopen persisted audit DB");
+        let (granted_id, granted_actor): (String, String) = reconn
+            .query_row(
+                "SELECT id, actor FROM events WHERE session_id = ?1 AND event_type = 'confirm_granted'",
+                [session_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("confirm_granted event must exist");
+        assert!(
+            granted_actor.contains(&effect_id.to_string()),
+            "confirm_granted actor must carry the effect_id"
+        );
+
+        let (exited_id, exited_parent): (String, Option<String>) = reconn
+            .query_row(
+                "SELECT id, parent_id FROM events WHERE session_id = ?1 AND event_type = 'process_exited'",
+                [session_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("process_exited event must exist");
+        assert_eq!(
+            exited_parent.as_deref(),
+            Some(granted_id.as_str()),
+            "process_exited must chain directly onto confirm_granted — the real head \
+             (D-04), never a fabricated root"
+        );
+        let _ = exited_id; // used only for the parent-chain assertion above
+
+        assert!(
+            verify_chain(&reconn, &session_id.to_string(), &key),
+            "verify_chain must be true — session_created -> sink_blocked -> \
+             confirm_granted -> process_exited, one unbroken causal chain"
+        );
+
+        // Second confirm: a DISTINCT process, same effect_id — durable
+        // single-shot release (D-06). No double-spawn: exactly ONE
+        // process_exited event exists for the whole session, before AND
+        // after this second call.
+        let (code2, _stdout2) = run_caprun_confirm(effect_id, &db_path);
+        assert_eq!(
+            code2, 5,
+            "a second confirm on an already-Confirmed effect_id must exit 5 (AlreadyTerminal)"
+        );
+        let exited_count: i64 = reconn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE session_id = ?1 AND event_type = 'process_exited'",
+                [session_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            exited_count, 1,
+            "no double-spawn: exactly ONE process_exited event must exist after both confirms"
+        );
+
+        let _ = blocked_event_id; // seeded for realism; asserted indirectly via the chain above
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// (e) Entry-guard fail-closed leg (D-07): a still-un-dispatchable sink
+    /// name (never `process.exec` — that sink IS now dispatchable per this
+    /// plan) is refused by the Step-4.75 guard BEFORE any state transition;
+    /// the row remains Pending. Proves the P33 guard mechanism itself did
+    /// not regress OPEN when process.exec's dispatch arm was wired.
+    #[tokio::test]
+    async fn s9_process_exec_confirm_on_still_undispatchable_sink_refuses_and_stays_pending() {
+        let run_id = Uuid::new_v4();
+        let tmp = std::env::temp_dir().join(format!("caprun_exec_confirm_guard_{run_id}"));
+        let workspace = tmp.join("workspace");
+        std::fs::create_dir_all(&workspace).expect("create workspace dir");
+        let db_path = tmp.join("audit.db");
+        let key = seed_test_key(&db_path);
+
+        let conn = open_audit_db(db_path.to_str().unwrap()).expect("open_audit_db for seeding");
+        let session_id = Uuid::new_v4();
+        let effect_id = Uuid::new_v4();
+        let read_event_id = Uuid::new_v4();
+
+        let root = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "session_created".into(),
+            Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(&conn, &key, &root, None).expect("append session_created");
+
+        let literal_sha256 = {
+            let mut hasher = Sha256::new();
+            hasher.update(b"rm -rf /");
+            hex::encode(hasher.finalize())
+        };
+        let anchor = SinkBlockedAnchor {
+            effect_id,
+            sink: SinkId("sink.never-wired".into()),
+            arg: "command".into(),
+            value_id: ValueId::new(),
+            literal_sha256,
+            taint: vec![TaintLabel::ExecRaw],
+            provenance_chain: vec![read_event_id],
+            read_event_id,
+        };
+        let resolved_args = vec![ResolvedArg {
+            name: "command".to_string(),
+            value_id: ValueId::new(),
+            literal: "rm -rf /".to_string(),
+            taint: vec![TaintLabel::ExecRaw],
+            provenance_chain: vec![read_event_id],
+        }];
+        let digest = combined_digest(
+            &resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let blocked_arg_names = vec!["command".to_string()];
+
+        let blocked_event = Event::sink_blocked(
+            Uuid::new_v4(),
+            Some(root.id),
+            session_id,
+            Utc::now(),
+            vec![anchor],
+            Some(digest.clone()),
+            blocked_arg_names.clone(),
+        );
+        let blocked_event_id = blocked_event.id;
+        append_event(&conn, &key, &blocked_event, Some(&root_hash)).expect("append sink_blocked");
+        insert_blocked_literal(&conn, &blocked_event_id.to_string(), "command", "rm -rf /")
+            .expect("insert_blocked_literal");
+
+        let pc = PendingConfirmation {
+            effect_id,
+            session_id,
+            blocked_event_id,
+            sink: SinkId("sink.never-wired".into()),
+            resolved_args,
+            blocked_arg_names,
+            combined_digest: digest,
+            workspace_root_path: workspace.to_string_lossy().into_owned(),
+            state: PendingConfirmationState::Pending,
+            mac: String::new(),
+        };
+        insert_pending_confirmation(&conn, &key, &pc).expect("insert_pending_confirmation");
+        drop(conn); // release before the subprocess opens its own connection
+
+        // A never-wired sink name refuses at the Step-4.75 entry guard —
+        // confirm() returns Err(_), which run_confirm_or_deny/main.rs map to
+        // exit code 1 (the generic error path; distinct from every
+        // ConfirmOutcome-specific code).
+        let (code, _stdout) = run_caprun_confirm(effect_id, &db_path);
+        assert_eq!(
+            code, 1,
+            "confirm on a still-un-dispatchable sink must fail closed (exit 1), \
+             never silently succeed"
+        );
+
+        // The row must NOT be burned: still Pending (D-07), no confirm_granted
+        // event may exist (Step 5 never ran).
+        let reconn = open_audit_db(db_path.to_str().unwrap()).expect("reopen persisted audit DB");
+        let found = find_pending_confirmation(&reconn, &effect_id.to_string())
+            .expect("find_pending_confirmation")
+            .expect("row must still exist");
+        assert_eq!(
+            found.state,
+            PendingConfirmationState::Pending,
+            "the entry guard must refuse BEFORE Step 6's state transition — the row \
+             must remain Pending, not Confirmed"
+        );
+        assert!(
+            find_event_by_type(&reconn, &session_id.to_string(), "confirm_granted")
+                .expect("query confirm_granted")
+                .is_none(),
+            "the entry guard must refuse BEFORE Step 5 appends confirm_granted"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
 
