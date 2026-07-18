@@ -258,7 +258,12 @@ Full detail archived in [`milestones/v1.8-ROADMAP.md`](milestones/v1.8-ROADMAP.m
   3. A read-only audit-DAG viewer renders a session's events/decisions and surfaces `verify_chain`, reusing the exact `load_or_create_key` MAC-key custody + F1 containment refusal — failing closed (refusing to render a `verify_chain` verdict) if the key is absent, never loading a fresh/`:memory:` key, out of the confined worker's reach.
   4. All tainted literal bytes (e.g. a tainted commit message or POST body) are control-char-neutralized/escaped before display — the terminal viewer never interprets attacker-tainted content as ANSI/formatting (audit-line-spoofing surface closed).
 
-**Plans**: TBD
+**Plans**: 4 plans (waves: 01+02 → 03 → 04)
+
+- [ ] 45-01-PLAN.md — SDK-01 `caprun run` verb + `--policy` flag (WG-6/POLICY-03) + post-Block effect_id surfacing (WG-5/Matt #2) + M7 anti-laundering disjointness (WG-1) [SDK-01]
+- [ ] 45-02-PLAN.md — extract `neutralize_control_chars` into a shared `brokerd::display` pub fn + anti-drift test (WG-2, U1 M3 foundation) [U1]
+- [ ] 45-03-PLAN.md — `caprun audit <session> <db>` read-only viewer: load-only fail-closed `load_existing_key` (WG-4/U1 M2), open-by-path DAG walk + verify_chain, universal literal neutralization (WG-2/U1 M3) [U1]
+- [ ] 45-04-PLAN.md — end-to-end acceptance: `caprun run` → I2 Block → surfaced effect_id → `caprun review` → `caprun audit` renders + verify_chain; fail-closed-on-absent-key + :memory:-refused + tainted-literal-neutralized negatives (LIVE-05 driver-inspector setup) [SDK-01, U1]
 
 ### Phase 46: Composed Live Proof (v1.9 DONE)
 
@@ -322,5 +327,5 @@ Full detail archived in [`milestones/v1.8-ROADMAP.md`](milestones/v1.8-ROADMAP.m
 | 42. Policy Layer — Binding, Enforcement & the I2 Boundary | v1.9 | 4/4 | Complete    | 2026-07-18 |
 | 43. `http.request` WRITE (POST/PUT) Egress | v1.9 | 0/? | Not started | - |
 | 44. `git.push` — Broker-Performed Destination-Pinned Egress | v1.9 | 0/? | Not started | - |
-| 45. Thin CLI/SDK + Read-Only Audit-DAG Viewer | v1.9 | 0/? | Not started | - |
+| 45. Thin CLI/SDK + Read-Only Audit-DAG Viewer | v1.9 | 0/4 | Not started | - |
 | 46. Composed Live Proof (v1.9 DONE) | v1.9 | 0/? | Not started | - |
