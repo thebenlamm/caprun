@@ -6,7 +6,12 @@
 /// spawns `caprun-worker` (which self-confines AFTER connecting). Every effect
 /// is logged to the SQLite audit DAG with an unbroken SHA-256 hash chain.
 ///
-/// Usage: caprun <intent-kind> <intent-param> <workspace-file> [audit-db-path]
+/// Usage: caprun [run] [--policy <path>] <intent-kind> <intent-param> <workspace-file> [audit-db-path]
+///
+/// The `run` verb (SDK-01) is a legible alias for the bare-positional
+/// intent-run; the bare-positional form (no verb) is unchanged. `--policy
+/// <path>` names the trusted session policy path fed to the SAME `bind_policy`
+/// call `CAPRUN_POLICY` feeds (env is the fallback; neither → broker default).
 ///
 /// Intent kinds:
 ///   send-email-summary <recipient>  — send a workspace summary to the recipient
@@ -147,33 +152,69 @@ async fn main() -> anyhow::Result<()> {
 
     let mut idx = 0usize;
 
-    // ── Parse optional --seed-from-file flag BEFORE positional args (ORIGIN-01/02) ──
-    // The caprun CLI is the ONLY place that decides seed-provenance (DESIGN §3):
-    // presence of this flag means the intent parameter is read from external file
-    // content (untrusted source) => SeedProvenance::FileDerived; absence means
-    // today's trusted-argv behavior is unchanged => SeedProvenance::TrustedArg.
-    // The broker (create_session) — not the CLI — turns that provenance into the
-    // session's initial Draft/Active status; the CLI only forwards it.
-    let seed_from_file_path: Option<String> =
-        if raw_args.get(idx).map(String::as_str) == Some("--seed-from-file") {
-            idx += 1;
-            let path = raw_args.get(idx).cloned().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "usage: caprun --seed-from-file <path> <intent-kind> <workspace-file> [audit-db-path]"
-                )
-            })?;
-            idx += 1;
-            Some(path)
-        } else {
-            None
-        };
+    // ── `run` verb (SDK-01, WG-6): a legible alias for the bare-positional ───
+    // intent-run. Consume the leading `run` token, then fall through to the
+    // SAME positional/--seed-from-file parse below — `run` adds NO new
+    // behavior, it just makes the driver call site legible. The bare-positional
+    // form (no verb) is UNCHANGED (the shipped e2e suite passes no verb and
+    // stays green). Checked AFTER confirm/deny/review/grant (which exit
+    // explicitly above), so those verbs are never shadowed by this alias.
+    if raw_args.first().map(String::as_str) == Some("run") {
+        idx = 1;
+    }
+
+    // ── Parse optional leading flags BEFORE positional args ──────────────────
+    // `--seed-from-file` (ORIGIN-01/02): the caprun CLI is the ONLY place that
+    // decides seed-provenance (DESIGN §3): presence means the intent parameter
+    // is read from external file content (untrusted source) =>
+    // SeedProvenance::FileDerived; absence means today's trusted-argv behavior
+    // is unchanged => SeedProvenance::TrustedArg. The broker (create_session)
+    // — not the CLI — turns that provenance into the session's initial
+    // Draft/Active status; the CLI only forwards it.
+    //
+    // `--policy <path>` (SDK-01 / WG-6 / POLICY-03): the trusted session policy
+    // path, threaded to the SAME `bind_policy(Option<&Path>, workspace_root)`
+    // call `CAPRUN_POLICY` already feeds (env stays the fallback; neither →
+    // `broker_default()`). It is NOT a second policy binder — one enforcement
+    // point, with the shared `refuse_if_beneath_workspace` F1 containment
+    // refusal, exactly as before.
+    //
+    // Both flags are consumed in any order, before the positionals, whether or
+    // not `run` was present.
+    let mut seed_from_file_path: Option<String> = None;
+    let mut policy_flag_path: Option<String> = None;
+    loop {
+        match raw_args.get(idx).map(String::as_str) {
+            Some("--seed-from-file") => {
+                idx += 1;
+                let path = raw_args.get(idx).cloned().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "usage: caprun [run] [--policy <path>] --seed-from-file <path> <intent-kind> <workspace-file> [audit-db-path]"
+                    )
+                })?;
+                idx += 1;
+                seed_from_file_path = Some(path);
+            }
+            Some("--policy") => {
+                idx += 1;
+                let path = raw_args.get(idx).cloned().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "usage: caprun [run] [--policy <path>] <intent-kind> <intent-param> <workspace-file> [audit-db-path]"
+                    )
+                })?;
+                idx += 1;
+                policy_flag_path = Some(path);
+            }
+            _ => break,
+        }
+    }
 
     let mut args = raw_args[idx..].iter().cloned();
 
     let usage = if seed_from_file_path.is_some() {
-        "usage: caprun --seed-from-file <path> <intent-kind> <workspace-file> [audit-db-path]"
+        "usage: caprun [run] [--policy <path>] --seed-from-file <path> <intent-kind> <workspace-file> [audit-db-path]"
     } else {
-        "usage: caprun <intent-kind> <intent-param> <workspace-file> [audit-db-path]"
+        "usage: caprun [run] [--policy <path>] <intent-kind> <intent-param> <workspace-file> [audit-db-path]"
     };
 
     // ── Parse typed intent from positional args (PLAN-01) ────────────────────
@@ -194,6 +235,14 @@ async fn main() -> anyhow::Result<()> {
             (SeedProvenance::TrustedArg, param)
         }
     };
+
+    // M7 (WG-1): the PRIMARY intent literal (recipient/path) is file-derived
+    // iff `--seed-from-file` was present. This per-literal signal is forwarded
+    // to the worker (below) → threaded through `ProvideIntent` → the broker's
+    // ProvideIntent arm mints a file-derived primary literal via `mint_from_read`
+    // (TAINTED), never `mint_from_intent` (which would launder it as trusted).
+    // Session status alone cannot carry this: it is per-session, not per-literal.
+    let primary_file_derived = matches!(seed_provenance, SeedProvenance::FileDerived);
 
     let workspace_path = args.next().ok_or_else(|| anyhow::anyhow!(usage))?;
     let audit_path = args.next().unwrap_or_else(|| ":memory:".to_string());
@@ -275,18 +324,20 @@ async fn main() -> anyhow::Result<()> {
 
     // ── 1d. Bind the session policy from a trusted source (v1.9 Phase 42, POLICY-03) ─
     // Alongside MAC-key custody (they share the SAME F1/containment discipline).
-    // The OPTIONAL trusted policy path comes from the `CAPRUN_POLICY` env var —
-    // the lowest-surface hook (no new CLI positional/flag; SDK-01 in Phase 45
-    // formalizes the CLI surface). `bind_policy` runs the SAME shared
-    // `refuse_if_beneath_workspace` containment check MAC-key custody uses against
-    // the policy path: a path at-or-beneath `workspace_root_dir` — the confined
-    // worker's PRIMARY reach — is a hard refusal, so a refusal propagates via `?`
-    // and NO session is created (fail-closed, DESIGN §4 policy-source row). No
-    // `CAPRUN_POLICY` → `bind_policy(None, ..)` returns the broker-constructed
-    // trusted default (`broker_default()`), so existing e2e flows (which pass no
-    // policy) stay green. The bound value is IMMUTABLE — captured here by value and
-    // threaded into `run_broker_server`; nothing re-reads the file mid-session.
-    let policy_path = std::env::var("CAPRUN_POLICY").ok();
+    // The OPTIONAL trusted policy path comes from the `--policy <path>` flag
+    // (SDK-01 / WG-6, formalizing the CLI surface) with the `CAPRUN_POLICY` env
+    // var as the fallback — BOTH resolve to the SAME single `bind_policy` call
+    // below (one enforcement point, never two binders). `bind_policy` runs the
+    // SAME shared `refuse_if_beneath_workspace` containment check MAC-key custody
+    // uses against the policy path: a path at-or-beneath `workspace_root_dir` —
+    // the confined worker's PRIMARY reach — is a hard refusal, so a refusal
+    // propagates via `?` and NO session is created (fail-closed, DESIGN §4
+    // policy-source row). Neither flag nor env → `bind_policy(None, ..)` returns
+    // the broker-constructed trusted default (`broker_default()`), so existing
+    // e2e flows (which pass no policy) stay green. The bound value is IMMUTABLE —
+    // captured here by value and threaded into `run_broker_server`; nothing
+    // re-reads the file mid-session.
+    let policy_path = policy_flag_path.or_else(|| std::env::var("CAPRUN_POLICY").ok());
     let (session_policy, policy_hash) = brokerd::policy::bind_policy(
         policy_path.as_deref().map(Path::new),
         workspace_root_dir,
@@ -477,6 +528,12 @@ async fn main() -> anyhow::Result<()> {
         // to the broker, which mints it authoritatively in the per-connection
         // ValueStore. Never passed raw bytes here; always the typed intent enum.
         .env("INTENT", serde_json::to_string(&intent).context("serialise intent")?)
+        // M7 (WG-1): forward the PER-LITERAL file-derived provenance of the
+        // primary intent literal so the worker can set the `primary_file_derived`
+        // flag on ProvideIntent. The broker mints a file-derived primary literal
+        // via `mint_from_read` (TAINTED) instead of `mint_from_intent` (trusted),
+        // closing the laundering path where file content minted trusted escapes I2.
+        .env("PRIMARY_SEED_FILE_DERIVED", if primary_file_derived { "1" } else { "0" })
         // Propagates PLANNER_SOCK + CAPRUN_PLANNER=llm ONLY when the sidecar
         // was spawned above (step 3b) — empty otherwise, so the default path
         // sees this call site add nothing (no regression).
