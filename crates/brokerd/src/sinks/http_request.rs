@@ -75,6 +75,16 @@ fn validate_url(url: &str) -> Result<String> {
         bail!("http.request: URL userinfo component is not allowed");
     }
 
+    // Reject any explicit port — https implies 443 (FIX 2, T-37-03 port pin).
+    // The resolve-and-pin `.resolve(host, socket_addr)` pins only the IP; reqwest
+    // still connects on the URL's *port*, so an unconstrained port means the
+    // SSRF-vetted endpoint and the connected endpoint could differ in the port
+    // dimension (e.g. an allowlisted host on an internal-only admin port). Pin
+    // to the default 443 by requiring the URL carry no explicit port.
+    if parsed.port().is_some() {
+        bail!("http.request: explicit port is not allowed (https implies 443)");
+    }
+
     // The WHATWG URL parser normalizes decimal/octal/hex-packed and plain IP
     // literals into a typed `Host::Ipv4`/`Host::Ipv6`; only a DNS `Domain` host
     // is accepted — this rejects every IP-encoding trick in one check.
@@ -363,6 +373,18 @@ mod tests {
     #[test]
     fn validate_url_accepts_plain_https_domain() {
         assert_eq!(validate_url("https://api.github.com/x").unwrap(), "api.github.com");
+    }
+
+    #[test]
+    fn validate_url_rejects_non_default_port() {
+        // FIX 2: an explicit non-default port is rejected — the pin only fixes
+        // the IP, not the port, so "checked endpoint" must equal "connected
+        // endpoint" in the port dimension too.
+        assert!(validate_url("https://api.github.com:8080/x").is_err());
+        assert!(validate_url("https://api.github.com:22/x").is_err());
+        // The default https port (443) is NOT "explicit" per the WHATWG parser
+        // (Url::port() returns None), so it is still accepted.
+        assert_eq!(validate_url("https://api.github.com:443/x").unwrap(), "api.github.com");
     }
 
     // ---- host allowlist ----
