@@ -451,6 +451,96 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------
+    // github.pr (GITHUB-01/03, DESIGN-git-github-http-sinks.md §4.1/§4.4)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn github_pr_is_registered_sink() {
+        // Registered => schema_for returns Some => never UnknownSink at Step 0.
+        assert!(
+            schema_for("github.pr").is_some(),
+            "github.pr must be a registered sink (never UnknownSink)"
+        );
+    }
+
+    #[test]
+    fn github_pr_exact_args_ok() {
+        let n = node(
+            "github.pr",
+            vec![
+                arg("owner"),
+                arg("repo"),
+                arg("base"),
+                arg("head"),
+                arg("title"),
+                arg("body"),
+            ],
+        );
+        assert_eq!(validate_schema(&n), Ok(()));
+    }
+
+    #[test]
+    fn github_pr_unknown_arg_denied() {
+        // No draft/maintainer_can_modify/headers/method args modeled this
+        // milestone (PR-create scope) — any extra fails closed at Step 0.
+        let n = node(
+            "github.pr",
+            vec![
+                arg("owner"),
+                arg("repo"),
+                arg("base"),
+                arg("head"),
+                arg("title"),
+                arg("body"),
+                arg("draft"),
+            ],
+        );
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::UnknownArg("draft".to_string()))
+        );
+    }
+
+    #[test]
+    fn github_pr_duplicate_arg_denied() {
+        let n = node(
+            "github.pr",
+            vec![
+                arg("owner"),
+                arg("owner"),
+                arg("repo"),
+                arg("base"),
+                arg("head"),
+                arg("title"),
+                arg("body"),
+            ],
+        );
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::DuplicateArg("owner".to_string()))
+        );
+    }
+
+    #[test]
+    fn github_pr_missing_required_arg_denied() {
+        // All six args are required — any absent → MissingArg.
+        let n = node(
+            "github.pr",
+            vec![
+                arg("owner"),
+                arg("repo"),
+                arg("base"),
+                arg("head"),
+                arg("title"),
+            ],
+        );
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::MissingArg("body".to_string()))
+        );
+    }
+
     #[test]
     fn exec_shell_fixture_remains_distinct_unknown_sink() {
         // Regression guard (RESEARCH Pitfall): "exec.shell" is a permanently-
