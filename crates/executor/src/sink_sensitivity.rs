@@ -83,6 +83,19 @@ pub fn sink_effect_class(sink: &SinkId) -> EffectClass {
         // what makes a draft / untrusted-seeded session I0-deny a POST (the
         // MAJOR-1 I0-escape fix).
         "http.request.write" => EffectClass::CommitIrreversible,
+        // GIT-02/03 (Phase 44), DESIGN-v1.9-egress-policy §1.1: a push crosses the
+        // trust boundary and lands refs on a remote — an external, irreversible
+        // effect, CommitIrreversible exactly like email.send / github.pr /
+        // http.request.write. This is a REAL EXPLICIT arm (not the
+        // `_ => CommitIrreversible` fail-closed default below), so a future
+        // refactor that reorders/removes the schema gate cannot silently relax
+        // git.push's class (T-44-01) — the github.pr / http.request.write
+        // precedent. It is ALSO redundantly covered by the `_ =>` default. The
+        // explicit CommitIrreversible class is what gives git.push the full
+        // irreversible discipline: a draft / untrusted-seeded session I0-denies a
+        // push (never an Observe fall-through), and it gets I2 collect-then-Block +
+        // confirm-releasable.
+        "git.push" => EffectClass::CommitIrreversible,
         // Test-fixture-only arm (DESIGN §9 Pitfall m2 / RESEARCH Pitfall 3): the
         // ONLY vehicle that makes TAINT-03 (Draft + Observe still Allowed)
         // testable end-to-end, since both live sinks are CommitIrreversible.
@@ -212,6 +225,19 @@ pub const HTTP_REQUEST_WRITE_ROUTING_SENSITIVE: &[&str] = &["url"];
 /// a taint carrier.
 pub const HTTP_REQUEST_WRITE_CONTENT_SENSITIVE: &[&str] = &["url", "body"];
 
+/// Args of git.push that determine WHERE the push lands. GIT-02/03 (Phase 44),
+/// DESIGN-v1.9-egress-policy §1.3: `remote` names the destination and `refspec`
+/// names the ref(s) written — a tainted value in EITHER steers the push to an
+/// attacker-chosen destination and MUST Block on that arg (T-44-02). Both come
+/// from TRUSTED session-creation intent, never the untrusted repo `.git/config`.
+/// git.push has NO content-sensitive arg: the pushed PACK content is
+/// worker-controlled and is surfaced at CONFIRM (DESIGN §1.6, Plan 44-04's
+/// payload-provenance surface), NOT gated as an I2 content-sensitive arg — so
+/// `remote`/`refspec` are deliberately absent from any content-sensitive set
+/// (no over-widening) and `is_content_sensitive(git.push, ..)` falls through to
+/// the fail-safe `_ => false` default.
+pub const GIT_PUSH_ROUTING_SENSITIVE: &[&str] = &["remote", "refspec"];
+
 /// Returns `true` iff `arg_name` is a routing-sensitive argument of `sink`.
 ///
 /// Routing-sensitive means: the attacker who controls this arg value redirects
@@ -227,6 +253,7 @@ pub fn is_routing_sensitive(sink: &SinkId, arg_name: &str) -> bool {
         "http.request" => HTTP_REQUEST_ROUTING_SENSITIVE.contains(&arg_name),
         "http.request.write" => HTTP_REQUEST_WRITE_ROUTING_SENSITIVE.contains(&arg_name),
         "github.pr" => GITHUB_PR_ROUTING_SENSITIVE.contains(&arg_name),
+        "git.push" => GIT_PUSH_ROUTING_SENSITIVE.contains(&arg_name),
         // v0: all other sinks — no routing-sensitive args defined yet.
         _ => false,
     }
@@ -406,6 +433,19 @@ pub fn expected_role(sink: &SinkId, arg_name: &str) -> Option<&'static [&'static
             // check — this `None` disables ONLY the structural role gate; it is
             // NOT an I2 bypass.
             "owner" | "repo" | "base" | "head" | "title" | "body" => None,
+            _ => None,
+        },
+        "git.push" => match arg_name {
+            // GIT-02/03, DESIGN-v1.9-egress-policy §1.3: remote/refspec are
+            // DELIBERATELY unconstrained at the structural Step-1c role gate —
+            // reuse the http.request.write/github.pr/git.commit rationale. There
+            // is no origin_role-producing mint site for a legitimately-authored
+            // trusted-intent push destination, so pinning Some(...) would
+            // fail-closed-Deny the legit flow. The Block for a tainted
+            // remote/refspec comes entirely from is_routing_sensitive + the
+            // untrusted-taint check — this `None` disables ONLY the structural
+            // role gate; it is NOT an I2 bypass.
+            "remote" | "refspec" => None,
             _ => None,
         },
         _ => None, // any other sink: unconstrained, out of v1.5 scope
@@ -992,6 +1032,67 @@ mod tests {
                 expected_role(&http_request_write(), arg),
                 None,
                 "http.request.write `{arg}` must be role-unconstrained (None)"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // git.push (GIT-02/03, DESIGN-v1.9-egress-policy §1.1/§1.3)
+    // -----------------------------------------------------------------
+
+    fn git_push() -> SinkId {
+        SinkId("git.push".to_string())
+    }
+
+    #[test]
+    fn git_push_is_commit_irreversible() {
+        // A push is an external, irreversible effect — an EXPLICIT arm, never the
+        // `_` fail-closed default reached only incidentally (GIT-02/03, §1.1). The
+        // explicit class is what makes a draft/untrusted-seeded session I0-deny a
+        // push (never an Observe fall-through), T-44-01.
+        assert_eq!(
+            sink_effect_class(&git_push()),
+            EffectClass::CommitIrreversible,
+            "git.push is an external irreversible effect (explicit arm, not `_` default)"
+        );
+    }
+
+    #[test]
+    fn git_push_remote_refspec_routing_sensitive() {
+        // remote/refspec determine WHERE the push lands — a tainted value
+        // mis-routes the push and must Block (routing-sensitive, T-44-02).
+        for arg in ["remote", "refspec"] {
+            assert!(
+                is_routing_sensitive(&git_push(), arg),
+                "git.push `{arg}` must be routing-sensitive (push destination)"
+            );
+        }
+    }
+
+    #[test]
+    fn git_push_has_no_content_sensitive_arg() {
+        // The pushed PACK content is worker-controlled and surfaced at CONFIRM
+        // (DESIGN §1.6), NOT an I2 content-sensitive arg — no over-widening.
+        // remote/refspec are routing-only.
+        for arg in ["remote", "refspec"] {
+            assert!(
+                !is_content_sensitive(&git_push(), arg),
+                "git.push `{arg}` is routing/destination, not payload — not content-sensitive"
+            );
+        }
+    }
+
+    #[test]
+    fn git_push_expected_role_is_none() {
+        // remote/refspec deliberately unconstrained at the structural Step-1c role
+        // gate (reuse the http.request.write/github.pr rationale): no origin_role-
+        // producing mint site for a legit trusted-intent push. The Block comes from
+        // routing-sensitivity + taint, not this gate — None is NOT an I2 bypass.
+        for arg in ["remote", "refspec"] {
+            assert_eq!(
+                expected_role(&git_push(), arg),
+                None,
+                "git.push `{arg}` must be role-unconstrained (None)"
             );
         }
     }
