@@ -153,3 +153,92 @@ None - no external service configuration required.
 - FOUND: .planning/phases/33-filesystem-read-write-breadth/33-05-SUMMARY.md
 - FOUND: commit 265ab83 (test task)
 - FOUND: commit ec6b19b (docs/summary)
+
+## Adversarial-Review Fixes
+
+Post-execution hardening pass applying the verified findings of a fresh
+non-self Fable-5 adversarial code-trace
+(`33-ADVERSARIAL-REVIEW.md`, reviewed at HEAD `d9ba149`) of the whole
+Phase-33 `file.write` TCB diff. 1 MAJOR + 3 MINOR + 3 NIT — all applied.
+
+**MAJOR-1 (`crates/brokerd/src/confirmation.rs`, `crates/brokerd/src/sinks/file_write.rs`) — commit `ad602f2`.**
+A blocked `file.write` had no Step-7 confirm-release dispatch arm: a human
+`caprun confirm` would durably burn the one-shot confirmation
+(`confirm_granted` appended, state → Confirmed) with no write performed and
+no terminal `sink_executed`/`sink_execution_failed` event — an audit-DAG
+gap. `process.exec` shared the same gap. Fixed by adding
+`invoke_file_write_from_resolved` (mirrors `invoke_file_create_from_resolved`
+verbatim) plus a `"file.write"` Step-7 dispatch arm, AND a pre-Step-5 entry
+guard refusing any sink outside `{file.create, email.send, file.write}`
+before `confirm_granted` is appended or state transitions — so an
+un-dispatchable sink can never burn the confirmation (row stays `Pending`,
+fail-closed-recoverable). Two new tests: a file.write confirm-release
+round-trip (release → write lands → `sink_executed` chained → `verify_chain`
+true → state Confirmed) and an entry-guard regression (an un-dispatchable
+`process.exec` block: `confirm()` returns `Err`, row stays `Pending`, no
+`confirm_granted` event exists).
+
+**MINOR-2 (`crates/brokerd/src/server.rs`) — landed inside commit `ad602f2`
+(staging-order mistake; the fix itself is correct, only its commit
+attribution is off).** `*fd_request_count += 1` could wrap `u32` back to 0
+after 2^32 denied round-trips (no `overflow-checks` profile anywhere in the
+workspace), failing the RequestFd guard OPEN. Changed to
+`fd_request_count.saturating_add(1)`.
+
+**MINOR-3 (`crates/adapter-fs/src/workspace.rs`) — commit `849a1b4`.**
+`write_within`'s `openat2(O_WRONLY|O_TRUNC)` would open any existing
+non-symlink target, including a FIFO; `O_WRONLY` on a reader-less FIFO
+blocks the calling thread indefinitely inside `conn.lock()` — a broker-wide
+freeze reachable via a hostile workspace path landing on a FIFO. Fixed with
+`O_NONBLOCK` (reader-less FIFO now fails immediately with `ENXIO`) plus a
+post-open `fstat`/`S_ISREG` guard rejecting any non-regular target
+fail-closed. New `cfg(target_os="linux")` test creates a FIFO via
+`nix::unistd::mkfifo` and asserts `write_within` rejects it rather than
+hanging. Same commit corrected two doc claims: NIT-6 (re-verified against
+live source — `write_within` and `create_exclusive_within` both call
+`sync_all()`; the catalog's "asymmetric durability" claim did not hold and
+was corrected rather than propagated) and NIT-7 (the non-Linux dev stub now
+rejects an absolute `rel_path`, since `PathBuf::join` silently replaces the
+base on an absolute argument).
+
+**MINOR-4 (`crates/brokerd/src/server.rs`) — commit `64f4b87`.** Doc-only:
+added a note at `MAX_REQUEST_FD_PER_SESSION` naming the three facts its
+"per-session" framing actually depends on (RequestFd is worker-only, one
+worker connection per session, a second connection is rejected).
+
+**NIT-5 (`crates/brokerd/src/sinks/file_write.rs`) — landed inside commit
+`ad602f2`.** Tightened the module doc to "on a *filesystem* error ... append
+FIRST" — a missing/dangling arg handle in `resolve_arg` propagates
+pre-effect, before any `sink_execution_failed` event would be appended.
+
+### Verification
+
+- `./scripts/check-invariants.sh`: all 4 gates PASSED after every fix (no
+  new `EffectRequest`, `runtime-core` purity intact, no new mint site, no
+  `test-fixtures` default feature).
+- `cargo build --workspace` and `cargo test -p brokerd -p adapter-fs
+  --no-fail-fast`: clean on macOS, 116/116 `brokerd` lib tests green
+  (including both new `confirmation.rs` tests), 0 failures anywhere.
+- **Linux gate 1 (compile enumeration):**
+  `MAILPIT_VERIFY_CMD='cargo build --tests --workspace --keep-going' bash scripts/mailpit-verify.sh`
+  — TRUE exit `0` (captured before any pipe), 0 `^error` lines, `Mailpit-backed Linux verification suite PASSED.`
+- **Linux gate 2 (scoped named tests):**
+  `MAILPIT_VERIFY_CMD='cargo test -p brokerd -p adapter-fs -p caprun --no-fail-fast -- <named tests>' bash scripts/mailpit-verify.sh`
+  — TRUE exit `0`. All 8 named tests found and `ok`:
+  `write_within_fifo_rejected_not_hung`,
+  `confirm_on_undispatchable_sink_does_not_burn_confirmation`,
+  `confirm_on_pending_file_write_releases_and_writes_file`,
+  `invoke_file_write_from_resolved_success_records_sink_executed`,
+  `invoke_file_write_from_resolved_failure_records_sink_invocation_failed`,
+  `s9_file_write_tainted_path_blocks_with_genuine_anchor`,
+  `s9_file_write_tainted_contents_blocks_with_genuine_anchor`,
+  `s9_file_write_clean_trusted_pair_is_allowed`.
+
+### Commits
+
+- `ad602f2` — `fix(33): wire file.write confirm-release dispatch + entry guard (MAJOR-1)` (also carries MINOR-2, NIT-5)
+- `849a1b4` — `fix(33): reject FIFO/non-regular write_within targets (MINOR-3)` (also carries NIT-6, NIT-7)
+- `64f4b87` — `docs(33): note MAX_REQUEST_FD_PER_SESSION's per-session dependency (MINOR-4)`
+
+No new mint site, no `ExecutorDecision` variant, no `EffectRequest` — I2
+stays table-entries-only throughout.
