@@ -775,7 +775,11 @@ async fn evaluate_plan_node_and_record(
     // (v1.6 Phase 27, X-04/F3) — NEVER read from plan_node/IPC (DESIGN §4/§11
     // condition 0). This function only READS it (never mutates), so the
     // caller-side snapshot is passed by shared reference.
-    let decision = executor::submit_plan_node(
+    // `mut` because git.push's always-confirm-gate (below) REWRITES an Allowed
+    // decision into BlockedPendingConfirmation — a clean/untainted git.push is
+    // re-gated into a pending confirmation, never auto-dispatched (Plan 44-04
+    // Task 2, DESIGN-v1.9-egress-policy §1.6/§1.7).
+    let mut decision = executor::submit_plan_node(
         session_id,
         effect_id,
         plan_node,
@@ -783,6 +787,66 @@ async fn evaluate_plan_node_and_record(
         session_status,
         policy,
     );
+
+    // 44-04 (GIT-02/03, DESIGN-v1.9-egress-policy §1.6/§1.7): THE always-confirm
+    // gate. git.push is NEVER auto-dispatched — the pushed PACK is worker-
+    // controlled and never an I2 arg, so even a clean/untainted Allowed decision
+    // must NOT ship it without a human PAYLOAD view (per the locked decision, NOT
+    // github.pr's coarse session grant). A clean git.push is re-gated HERE, BEFORE
+    // the durable block machinery below, by rewriting the Allowed decision into a
+    // synthetic BlockedPendingConfirmation whose anchors are the routing args
+    // (remote, refspec) the human authorizes. The EXISTING block machinery then
+    // freezes the new-oid (`block_frozen_new_oid`), appends the `sink_blocked`
+    // event + `blocked_literals`, and inserts the pending confirmation UNIFORMLY
+    // — so the clean-Allowed path and the tainted I2-Block path CONVERGE on ONE
+    // frozen-oid confirm gate + ONE insert, with no separate assembly. A tainted
+    // git.push already arrives here as BlockedPendingConfirmation (executor I2)
+    // and is UNTOUCHED by this rewrite (the guard is `Allowed`-only). There is NO
+    // git.push Allowed-dispatch arm anywhere below — the transfer runs ONLY from
+    // confirmation.rs Step-7 on a human confirm.
+    if matches!(decision, runtime_core::ExecutorDecision::Allowed)
+        && plan_node.sink.0 == "git.push"
+    {
+        use sha2::Digest as _;
+        let mut anchors: Vec<runtime_core::BlockedArg> = Vec::with_capacity(plan_node.args.len());
+        for arg in &plan_node.args {
+            // Resolve from the live per-connection ValueStore — the SAME
+            // fail-closed discipline the block-snapshot builder uses (a dangling
+            // handle is a broker-internal invariant violation, validate_schema
+            // already guaranteed presence).
+            let record = value_store.resolve(&arg.value_id).ok_or_else(|| {
+                anyhow::anyhow!("git.push confirm-gate: arg `{}` handle did not resolve", arg.name)
+            })?;
+            let literal_sha256 = {
+                let mut h = sha2::Sha256::new();
+                h.update(record.literal.as_bytes());
+                hex::encode(h.finalize())
+            };
+            // Anchor read root: `provenance_chain[0]` when present, else the
+            // current chain head (a valid event id) — kept CONSISTENT so the
+            // anchor's `read_event_id == provenance_chain[0]` invariant holds
+            // even for an arg with no read provenance.
+            let (provenance_chain, read_event_id) =
+                match record.provenance_chain.first().copied() {
+                    Some(root) => (record.provenance_chain.clone(), root),
+                    None => (vec![*last_event_id], *last_event_id),
+                };
+            anchors.push(runtime_core::BlockedArg {
+                anchor: runtime_core::SinkBlockedAnchor {
+                    effect_id,
+                    sink: plan_node.sink.clone(),
+                    arg: arg.name.clone(),
+                    value_id: arg.value_id.clone(),
+                    literal_sha256,
+                    taint: record.taint.clone(),
+                    provenance_chain,
+                    read_event_id,
+                },
+                literal: record.literal.clone(),
+            });
+        }
+        decision = runtime_core::ExecutorDecision::BlockedPendingConfirmation { anchors };
+    }
 
     // Durably record the decision BEFORE returning any response (ACC-02).
     // Fail-closed: an append error propagates with `?`, so the block is
@@ -3042,5 +3106,293 @@ mod tests {
                 .is_none(),
             "http.request.write mints no value (Gate 3) — no http_response_received event"
         );
+    }
+
+    // ── 44-04 (GIT-02/03): git.push always-confirm-gate dispatch arm ──
+    //
+    // Linux-only (CLAUDE.md / cfg-linux-test-blindness): the freeze runs the
+    // real confined `git rev-parse` via the `caprun-exec-launcher` sibling
+    // binary + the system `git` — the launcher only self-confines under
+    // `#[cfg(target_os = "linux")]`. On macOS these COMPILE to nothing (0 tests)
+    // — expected. Real verification is the container step (`cargo build
+    // --workspace` first so the launcher binary is placed — Pitfall 3).
+
+    /// Build a temp workspace that IS a git repo with one commit on branch
+    /// `main`, so `freeze_new_oid` (confined `git rev-parse main^{{commit}}`)
+    /// resolves a real oid. Runs the SETUP git UNCONFINED in the test process.
+    #[cfg(target_os = "linux")]
+    fn setup_git_push_repo(tag: &str) -> (std::path::PathBuf, Arc<adapter_fs::workspace::WorkspaceRoot>) {
+        use std::process::Command;
+        let git = |dir: &std::path::Path, args: &[&str]| -> bool {
+            Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .expect("spawn setup git")
+                .status
+                .success()
+        };
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_gitpush_gate_{tag}_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(git(&root, &["init", "-q"]), "git init");
+        std::fs::write(root.join("f.txt"), b"hello\n").unwrap();
+        assert!(git(&root, &["add", "f.txt"]), "git add");
+        assert!(git(&root, &["commit", "-q", "-m", "init"]), "git commit");
+        // Rename whatever the default branch is to `main` (robust across git
+        // versions that default to `master`).
+        assert!(git(&root, &["branch", "-M", "main"]), "git branch -M main");
+        let ws = Arc::new(adapter_fs::workspace::WorkspaceRoot::open(&root).unwrap());
+        (root, ws)
+    }
+
+    /// Mint the git.push `{remote, refspec}` args with the given taint into a
+    /// store and return the plan node.
+    #[cfg(target_os = "linux")]
+    fn git_push_node(
+        store: &mut ValueStore,
+        remote_taint: Vec<runtime_core::plan_node::TaintLabel>,
+    ) -> runtime_core::PlanNode {
+        use runtime_core::plan_node::TaintLabel;
+        use runtime_core::{PlanArg, PlanNode, SinkId};
+        let provenance = Uuid::new_v4();
+        let remote_vid = store
+            .mint(
+                "https://github-mock.caprun.test/owner/repo.git".to_string(),
+                remote_taint,
+                vec![provenance],
+                None,
+            )
+            .expect("mint remote");
+        let refspec_vid = store
+            .mint(
+                "refs/heads/main:refs/heads/main".to_string(),
+                vec![TaintLabel::UserTrusted],
+                vec![provenance],
+                None,
+            )
+            .expect("mint refspec");
+        PlanNode {
+            sink: SinkId("git.push".to_string()),
+            args: vec![
+                PlanArg { name: "remote".to_string(), value_id: remote_vid },
+                PlanArg { name: "refspec".to_string(), value_id: refspec_vid },
+            ],
+        }
+    }
+
+    /// (a) A CLEAN (untainted) git.push is NOT auto-dispatched: the executor
+    /// Allows it (no taint), but the broker always-confirm-gate FREEZES the
+    /// new-oid, inserts a pending confirmation carrying a non-empty frozen oid +
+    /// a valid whole-row MAC, appends a synthetic sink_blocked event, REWRITES
+    /// the decision to BlockedPendingConfirmation, and opens NO socket (NO
+    /// git_push_* terminal event). This is THE #1 correctness pin: there is no
+    /// bare Allowed→auto-dispatch arm for git.push.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn clean_git_push_is_confirm_gated_never_auto_dispatched() {
+        use runtime_core::SessionStatus;
+        let (repo, ws) = setup_git_push_repo("clean");
+        let (conn, session_id, mut store, mut lei, mut leh, _ss, _ws0, _ti) = harness();
+
+        let plan_node = git_push_node(&mut store, vec![runtime_core::plan_node::TaintLabel::UserTrusted]);
+        let (decision, output_value_id, _demoted) = evaluate_plan_node_and_record(
+            &plan_node,
+            &conn,
+            TEST_KEY,
+            session_id,
+            &mut store,
+            &ws,
+            &SessionStatus::Active,
+            &runtime_core::SessionPolicy::allow_all(),
+            &mut lei,
+            &mut leh,
+        )
+        .await
+        .expect("evaluate clean git.push");
+
+        assert!(
+            matches!(decision, runtime_core::ExecutorDecision::BlockedPendingConfirmation { .. }),
+            "a clean git.push MUST be re-gated to BlockedPendingConfirmation, never Allowed \
+             (no auto-dispatch): got {decision:?}"
+        );
+        assert!(output_value_id.is_none(), "git.push mints nothing");
+
+        let locked = conn.lock().expect("lock conn");
+        let sid = session_id.to_string();
+        // The synthetic block exists; NO transfer ran (no socket opened).
+        assert!(
+            crate::audit::find_event_by_type(&locked, &sid, "sink_blocked").unwrap().is_some(),
+            "the clean-gate must append a synthetic sink_blocked event"
+        );
+        assert!(
+            crate::audit::find_event_by_type(&locked, &sid, "git_push_succeeded").unwrap().is_none()
+                && crate::audit::find_event_by_type(&locked, &sid, "git_push_failed").unwrap().is_none(),
+            "NO git_push_* terminal event — the clean gate opens no socket"
+        );
+        // The pending row carries a non-empty frozen oid + a valid whole-row MAC.
+        let eid: String = locked
+            .query_row("SELECT effect_id FROM pending_confirmations", [], |r| r.get(0))
+            .expect("one pending row");
+        let pc = crate::confirmation::find_pending_confirmation(&locked, &eid)
+            .unwrap()
+            .expect("pending confirmation row");
+        assert_eq!(pc.sink.0, "git.push");
+        assert!(!pc.frozen_new_oid.trim().is_empty(), "the new-oid must be frozen at the gate");
+        assert!(
+            crate::confirmation::verify_pending_confirmation_mac(TEST_KEY, &pc),
+            "the clean-path pending row's whole-row MAC (incl. frozen_new_oid) must verify"
+        );
+        drop(locked);
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    /// (b) A TAINTED-remote git.push is I2-blocked by the executor and ALSO
+    /// carries the frozen new-oid into the pending confirmation — both paths
+    /// converge on one frozen-oid confirm gate; no socket opens.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn tainted_git_push_blocks_with_frozen_oid() {
+        use runtime_core::SessionStatus;
+        let (repo, ws) = setup_git_push_repo("tainted");
+        let (conn, session_id, mut store, mut lei, mut leh, _ss, _ws0, _ti) = harness();
+
+        // A tainted (ExternalUntrusted) routing-sensitive `remote` → I2 Block.
+        let plan_node =
+            git_push_node(&mut store, vec![runtime_core::plan_node::TaintLabel::ExternalUntrusted]);
+        let (decision, _ovid, _demoted) = evaluate_plan_node_and_record(
+            &plan_node,
+            &conn,
+            TEST_KEY,
+            session_id,
+            &mut store,
+            &ws,
+            &SessionStatus::Active,
+            &runtime_core::SessionPolicy::allow_all(),
+            &mut lei,
+            &mut leh,
+        )
+        .await
+        .expect("evaluate tainted git.push");
+
+        assert!(
+            matches!(decision, runtime_core::ExecutorDecision::BlockedPendingConfirmation { .. }),
+            "a tainted-remote git.push must I2-Block: got {decision:?}"
+        );
+
+        let locked = conn.lock().expect("lock conn");
+        let sid = session_id.to_string();
+        assert!(
+            crate::audit::find_event_by_type(&locked, &sid, "git_push_succeeded").unwrap().is_none()
+                && crate::audit::find_event_by_type(&locked, &sid, "git_push_failed").unwrap().is_none(),
+            "a Block opens no socket — no git_push_* terminal event"
+        );
+        let eid: String = locked
+            .query_row("SELECT effect_id FROM pending_confirmations", [], |r| r.get(0))
+            .expect("one pending row");
+        let pc = crate::confirmation::find_pending_confirmation(&locked, &eid)
+            .unwrap()
+            .expect("pending confirmation row");
+        assert!(
+            !pc.frozen_new_oid.trim().is_empty(),
+            "the tainted-path pending row must ALSO carry the frozen new-oid (WG-7)"
+        );
+        drop(locked);
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    /// (c) The server-assembled clean-path pending row is confirm-releasable
+    /// end-to-end: its whole-row MAC validates, the redaction + digest-recompute
+    /// gates pass, and confirm() reaches the Step-7 git.push dispatch. Needs the
+    /// mock host on the push allowlist (the Step-4.8d precheck), so gated behind
+    /// `mock-egress-ca`. The live transfer cannot succeed (no mock receive-pack),
+    /// so it folds into a terminal `git_push_failed` FIRST → ConfirmedButSinkFailed.
+    #[cfg(all(target_os = "linux", feature = "mock-egress-ca"))]
+    #[tokio::test]
+    async fn clean_git_push_pending_row_is_confirm_releasable() {
+        use runtime_core::SessionStatus;
+        let (repo, ws) = setup_git_push_repo("releasable");
+        let (conn, session_id, mut store, mut lei, mut leh, _ss, _ws0, _ti) = harness();
+
+        // Seed a GENUINE session_created root so verify_chain (run inside
+        // confirm) has a real chain to walk — the harness's placeholder head is
+        // not a persisted event.
+        {
+            let locked = conn.lock().expect("lock conn");
+            let root = Event::new(
+                Uuid::new_v4(),
+                None,
+                session_id,
+                "broker".into(),
+                "session_created".into(),
+                Utc::now(),
+                vec![],
+            );
+            let root_hash = crate::audit::append_event(&locked, TEST_KEY, &root, None).unwrap();
+            lei = root.id;
+            leh = root_hash;
+        }
+
+        let plan_node =
+            git_push_node(&mut store, vec![runtime_core::plan_node::TaintLabel::UserTrusted]);
+        let (decision, _ovid, _demoted) = evaluate_plan_node_and_record(
+            &plan_node,
+            &conn,
+            TEST_KEY,
+            session_id,
+            &mut store,
+            &ws,
+            &SessionStatus::Active,
+            &runtime_core::SessionPolicy::allow_all(),
+            &mut lei,
+            &mut leh,
+        )
+        .await
+        .expect("evaluate clean git.push");
+        assert!(matches!(
+            decision,
+            runtime_core::ExecutorDecision::BlockedPendingConfirmation { .. }
+        ));
+
+        // Take sole ownership of the audit Connection so confirm() (which needs
+        // a `&mut Connection`, not the Arc<Mutex>) can run against the SAME DB.
+        let eid: String = {
+            let locked = conn.lock().expect("lock conn");
+            locked
+                .query_row("SELECT effect_id FROM pending_confirmations", [], |r| r.get(0))
+                .expect("one pending row")
+        };
+        let mut conn_owned = Arc::try_unwrap(conn)
+            .expect("sole Arc owner after evaluate returned")
+            .into_inner()
+            .expect("mutex not poisoned");
+
+        let outcome = crate::confirmation::confirm(&mut conn_owned, TEST_KEY, &eid, &ws)
+            .await
+            .expect("confirm completes (not a transport-level Err)");
+        // Released past the integrity gates + precheck into Step-7; the live
+        // transfer then fails (no mock receive-pack) → ConfirmedButSinkFailed.
+        assert_eq!(outcome, crate::confirmation::ConfirmOutcome::ConfirmedButSinkFailed);
+
+        let sid = session_id.to_string();
+        assert!(
+            crate::audit::find_event_by_type(&conn_owned, &sid, "confirm_granted").unwrap().is_some(),
+            "confirm_granted proves the MAC/redaction/digest gates passed and Step-7 ran"
+        );
+        assert!(
+            crate::audit::find_event_by_type(&conn_owned, &sid, "git_push_failed").unwrap().is_some(),
+            "the transfer failure folds into a terminal git_push_failed event FIRST"
+        );
+        assert!(
+            crate::audit::find_event_by_type(&conn_owned, &sid, "confirm_digest_mismatch").unwrap().is_none(),
+            "the clean-path row is NOT rejected by the confirm-time integrity gate"
+        );
+        std::fs::remove_dir_all(&repo).ok();
     }
 }
