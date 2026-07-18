@@ -11,12 +11,27 @@ tokio        = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 anyhow       = { workspace = true }
-# The ONLY reqwest in the workspace (PLANNER-04) — supply-chain-gated
-# (checkpoint pre-cleared by the orchestrator with crates.io evidence:
-# 573,024,238 total downloads, not yanked, maintained by seanmonstar/hyper).
-# default-features = false + rustls-tls-only feature set: NO native-tls /
-# openssl-sys transitive dependency. `rustls` (not `rustls-tls`) is the
-# correct feature name as of reqwest 0.13.4 — the 0.11/0.12-era name
-# `rustls-tls` was renamed; verified via `cargo add --dry-run` before use
-# (deviation, see SUMMARY).
-reqwest      = { version = "=0.13.4", default-features = false, features = ["rustls", "json"] }
+# reqwest for the OpenAI HTTPS call (PLANNER-04) — supply-chain-gated
+# (crates.io evidence: 573,024,238 total downloads, not yanked, maintained by
+# seanmonstar/hyper). default-features = false + NO native-tls / openssl-sys.
+#
+# Phase 37 FIX 1 (supply-chain / TCB integrity): this crate previously used the
+# `rustls` feature, which transitively enables reqwest's `__rustls-aws-lc-rs`
+# path (hyper-rustls default provider + rustls-platform-verifier). Under
+# resolver-3 feature unification that activated the aws-lc-rs C-crypto provider
+# on the SINGLE shared `rustls` build unit that `crates/brokerd` also links —
+# so `cargo tree --workspace -i aws-lc-rs` showed aws-lc-rs ← rustls ← brokerd,
+# pulling untrusted C into the broker TCB even though brokerd itself uses the
+# correct ring recipe. We now match brokerd EXACTLY: `rustls-no-provider`
+# (reqwest bundles NO crypto provider, NO default root store), with the pure-Rust
+# `ring` provider + compiled-in `webpki-roots` supplied explicitly via
+# `use_preconfigured_tls` in openai.rs. This keeps the shared `rustls` unit
+# aws-lc-rs-free workspace-wide. `json` retained for the OpenAI request body.
+reqwest      = { version = "=0.13.4", default-features = false, features = ["rustls-no-provider", "json"] }
+# Pure-Rust `ring` crypto provider for the preconfigured rustls ClientConfig
+# (matches crates/brokerd's recipe, DESIGN §5.1). default-features = false drops
+# rustls's default `aws-lc-rs` provider so only ring C-free crypto is wired.
+rustls       = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# Compiled-in CA trust anchors (DESIGN §5.2) so TLS validation needs no
+# SSL_CERT_* env var or readable system cert store — `env_clear()`-hermetic.
+webpki-roots = "1.0.8"

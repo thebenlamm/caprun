@@ -18,9 +18,27 @@
 
 use llm_planner::{parse_planner_response, PlannerRequest, PlannerResponse};
 use runtime_core::plan_node::ValueId;
+use std::sync::Arc;
 
 /// OpenAI chat-completions endpoint. The sidecar's only network egress.
 const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
+
+/// Preconfigured rustls `ClientConfig`: pure-Rust `ring` provider + compiled-in
+/// `webpki-roots` trust anchors — the SAME recipe `crates/brokerd` uses (Phase 37
+/// FIX 1). Building the reqwest client with this (via `use_preconfigured_tls`)
+/// keeps reqwest's `rustls-no-provider` feature from ever activating the
+/// aws-lc-rs C provider on the shared workspace `rustls` build unit, and needs
+/// no `SSL_CERT_*` env var or system cert store (`env_clear()`-hermetic).
+fn ring_webpki_tls_config() -> rustls::ClientConfig {
+    let roots = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .expect("ring provider supports rustls default protocol versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth()
+}
 
 /// Build the OpenAI chat-completions request body from a `PlannerRequest`
 /// alone (T-21-04 — no literal ever enters this function, because
@@ -114,7 +132,13 @@ pub async fn call_openai(
 ) -> anyhow::Result<PlannerResponse> {
     let body = build_chat_request(req, model);
 
-    let client = reqwest::Client::new();
+    // Build the client with the explicit ring + webpki-roots TLS config (FIX 1)
+    // — NOT reqwest::Client::new(), whose default TLS would (re)activate the
+    // aws-lc-rs provider path this crate deliberately drops.
+    let client = reqwest::Client::builder()
+        .use_preconfigured_tls(ring_webpki_tls_config())
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to build OpenAI HTTP client: {e}"))?;
     let http_response = client
         .post(OPENAI_CHAT_COMPLETIONS_URL)
         .bearer_auth(api_key)

@@ -171,6 +171,50 @@ else
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Gate 5: no aws-lc-rs C-crypto provider anywhere in the workspace build graph
+# (Phase 37 FIX 1 — supply-chain / TCB integrity).
+#
+# The broker (crates/brokerd) links `rustls` and MUST use only the pure-Rust
+# `ring` provider (DESIGN §5.1 "minimize untrusted C in the TCB"). Under
+# resolver-3 feature unification a single workspace member enabling reqwest's
+# `rustls` feature (hyper-rustls default provider + rustls-platform-verifier)
+# re-activates the aws-lc-rs C provider on the SHARED `rustls` build unit that
+# brokerd also links — silently pulling untrusted C into the broker TCB. Every
+# reqwest user (brokerd, cli/caprun-planner) must therefore use
+# `rustls-no-provider` + an explicitly-supplied ring `CryptoProvider`.
+#
+# WORKSPACE scope (NOT `-p brokerd`): feature unification is a workspace-graph
+# property, so the assertion must be over the whole graph. `cargo tree -i` prints
+# the crate as its first output line when present and errors ("did not match any
+# packages") when absent; we match the crate line explicitly (robust to the
+# error text). Also assert reqwest introduces NO openssl-sys (lettre's
+# pre-existing native-tls path is allowed and, on this graph, pulls none).
+# ──────────────────────────────────────────────────────────────────────────────
+echo "Gate 5: checking aws-lc-rs is absent from the workspace build graph ..."
+if command -v cargo >/dev/null 2>&1; then
+    awslc_out=$(cargo tree --workspace -i aws-lc-rs 2>&1 || true)
+    if echo "$awslc_out" | grep -qE '^aws-lc-rs v'; then
+        echo "  FAIL — aws-lc-rs is in the workspace build graph (C crypto in the TCB):"
+        echo "$awslc_out" | sed 's/^/    /'
+        overall=$FAIL
+    else
+        echo "  PASS — aws-lc-rs absent from the workspace build graph (ring-only crypto)"
+    fi
+
+    openssl_out=$(cargo tree --workspace -i openssl-sys 2>&1 || true)
+    # Allowed ONLY via lettre (native-tls). Fail if any reqwest path pulls it.
+    if echo "$openssl_out" | grep -qE '^openssl-sys v' && echo "$openssl_out" | grep -q 'reqwest'; then
+        echo "  FAIL — openssl-sys reached via a reqwest path (native-tls leaked into the HTTP client):"
+        echo "$openssl_out" | sed 's/^/    /'
+        overall=$FAIL
+    else
+        echo "  PASS — no openssl-sys via reqwest (only lettre's native-tls path is allowed)"
+    fi
+else
+    echo "  SKIP — cargo not found on PATH (cannot audit the build graph)"
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Summary
 # ──────────────────────────────────────────────────────────────────────────────
 echo ""
