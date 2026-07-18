@@ -163,6 +163,9 @@ fn seed_pending_file_create_block(
         blocked_arg_names,
         combined_digest: digest,
         workspace_root_path: workspace_root.to_string_lossy().into_owned(),
+        // EMPTY for every non-git.push block (Phase 44-04 added this field;
+        // git.push freezes a real oid here, all other sinks carry no payload oid).
+        frozen_new_oid: String::new(),
         state: PendingConfirmationState::Pending,
         mac: String::new(),
     };
@@ -467,6 +470,9 @@ fn seed_pending_email_send_block(
         blocked_arg_names,
         combined_digest: digest,
         workspace_root_path: workspace_root.to_string_lossy().into_owned(),
+        // EMPTY for every non-git.push block (Phase 44-04 added this field;
+        // git.push freezes a real oid here, all other sinks carry no payload oid).
+        frozen_new_oid: String::new(),
         state: PendingConfirmationState::Pending,
         mac: String::new(),
     };
