@@ -12,8 +12,8 @@ are new families starting at 01).
 
 ### Design Gate
 
-- [ ] **DESIGN-15**: A DESIGN doc (`planning-docs/DESIGN-git-github-http-sinks.md`) pins the mechanism + fail-closed default for all four new sinks — effect-class per sink; `mint_from_http` inbound-taint + session demotion; git config/hook neutralization surface; git.push destination pinning + credential-injection mechanism; the SSRF resolve-and-pin model; the github.pr human auth-grant model; the `env_clear()` TLS-cert allowlist policy; duplicate-PR CAS semantics; and the new `TaintLabel` variants — explicitly closing all 11 design-gate-blocking pitfalls.
-- [ ] **DESIGN-16**: The DESIGN doc clears a fresh **non-self** adversarial code-trace (orchestrator-owned, not a gsd-executor) before any `crates/{executor,brokerd,sandbox,runtime-core}` TCB code is written — per the unbroken v1.0–v1.7 design-gate-first precedent.
+- [x] **DESIGN-15**: A DESIGN doc (`planning-docs/DESIGN-git-github-http-sinks.md`) pins the mechanism + fail-closed default for all four new sinks — effect-class per sink; `mint_from_http` inbound-taint + session demotion; git config/hook neutralization surface; git.push destination pinning + credential-injection mechanism; the SSRF resolve-and-pin model; the github.pr human auth-grant model; the `env_clear()` TLS-cert allowlist policy; duplicate-PR CAS semantics; and the new `TaintLabel` variants — explicitly closing all 11 design-gate-blocking pitfalls.
+- [x] **DESIGN-16**: The DESIGN doc clears a fresh **non-self** adversarial code-trace (orchestrator-owned, not a gsd-executor) before any `crates/{executor,brokerd,sandbox,runtime-core}` TCB code is written — per the unbroken v1.0–v1.7 design-gate-first precedent.
 
 ### Git Sinks
 
@@ -48,10 +48,12 @@ are new families starting at 01).
 Deferred to v1.9+. Tracked but not in this roadmap.
 
 ### HTTP / GitHub breadth
+
 - **HTTP-W-01**: `http.request` write egress (POST/PUT) with request-body I2 gating.
 - **GITHUB-W-01**: `github.pr` merge/comment; multi-repo/fork PRs; OAuth/GitHub-App token provisioning.
 
 ### Planner / Product
+
 - **PLANNER-LOOP-01**: A real LLM planner loop (multi-step tool-use on the v1.4 sidecar seam) driving the composed workflow.
 - **POLICY-01**: A declarative policy file for per-session sink allowlists + arg constraints (hosts, paths, repos).
 - **SDK-01**: A thin SDK/CLI + audit-DAG viewer.
@@ -76,8 +78,8 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DESIGN-15 | Phase 35 | Pending |
-| DESIGN-16 | Phase 35 | Pending |
+| DESIGN-15 | Phase 35 | Complete |
+| DESIGN-16 | Phase 35 | Complete |
 | GIT-01 | Phase 36 | Pending |
 | GIT-02 | Phase 39 | Pending |
 | GIT-03 | Phase 39 | Pending |
@@ -93,6 +95,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | LIVE-04 | Phase 40 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 15 total
 - Mapped to phases: 15
 - Unmapped: 0

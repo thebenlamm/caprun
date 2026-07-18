@@ -1,16 +1,20 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.8
-milestone_name: Git/GitHub Adapters (Effect Breadth II)
-status: roadmapped
-last_updated: "2026-07-18T06:10:00.000Z"
+milestone_name: — Git/GitHub Adapters
+current_phase: 36
+current_phase_name: `git.commit` Sink
+status: planning
+stopped_at: v1.8 roadmap created (Phases 35-40)
+last_updated: "2026-07-18T06:47:55.052Z"
 last_activity: 2026-07-18
+last_activity_desc: Phase 35 complete, transitioned to Phase 36
 progress:
   total_phases: 6
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 2
+  completed_plans: 2
+  percent: 17
 ---
 
 # Project State
@@ -24,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 ## Current Position
 
-Phase: 35 — DESIGN Gate + Fresh Adversarial Code-Trace (not started)
-Plan: —
+Phase: 36 — `git.commit` Sink
+Plan: Not started
 Status: Roadmapped, ready to plan Phase 35
-Last activity: 2026-07-18 — v1.8 roadmap created (`/gsd-roadmapper`), 6 phases (35-40), 15/15 requirements mapped
+Last activity: 2026-07-18 — Phase 35 complete, transitioned to Phase 36
 
 ## Performance Metrics
 
@@ -60,17 +64,22 @@ HIGH confidence):
   Phases 36-40. The ORCHESTRATOR (not a gsd-executor) owns the review spawn. No
   `crates/executor`/`brokerd`/`sandbox`/`runtime-core` TCB code before this gate
   clears.
+
 - **Phase 36** is `git.commit` alone (GIT-01) — lowest risk, reuses the v1.7
   `caprun-exec-launcher` + `mint_from_exec` pattern near-verbatim.
+
 - **Phase 37** is `http.request` GET (HTTP-01..03) — establishes the NEW
   `mint_from_http` inbound-taint mechanism that `github.pr` reuses; must land
   before Phase 38.
+
 - **Phase 38** is `github.pr` (GITHUB-01..04) — reuses the Phase-37 http egress
   infra + inbound mint; adds the bearer token, the new human auth-grant, and
   duplicate-PR CAS.
+
 - **Phase 39** is `git.push` (GIT-02/03) — hardest: network-from-confined-child +
   push-credential injection; done after the credential boundary is proven by
   Phase 38's `github.pr`.
+
 - **Phase 40** is CLI compose + sidecar env_clear() (ENV-01) + the composed live
   Linux proof with adversarial attack legs (LIVE-03/04). Mirrors v1.2 P11, v1.3
   P17, v1.4 P22, v1.5 P25, v1.6 P30, v1.7 P34. Depends on Phases 36-39 all
@@ -83,11 +92,14 @@ HIGH confidence):
   clearing a fresh (non-self) adversarial code-trace. No `crates/executor` /
   `crates/brokerd` / `crates/sandbox` / `crates/runtime-core` TCB code before that
   gate.
+
 - Phase 38 (`github.pr`) is hard-blocked on Phase 37 (`http.request`) landing
   first — `github.pr` reuses `mint_from_http`, which does not exist until Phase 37.
+
 - Phase 39 (`git.push`) is hard-blocked on Phase 38 (`github.pr`) landing first —
   the push-credential-injection design is meant to be proven incrementally after
   the bearer-token boundary is proven by `github.pr`.
+
 - The DESIGN doc must settle two genuine forks before it can clear review: the
   `git.push` network path (net-allowed confined child vs. in-broker git lib —
   reopens default-deny-net) and the rustls crypto provider (aws-lc-rs vs. ring).
