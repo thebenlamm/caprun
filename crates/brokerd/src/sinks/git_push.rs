@@ -10,14 +10,18 @@
 //! whose construction makes `--force`/deletion UNREACHABLE. Every function here
 //! is pure byte manipulation — no socket, no `git` binary, no async — so it is
 //! fully unit-tested on the macOS host (CLAUDE.md: no cfg-gating needed for pure
-//! code). The confined `git pack-objects` PACK bytes + the two-request wire
-//! driver (which CONSUMES these functions through the WG-1 frozen-IP client) are
-//! Plan 44-03.
+//! code). Plan 44-03 ADDED, in this module: the confined `git pack-objects` PACK
+//! bytes (via the WG-2 binary launcher), the broker-env credential + distinct
+//! `GIT_PUSH_HOST_ALLOWLIST` + opaque scrubbed two-phase audit, and the
+//! `invoke_git_push_from_resolved` two-request driver (which CONSUMES the 44-02
+//! substrate through the WG-1 frozen-IP client).
 //!
-//! Until Plan 44-03 wires the driver, these substrate functions are reachable
-//! only from this module's own unit tests, so a non-test `cargo build` sees them
-//! as unused — hence the module-scoped `allow(dead_code)`. It narrows to nothing
-//! once 44-03's dispatch arm consumes them.
+//! The driver's Linux socket/`git` legs are `#[cfg(target_os = "linux")]`; on the
+//! macOS host they stub out, so the substrate parsers/command-list/pack helpers
+//! are reachable there only from this module's own unit tests — a non-test macOS
+//! `cargo build` sees them as unused, hence the module-scoped `allow(dead_code)`.
+//! It narrows once Plan 44-04's confirm-release Step-7 dispatch arm consumes
+//! `invoke_git_push_from_resolved` on the (Linux) live path.
 //!
 //! # Structural `--force`/deletion denial (DESIGN §1.3, RESEARCH §5)
 //!
@@ -54,6 +58,13 @@ use uuid::Uuid;
 use adapter_fs::workspace::WorkspaceRoot;
 
 use crate::audit::append_event;
+use crate::confirmation::ResolvedArg;
+use crate::sinks::http_request;
+
+// The response-body cap primitives (RESEARCH A6) are consumed only by the
+// Linux-gated transfer helpers; the macOS stub does not touch a socket.
+#[cfg(target_os = "linux")]
+use crate::sinks::http_request::{build_pinned_client, check_body_cap, resolve_and_vet, MAX_RESPONSE_BODY_BYTES};
 
 // The confined-launcher machinery (Pattern B) is consumed only by the Linux-gated
 // pack-gen + rev-parse children; the macOS stubs take the same signatures but do
@@ -761,6 +772,277 @@ fn append_push_outcome(
     }
 }
 
+// ---- the frozen-IP two-request transfer driver (DESIGN §1.5/§1.6, WG-7) ----
+
+/// Look up a required named literal from a frozen `ResolvedArg` snapshot,
+/// fail-closed if missing OR empty (mirror `http_write::required_literal`).
+fn required_literal<'a>(resolved_args: &'a [ResolvedArg], name: &str) -> Result<&'a str> {
+    let literal = resolved_args
+        .iter()
+        .find(|a| a.name == name)
+        .map(|a| a.literal.as_str())
+        .ok_or_else(|| anyhow!("git.push: missing required `{name}` arg (fail-closed)"))?;
+    if literal.trim().is_empty() {
+        bail!("git.push: required `{name}` arg is empty (fail-closed)");
+    }
+    Ok(literal)
+}
+
+/// Split a refspec into `(<src>, <dst>)` — the local ref whose new-oid is
+/// resolved, and the remote refname the command-list updates + the old-oid is
+/// looked up for. A bare `<ref>` (no `:`) uses the same name for both. Pure,
+/// host-portable; the force/deletion refusal already ran in `validate_git_refspec`.
+fn split_refspec(refspec: &str) -> (&str, &str) {
+    match refspec.split_once(':') {
+        Some((src, dst)) => (src, dst),
+        None => (refspec, refspec),
+    }
+}
+
+/// The WG-7 anti-TOCTOU equality gate (DESIGN §1.6): the human confirmed a
+/// SPECIFIC new-oid; only that oid may be packed/pushed. A live rev-parse that
+/// differs (a worker advanced the ref between Block and confirm) is a fail-closed
+/// refusal. Pure, host-portable. Called AFTER the advertisement GET + rev-parse
+/// but BEFORE the command-list / pack / POST — so a mismatch attempts NO push.
+fn assert_frozen_oid(live_oid: &str, frozen_new_oid: &str) -> Result<()> {
+    if live_oid != frozen_new_oid {
+        bail!(
+            "git.push: live new-oid does not match the human-confirmed frozen oid \
+             (anti-TOCTOU refusal, WG-7/DESIGN §1.6)"
+        );
+    }
+    Ok(())
+}
+
+/// The confirm-release-only `git.push` transfer driver (RESEARCH A9, DESIGN
+/// §1.5/§1.6/§1.7). The SINGLE transfer entry point — there is NO auto-dispatch
+/// Allowed variant because git.push is ALWAYS confirm-gated (DESIGN §1.6/§1.7);
+/// it is called only from the confirm-release Step-7 dispatch (Plan 44-04).
+///
+/// Mirrors `http_write::invoke_http_write_from_resolved`'s conn/audit/parent-chain
+/// shape (conn pre-locked; `append_push_outcome` folds EVERY failure into a
+/// terminal `git_push_failed` FIRST, then propagates a non-swallowed Err —
+/// P33/P34). It threads the human-confirmed `frozen_new_oid` (from the pending
+/// confirmation, Plan 44-04) into the WG-7 equality gate. Mints NOTHING.
+///
+/// # Arguments
+/// * `conn` — pre-locked broker audit connection (confirm-release is single-shot).
+/// * `frozen_new_oid` — the human-confirmed new-oid (anti-TOCTOU comparand, WG-7).
+/// * `workspace_root` — the workspace the confined pack-gen / rev-parse children
+///   read `.git` from.
+///
+/// # Returns `(git_push_succeeded event_id, hash)` on a clean report-status.
+#[allow(clippy::too_many_arguments)]
+pub async fn invoke_git_push_from_resolved(
+    conn: &Connection,
+    key: &[u8],
+    session_id: Uuid,
+    effect_id: Uuid,
+    resolved_args: &[ResolvedArg],
+    workspace_root: &WorkspaceRoot,
+    frozen_new_oid: &str,
+    parent_id: Uuid,
+    parent_hash: &str,
+) -> Result<(Uuid, String)> {
+    // Freeze the credential + remote up front for the scrub (even a pre-transfer
+    // failure logs through the scrubbed audit fold).
+    let token = git_push_token();
+    let remote = required_literal(resolved_args, "remote").ok().map(str::to_string);
+    let refspec = required_literal(resolved_args, "refspec").ok().map(str::to_string);
+    let remote_for_scrub = remote.clone().unwrap_or_default();
+
+    // Run the transfer; EVERY fallible leg (missing arg, url, allowlist, resolve,
+    // GET, oid-mismatch, refspec, command-list, pack, POST, report-status) folds
+    // into the SAME Result → a terminal `git_push_failed` FIRST (never a dangling
+    // success), then a scrubbed non-swallowed Err (P33/P34).
+    let push_result = run_git_push(
+        remote.as_deref(),
+        refspec.as_deref(),
+        workspace_root,
+        frozen_new_oid,
+        token.as_deref(),
+    )
+    .await;
+
+    append_push_outcome(
+        conn,
+        key,
+        session_id,
+        effect_id,
+        parent_id,
+        parent_hash,
+        push_result,
+        token.as_deref(),
+        &remote_for_scrub,
+    )
+}
+
+/// The transfer body: host-portable fail-closed gates (Err BEFORE any resolve),
+/// then the Linux-gated frozen-IP network + confined-child legs. Kept separate
+/// from the audit fold so a pre-resolve gate failure and a transport failure share
+/// ONE `Result` path.
+async fn run_git_push(
+    remote: Option<&str>,
+    refspec: Option<&str>,
+    workspace_root: &WorkspaceRoot,
+    frozen_new_oid: &str,
+    token: Option<&str>,
+) -> Result<()> {
+    let remote = remote.ok_or_else(|| anyhow!("git.push: missing `remote` arg (fail-closed)"))?;
+    let refspec =
+        refspec.ok_or_else(|| anyhow!("git.push: missing `refspec` arg (fail-closed)"))?;
+
+    // Fail-closed gates BEFORE any DNS resolve or socket (DESIGN §1.5, WG-9):
+    //   validate_url (userinfo/non-https/port/IP-encoding) → the DISTINCT git.push
+    //   host allowlist → the refspec force/deletion value-gate.
+    let host = http_request::validate_url(remote)?;
+    if !is_git_push_host_allowlisted(&host) {
+        bail!("git.push: host {host:?} is not on the git.push host allowlist (fail-closed)");
+    }
+    validate_git_refspec(refspec)?;
+
+    run_git_push_network(remote, refspec, &host, workspace_root, frozen_new_oid, token).await
+}
+
+/// Linux: the frozen-IP two-request exchange + confined-child pack legs (DESIGN
+/// §1.5/§1.6). Resolves ONE SSRF-vetted `SocketAddr` (`resolve_and_vet`, Plan
+/// 44-02), builds ONE redirect-none `build_pinned_client`, and issues BOTH the
+/// info/refs GET and the receive-pack POST through it — `invoke_pinned_post`
+/// (which re-resolves) is NEVER used (RESEARCH A7, DESIGN §1.5). Threads the
+/// WG-7 frozen-oid refusal. Credential is set ONLY on the POST, never followed
+/// across a redirect (redirect-none refuses a 3xx as a non-success status).
+#[cfg(target_os = "linux")]
+async fn run_git_push_network(
+    remote: &str,
+    refspec: &str,
+    host: &str,
+    workspace_root: &WorkspaceRoot,
+    frozen_new_oid: &str,
+    token: Option<&str>,
+) -> Result<()> {
+    // ONE frozen IP; ONE redirect-none client both requests ride (no re-resolve).
+    let pinned = resolve_and_vet(host).await?;
+    let client = build_pinned_client(host, pinned)?;
+
+    let (src_ref, dst_ref) = split_refspec(refspec);
+    let base = remote.trim_end_matches('/');
+
+    // 1. info/refs GET (git-receive-pack advertisement) through the frozen client.
+    let info_url = format!("{base}/info/refs?service=git-receive-pack");
+    let adv_bytes = get_capped(&client, &info_url).await?;
+    let adv = parse_advertisement(&adv_bytes)?;
+    // Advertised old-oid for the target remote ref, or the zero-oid CREATE (WG-6:
+    // the ref is not advertised). The refusal keys on new-oid==zero only, so a
+    // create's zero old-oid is allowed by `build_command_list`.
+    let old_oid = adv
+        .old_oid_for(dst_ref)
+        .map(str::to_string)
+        .unwrap_or_else(|| ZERO_OID_SHA1.to_string());
+
+    // 2. resolve the live local new-oid + the WG-7 anti-TOCTOU equality gate.
+    //    A mismatch refuses HERE — before any command-list / pack / POST.
+    let live_oid = resolve_new_oid(workspace_root, src_ref).await?;
+    assert_frozen_oid(&live_oid, frozen_new_oid)?;
+
+    // 3. structural-denial command-list (force/delete unreachable) + 4. pack from
+    //    the confirmed {advertised old-oid, frozen new-oid} range.
+    let command_list = build_command_list(&old_oid, frozen_new_oid, dst_ref)?;
+    let pack = generate_pack(workspace_root, &old_oid, frozen_new_oid).await?;
+
+    // 5. receive-pack POST: body = command-list ++ PACK, credential ONLY here.
+    let mut body = command_list;
+    body.extend_from_slice(&pack);
+    let post_url = format!("{base}/git-receive-pack");
+    let report = post_receive_pack(&client, &post_url, body, token).await?;
+
+    // 6. parse report-status fail-closed (any `ng`/non-clean `unpack` => Err).
+    parse_report_status(&report)
+}
+
+/// macOS no-op stub — the real socket + `git` legs are Linux-only (CLAUDE.md);
+/// exercised on the Linux gate / compose-verify (Plan 44-04/44-05).
+#[cfg(not(target_os = "linux"))]
+async fn run_git_push_network(
+    _remote: &str,
+    _refspec: &str,
+    _host: &str,
+    _workspace_root: &WorkspaceRoot,
+    _frozen_new_oid: &str,
+    _token: Option<&str>,
+) -> Result<()> {
+    bail!("git.push live transfer is Linux-only (macOS no-op stub); exercised on the Linux gate")
+}
+
+/// Linux: GET `url` through the frozen-IP client and return the byte-capped body.
+/// A non-success status (incl. a redirect-none 3xx) is a fail-closed `Err`.
+#[cfg(target_os = "linux")]
+async fn get_capped(client: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
+    let mut resp = client
+        .get(url)
+        .header("User-Agent", "caprun")
+        .send()
+        .await
+        .map_err(|e| anyhow!("git.push: info/refs GET failed: {e}"))?;
+    if !resp.status().is_success() {
+        bail!(
+            "git.push: info/refs GET returned non-success status {} (redirect refused)",
+            resp.status().as_u16()
+        );
+    }
+    read_body_capped(&mut resp).await
+}
+
+/// Linux: POST the receive-pack body (command-list ++ PACK) through the SAME
+/// frozen-IP client. The credential (broker-env only) is set ONLY here via Basic
+/// auth (`x-access-token:<token>` — the git-over-HTTPS token convention), never
+/// followed across a redirect: a `git-receive-pack` 3xx surfaces as a non-success
+/// status and is REFUSED (redirect-none).
+#[cfg(target_os = "linux")]
+async fn post_receive_pack(
+    client: &reqwest::Client,
+    url: &str,
+    body: Vec<u8>,
+    token: Option<&str>,
+) -> Result<Vec<u8>> {
+    let mut req = client
+        .post(url)
+        .header("Content-Type", "application/x-git-receive-pack-request")
+        .header("Accept", "application/x-git-receive-pack-result")
+        .header("User-Agent", "caprun")
+        .body(body);
+    if let Some(t) = token {
+        req = req.basic_auth("x-access-token", Some(t));
+    }
+    let mut resp = req
+        .send()
+        .await
+        .map_err(|e| anyhow!("git.push: receive-pack POST failed: {e}"))?;
+    if !resp.status().is_success() {
+        bail!(
+            "git.push: receive-pack POST returned non-success status {} (redirect refused)",
+            resp.status().as_u16()
+        );
+    }
+    read_body_capped(&mut resp).await
+}
+
+/// Linux: stream a response body with the SAME fail-closed byte cap as the GET
+/// egress (RESEARCH A6) — never `resp.text()` (unbounded buffer, and a pkt-line
+/// body is not UTF-8).
+#[cfg(target_os = "linux")]
+async fn read_body_capped(resp: &mut reqwest::Response) -> Result<Vec<u8>> {
+    let mut body: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| anyhow!("git.push: reading response body failed: {e}"))?
+    {
+        body.extend_from_slice(&chunk);
+        check_body_cap(body.len(), MAX_RESPONSE_BODY_BYTES)?;
+    }
+    Ok(body)
+}
+
 #[cfg(test)]
 mod pack {
     use super::*;
@@ -1022,6 +1304,118 @@ mod audit {
         assert_eq!(ok.actor, format!("sink:git.push:{effect_id}"));
         assert_eq!(ok.parent_id, Some(parent_id));
         assert!(ok.taint.is_empty(), "the opaque success event carries empty taint");
+    }
+}
+
+#[cfg(test)]
+mod transfer {
+    use super::*;
+    use crate::audit::{find_event_by_type, open_audit_db};
+    use runtime_core::plan_node::{TaintLabel, ValueId};
+
+    const TEST_KEY: &[u8] = b"git-push-transfer-rs-unit-test-key";
+    const OID_FROZEN: &str = "2222222222222222222222222222222222222222";
+    const OID_OTHER: &str = "3333333333333333333333333333333333333333";
+
+    // ---- WG-7 anti-TOCTOU frozen-oid equality gate (host-portable) ----
+
+    #[test]
+    fn assert_frozen_oid_accepts_equal_refuses_differing() {
+        assert!(assert_frozen_oid(OID_FROZEN, OID_FROZEN).is_ok());
+        // A worker that advanced the ref between Block and confirm => refusal.
+        assert!(assert_frozen_oid(OID_OTHER, OID_FROZEN).is_err());
+    }
+
+    // ---- refspec src/dst split (host-portable) ----
+
+    #[test]
+    fn split_refspec_src_dst_and_bare() {
+        assert_eq!(
+            split_refspec("refs/heads/main:refs/heads/prod"),
+            ("refs/heads/main", "refs/heads/prod")
+        );
+        assert_eq!(split_refspec("refs/heads/main"), ("refs/heads/main", "refs/heads/main"));
+    }
+
+    // ---- audit-fold: a fail-closed gate before any resolve folds into a terminal
+    // opaque git_push_failed FIRST, then a scrubbed Err (host-portable: the
+    // git.push allowlist is empty in release, so ANY host is refused BEFORE the
+    // Linux network legs — a POST is never attempted). ----
+
+    fn resolved(remote: &str, refspec: &str) -> Vec<ResolvedArg> {
+        let mk = |name: &str, literal: &str| ResolvedArg {
+            name: name.to_string(),
+            value_id: ValueId::new(),
+            literal: literal.to_string(),
+            taint: vec![TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![],
+        };
+        vec![mk("remote", remote), mk("refspec", refspec)]
+    }
+
+    #[tokio::test]
+    async fn driver_non_allowlisted_host_folds_into_opaque_git_push_failed() {
+        let conn = open_audit_db(":memory:").unwrap();
+        let session_id = Uuid::new_v4();
+        let root = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "confirm_granted".into(),
+            Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(&conn, TEST_KEY, &root, None).unwrap();
+        let effect_id = Uuid::new_v4();
+
+        // A well-formed https remote whose host is NOT on the (empty) git.push
+        // allowlist — refused BEFORE any DNS resolve or socket.
+        const REMOTE: &str = "https://not-on-allowlist.example.com/secret-owner/secret-repo.git";
+        let mut root_dir = std::env::temp_dir();
+        root_dir.push(format!("caprun_gp_driver_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root_dir).unwrap();
+        let ws = WorkspaceRoot::open(&root_dir).unwrap();
+
+        let result = invoke_git_push_from_resolved(
+            &conn,
+            TEST_KEY,
+            session_id,
+            effect_id,
+            &resolved(REMOTE, "refs/heads/main:refs/heads/main"),
+            &ws,
+            OID_FROZEN,
+            root.id,
+            &root_hash,
+        )
+        .await;
+
+        assert!(result.is_err(), "a non-allowlisted host must fail closed, never be swallowed");
+
+        let failed = find_event_by_type(&conn, &session_id.to_string(), "git_push_failed")
+            .unwrap()
+            .expect("git_push_failed must be appended FIRST");
+        assert_eq!(failed.actor, format!("sink:git.push:{effect_id}"));
+        assert_eq!(failed.parent_id, Some(root.id));
+        assert!(
+            find_event_by_type(&conn, &session_id.to_string(), "git_push_succeeded")
+                .unwrap()
+                .is_none(),
+            "no git_push_succeeded when the allowlist gate refuses"
+        );
+
+        // The persisted payload is opaque — no remote-URL material.
+        let payload: String = conn
+            .query_row(
+                "SELECT payload FROM events WHERE event_type = 'git_push_failed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!payload.contains("secret-owner"), "the remote URL must NEVER be in the payload");
+        assert!(!payload.contains("not-on-allowlist"), "no remote host in the payload");
+
+        std::fs::remove_dir_all(&root_dir).ok();
     }
 }
 
