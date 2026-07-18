@@ -349,7 +349,7 @@ fn parse_report_status(body: &[u8]) -> Result<()> {
 ///
 /// Called by BOTH the confirm-precheck (Plan 44-03 Step 4.8d) and the transfer
 /// path so the two cannot drift (the P34 lesson).
-pub(crate) fn validate_git_refspec(refspec: &str) -> Result<()> {
+pub fn validate_git_refspec(refspec: &str) -> Result<()> {
     if refspec.is_empty() {
         bail!("git.push: empty refspec is refused");
     }
@@ -416,7 +416,7 @@ fn validate_refname(refname: &str) -> Result<()> {
 /// advertisement (Plan 44-03), NEVER read from the untrusted local repo
 /// (WG-6/T-44-07). The capability set (`RECEIVE_PACK_CAPS`) carries no force
 /// capability, so a force update is not expressible.
-pub(crate) fn build_command_list(old_oid: &str, new_oid: &str, refname: &str) -> Result<Vec<u8>> {
+pub fn build_command_list(old_oid: &str, new_oid: &str, refname: &str) -> Result<Vec<u8>> {
     // Layer 2 structural denial: a delete is a command whose new-oid is zero.
     if is_zero_oid(new_oid) {
         bail!("git.push: refusing to build a deletion command (new-oid is the zero-oid)");
