@@ -615,7 +615,7 @@ async fn handle_connection(
             // The reduced planner wire (PlanNodeDecisionReduced) never carries
             // the minted exec-output ValueId (T-04-02) — discard it here;
             // the planner connection gets only the `blocked` projection.
-            let (decision, _output_value_id) = evaluate_plan_node_and_record(
+            let (decision, _output_value_id, session_demoted) = evaluate_plan_node_and_record(
                 plan_node,
                 &conn,
                 &key[..],
@@ -627,6 +627,16 @@ async fn handle_connection(
                 &mut last_event_hash,
             )
             .await?;
+            // 37-03 (HTTP-02): mint_from_http already demoted the session
+            // durably; propagate the I1 demotion to the SHARED in-memory cell
+            // (monotonic Draft write, RequestFd exemplar) so a later
+            // same-connection node observes Draft, never a stale Active.
+            if session_demoted {
+                let mut locked_status = session_status
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                *locked_status = SessionStatus::Draft;
+            }
             let blocked = !matches!(decision, runtime_core::ExecutorDecision::Allowed);
             send_response(
                 &mut stream,
@@ -694,6 +704,14 @@ async fn evaluate_plan_node_and_record(
 ) -> anyhow::Result<(
     runtime_core::ExecutorDecision,
     Option<runtime_core::plan_node::ValueId>,
+    // 37-03 (HTTP-02): `true` iff this evaluation performed an I1 session
+    // demotion durably (mint_from_http's atomic UPDATE + session_demoted
+    // event). This function only holds `session_status: &SessionStatus`
+    // (read-only), so it CANNOT write the shared in-memory cell itself; it
+    // returns this signal to the caller (which holds the shared
+    // `Arc<Mutex<SessionStatus>>`) to propagate the demotion to the in-memory
+    // cell (RequestFd exemplar) so a later same-connection node observes Draft.
+    bool,
 )> {
     // The broker mints the effect identity (HARD-06) and passes it into the
     // executor — the executor never mints a Uuid (DESIGN §4 rule 2).
@@ -1104,6 +1122,10 @@ async fn evaluate_plan_node_and_record(
     // locks internally only for its own append_event call, never across the
     // spawn/capture/timeout `.await` sequence.
     let mut output_value_id: Option<runtime_core::plan_node::ValueId> = None;
+    // 37-03 (HTTP-02): set true ONLY by the http.request arm below when
+    // mint_from_http durably demotes the session; returned to the caller to
+    // propagate to the shared in-memory session_status cell.
+    let mut session_demoted = false;
     if matches!(decision, runtime_core::ExecutorDecision::Allowed)
         && plan_node.sink.0 == "process.exec"
     {
@@ -1165,7 +1187,78 @@ async fn evaluate_plan_node_and_record(
         output_value_id = Some(value_id);
     }
 
-    Ok((decision, output_value_id))
+    // 37-03 (HTTP-01/HTTP-02): on an Allowed `http.request` GET decision, fetch
+    // (Plan 02's SSRF-defended invoke_http_get), then mint the response body as
+    // a genuinely-rooted untrusted ValueNode AND demote the session (I1). Unlike
+    // the process.exec/git.commit arms above (which mint via mint_from_exec on a
+    // PRE-appended event), mint_from_http appends its OWN http_response_received
+    // event, so this arm calls it directly with the fetched body (DESIGN §3.3).
+    // The mint call site stays HERE in server.rs (Gate-3-sanctioned locus,
+    // DESIGN §10); invoke_http_get itself never mints and never demotes.
+    if matches!(decision, runtime_core::ExecutorDecision::Allowed)
+        && plan_node.sink.0 == "http.request"
+    {
+        // Resolve the `url` literal from the broker-owned store (schema Step 0
+        // guaranteed `url` present + exact-args). Fail closed on a missing
+        // handle — a broker-internal invariant violation, never a partial effect.
+        let url = plan_node
+            .args
+            .iter()
+            .find(|a| a.name == "url")
+            .and_then(|a| value_store.resolve(&a.value_id))
+            .map(|r| r.literal.clone())
+            .ok_or_else(|| anyhow::anyhow!("http.request: `url` arg did not resolve"))?;
+
+        // Fetch OUTSIDE any conn lock (invoke_http_get is async; NEVER hold the
+        // audit-db mutex across `.await`). On Err (non-allowlisted host,
+        // SSRF-range resolution, redirect, or transport failure — DESIGN §8),
+        // surface a broker-side Deny: log via the eprintln convention (never the
+        // hash chain), append no mint, do NOT demote, return no output value (the
+        // effect did not occur). Raw response text + url never enter any audit
+        // payload (opaque discipline, email_smtp convention).
+        match crate::sinks::http_request::invoke_http_get(&url).await {
+            Ok(body) => {
+                // mint_from_http appends its OWN http_response_received event
+                // FIRST, mints the body rooted on it (non-stapled anchor), then
+                // performs the atomic in-conn I1 demotion. Lock `conn` only for
+                // this synchronous call — never across the fetch `.await` above.
+                let (_response_event_id, _response_hash, value_id, demoted_id, demoted_hash) = {
+                    let locked = conn
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                    crate::quarantine::mint_from_http(
+                        &locked,
+                        key,
+                        value_store,
+                        session_id,
+                        body,
+                        Some(*last_event_id),
+                        Some(last_event_hash),
+                    )?
+                };
+                // Advance the causal chain head to the DEMOTED event (the LAST
+                // event mint_from_http appended) — NOT the response event — so the
+                // next appended event chains linearly and verify_chain's walk
+                // stays unbroken (quarantine.rs caller note; using the response id
+                // would fork the DAG into a sibling of session_demoted).
+                *last_event_id = demoted_id;
+                *last_event_hash = demoted_hash;
+                output_value_id = Some(value_id);
+                // The durable I1 demotion committed inside mint_from_http; signal
+                // the caller (which holds the shared Arc<Mutex<SessionStatus>>) to
+                // propagate it to the in-memory cell so a later same-connection
+                // node observes Draft (RequestFd exemplar, server.rs).
+                session_demoted = true;
+            }
+            Err(e) => {
+                eprintln!(
+                    "[brokerd] http.request GET denied/failed (no mint, no demotion): {e}"
+                );
+            }
+        }
+    }
+
+    Ok((decision, output_value_id, session_demoted))
 }
 
 /// The `CreateSession`-over-IPC disabled-path `Error` response (v1.6
@@ -1679,7 +1772,7 @@ pub async fn dispatch_request(
             // `evaluate_plan_node_and_record` is the SAME evaluation-and-
             // durable-recording entry point both paths share; only the
             // RESPONSE shape differs by caller.
-            let (decision, output_value_id) = evaluate_plan_node_and_record(
+            let (decision, output_value_id, session_demoted) = evaluate_plan_node_and_record(
                 &plan_node,
                 conn,
                 key,
@@ -1691,6 +1784,18 @@ pub async fn dispatch_request(
                 last_event_hash,
             )
             .await?;
+
+            // 37-03 (HTTP-02): mint_from_http already demoted the session
+            // durably (UPDATE + session_demoted event); propagate the I1
+            // demotion to the SHARED in-memory session_status cell (monotonic
+            // Draft write, RequestFd exemplar) so a subsequent same-connection
+            // plan node reads Draft, never a stale Active.
+            if session_demoted {
+                let mut locked_status = session_status
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                *locked_status = SessionStatus::Draft;
+            }
 
             // Only send the decision AFTER the durable append (and any sink
             // invocation) succeeded. output_value_id is Some(..) ONLY on an
