@@ -48,6 +48,7 @@ fn denied_planner_requests() -> Vec<(&'static str, BrokerRequest)> {
                 intent: CaprunIntent::CreateFileFromReport {
                     path: "report.txt".into(),
                 },
+                primary_file_derived: false,
             },
         ),
         (
@@ -318,6 +319,7 @@ mod linux_tests {
                         subject: "x".into(),
                         body: "y".into(),
                     },
+                    primary_file_derived: false,
                 },
             ),
             (
@@ -380,6 +382,7 @@ mod linux_tests {
                 intent: CaprunIntent::CreateFileFromReport {
                     path: "z".into(),
                 },
+                primary_file_derived: false,
             },
         )
         .await;

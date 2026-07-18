@@ -87,7 +87,29 @@ pub enum BrokerRequest {
     /// the broker mints the ValueRecord authoritatively — the worker NEVER constructs
     /// a ValueRecord or sets taint. The per-connection ValueStore ensures the returned
     /// ValueId resolves only within this session's executor evaluation (HARD-03 / Pitfall 1).
-    ProvideIntent { intent: runtime_core::intent::CaprunIntent },
+    ///
+    /// `primary_file_derived` (M7 / WG-1) is the PER-LITERAL provenance of the
+    /// PRIMARY intent literal (the recipient for `SendEmailSummary`, the path for
+    /// `CreateFileFromReport`): `true` iff that literal was read from external
+    /// file/stream content (`--seed-from-file`). The broker's ProvideIntent arm
+    /// mints a file-derived primary literal via `mint_from_read` (TAINTED,
+    /// `ExternalUntrusted` + a real `file_read` event + session-demote) instead
+    /// of `mint_from_intent` (trusted) — closing the laundering path where file
+    /// content minted `UserTrusted` escapes the I2 value-injection Block. Session
+    /// status alone cannot carry this: it is per-session, not per-literal, and a
+    /// file-derived recipient must Block even when an operator-typed literal in
+    /// the same session would be Allowed. Subject/body defaults stay operator-
+    /// trusted (`mint_from_intent`), DISJOINT from file/env ingestion.
+    ///
+    /// A plain required field (deliberately NOT `#[serde(default)]`, mirroring
+    /// `PlanNodeDecision.output_value_id`'s Pitfall-8 discipline): every
+    /// construction/destructure site must explicitly acknowledge the provenance
+    /// signal, so a future caller cannot silently forget to forward it and
+    /// re-open the laundering path.
+    ProvideIntent {
+        intent: runtime_core::intent::CaprunIntent,
+        primary_file_derived: bool,
+    },
     /// Request an open file descriptor for `path`.
     /// The broker opens the file and delivers the fd via SCM_RIGHTS.
     RequestFd { path: String },

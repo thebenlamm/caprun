@@ -97,6 +97,17 @@ async fn main() -> anyhow::Result<()> {
     let intent: CaprunIntent =
         serde_json::from_str(&intent_json).context("parse INTENT (unknown intent variant?)")?;
 
+    // M7 (WG-1): the PER-LITERAL file-derived provenance of the PRIMARY intent
+    // literal (recipient/path), forwarded by caprun main via PRIMARY_SEED_FILE_DERIVED
+    // ("1" iff `--seed-from-file` was present). Threaded onto ProvideIntent so the
+    // broker mints a file-derived primary literal via `mint_from_read` (TAINTED),
+    // never `mint_from_intent` (trusted). Absent/any-other value → false (an
+    // operator-typed literal stays trusted) — fail-safe default is the trusted-arg
+    // behavior, but M7's SECURITY property is the opposite direction (a file-derived
+    // literal Blocks), so a MISSING var only ever under-taints an operator run, never
+    // laundering a file-derived one (caprun main always sets it explicitly).
+    let primary_file_derived = std::env::var("PRIMARY_SEED_FILE_DERIVED").as_deref() == Ok("1");
+
     // Connect to the broker's abstract-namespace UDS.
     //
     // The broker binds this socket in a sibling task after only a best-effort
@@ -155,6 +166,7 @@ async fn main() -> anyhow::Result<()> {
         &std_stream,
         &BrokerRequest::ProvideIntent {
             intent: intent.clone(),
+            primary_file_derived,
         },
     )?;
 

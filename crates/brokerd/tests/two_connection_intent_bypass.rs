@@ -239,6 +239,7 @@ mod linux_tests {
                     subject: "x".into(),
                     body: "y".into(),
                 },
+                primary_file_derived: false,
             },
         )
         .await;
@@ -298,6 +299,7 @@ mod linux_tests {
                     subject: "x".into(),
                     body: "y".into(),
                 },
+                primary_file_derived: false,
             },
         )
         .await;
@@ -432,6 +434,7 @@ mod linux_tests {
                     subject: "x".into(),
                     body: "y".into(),
                 },
+                primary_file_derived: false,
             },
         )
         .await;

@@ -62,6 +62,7 @@ fn provide_intent_request_round_trips() {
             subject: "Q3 summary".to_string(),
             body: "See attached.".to_string(),
         },
+        primary_file_derived: false,
     };
     let json = serde_json::to_value(&req).expect("serialize ProvideIntent request");
     let recovered: BrokerRequest =
@@ -144,6 +145,7 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
                 subject: "Q3 summary".to_string(),
                 body: "See attached.".to_string(),
             },
+            primary_file_derived: false,
         },
         &mut server_end,
         &conn,
@@ -537,6 +539,7 @@ async fn report_derived_claim_dispatch_rejects_non_file_read_root_at_index_0() {
                 subject: "Q3 summary".to_string(),
                 body: "See attached.".to_string(),
             },
+            primary_file_derived: false,
         })
         .await
         .expect("dispatch ProvideIntent must succeed");

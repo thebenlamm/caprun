@@ -274,6 +274,7 @@ async fn allowed_email_send_replay_delivers_once() {
                 subject: "replay-cas test".into(),
                 body: "hello from replay_cas.rs".into(),
             },
+            primary_file_derived: false,
         },
     )
     .await;

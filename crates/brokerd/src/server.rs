@@ -2367,7 +2367,7 @@ pub async fn dispatch_request(
             }
         }
 
-        BrokerRequest::ProvideIntent { intent } => {
+        BrokerRequest::ProvideIntent { intent, primary_file_derived } => {
             // Phase 16 (BLOCKER-1 guard a): ProvideIntent is accepted EXACTLY
             // ONCE and ONLY BEFORE any RequestFd on this connection —
             // broker-enforced, not assumed from an honest worker's startup
@@ -2405,8 +2405,16 @@ pub async fn dispatch_request(
             // below, which is reached by BOTH variants (recipient for SendEmailSummary,
             // path for CreateFileFromReport). Hardcoding "recipient" there would mistag
             // every file.create path.
-            let (primary_literal, primary_role, subject_literal, body_literal): (
+            // `primary_claim_type` (M7 / WG-1): the `mint_from_read` claim_type used
+            // ONLY when `primary_file_derived` — `"email_address"` for the
+            // `SendEmailSummary` recipient (→ `[ExternalUntrusted, EmailRaw]`),
+            // `"relative_path"` for the `CreateFileFromReport` path (→
+            // `[ExternalUntrusted, PathRaw]`). Selected in the SAME arm that
+            // produces `primary_literal`/`primary_role` so a new intent variant is
+            // forced to declare its file-derived taint shape (never default-tagged).
+            let (primary_literal, primary_role, primary_claim_type, subject_literal, body_literal): (
                 String,
+                &'static str,
                 &'static str,
                 Option<String>,
                 Option<String>,
@@ -2414,10 +2422,13 @@ pub async fn dispatch_request(
                 CaprunIntent::SendEmailSummary { recipient, subject, body } => (
                     recipient.clone(),
                     "recipient",
+                    "email_address",
                     Some(subject.clone()),
                     Some(body.clone()),
                 ),
-                CaprunIntent::CreateFileFromReport { path } => (path.clone(), "path", None, None),
+                CaprunIntent::CreateFileFromReport { path } => {
+                    (path.clone(), "path", "relative_path", None, None)
+                }
             };
 
             // Mint inside the per-connection ValueStore (Pitfall 1: minting outside
@@ -2433,20 +2444,58 @@ pub async fn dispatch_request(
                     .lock()
                     .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
 
-                // Causal parent = the connection chain head (DESIGN §0): intent_received
-                // is parent-linked onto session_created, keeping the parent_id chain unbroken.
-                let (recipient_event_id, recipient_hash, recipient_value_id) = mint_from_intent(
-                    &locked,
-                    key,
-                    value_store,
-                    session_id,
-                    primary_literal,
-                    Some(*last_event_id),
-                    Some(last_event_hash),
-                    Some(primary_role.to_string()),
-                )?;
-                *last_event_id = recipient_event_id;
-                *last_event_hash = recipient_hash;
+                // Causal parent = the connection chain head (DESIGN §0): the primary
+                // literal's mint event is parent-linked onto session_created, keeping
+                // the parent_id chain unbroken.
+                //
+                // M7 (WG-1) DISJOINT ROUTING: a FILE-DERIVED primary literal is minted
+                // TAINTED via `mint_from_read` (the existing sole broker taint-mint
+                // site — Gate-3-sanctioned here in server.rs, adding NO second site),
+                // which appends a genuine `file_read` event (`[ExternalUntrusted,
+                // EmailRaw|PathRaw]`), mints a ValueRecord whose `provenance_chain[0]`
+                // roots on that event, and session-demotes (I1) — exactly as a raw
+                // read would. An OPERATOR-TYPED literal stays on `mint_from_intent`
+                // (`UserTrusted`), DISJOINT from file/env ingestion. This is what
+                // makes a file-derived recipient/path I2-Block in a sink arg while an
+                // operator literal in the same arg is Allowed — the value carries
+                // genuine untrusted taint, never a false `UserTrusted` (T-45-01).
+                //
+                // Both arms return `(value_id, next_last_event_id, next_last_event_hash)`.
+                // For `mint_from_read` the next chain head is the `session_demoted`
+                // event it appended LAST (its documented `chain_head_id`/`chain_head_hash`
+                // parent-forking contract) — NOT the `file_read` id — so the subject/body
+                // mints below stay ONE linear chain that `verify_chain` walks.
+                let (recipient_value_id, next_event_id, next_event_hash) = if primary_file_derived {
+                    let claim = Claim {
+                        claim_type: primary_claim_type.to_string(),
+                        value: primary_literal,
+                    };
+                    let (_read_event_id, _read_hash, value_id, chain_head_id, chain_head_hash) =
+                        mint_from_read(
+                            &locked,
+                            key,
+                            value_store,
+                            session_id,
+                            &claim,
+                            Some(*last_event_id),
+                            Some(last_event_hash),
+                        )?;
+                    (value_id, chain_head_id, chain_head_hash)
+                } else {
+                    let (event_id, hash, value_id) = mint_from_intent(
+                        &locked,
+                        key,
+                        value_store,
+                        session_id,
+                        primary_literal,
+                        Some(*last_event_id),
+                        Some(last_event_hash),
+                        Some(primary_role.to_string()),
+                    )?;
+                    (value_id, event_id, hash)
+                };
+                *last_event_id = next_event_id;
+                *last_event_hash = next_event_hash;
 
                 let subject_value_id = match subject_literal {
                     Some(subject) => {
@@ -2644,7 +2693,7 @@ mod tests {
             tokio::net::UnixStream::pair().expect("UnixStream::pair");
 
         dispatch_request(
-            BrokerRequest::ProvideIntent { intent: sample_intent() },
+            BrokerRequest::ProvideIntent { intent: sample_intent(), primary_file_derived: false },
             &mut server_end,
             &conn,
             TEST_KEY,
@@ -2688,7 +2737,7 @@ mod tests {
             tokio::net::UnixStream::pair().expect("UnixStream::pair");
 
         dispatch_request(
-            BrokerRequest::ProvideIntent { intent: sample_intent() },
+            BrokerRequest::ProvideIntent { intent: sample_intent(), primary_file_derived: false },
             &mut server_end,
             &conn,
             TEST_KEY,
@@ -2714,7 +2763,7 @@ mod tests {
         let last_event_hash_before_second = last_event_hash.clone();
 
         dispatch_request(
-            BrokerRequest::ProvideIntent { intent: sample_intent() },
+            BrokerRequest::ProvideIntent { intent: sample_intent(), primary_file_derived: false },
             &mut server_end,
             &conn,
             TEST_KEY,
@@ -2815,7 +2864,7 @@ mod tests {
         let last_event_hash_before_intent = last_event_hash.clone();
 
         dispatch_request(
-            BrokerRequest::ProvideIntent { intent: sample_intent() },
+            BrokerRequest::ProvideIntent { intent: sample_intent(), primary_file_derived: false },
             &mut server_end,
             &conn,
             TEST_KEY,
