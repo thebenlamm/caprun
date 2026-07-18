@@ -248,7 +248,7 @@ mod tests {
     }
 
     /// `None` binds the broker-constructed default: the EXPLICIT deny-by-default
-    /// allowlist of the seven production sinks (never allow-everything, never a
+    /// allowlist of the nine production sinks (never allow-everything, never a
     /// refusal), with a stable hash.
     #[test]
     fn bind_policy_none_binds_broker_default() {
@@ -264,15 +264,19 @@ mod tests {
             "process.exec",
             "git.commit",
             "http.request",
+            "http.request.write",
             "github.pr",
+            "git.push",
         ] {
             assert!(
                 policy.permits_sink(&SinkId(s.to_string())),
                 "broker_default should permit {s}"
             );
         }
-        // ...but is NOT allow-everything: a future/unknown sink is not callable.
-        assert!(!policy.permits_sink(&SinkId("git.push".to_string())));
+        // ...but is NOT allow-everything: a genuinely-unregistered sink is not
+        // callable (git.push became a production sink in Phase 44-01, so it can no
+        // longer serve as the unknown-sink example — mirrors the runtime-core twin).
+        assert!(!policy.permits_sink(&SinkId("deploy.service".to_string())));
         assert_eq!(hash.len(), 64);
         std::fs::remove_dir_all(&ws_root).ok();
     }
