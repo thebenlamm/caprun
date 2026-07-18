@@ -51,7 +51,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use executor::value_store::ValueStore;
 use runtime_core::{Event, PlanNode, TaintLabel};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as TokioCommand;
 use uuid::Uuid;
 
@@ -408,49 +408,20 @@ pub(crate) async fn run_launcher(
     _args: &[String],
     extra_env: &[(&str, &str)],
 ) -> Result<(std::process::ExitStatus, String)> {
-    let mut cmd = TokioCommand::new(launcher_path);
-    // SECURITY (todo 2026-07-17-exec-child-env-clear / Phase 34 gap-closure):
-    // clear the broker's environment so the confined child inherits NONE of the
-    // unconfined `caprun` process's env — notably `OPENAI_API_KEY` and
-    // `CAPRUN_SMTP_*`. Without this, a UserTrusted `env`/`printenv` target would
-    // capture those secrets into `combined_output`, which is minted/audited and
-    // shown verbatim in the confirmation UX. Pass ONLY a minimal safe `PATH` (so
-    // the launcher's `execve` of a bare-name target command still resolves
-    // standard binaries) plus the `EXEC_*` vars the launcher itself reads — those
-    // are non-secret command metadata (command/args/cwd/workspace root), already
-    // known to any human confirmer.
-    cmd.env_clear();
-    cmd.env("PATH", SAFE_EXEC_PATH);
-    cmd.env("EXEC_COMMAND", command).env("EXEC_ARGS_JSON", args_json);
-    // Only set EXEC_CWD when a cwd was actually supplied (32-06 fix): setting
-    // it to an EMPTY STRING when `cwd` is `None` made the launcher call
-    // `Command::current_dir("")`, which performs `chdir("")` — POSIX
-    // `chdir("")` fails with ENOENT (empty path is not a valid path), so
-    // EVERY process.exec invocation with no explicit `cwd` arg failed the
-    // launcher's OWN subsequent `execve` with a misleading "No such file or
-    // directory" error attributed to the TARGET command, not the empty cwd.
-    // Reproduced and confirmed empirically in the 32-06 Linux container run
-    // (cfg-linux-test-blindness: this path never compiled/ran on Mac). Leaving
-    // the var UNSET when `cwd` is `None` makes the launcher's own
-    // `std::env::var("EXEC_CWD").ok()` correctly resolve to `None`, matching
-    // its doc comment's "EXEC_CWD (optional)" contract.
-    if let Some(dir) = cwd {
-        cmd.env("EXEC_CWD", dir);
-    }
-    // Effect-specific neutralization env, layered onto the env_clear()ed child
-    // AFTER the EXEC_* metadata. Empty for process.exec (child env unchanged);
-    // git.commit passes the non-secret GIT_CONFIG_NOSYSTEM/GLOBAL +
-    // GIT_TERMINAL_PROMPT triple (GIT-01, DESIGN §1.5).
-    for (k, v) in extra_env {
-        cmd.env(k, v);
-    }
-    cmd.env(
-            "EXEC_WORKSPACE_ROOT",
-            workspace_root.root_path().to_string_lossy().as_ref(),
-        )
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    // Shared confinement env (env_clear + SAFE_EXEC_PATH + EXEC_* + extra_env +
+    // workspace root + kill_on_drop) — IDENTICAL to `run_launcher_capture_bytes`
+    // (RESEARCH WG-2: the confinement stack is refactored, never forked). This
+    // path merges stdout+stderr as a lossy-UTF-8 String (no stdin); the binary
+    // variant separates them as raw bytes with optional stdin.
+    let mut cmd = configure_confined_command(
+        launcher_path,
+        command,
+        args_json,
+        cwd,
+        workspace_root,
+        extra_env,
+    );
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = cmd
         .spawn()
@@ -500,6 +471,175 @@ pub(crate) async fn run_launcher(
             let _ = child.wait().await; // reap, avoid a zombie
             Err(anyhow::anyhow!(
                 "process.exec: wall-clock timeout ({EXEC_WALL_CLOCK_TIMEOUT:?}) exceeded, child killed"
+            ))
+        }
+    }
+}
+
+/// Configure the confined-launcher `TokioCommand` — the SHARED confinement
+/// machinery both `run_launcher` (merged String) and `run_launcher_capture_bytes`
+/// (separate raw bytes + stdin) call (RESEARCH WG-2: refactor the stack, do NOT
+/// fork it — a drift here is a security regression). Sets `env_clear()` + the
+/// minimal `SAFE_EXEC_PATH` + the `EXEC_*` metadata + effect-specific `extra_env`
+/// + the workspace root + `kill_on_drop`. The caller adds the stdio wiring
+/// (stdout/stderr always piped; the byte variant additionally pipes stdin).
+///
+/// SECURITY (todo 2026-07-17-exec-child-env-clear / Phase 34 gap-closure):
+/// `env_clear()` so the confined child inherits NONE of the unconfined `caprun`
+/// process's env — notably `OPENAI_API_KEY` and `CAPRUN_SMTP_*` (and, for
+/// git.push, `CAPRUN_GIT_PUSH_TOKEN`, which lives broker-side and MUST NOT reach
+/// the pack-gen child). Only a minimal safe `PATH` (so the launcher's `execve` of
+/// a bare-name target command still resolves standard binaries) plus the `EXEC_*`
+/// vars the launcher itself reads — non-secret command metadata — are set.
+fn configure_confined_command(
+    launcher_path: &std::path::Path,
+    command: &str,
+    args_json: &str,
+    cwd: Option<&str>,
+    workspace_root: &WorkspaceRoot,
+    extra_env: &[(&str, &str)],
+) -> TokioCommand {
+    let mut cmd = TokioCommand::new(launcher_path);
+    cmd.env_clear();
+    cmd.env("PATH", SAFE_EXEC_PATH);
+    cmd.env("EXEC_COMMAND", command).env("EXEC_ARGS_JSON", args_json);
+    // Only set EXEC_CWD when a cwd was actually supplied (32-06 fix): setting
+    // it to an EMPTY STRING when `cwd` is `None` made the launcher call
+    // `Command::current_dir("")`, which performs `chdir("")` — POSIX
+    // `chdir("")` fails with ENOENT (empty path is not a valid path), so
+    // EVERY invocation with no explicit `cwd` failed the launcher's OWN
+    // subsequent `execve` with a misleading "No such file or directory" error
+    // attributed to the TARGET command, not the empty cwd. Leaving the var
+    // UNSET when `cwd` is `None` makes the launcher's own
+    // `std::env::var("EXEC_CWD").ok()` correctly resolve to `None`.
+    if let Some(dir) = cwd {
+        cmd.env("EXEC_CWD", dir);
+    }
+    // Effect-specific neutralization env, layered onto the env_clear()ed child
+    // AFTER the EXEC_* metadata. Empty for process.exec (child env unchanged);
+    // git.commit AND git.push pack-gen pass the non-secret GIT_CONFIG_NOSYSTEM/
+    // GLOBAL (+ GIT_TERMINAL_PROMPT) neutralization triple (GIT-01, DESIGN §1.5).
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    cmd.env(
+        "EXEC_WORKSPACE_ROOT",
+        workspace_root.root_path().to_string_lossy().as_ref(),
+    )
+    .kill_on_drop(true);
+    cmd
+}
+
+/// Spawn the confined launcher and capture stdout as RAW BYTES, SEPARATE from
+/// stderr, with OPTIONAL stdin — the WG-2 binary-capable sibling of `run_launcher`
+/// (RESEARCH WG-2, DESIGN §1.1/§1.2). A binary packfile from `git pack-objects`
+/// cannot survive `run_launcher`'s `from_utf8_lossy(&stdout++stderr)`, so this
+/// variant returns `(ExitStatus, Vec<u8> /*stdout*/, Vec<u8> /*stderr*/)` with NO
+/// lossy conversion and NO merge.
+///
+/// It shares the EXACT confinement stack with `run_launcher` via
+/// `configure_confined_command` (env_clear → SAFE_EXEC_PATH → EXEC_* → extra_env
+/// → workspace root → kill_on_drop; the launcher itself self-confines with the
+/// SAME rlimits → Landlock exec-child ruleset → seccomp `exec_child_filter` net-
+/// deny). Same `EXEC_WALL_CLOCK_TIMEOUT`, same COMBINED `MAX_COMBINED_OUTPUT_BYTES`
+/// byte cap (shared counter across stdout+stderr), same `kill_on_drop` backstop.
+///
+/// `stdin` (when `Some`) is written in full and then the pipe is CLOSED (EOF) so a
+/// child reading its stdin to completion — `git pack-objects` reading the tiny
+/// rev-list — terminates. The write is raced together with the capped reads +
+/// `wait()` under the SAME `tokio::join!` to avoid the classic pipe-buffer
+/// deadlock.
+///
+/// Its sole non-test consumer (`git_push::generate_pack`) is Linux-gated, so a
+/// non-test macOS build sees it as unused (mirrors `http_request`'s platform-gated
+/// helpers); on Linux the pack-gen child + the round-trip tests exercise it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) async fn run_launcher_capture_bytes(
+    launcher_path: &std::path::Path,
+    command: &str,
+    args_json: &str,
+    cwd: Option<&str>,
+    workspace_root: &WorkspaceRoot,
+    extra_env: &[(&str, &str)],
+    stdin: Option<&[u8]>,
+) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>)> {
+    let mut cmd = configure_confined_command(
+        launcher_path,
+        command,
+        args_json,
+        cwd,
+        workspace_root,
+        extra_env,
+    );
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    // Pipe stdin only when the caller supplies bytes; otherwise close it (null) so
+    // a child that reads stdin sees an immediate EOF rather than blocking.
+    if stdin.is_some() {
+        cmd.stdin(Stdio::piped());
+    } else {
+        cmd.stdin(Stdio::null());
+    }
+
+    let mut child = cmd
+        .spawn()
+        .context("git.push: failed to spawn caprun-exec-launcher (binary capture)")?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("git.push: launcher stdout was not piped"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("git.push: launcher stderr was not piped"))?;
+    // Take the stdin pipe (present only when `stdin.is_some()`); own the bytes so
+    // the write future is `'static`-free of the borrow.
+    let mut stdin_pipe = child.stdin.take();
+    let stdin_bytes: Option<Vec<u8>> = stdin.map(|s| s.to_vec());
+
+    // Separate capped reads of stdout+stderr, the stdin write, and the child's
+    // `wait()` — all raced together so draining the pipes WHILE writing stdin and
+    // waiting avoids a pipe-buffer deadlock. `total_read` is SHARED so the cap is
+    // the COMBINED byte total, matching `run_launcher`.
+    let total_read = AtomicUsize::new(0);
+    let write_stdin = async {
+        if let Some(mut sink) = stdin_pipe.take() {
+            if let Some(bytes) = stdin_bytes.as_deref() {
+                sink.write_all(bytes)
+                    .await
+                    .context("git.push: writing pack-gen rev-list to child stdin failed")?;
+            }
+            // Drop the pipe → EOF on the child's stdin so it stops reading.
+            drop(sink);
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+    let run = async {
+        tokio::join!(
+            read_capped(stdout, MAX_COMBINED_OUTPUT_BYTES, &total_read),
+            read_capped(stderr, MAX_COMBINED_OUTPUT_BYTES, &total_read),
+            write_stdin,
+            child.wait(),
+        )
+    };
+
+    match tokio::time::timeout(EXEC_WALL_CLOCK_TIMEOUT, run).await {
+        Ok((stdout_result, stderr_result, stdin_result, wait_result)) => {
+            let exit_status = wait_result.context("git.push: child wait() failed")?;
+            stdin_result?;
+            let stdout_bytes = stdout_result
+                .context("git.push: stdout capture failed (byte cap or read error)")?;
+            let stderr_bytes = stderr_result
+                .context("git.push: stderr capture failed (byte cap or read error)")?;
+            Ok((exit_status, stdout_bytes, stderr_bytes))
+        }
+        Err(_elapsed) => {
+            // Wall-clock timeout: kill via the cancellable async `Child` (NOT
+            // `wait_with_output()`, which cannot be killed once a timeout races
+            // it). `.kill_on_drop(true)` is the defense-in-depth backstop.
+            let _ = child.kill().await;
+            let _ = child.wait().await; // reap, avoid a zombie
+            Err(anyhow::anyhow!(
+                "git.push: wall-clock timeout ({EXEC_WALL_CLOCK_TIMEOUT:?}) exceeded, child killed"
             ))
         }
     }
@@ -896,6 +1036,81 @@ mod from_resolved_tests {
             "expected the minimal SAFE_EXEC_PATH in the child env, got:\n{combined_output}"
         );
 
+        std::fs::remove_dir_all(&root).ok();
+    }
+}
+
+// ── run_launcher_capture_bytes (WG-2 binary-capable confined spawn) ──────────
+//
+// Linux-only (same discipline as `from_resolved_tests`): these genuinely spawn
+// the real `caprun-exec-launcher`, whose confinement primitives are macOS no-op
+// stubs. `cargo test -p brokerd` on macOS shows 0 tests from this module —
+// expected (cfg-linux-test-blindness), never a pass. Run via
+// `scripts/mailpit-verify.sh`. Requires `cargo build --workspace` first so the
+// sibling launcher binary exists (cargo-test-workspace-missing-sibling-binary).
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod capture_bytes_tests {
+    use super::*;
+
+    fn temp_workspace(tag: &str) -> (std::path::PathBuf, WorkspaceRoot) {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_capbytes_{tag}_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+        (root, ws)
+    }
+
+    /// A raw binary payload fed on stdin survives INTACT through
+    /// `run_launcher_capture_bytes` (no `from_utf8_lossy` corruption) and comes
+    /// back on stdout via `/bin/cat` — the exact property a binary packfile needs
+    /// (WG-2). The payload contains non-UTF-8 bytes (0xff / 0x80 / NUL) that
+    /// `from_utf8_lossy` would replace with U+FFFD.
+    #[tokio::test]
+    async fn run_launcher_capture_bytes_feeds_stdin_binary_round_trip() {
+        let (root, ws) = temp_workspace("catbin");
+        let launcher = resolve_launcher_path().expect("build the workspace first");
+        let payload: Vec<u8> = vec![0xff, 0x00, 0xfe, 0x01, 0x80, b'p', b'a', b'c', b'k'];
+        let args_json = serde_json::to_string::<Vec<String>>(&vec![]).unwrap();
+
+        let (status, stdout, stderr) = run_launcher_capture_bytes(
+            &launcher,
+            "/bin/cat",
+            &args_json,
+            None,
+            &ws,
+            &[],
+            Some(&payload),
+        )
+        .await
+        .expect("cat must echo the piped stdin bytes");
+
+        assert!(status.success(), "cat should exit 0");
+        assert_eq!(stdout, payload, "stdout bytes must be BYTE-IDENTICAL (non-lossy) to the stdin");
+        assert!(stderr.is_empty(), "cat writes nothing to stderr");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// stdout and stderr are captured SEPARATELY (never merged) — a pack on
+    /// stdout is never polluted by a git progress line on stderr (WG-2).
+    #[tokio::test]
+    async fn run_launcher_capture_bytes_separates_stdout_from_stderr() {
+        let (root, ws) = temp_workspace("sep");
+        let launcher = resolve_launcher_path().expect("build the workspace first");
+        let args: Vec<String> = vec![
+            "-c".into(),
+            "printf OUTDATA; printf ERRDATA >&2".into(),
+        ];
+        let args_json = serde_json::to_string(&args).unwrap();
+
+        let (status, stdout, stderr) =
+            run_launcher_capture_bytes(&launcher, "/bin/sh", &args_json, None, &ws, &[], None)
+                .await
+                .expect("sh must run");
+
+        assert!(status.success());
+        assert_eq!(stdout, b"OUTDATA", "stdout must carry ONLY the stdout stream");
+        assert_eq!(stderr, b"ERRDATA", "stderr must be SEPARATE, never merged into stdout");
         std::fs::remove_dir_all(&root).ok();
     }
 }

@@ -47,6 +47,14 @@
 use anyhow::{anyhow, bail, Result};
 use std::collections::BTreeMap;
 
+use adapter_fs::workspace::WorkspaceRoot;
+
+// The confined-launcher machinery (Pattern B) is consumed only by the Linux-gated
+// pack-gen + rev-parse children; the macOS stubs take the same signatures but do
+// not spawn, so these imports are Linux-only (mirrors the platform split).
+#[cfg(target_os = "linux")]
+use crate::sinks::process_exec::{resolve_launcher_path, run_launcher, run_launcher_capture_bytes};
+
 /// The 4-byte flush-pkt marker terminating a pkt-line stream / section.
 const FLUSH_PKT: &[u8] = b"0000";
 
@@ -405,6 +413,205 @@ pub(crate) fn build_command_list(old_oid: &str, new_oid: &str, refname: &str) ->
     let mut out = pkt_line(payload.as_bytes());
     out.extend_from_slice(flush_pkt());
     Ok(out)
+}
+
+// ---- confined pack generation (Pattern B, RESEARCH §2 step 2/4, A14) ----
+
+/// The git config/hook neutralization triple for a confined `git` child — the
+/// SAME env-only neutralization `git.commit` uses (`git_commit.rs`): strips the
+/// system + global config so no ambient alias/hook fires, and silences any
+/// terminal credential prompt. NON-SECRET constants (the child stays
+/// `env_clear()`ed otherwise, inheriting no `CAPRUN_GIT_PUSH_TOKEN`).
+const GIT_NEUTRALIZE_ENV: [(&str, &str); 3] = [
+    ("GIT_CONFIG_NOSYSTEM", "1"),
+    ("GIT_CONFIG_GLOBAL", "/dev/null"),
+    ("GIT_TERMINAL_PROMPT", "0"),
+];
+
+/// Build the `git pack-objects --revs --stdout` stdin rev-list (RESEARCH §2 step
+/// 4). For an UPDATE the range is `<new>\n^<old>\n` (pack only the objects the
+/// remote lacks); for a CREATE (`old_oid` is the zero-oid — the ref is not
+/// advertised, WG-6) the `^<old>` exclusion line is OMITTED so the full history
+/// reachable from `<new>` is packed. Pure, host-portable.
+fn build_pack_revlist(old_oid: &str, new_oid: &str) -> String {
+    if is_zero_oid(old_oid) {
+        format!("{new_oid}\n")
+    } else {
+        format!("{new_oid}\n^{old_oid}\n")
+    }
+}
+
+/// Generate the binary packfile for `{old_oid}..{new_oid}` as a Pattern-B confined
+/// child (RESEARCH §2 step 4, A14). Runs
+/// `git -c core.hooksPath=/dev/null pack-objects --revs --stdout --thin
+/// --delta-base-offset` under the SAME confinement as `git.commit`:
+///   * net-denied (the unchanged `exec_child_filter` — a pack-gen child NEVER
+///     opens `AF_INET`/`AF_INET6`; the pin is application-layer, the seccomp
+///     net-deny is the §1.8 fail-closed backstop, T-44-09),
+///   * Landlocked to the workspace root (reads `.git`),
+///   * git-config-neutralized (`-c core.hooksPath=/dev/null` on the argv +
+///     `GIT_CONFIG_NOSYSTEM=1`/`GIT_CONFIG_GLOBAL=/dev/null` in the env) so the
+///     untrusted workspace `.git/config` RCE surface stays contained (T-44-11),
+///   * `env_clear()`ed (inherits no `CAPRUN_GIT_PUSH_TOKEN` / broker secret).
+/// The stdin is the tiny text rev-list; stdout is the RAW binary pack captured
+/// intact via the WG-2 `run_launcher_capture_bytes` (never lossy). A non-zero
+/// `pack-objects` exit is a fail-closed `Err` (exit-code gated, A14).
+#[cfg(target_os = "linux")]
+async fn generate_pack(
+    workspace_root: &WorkspaceRoot,
+    old_oid: &str,
+    new_oid: &str,
+) -> Result<Vec<u8>> {
+    let revlist = build_pack_revlist(old_oid, new_oid);
+    let argv: Vec<String> = vec![
+        "-c".into(),
+        "core.hooksPath=/dev/null".into(),
+        "pack-objects".into(),
+        "--revs".into(),
+        "--stdout".into(),
+        "--thin".into(),
+        "--delta-base-offset".into(),
+    ];
+    let args_json = serde_json::to_string(&argv)
+        .map_err(|e| anyhow!("git.push: failed to serialize pack-objects argv: {e}"))?;
+    let cwd = workspace_root.root_path().to_string_lossy().into_owned();
+    let launcher_path = resolve_launcher_path()?;
+
+    let (exit_status, pack, stderr) = run_launcher_capture_bytes(
+        &launcher_path,
+        "git",
+        &args_json,
+        Some(cwd.as_str()),
+        workspace_root,
+        &GIT_NEUTRALIZE_ENV,
+        Some(revlist.as_bytes()),
+    )
+    .await?;
+
+    if !exit_status.success() {
+        // Fail-closed: a non-zero pack-objects exit means NO valid pack was
+        // produced. stderr is captured separately (never merged into the pack)
+        // and folded into the error for diagnosis — the caller scrubs any log.
+        bail!(
+            "git.push: git pack-objects exited non-zero ({exit_status}); no pack generated: {}",
+            String::from_utf8_lossy(&stderr)
+        );
+    }
+    if pack.is_empty() {
+        bail!("git.push: git pack-objects produced an empty pack (fail-closed)");
+    }
+    Ok(pack)
+}
+
+/// macOS no-op stub — the real `git pack-objects` leg is Linux-only (CLAUDE.md);
+/// exercised on the Linux gate / compose-verify.
+#[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
+async fn generate_pack(
+    _workspace_root: &WorkspaceRoot,
+    _old_oid: &str,
+    _new_oid: &str,
+) -> Result<Vec<u8>> {
+    bail!("git.push pack generation is Linux-only (macOS no-op stub); exercised on the Linux gate")
+}
+
+/// Resolve the local source ref to its commit oid via a confined
+/// `git rev-parse --verify <ref>^{{commit}}` child (RESEARCH §2 step 2). TEXT
+/// output, so the existing String `run_launcher` fits verbatim; same config
+/// neutralization + workspace cwd as `generate_pack`. Returns the validated oid.
+/// A non-zero exit (unknown ref) is a fail-closed `Err`. The resolved oid is the
+/// anti-TOCTOU comparand: the driver refuses if it != the human-confirmed frozen
+/// oid (WG-7, DESIGN §1.6).
+#[cfg(target_os = "linux")]
+async fn resolve_new_oid(workspace_root: &WorkspaceRoot, src_ref: &str) -> Result<String> {
+    let argv: Vec<String> = vec![
+        "-c".into(),
+        "core.hooksPath=/dev/null".into(),
+        "rev-parse".into(),
+        "--verify".into(),
+        format!("{src_ref}^{{commit}}"),
+    ];
+    let args_json = serde_json::to_string(&argv)
+        .map_err(|e| anyhow!("git.push: failed to serialize rev-parse argv: {e}"))?;
+    let cwd = workspace_root.root_path().to_string_lossy().into_owned();
+    let launcher_path = resolve_launcher_path()?;
+
+    let (exit_status, output) = run_launcher(
+        &launcher_path,
+        "git",
+        &args_json,
+        Some(cwd.as_str()),
+        workspace_root,
+        &argv,
+        &GIT_NEUTRALIZE_ENV,
+    )
+    .await?;
+
+    if !exit_status.success() {
+        bail!("git.push: git rev-parse could not resolve {src_ref:?} (fail-closed): {output}");
+    }
+    let oid = output.trim().to_string();
+    validate_oid(&oid)?;
+    Ok(oid)
+}
+
+/// macOS no-op stub — the real `git rev-parse` leg is Linux-only (CLAUDE.md).
+#[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
+async fn resolve_new_oid(_workspace_root: &WorkspaceRoot, _src_ref: &str) -> Result<String> {
+    bail!("git.push rev-parse is Linux-only (macOS no-op stub); exercised on the Linux gate")
+}
+
+#[cfg(test)]
+mod pack {
+    use super::*;
+
+    // ---- build_pack_revlist (host-portable, RESEARCH §2 step 4) ----
+
+    const OID_OLD: &str = "1111111111111111111111111111111111111111";
+    const OID_NEW: &str = "2222222222222222222222222222222222222222";
+
+    #[test]
+    fn revlist_update_includes_negative_old_oid() {
+        // An UPDATE packs `<new>` excluding `^<old>` (only the new objects).
+        assert_eq!(build_pack_revlist(OID_OLD, OID_NEW), format!("{OID_NEW}\n^{OID_OLD}\n"));
+    }
+
+    #[test]
+    fn revlist_create_omits_negative_old_oid() {
+        // WG-6: a CREATE (old-oid == zero-oid) OMITS the `^<old>` exclusion — the
+        // full history reachable from `<new>` is packed (SHA-1 and SHA-256 zero).
+        assert_eq!(build_pack_revlist(ZERO_OID_SHA1, OID_NEW), format!("{OID_NEW}\n"));
+        assert_eq!(build_pack_revlist(ZERO_OID_SHA256, OID_NEW), format!("{OID_NEW}\n"));
+        // The zero-oid must NOT appear as a `^<old>` exclusion line.
+        assert!(!build_pack_revlist(ZERO_OID_SHA1, OID_NEW).contains('^'));
+    }
+
+    // ---- generate_pack: exit-code gating (Linux-gated — real git child) ----
+    //
+    // Runs the real `git pack-objects` confined child; macOS stubs it, so this
+    // shows 0 tests on the Mac host (cfg-linux-test-blindness) — expected.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn generate_pack_nonzero_exit_is_err() {
+        // A directory that is NOT a git repo makes `git pack-objects` exit
+        // non-zero → fail-closed Err (never a bogus/empty "pack"). Exercises the
+        // A14 exit-code gate through the WG-2 binary launcher.
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_genpack_norepo_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let result = generate_pack(
+            &ws,
+            "1111111111111111111111111111111111111111",
+            "2222222222222222222222222222222222222222",
+        )
+        .await;
+
+        assert!(result.is_err(), "pack-objects in a non-repo dir must fail closed");
+        std::fs::remove_dir_all(&root).ok();
+    }
 }
 
 #[cfg(test)]

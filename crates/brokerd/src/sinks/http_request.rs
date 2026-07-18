@@ -76,8 +76,10 @@ const HTTP_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// this stops the read and errors — NEVER a silent truncate-and-keep-going.
 // Referenced by the Linux `do_pinned_get` streaming loop and by host-portable
 // unit tests; on a non-test macOS build (stub `do_pinned_get`) it is unreferenced.
+// `pub(crate)` (RESEARCH A6) so `sinks::git_push`'s Linux transfer driver caps the
+// info/refs GET + report-status POST response reads with the SAME fail-closed bound.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-const MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
+pub(crate) const MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 /// Fail-closed body-cap check over a running byte total (FIX 3). Pure,
 /// host-portable — the same predicate the Linux streaming read applies after
@@ -85,8 +87,10 @@ const MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
 /// never a truncation.
 // Consumed by the Linux `do_pinned_get` streaming loop and by a host-portable
 // unit test; on a non-test macOS build (stub `do_pinned_get`) it is unreferenced.
+// `pub(crate)` (RESEARCH A6) so `sinks::git_push`'s Linux transfer driver applies
+// the SAME fail-closed cap predicate to the two push response reads (no re-impl).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn check_body_cap(total: usize, cap: usize) -> Result<()> {
+pub(crate) fn check_body_cap(total: usize, cap: usize) -> Result<()> {
     if total > cap {
         bail!("http.request: response body exceeded the {cap}-byte cap (fail-closed)");
     }
@@ -193,7 +197,11 @@ pub(crate) fn validate_write_method(method: &str) -> Result<()> {
 /// (decimal/octal/hex-packed or plain IP-literal hosts — the WHATWG URL parser
 /// normalizes those to an `Ipv4`/`Ipv6` host, which we reject: only a DNS
 /// domain host is allowed). Pure, host-portable.
-fn validate_url(url: &str) -> Result<String> {
+///
+/// `pub(crate)` (RESEARCH A4) so `sinks::git_push` applies the SAME userinfo/
+/// non-https/explicit-port/IP-encoding refusal to the push remote URL BEFORE any
+/// resolve — a single source of truth, never re-implemented.
+pub(crate) fn validate_url(url: &str) -> Result<String> {
     let parsed = reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("invalid URL: {e}"))?;
 
     if parsed.scheme() != "https" {
