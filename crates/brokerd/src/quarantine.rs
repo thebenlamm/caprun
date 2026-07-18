@@ -852,6 +852,26 @@ pub fn mint_from_exec(
         .map_err(|e| anyhow::anyhow!("mint invariant: {e:?}"))
 }
 
+/// (37-03 RED stub — replaced by the real body in the GREEN commit.)
+#[allow(clippy::too_many_arguments)]
+pub fn mint_from_http(
+    _conn: &rusqlite::Connection,
+    _key: &[u8],
+    _store: &mut ValueStore,
+    _session_id: Uuid,
+    _body: String,
+    _parent_id: Option<Uuid>,
+    _parent_hash: Option<&str>,
+) -> Result<(
+    Uuid,
+    String,
+    runtime_core::plan_node::ValueId,
+    Uuid,
+    String,
+)> {
+    unimplemented!("mint_from_http: RED stub (37-03)")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1931,6 +1951,94 @@ mod tests {
         assert!(
             record.taint.iter().any(|t| t.is_untrusted()),
             "a minted exec-output record must be untrusted"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // mint_from_http tests — genuine-taint anchor (37-03, HTTP-02)
+    // -----------------------------------------------------------------------
+
+    /// Genuine-taint anchor identity test, mirroring `mint_from_read_anchor_identity`
+    /// (DESIGN-git-github-http-sinks.md §3.3/§3.5): after `mint_from_http`,
+    /// `store.resolve(value_id).provenance_chain[0]` MUST equal the returned
+    /// `http_response_received` Event id (the non-stapled value-lineage anchor),
+    /// AND that same id must exist in the audit DAG as an `http_response_received`
+    /// event. The minted record's taint is `[ExternalUntrusted, HttpRaw]`,
+    /// `origin_role` is `Some("http_response")`, and the session row is `Draft`
+    /// after (I1 demotion on untrusted inbound).
+    #[test]
+    fn mint_from_http_anchor_identity() {
+        use crate::session::{create_session, persist_session};
+        use runtime_core::{SeedProvenance, SessionStatus};
+
+        let conn = open_audit_db(":memory:").unwrap();
+        let mut store = ValueStore::default();
+        // A real, Active session row so the demotion has a row to flip.
+        let session = create_session(Uuid::new_v4(), SeedProvenance::TrustedArg);
+        persist_session(&conn, &session).unwrap();
+        assert_eq!(session.status, SessionStatus::Active);
+
+        let (event_id, _event_hash, value_id, _demoted_id, _demoted_hash) = mint_from_http(
+            &conn,
+            TEST_KEY,
+            &mut store,
+            session.id,
+            "hostile response body <script>…</script> attacker@evil.com".to_string(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        // provenance_chain[0] == the returned http_response_received Event id
+        // (genuine, non-stapled anchor — never a fabricated UUID).
+        let record = store.resolve(&value_id).expect("value_id must resolve");
+        assert_eq!(
+            record.provenance_chain[0], event_id,
+            "provenance_chain[0] must equal the http_response_received Event id \
+             (genuine-taint anchor, non-stapled)"
+        );
+
+        // That id must exist in the audit DAG as an http_response_received event.
+        let evt = find_event_by_type(&conn, &session.id.to_string(), "http_response_received")
+            .unwrap()
+            .expect("http_response_received event must exist in the audit DAG");
+        assert_eq!(
+            evt.id, event_id,
+            "audit DAG event id must match the returned http_response_received event id"
+        );
+
+        // Taint is [ExternalUntrusted, HttpRaw]; origin_role is http_response.
+        assert!(
+            record.taint.contains(&TaintLabel::HttpRaw),
+            "taint must contain HttpRaw"
+        );
+        assert!(
+            record.taint.contains(&TaintLabel::ExternalUntrusted),
+            "taint must contain ExternalUntrusted"
+        );
+        assert_eq!(
+            record.origin_role,
+            Some("http_response".to_string()),
+            "origin_role must be Some(\"http_response\")"
+        );
+        assert!(
+            record.taint.iter().any(|t| t.is_untrusted()),
+            "a minted http-response record must be untrusted"
+        );
+
+        // Session demoted to Draft (I1) after mint_from_http.
+        let status_json: String = conn
+            .query_row(
+                "SELECT status FROM sessions WHERE id = ?1",
+                rusqlite::params![session.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let row_status: SessionStatus = serde_json::from_str(&status_json).unwrap();
+        assert_eq!(
+            row_status,
+            SessionStatus::Draft,
+            "session must be demoted to Draft after mint_from_http (I1)"
         );
     }
 }
