@@ -239,7 +239,12 @@ Full detail archived in [`milestones/v1.8-ROADMAP.md`](milestones/v1.8-ROADMAP.m
   4. The workspace-scoped supply-chain **absence assertion** re-runs after the transport-dep choice (`cargo tree --workspace -i` = absent for aws-lc-rs/openssl-sys; ring-only + webpki-roots), enumerating any new transport deps; plus the `compose-verify.sh` feature-OFF guard and the workspace-wide `check-invariants` Gate 4b grep (HYG-01).
   5. **Safety-valve:** if the Phase-41 gate proved no sound fully-unprivileged destination-pinning mechanism exists, GIT-02/03 defer a 3rd time — a disclosed, sign-off-gated deferral (the git.push leg auto-descopes from LIVE-05/06), never shipping arbitrary child egress and never a silent drop.
 
-**Plans**: TBD
+**Plans**: 5 plans (4 waves)
+- [ ] 44-01-PLAN.md — Executor-TCB registration: git.push sink schema {remote,refspec}, CommitIrreversible + routing-sensitive tables, PRODUCTION_SINKS, effect-ontology WG-4 reconcile, llm-planner WG-5 (GIT-02/03)
+- [ ] 44-02-PLAN.md — Protocol substrate: pkt-line encode/decode + advertisement/report-status parsers, validate_git_refspec + structural force/delete denial, WG-1 single-frozen-IP primitive (GIT-02)
+- [ ] 44-03-PLAN.md — Pack-gen + transport: WG-2 binary confined-spawn variant + net-denied pack-objects child, broker-env credential + distinct host-allowlist + opaque scrubbed audit, frozen-IP two-request transfer driver (GIT-02)
+- [ ] 44-04-PLAN.md — Dispatch + confirm-release: always-confirm-gate (no auto-dispatch), new-oid freeze thread (WG-7), Step-4.8d prepare_git_push precheck, commit-range/taint-provenance confirm renderer (WG-8) (GIT-02/03)
+- [ ] 44-05-PLAN.md — Differential acceptance + git-receive-pack mock (WG-9) + HYG-01 supply-chain re-run/compose feature-OFF guard/Gate 4b broadening (GIT-02/03, HYG-01)
 
 ### Phase 45: Thin CLI/SDK + Read-Only Audit-DAG Viewer
 
