@@ -43,30 +43,81 @@ const PRODUCTION_SINKS: &[&str] = &[
 
 /// A coarse allowlist constraint on a single sink argument (POLICY-01).
 ///
-/// Entries are matched as **prefixes**: a literal satisfies the constraint if it
-/// equals or is prefixed by any allowlisted entry. This coarsely covers both the
-/// host case (an allowlisted host is a prefix of the request `url`) and the path
-/// case (an allowlisted path prefix of a `file.write` `path`). It is deliberately
-/// minimal — the fine-grained F1 filesystem containment lives in adapter-fs
-/// (Plan 02), never in this pure type.
+/// Entries are matched **boundary-and-traversal-safely** (NOT a bare textual
+/// prefix): a literal satisfies the constraint iff it EQUALS an allowlisted
+/// entry, OR the entry is a proper prefix of the literal AND the entry ends at a
+/// path boundary — either the entry itself already ends in `/`, or the character
+/// in the literal immediately following the entry is `/`. This closes two
+/// bare-`starts_with` bypasses: an allowlisted host `api.example.com` does NOT
+/// permit `api.example.com.evil.com` (next char is `.`, not a boundary), and an
+/// allowlisted path `/ws/out/` does NOT permit a `..` path-traversal escape.
+///
+/// TRAVERSAL: for a path-style entry (one beginning with `/`), any literal
+/// containing a `..` path segment is refused outright — so `/ws/out/` does NOT
+/// permit `/ws/out/../../etc/passwd`.
+///
+/// This is deliberately the COARSE per-session narrowing gate. Fine-grained
+/// URL-host parsing / SSRF resolve-and-pin remains the sink layer's job
+/// (`http_request.rs`), and fine-grained F1 filesystem containment lives in
+/// adapter-fs (Plan 02) — never in this pure type.
 ///
 /// An EMPTY allowlist denies every literal (fail-closed): a constrained arg with
-/// no permitted prefixes admits nothing.
+/// no permitted entries admits nothing.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ArgConstraint {
-    /// Allowlisted literal values / prefixes (hosts, path prefixes, repos). A
-    /// literal is permitted iff it `starts_with` one of these entries.
+    /// Allowlisted literal values / boundary-safe prefixes (hosts, path
+    /// prefixes, repos). A literal is permitted iff it EQUALS an entry, or an
+    /// entry is a prefix of it terminated at a `/` path boundary (see the
+    /// type-level docs). A `..` path segment in the literal is refused against
+    /// any path-style (`/`-rooted) entry. NOT a bare `starts_with`.
     pub allowed_prefixes: BTreeSet<String>,
 }
 
 impl ArgConstraint {
-    /// Returns `true` iff `literal` matches (equals or is prefixed by) an
-    /// allowlisted entry. An empty allowlist matches nothing (fail-closed).
+    /// Returns `true` iff `literal` matches an allowlisted entry under the
+    /// boundary-and-traversal-safe rule (see the type-level docs). An empty
+    /// allowlist matches nothing (fail-closed).
     fn permits(&self, literal: &str) -> bool {
         self.allowed_prefixes
             .iter()
-            .any(|prefix| literal.starts_with(prefix.as_str()))
+            .any(|entry| entry_permits(entry.as_str(), literal))
     }
+}
+
+/// True iff `entry` permits `literal` under the boundary-and-traversal-safe rule.
+///
+/// - EQUAL: `literal == entry` always permits.
+/// - PREFIX + BOUNDARY: `entry` is a proper prefix of `literal` AND the entry
+///   ends at a path boundary — either `entry` ends in `/`, or the char in
+///   `literal` right after the entry is `/`. So `api.example.com` does NOT match
+///   `api.example.com.evil.com` (next char `.`), while `https://api.example.com`
+///   matches `https://api.example.com/foo` (next char `/`).
+/// - TRAVERSAL: for a path-style `entry` (starts with `/`), a literal carrying a
+///   `..` path segment is refused, so `/ws/out/` cannot permit `/ws/out/../..`.
+///
+/// Pure string logic only (runtime-core is I/O-forbidden) — no URL/path crate.
+fn entry_permits(entry: &str, literal: &str) -> bool {
+    // Traversal guard: a path-style entry never permits a `..`-escaping literal.
+    if entry.starts_with('/') && has_dotdot_segment(literal) {
+        return false;
+    }
+    if literal == entry {
+        return true;
+    }
+    if let Some(remainder) = literal.strip_prefix(entry) {
+        // `remainder` is the tail of `literal` after the matched `entry`. The
+        // match is only valid at a path boundary: either the entry already ends
+        // in `/`, or the very next char of the literal is `/`.
+        return entry.ends_with('/') || remainder.starts_with('/');
+    }
+    false
+}
+
+/// True iff `s` contains a `..` component when split on `/` — i.e. a genuine
+/// path-traversal segment, NOT merely the substring `..` inside a file name
+/// (`file..txt` is fine; `/a/../b` is not).
+fn has_dotdot_segment(s: &str) -> bool {
+    s.split('/').any(|seg| seg == "..")
 }
 
 /// The machine-readable reason a policy evaluation DENIED a call.
@@ -280,6 +331,122 @@ mod tests {
             policy.evaluate(&sink("http.request"), "url", "https://evil.example.net/x"),
             Err(PolicyDenyKind::ArgNotAllowlisted)
         );
+    }
+
+    /// Helper: build a single-sink, single-arg constrained policy.
+    fn constrained_policy(sink_id: &str, arg: &str, entries: &[&str]) -> SessionPolicy {
+        let mut allowed = BTreeSet::new();
+        allowed.insert(sink_id.to_string());
+        let mut prefixes = BTreeSet::new();
+        for e in entries {
+            prefixes.insert((*e).to_string());
+        }
+        let mut arg_c = BTreeMap::new();
+        arg_c.insert(
+            arg.to_string(),
+            ArgConstraint {
+                allowed_prefixes: prefixes,
+            },
+        );
+        let mut arg_constraints = BTreeMap::new();
+        arg_constraints.insert(sink_id.to_string(), arg_c);
+        SessionPolicy {
+            allowed_sinks: allowed,
+            arg_constraints,
+        }
+    }
+
+    #[test]
+    fn host_suffix_bypass_is_denied() {
+        // REGRESSION (Phase 42 FIX 1): a bare `starts_with` allowlist for host
+        // `api.example.com` would WRONGLY permit `api.example.com.evil.com`
+        // (attacker-registered sibling domain). Boundary-safe matching denies it
+        // — the char after the entry is `.`, not a `/` path boundary. FAILS pre-fix.
+        let policy = constrained_policy("http.request", "url", &["api.example.com"]);
+        assert_eq!(
+            policy.evaluate(&sink("http.request"), "url", "api.example.com.evil.com"),
+            Err(PolicyDenyKind::ArgNotAllowlisted),
+            "a suffix-appended sibling domain must NOT satisfy a host allowlist entry"
+        );
+        // Exact host still permits.
+        assert_eq!(
+            policy.evaluate(&sink("http.request"), "url", "api.example.com"),
+            Ok(())
+        );
+        // Host followed by a `/` path boundary still permits.
+        assert_eq!(
+            policy.evaluate(&sink("http.request"), "url", "api.example.com/v1/x"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn scheme_qualified_host_prefix_permits_at_boundary() {
+        // A `https://`-qualified host entry permits any path beneath it (next
+        // char `/`) and the exact bare host, but NOT a suffix-glued sibling.
+        let policy =
+            constrained_policy("http.request", "url", &["https://api.example.com"]);
+        assert_eq!(
+            policy.evaluate(&sink("http.request"), "url", "https://api.example.com/foo"),
+            Ok(())
+        );
+        assert_eq!(
+            policy.evaluate(&sink("http.request"), "url", "https://api.example.com"),
+            Ok(())
+        );
+        assert_eq!(
+            policy.evaluate(
+                &sink("http.request"),
+                "url",
+                "https://api.example.com.evil.net/foo"
+            ),
+            Err(PolicyDenyKind::ArgNotAllowlisted)
+        );
+    }
+
+    #[test]
+    fn path_traversal_escape_is_denied() {
+        // REGRESSION (Phase 42 FIX 1): a bare `starts_with` allowlist for path
+        // prefix `/ws/out/` would WRONGLY permit `/ws/out/../../etc/passwd`
+        // (it textually starts with the entry). The traversal guard refuses any
+        // `..` path segment against a path-style entry. FAILS pre-fix.
+        let policy = constrained_policy("file.write", "path", &["/ws/out/"]);
+        assert_eq!(
+            policy.evaluate(&sink("file.write"), "path", "/ws/out/../../etc/passwd"),
+            Err(PolicyDenyKind::ArgNotAllowlisted),
+            "a `..` escape beneath the allowlisted prefix must be refused"
+        );
+        assert_eq!(
+            policy.evaluate(&sink("file.write"), "path", "/ws/out/../.."),
+            Err(PolicyDenyKind::ArgNotAllowlisted)
+        );
+        // A legitimate file beneath the prefix (entry ends in `/`) still permits.
+        assert_eq!(
+            policy.evaluate(&sink("file.write"), "path", "/ws/out/report.txt"),
+            Ok(())
+        );
+        // A dotted file name that is NOT a `..` segment still permits.
+        assert_eq!(
+            policy.evaluate(&sink("file.write"), "path", "/ws/out/v1.2..final.txt"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn textual_prefix_without_boundary_is_denied() {
+        // `/ws/out` (no trailing slash) must NOT permit `/ws/output/x` — the
+        // char after the entry is `p`, not a `/` boundary (sibling-dir escape).
+        let policy = constrained_policy("file.write", "path", &["/ws/out"]);
+        assert_eq!(
+            policy.evaluate(&sink("file.write"), "path", "/ws/output/secret"),
+            Err(PolicyDenyKind::ArgNotAllowlisted)
+        );
+        // But `/ws/out/x` (boundary `/`) and exact `/ws/out` still permit.
+        assert_eq!(
+            policy.evaluate(&sink("file.write"), "path", "/ws/out/x"),
+            Ok(())
+        );
+        assert_eq!(policy.evaluate(&sink("file.write"), "path", "/ws/out"), Ok(()));
     }
 
     #[test]
