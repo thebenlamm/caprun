@@ -913,6 +913,35 @@ async fn evaluate_plan_node_and_record(
         *last_event_hash = sink_hash;
     }
 
+    // 33-04 (FS-02): on an Allowed `file.write` decision, invoke the live
+    // sink. Mirrors the file.create Allowed-dispatch arm immediately above —
+    // same locking, head-advance, and two-phase (authorize, then effect)
+    // ordering. file.write is terminal and mints no value, so
+    // `output_value_id` is left untouched (stays `None` on this branch,
+    // exactly as the file.create arm leaves it).
+    if matches!(decision, runtime_core::ExecutorDecision::Allowed)
+        && plan_node.sink.0 == "file.write"
+    {
+        let (sink_event_id, sink_hash) = {
+            let locked = conn
+                .lock()
+                .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+            crate::sinks::file_write::invoke_file_write(
+                &locked,
+                key,
+                value_store,
+                session_id,
+                effect_id,
+                plan_node,
+                workspace_root,
+                *last_event_id,
+                last_event_hash,
+            )?
+        };
+        *last_event_id = sink_event_id;
+        *last_event_hash = sink_hash;
+    }
+
     // Phase 16 (CONTROL-01): on an Allowed `email.send` decision,
     // mirror the file.create Allowed-dispatch above — same locking,
     // head-advance, and two-phase (authorize, then effect) ordering.
