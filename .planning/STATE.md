@@ -1,20 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.8
-milestone_name: — Git/GitHub Adapters
-current_phase: 8
-status: Awaiting next milestone
-stopped_at: v1.8 roadmap created (Phases 35-40)
-last_updated: "2026-07-18T11:26:04.817Z"
+milestone: v1.9
+milestone_name: Authorized Egress + Policy & Audit Surface
+status: planning
+last_updated: "2026-07-18T13:27:40.852Z"
 last_activity: 2026-07-18
-last_activity_desc: Milestone v1.8 completed and archived
 progress:
-  total_phases: 6
-  completed_phases: 5
-  total_plans: 16
-  completed_plans: 18
-  percent: 83
-current_phase_name: CLI Compose, Sidecar env_clear() & Composed Live Proof (v1.8 DONE)
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -28,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 ## Current Position
 
-Phase: Milestone v1.8 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-07-18 — Milestone v1.8 completed and archived
+Status: Defining requirements
+Last activity: 2026-07-18 — Milestone v1.9 started
 
 ## Performance Metrics
 
