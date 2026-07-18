@@ -219,6 +219,51 @@ CREATE TABLE IF NOT EXISTS sent_plan_nodes (
     session_id      TEXT NOT NULL,
     sent_at         TEXT NOT NULL
 ) STRICT;
+
+-- Session-scoped capability record for github.pr's bearer token (v1.8 Phase
+-- 38, GITHUB-02, DESIGN-git-github-http-sinks.md §4.3, FORK 3). A bearer
+-- token's authority far exceeds one PR (push / merge / cross-repo read) and
+-- it is a broker-held secret, so authorizing the CREDENTIAL is a DISTINCT
+-- human action from the per-effect I2 confirm of a single PR's (sink, args).
+-- Mirrors the v1.4 `ConnectionRole` capability precedent: a fixed,
+-- fail-closed, default-deny capability decision. Its lifetime is the Session
+-- — keyed by `session_id` (PRIMARY KEY), so a grant on one session NEVER
+-- leaks to another and it does NOT persist across sessions. Written ONLY by
+-- the human `caprun grant` action, NEVER by the worker (the worker has no DB
+-- access — same custody boundary as confirm/deny). Absent a live row here,
+-- `has_github_grant` returns false and the github.pr sink Denies (§8) — a
+-- bare per-effect confirm can NEVER create a PR. `grant_type` pins WHICH
+-- capability ('github.pr'); `granted_at` is rfc3339 for audit legibility.
+CREATE TABLE IF NOT EXISTS session_grants (
+    session_id TEXT PRIMARY KEY,
+    grant_type TEXT NOT NULL,
+    granted_at TEXT NOT NULL
+) STRICT;
+
+-- Content-derived, at-most-once CAS row for the github.pr sink (v1.8 Phase
+-- 38, GITHUB-04, DESIGN-git-github-http-sinks.md §4.5 / §10) — the replay
+-- defense, mirroring HARDEN-03's `sent_plan_nodes` exactly. `idempotency_key`
+-- is the PRIMARY KEY — its value is `github_pr_content_key(...)` below, a
+-- CONTENT-derived digest over the RESOLVED literals (owner, repo, base, head,
+-- title, body) via the vetted `combined_digest` primitive. It is NEVER a
+-- `PlanNode` field and NEVER `effect_id` (D-08 / §c: `effect_id` is minted
+-- fresh via `Uuid::new_v4()` on EVERY resubmit, so an `effect_id`-keyed CAS
+-- catches ZERO replays — proven unsound, not a style choice). A replayed
+-- github.pr carrying the IDENTICAL resolved content computes the SAME key and
+-- hits the PRIMARY KEY constraint on `INSERT`, which is how the dispatch site
+-- (Plans 38-04/38-05) detects and suppresses the duplicate BEFORE any GitHub
+-- API socket opens. `effect_id`/`session_id`/`created_at` are carried for
+-- audit legibility only (NOT part of the CAS identity). There is NO
+-- clear-key-on-failure path (the crash-window MAJOR-5 accepted residual, §11:
+-- a lost PR is the at-most-once fail-closed tradeoff — never a second PR).
+-- Deliberately NOT backfilled for a legacy DB — see
+-- `migrate_created_prs_schema`.
+CREATE TABLE IF NOT EXISTS created_prs (
+    idempotency_key TEXT PRIMARY KEY,
+    effect_id       TEXT NOT NULL,
+    session_id      TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+) STRICT;
 ";
 
 /// Idempotently widen a pre-existing `pending_confirmations` table with the
@@ -365,6 +410,227 @@ fn migrate_sent_plan_nodes_schema(conn: &rusqlite::Connection) -> Result<()> {
     Ok(())
 }
 
+/// Idempotently verify the `session_grants` table exists (v1.8 Phase 38,
+/// GITHUB-02) — the presence-check half of a migration for a pre-existing
+/// (pre-Phase-38) database.
+///
+/// Mirrors `migrate_sent_plan_nodes_schema` / `migrate_chain_anchor_schema`
+/// verbatim: `session_grants` is a WHOLE NEW table with all three columns
+/// present from its very first introduction — there is no column-widening
+/// case. `SCHEMA_DDL`'s `CREATE TABLE IF NOT EXISTS` (run via `execute_batch`
+/// on every `open_audit_db` call, BEFORE this function) already creates it on
+/// a legacy DB missing it; this function's job is the defensive, explicit
+/// `sqlite_master`-gated presence check — fail loudly (never silently) if the
+/// table is somehow still absent after `SCHEMA_DDL` ran.
+///
+/// Deliberately does NOT backfill grants for a legacy database — a grant is a
+/// live, session-scoped human authorization; a pre-Phase-38 session was never
+/// grant-gated and cannot be retroactively "granted" (forward-looking
+/// capability, exactly like `sent_plan_nodes`'s no-backfill rule). Absence of
+/// a row is the correct fail-closed default (`has_github_grant` → false).
+fn migrate_session_grants_schema(conn: &rusqlite::Connection) -> Result<()> {
+    let table_exists: bool = match conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_grants'",
+        [],
+        |_row| Ok(()),
+    ) {
+        Ok(()) => true,
+        Err(rusqlite::Error::QueryReturnedNoRows) => false,
+        Err(e) => return Err(anyhow::Error::from(e)),
+    };
+
+    if !table_exists {
+        return Err(anyhow::anyhow!(
+            "session_grants table missing after SCHEMA_DDL ran — open_audit_db invariant violated"
+        ));
+    }
+    Ok(())
+}
+
+/// Idempotently verify the `created_prs` table exists (v1.8 Phase 38,
+/// GITHUB-04) — the presence-check half of a migration for a pre-existing
+/// (pre-Phase-38) database.
+///
+/// Mirrors `migrate_sent_plan_nodes_schema` verbatim: `created_prs` is a
+/// WHOLE NEW table with all four columns present from its very first
+/// introduction — there is no column-widening case. `SCHEMA_DDL`'s `CREATE
+/// TABLE IF NOT EXISTS` (run BEFORE this function) already creates it on a
+/// legacy DB missing it; this function's job is the defensive, explicit
+/// `sqlite_master`-gated presence check — fail loudly (never silently) if the
+/// table is somehow still absent after `SCHEMA_DDL` ran.
+///
+/// Deliberately does NOT backfill `created_prs` rows for a legacy database's
+/// past sends — a pre-Phase-38 github.pr was never CAS-protected (this is
+/// forward-looking hardening, not retroactive), exactly analogous to
+/// `sent_plan_nodes`'s own "no backfill" rule.
+fn migrate_created_prs_schema(conn: &rusqlite::Connection) -> Result<()> {
+    let table_exists: bool = match conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'created_prs'",
+        [],
+        |_row| Ok(()),
+    ) {
+        Ok(()) => true,
+        Err(rusqlite::Error::QueryReturnedNoRows) => false,
+        Err(e) => return Err(anyhow::Error::from(e)),
+    };
+
+    if !table_exists {
+        return Err(anyhow::anyhow!(
+            "created_prs table missing after SCHEMA_DDL ran — open_audit_db invariant violated"
+        ));
+    }
+    Ok(())
+}
+
+/// Record a durable, session-scoped github.pr auth-grant (v1.8 Phase 38,
+/// GITHUB-02, DESIGN §4.3) AND append an OPAQUE `github_grant_authorized`
+/// audit event chained on the session's current chain head.
+///
+/// This is the WRITE half of the NEW capability model; `has_github_grant`
+/// below is the READ/gate half both dispatch paths (Plans 38-04/38-05)
+/// consult. Called ONLY from the human `caprun grant` action
+/// (`cli/caprun/src/main.rs`), NEVER from the worker.
+///
+/// Two writes under the caller's connection:
+/// 1. `INSERT OR IGNORE` the `session_grants` row (`grant_type` "github.pr",
+///    `granted_at` rfc3339). `INSERT OR IGNORE` makes a repeated grant on the
+///    SAME session idempotent — no error, no duplicate capability (the
+///    PRIMARY KEY on `session_id` collapses it).
+/// 2. ONLY when the row was freshly inserted (`rows_affected == 1`), append an
+///    OPAQUE `github_grant_authorized` Event (actor `grant:github.pr:{sid}`,
+///    empty taint) chained on the session's current chain head via
+///    `append_event`. Gating the event on the fresh insert keeps a replayed
+///    grant a genuine no-op (never grows the chain with duplicate authorize
+///    events), mirroring the CAS "suppress on replay" discipline.
+///
+/// The event payload carries NO token/secret — only the fact that the grant
+/// was authorized (the token itself is handled in Plan 38-03, never persisted
+/// into any audit payload here).
+pub fn record_github_grant(
+    conn: &rusqlite::Connection,
+    key: &[u8],
+    session_id: &str,
+) -> Result<()> {
+    let rows_affected = conn.execute(
+        "INSERT OR IGNORE INTO session_grants (session_id, grant_type, granted_at) \
+         VALUES (?1, ?2, ?3)",
+        rusqlite::params![session_id, "github.pr", chrono::Utc::now().to_rfc3339()],
+    )?;
+
+    // Replay-suppression: only emit the authorize event on a FRESH grant.
+    if rows_affected == 1 {
+        let session_uuid = uuid::Uuid::parse_str(session_id)?;
+        let (parent_id, parent_hash) = match current_chain_head(conn, session_id)? {
+            Some((id, hash)) => (Some(id), Some(hash)),
+            None => (None, None),
+        };
+        let event = Event::new(
+            uuid::Uuid::new_v4(),
+            parent_id,
+            session_uuid,
+            format!("grant:github.pr:{session_id}"),
+            "github_grant_authorized".to_string(),
+            chrono::Utc::now(),
+            vec![],
+        );
+        append_event(conn, key, &event, parent_hash.as_deref())?;
+    }
+    Ok(())
+}
+
+/// Fail-closed existence check for a session's github.pr auth-grant (v1.8
+/// Phase 38, GITHUB-02) — the SINGLE gate both dispatch paths (Plans
+/// 38-04/38-05) consult before using the bearer token.
+///
+/// Returns `true` iff a `session_grants` row exists for `session_id`
+/// (session-scoped: a grant on session A does NOT make this true for session
+/// B). Returns `false` on a fresh DB, an ungranted session, OR any query
+/// error — fail-closed by construction (`query_row`'s `QueryReturnedNoRows`
+/// and every other error map to `false`, never `true`). Absent a `true`
+/// here, the github.pr sink Denies (§8) — a bare confirm cannot create a PR.
+pub fn has_github_grant(conn: &rusqlite::Connection, session_id: &str) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM session_grants WHERE session_id = ?1",
+        rusqlite::params![session_id],
+        |_row| Ok(()),
+    )
+    .is_ok()
+}
+
+/// Content-derived idempotency key for a github.pr duplicate-suppression CAS
+/// row (v1.8 Phase 38, GITHUB-04, DESIGN §4.5).
+///
+/// Built by feeding the SIX resolved `(name, literal)` pairs
+/// (owner/repo/base/head/title/body) into the vetted
+/// `crate::confirmation::combined_digest` primitive — REUSED deliberately, NOT
+/// re-implemented and NOT a plain concatenation. Unlike
+/// `plan_node_idempotency_key` (which hashes fixed-width UUID `value_id`s and
+/// schema-fixed arg names, so plain concat is safe there), these six values
+/// are ATTACKER-INFLUENCEABLE variable-length literals (`title`/`body`
+/// especially): plain concatenation would be partition-blind
+/// (`owner="ab",repo="c"` colliding with `owner="a",repo="bc"`).
+/// `combined_digest`'s per-field fixed-width inner-hash discipline
+/// (`sha256(name)‖sha256(literal)` at 64-hex width, then an outer hash) is
+/// exactly the defense against that collision — so the key is DERIVED from
+/// resolved content, is order-stable, and changes if ANY one field changes.
+///
+/// The key is NEVER a `PlanNode` field and NEVER `effect_id`-keyed (§4.5).
+pub fn github_pr_content_key(
+    owner: &str,
+    repo: &str,
+    base: &str,
+    head: &str,
+    title: &str,
+    body: &str,
+) -> String {
+    let pairs = [
+        ("owner", owner),
+        ("repo", repo),
+        ("base", base),
+        ("head", head),
+        ("title", title),
+        ("body", body),
+    ];
+    crate::confirmation::combined_digest(&pairs)
+}
+
+/// At-most-once CAS reservation for a github.pr, committed BEFORE the GitHub
+/// API call (v1.8 Phase 38, GITHUB-04) — the SINGLE INSERT-before-effect CAS
+/// both dispatch sites (Plans 38-04/38-05) call, mirroring HARDEN-03's
+/// `email.send` `sent_plan_nodes` `INSERT OR IGNORE ... rows_affected`
+/// pattern.
+///
+/// `idempotency_key` MUST be a `github_pr_content_key` (content-derived).
+/// Performs `INSERT OR IGNORE INTO created_prs ...` and returns
+/// `rows_affected == 1`:
+/// - `true`  == FRESH: this dispatch owns the effect and may open the API
+///   socket.
+/// - `false` == REPLAY: an identical-content submission already reserved this
+///   key; the PRIMARY KEY collision is suppressed and the caller MUST NOT make
+///   a second API call (at-most-once per PR content).
+///
+/// There is NO clear-key-on-failure path — a reserved-but-failed PR stays
+/// reserved (the accepted crash-window tradeoff §11: a lost PR, never a
+/// second PR).
+pub fn reserve_created_pr(
+    conn: &rusqlite::Connection,
+    idempotency_key: &str,
+    effect_id: &str,
+    session_id: &str,
+) -> Result<bool> {
+    let rows_affected = conn.execute(
+        "INSERT OR IGNORE INTO created_prs (idempotency_key, effect_id, session_id, created_at) \
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![
+            idempotency_key,
+            effect_id,
+            session_id,
+            chrono::Utc::now().to_rfc3339()
+        ],
+    )?;
+    Ok(rows_affected == 1)
+}
+
 /// Content-derived idempotency key for the trusted (Allowed) sink-dispatch
 /// CAS row (v1.6 Phase 29, HARDEN-03).
 ///
@@ -433,6 +699,8 @@ pub fn open_audit_db(path: &str) -> Result<rusqlite::Connection> {
     migrate_pending_confirmations_schema(&conn)?;
     migrate_chain_anchor_schema(&conn)?;
     migrate_sent_plan_nodes_schema(&conn)?;
+    migrate_session_grants_schema(&conn)?;
+    migrate_created_prs_schema(&conn)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     Ok(conn)
 }
@@ -1884,5 +2152,274 @@ mod tests {
             key_first, key_second,
             "identical inputs must produce the identical key across calls"
         );
+    }
+
+    // ── GITHUB-02 (Task 1): session auth-grant capability ───────────────────
+
+    /// has_github_grant is false on a fresh DB (fail-closed default — absent a
+    /// grant the github.pr sink Denies, §8).
+    #[test]
+    fn github_grant_false_on_fresh_db() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+        assert!(
+            !has_github_grant(&conn, &session_id.to_string()),
+            "a fresh DB with no grant row must report has_github_grant == false"
+        );
+    }
+
+    /// record_github_grant inserts the capability AND appends an OPAQUE
+    /// `github_grant_authorized` event; afterward has_github_grant == true and
+    /// the event carries NO secret in its payload/taint.
+    #[test]
+    fn github_grant_recorded_makes_has_true_and_emits_opaque_event() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+
+        assert!(!has_github_grant(&conn, &session_id.to_string()));
+        record_github_grant(&conn, TEST_KEY, &session_id.to_string())
+            .expect("record_github_grant");
+        assert!(
+            has_github_grant(&conn, &session_id.to_string()),
+            "after record_github_grant, has_github_grant must be true"
+        );
+
+        // The grant event exists, is opaque (empty taint, no token), and its
+        // actor names the grant capability + session.
+        let event = find_event_by_type(
+            &conn,
+            &session_id.to_string(),
+            "github_grant_authorized",
+        )
+        .expect("find_event_by_type")
+        .expect("a github_grant_authorized event must exist");
+        assert!(
+            event.taint.is_empty(),
+            "the grant event must be opaque — empty taint set"
+        );
+        assert_eq!(
+            event.actor,
+            format!("grant:github.pr:{session_id}"),
+            "the grant event actor must name the grant capability and session"
+        );
+        // The genuine, normally-appended chain still verifies true (the grant
+        // event chained correctly on the session head + anchor upserted).
+        assert!(
+            verify_chain(&conn, &session_id.to_string(), TEST_KEY),
+            "the grant event must leave a verifiable, anchored chain"
+        );
+    }
+
+    /// Session-scoped: a grant on session A must NOT leak to session B (the
+    /// capability is keyed by session_id — the load-bearing GITHUB-02 claim).
+    #[test]
+    fn github_grant_is_session_scoped() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_a = Uuid::new_v4();
+        let session_b = Uuid::new_v4();
+
+        record_github_grant(&conn, TEST_KEY, &session_a.to_string())
+            .expect("record grant for A");
+
+        assert!(
+            has_github_grant(&conn, &session_a.to_string()),
+            "session A must have the grant"
+        );
+        assert!(
+            !has_github_grant(&conn, &session_b.to_string()),
+            "a grant on session A must NOT leak to session B (session-scoped)"
+        );
+    }
+
+    /// record_github_grant is idempotent: a second grant for the SAME session
+    /// does not error and does not duplicate the capability row (INSERT OR
+    /// IGNORE via the session_id PRIMARY KEY), and no duplicate authorize
+    /// event is appended on the replay.
+    #[test]
+    fn github_grant_record_is_idempotent() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4();
+
+        record_github_grant(&conn, TEST_KEY, &session_id.to_string())
+            .expect("first grant");
+        record_github_grant(&conn, TEST_KEY, &session_id.to_string())
+            .expect("second grant must not error (idempotent)");
+
+        let row_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM session_grants WHERE session_id = ?1",
+                rusqlite::params![session_id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("count session_grants rows");
+        assert_eq!(
+            row_count, 1,
+            "a repeated grant must not duplicate the capability row"
+        );
+
+        // The replay must NOT append a second authorize event.
+        let event_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM events \
+                 WHERE session_id = ?1 AND event_type = 'github_grant_authorized'",
+                rusqlite::params![session_id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("count grant events");
+        assert_eq!(
+            event_count, 1,
+            "a replayed grant must not append a duplicate github_grant_authorized event"
+        );
+    }
+
+    /// The `session_grants` migration is idempotent and re-runnable across a
+    /// broker restart against the same DB file (mirrors
+    /// `sent_plan_nodes_migration_is_idempotent`).
+    #[test]
+    fn github_grant_migration_is_idempotent() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("caprun_session_grants_{}.db", Uuid::new_v4()));
+
+        let conn = open_audit_db(path.to_str().unwrap()).expect("open_audit_db (first)");
+        let session_id = Uuid::new_v4();
+        record_github_grant(&conn, TEST_KEY, &session_id.to_string())
+            .expect("record grant against freshly-created table");
+        drop(conn);
+
+        // Re-open (simulating a broker restart) — the migration must not error
+        // and the grant row must survive (no table recreation / data loss).
+        let conn2 = open_audit_db(path.to_str().unwrap())
+            .expect("open_audit_db (second, already-migrated) must not error");
+        assert!(
+            has_github_grant(&conn2, &session_id.to_string()),
+            "the grant recorded before the second open must survive re-migration"
+        );
+
+        drop(conn2);
+        std::fs::remove_file(&path).ok();
+    }
+
+    // ── GITHUB-04 (Task 2): duplicate-PR CAS ─────────────────────────────────
+
+    /// github_pr_content_key is deterministic: identical
+    /// (owner,repo,base,head,title,body) literals produce the IDENTICAL key
+    /// across calls.
+    #[test]
+    fn created_pr_content_key_is_deterministic() {
+        let k1 = github_pr_content_key("octo", "hello", "main", "feature", "Add X", "body text");
+        let k2 = github_pr_content_key("octo", "hello", "main", "feature", "Add X", "body text");
+        assert_eq!(
+            k1, k2,
+            "identical PR content must produce the identical content key"
+        );
+    }
+
+    /// Changing ANY one of the six fields changes the key (field-change
+    /// sensitivity — a replay is only suppressed for byte-identical content).
+    #[test]
+    fn created_pr_content_key_changes_when_any_field_changes() {
+        let base = github_pr_content_key("octo", "hello", "main", "feature", "Add X", "body");
+        let variants = [
+            github_pr_content_key("OCTO", "hello", "main", "feature", "Add X", "body"),
+            github_pr_content_key("octo", "HELLO", "main", "feature", "Add X", "body"),
+            github_pr_content_key("octo", "hello", "MAIN", "feature", "Add X", "body"),
+            github_pr_content_key("octo", "hello", "main", "FEATURE", "Add X", "body"),
+            github_pr_content_key("octo", "hello", "main", "feature", "Add Y", "body"),
+            github_pr_content_key("octo", "hello", "main", "feature", "Add X", "BODY"),
+        ];
+        for (i, v) in variants.iter().enumerate() {
+            assert_ne!(
+                &base, v,
+                "changing field #{i} must change the content key"
+            );
+        }
+    }
+
+    /// Partition-blindness resistance: `owner="ab",repo="c"` must NOT collide
+    /// with `owner="a",repo="bc"` — this holds ONLY because the key is built
+    /// on `combined_digest` (per-field fixed-width inner hash), NOT a plain
+    /// concatenation.
+    #[test]
+    fn created_pr_content_key_resists_partition_blindness() {
+        let a = github_pr_content_key("ab", "c", "main", "feature", "t", "b");
+        let b = github_pr_content_key("a", "bc", "main", "feature", "t", "b");
+        assert_ne!(
+            a, b,
+            "a boundary shift between owner and repo must change the key \
+             (combined_digest defends partition-blindness)"
+        );
+    }
+
+    /// reserve_created_pr returns true on the first insert of a key and false
+    /// on a replay of the SAME key (PRIMARY KEY violation suppressed via
+    /// INSERT OR IGNORE) — at-most-once per PR content.
+    #[test]
+    fn created_pr_reserve_fresh_then_suppressed() {
+        let conn = open_audit_db(":memory:").expect("open_audit_db");
+        let session_id = Uuid::new_v4().to_string();
+        let key = github_pr_content_key("octo", "hello", "main", "feature", "Add X", "body");
+
+        // First reservation (a fresh effect_id) — this dispatch owns the PR.
+        let fresh = reserve_created_pr(&conn, &key, &Uuid::new_v4().to_string(), &session_id)
+            .expect("first reserve");
+        assert!(fresh, "the first reservation of a content key must be fresh (true)");
+
+        // Replay: identical content key, DIFFERENT (fresh) effect_id — the CAS
+        // must still suppress it (proving it is content-keyed, not
+        // effect_id-keyed).
+        let replay = reserve_created_pr(&conn, &key, &Uuid::new_v4().to_string(), &session_id)
+            .expect("replay reserve");
+        assert!(
+            !replay,
+            "a replay of the same content key must be suppressed (false) even \
+             under a fresh effect_id"
+        );
+
+        // Exactly one row persisted for the key.
+        let row_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM created_prs WHERE idempotency_key = ?1",
+                rusqlite::params![key],
+                |row| row.get(0),
+            )
+            .expect("count created_prs rows");
+        assert_eq!(row_count, 1, "at most one CAS row per content key");
+    }
+
+    /// The `created_prs` migration is idempotent across a broker restart
+    /// against the same DB file (mirrors `sent_plan_nodes_migration_is_idempotent`).
+    #[test]
+    fn created_pr_migration_is_idempotent() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("caprun_created_prs_{}.db", Uuid::new_v4()));
+
+        let conn = open_audit_db(path.to_str().unwrap()).expect("open_audit_db (first)");
+        let key = github_pr_content_key("octo", "hello", "main", "feature", "Add X", "body");
+        assert!(
+            reserve_created_pr(&conn, &key, &Uuid::new_v4().to_string(), &Uuid::new_v4().to_string())
+                .expect("reserve against freshly-created table"),
+            "first reserve on the fresh table must be true"
+        );
+        drop(conn);
+
+        // Re-open — migration must not error and the reserved row must survive,
+        // so a second reserve of the same key is suppressed (false).
+        let conn2 = open_audit_db(path.to_str().unwrap())
+            .expect("open_audit_db (second, already-migrated) must not error");
+        let replay = reserve_created_pr(
+            &conn2,
+            &key,
+            &Uuid::new_v4().to_string(),
+            &Uuid::new_v4().to_string(),
+        )
+        .expect("reserve after reopen");
+        assert!(
+            !replay,
+            "the row reserved before the second open must survive re-migration \
+             (replay suppressed)"
+        );
+
+        drop(conn2);
+        std::fs::remove_file(&path).ok();
     }
 }
