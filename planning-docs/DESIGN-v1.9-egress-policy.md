@@ -402,4 +402,218 @@ only; v1.8's table (its §8) carries forward for the shared GET/`github.pr`/SSRF
 | policy vs I2 (POLICY-02) | invariant | policy narrows which sinks/args are callable | policy PERMIT never disables I2 — a tainted sensitive arg on a permitted call still Blocks; policy can only add a Deny, never remove a Block |
 | policy-deny outcome (POLICY-01) | structural | distinct machine-checkable policy-deny, separate from an I2 Block | sink/arg not permitted by policy → policy-Deny (distinct terminal tag), before/independent of I2 |
 
-<!-- gsd:policy-section-pending (Task 2) -->
+---
+
+## §5. The policy↔I2 boundary — pre-I2 narrowing gate + POLICY-03 binding (POLICY-01/02/03)
+
+This is the **#1 adversarial-trace risk** of the milestone (T-41-02): a design that lets
+policy override or disable I2 would convert the trust surface into a bypass. This section
+pins **exactly** what policy can and cannot do, and where policy comes from.
+
+### 5.1 Policy is a PRE-I2 narrowing gate — it decides WHICH sinks/args are callable (POLICY-01)
+
+**DECISION.** A minimal declarative **per-session policy** — a **hardcoded-schema struct/file
+(NOT Cedar)** — specifies which sinks are callable + coarse arg constraints (allowlisted
+hosts / paths / repos). It is a **pre-I2 narrowing gate**: it can only *remove* authority
+(refuse a sink/arg that would otherwise be callable), never *add* it. A sink or arg not
+permitted by the session's policy is refused with a **DISTINCT, machine-checkable policy-deny
+outcome** — a terminal event/decision tag **separate from an I2 Block** (POLICY-01). The two
+mechanisms are independently attributable: a policy-deny says "this call was never
+permitted"; an I2 Block says "this permitted call carried an attacker-tainted value into a
+sensitive arg." Phase 42 introduces a distinct `DenyReason::PolicyDeny` (or equivalent),
+never conflated with the I2 Block variant.
+
+### 5.2 Policy can NEVER disable or override I2 — I2 stays HARDCODED, unconditional (POLICY-02, LOCKED)
+
+**DECISION (LOCKED INVARIANT).** Policy may only gate WHICH sinks/args are callable — it can
+**NEVER disable or override I2**. The I2 decision stays **HARDCODED in the Rust TCB executor**
+(`crates/executor`, the CON-i2-non-bypassable discipline — sensitivity is a security property
+via `is_content_sensitive`/`is_routing_sensitive`/`expected_role` table rows in
+`sink_sensitivity.rs`, never a swappable policy file). I2 **executes unconditionally on every
+policy-PERMITTED call** and can **never be short-circuited by any policy outcome** (`[rev:
+m3]`): policy is evaluated *before* I2 as a narrowing gate; a PERMIT hands the call to the
+UNMODIFIED `submit_plan_node` collect-then-Block loop, where an attacker-tainted value in a
+sensitive sink arg **still Blocks regardless of policy**. There is no policy value, however
+permissive, that removes an I2 Block. This is proven later by a **live leg where a permissive
+policy does NOT weaken the I2 taint Block** (LIVE-06 leg 3: the I2-Block legs run a sink+arg
+the policy explicitly PERMITS, so policy is provably not what's blocking). This is the caprun
+anti-requirement "Policy that can disable/override I2" (`.planning/REQUIREMENTS.md` Out of
+Scope).
+
+### 5.3 POLICY-03 — the broker binds policy at session creation from a trusted source outside worker reach
+
+**DECISION (`[rev: B1 + Matt #1` — both reviewers converged, BLOCKER-class).** The session
+policy is **bound by the broker at session creation from a trusted source provably outside
+the confined worker's reach**. The binding reuses the **F1 containment check verbatim from
+`cli/caprun/src/key.rs`** — the exact fail-closed refusal already shipped for MAC-key custody:
+
+- `load_or_create_key` (`key.rs:60`) canonicalizes the workspace root
+  (`std::fs::canonicalize(workspace_root)`, `key.rs:74`) and each candidate path, then
+  **refuses — hard `Err`, nothing returned/written — if the canonical candidate
+  `starts_with` the canonical workspace root** (`key.rs:88-95`). The policy binding MUST run
+  this SAME check against the policy path: **refuse if the policy path resolves at-or-beneath
+  the workspace root**, because the confined worker — caprun's PRIMARY adversary — could
+  `RequestFd` any file beneath the workspace root via the SAME `WorkspaceRoot::read_within`
+  reach the broker grants for legitimate reads (`key.rs:13-26` F1 rationale), then rewrite
+  its own policy to widen its allowlist (the F1-precedent attack, `.planning/REQUIREMENTS.md`
+  Out of Scope "Policy loaded from a session/worker-writable location").
+- **An unresolvable/absent policy path is itself a refusal** (fail-closed, never fail-open) —
+  `canonicalize_existing_or_parent` (`key.rs:166`) + the `with_context` bails at `key.rs:74`/
+  `key.rs:82` mean a path that cannot be resolved refuses to run, exactly as key custody does.
+- The bound policy is **immutable for the session's life** — a confined worker that
+  writes/rewrites a policy file mid-session does **NOT** change the enforced allowlist
+  (proven by a **negative live leg**).
+- The policy's **identity/hash is recorded as a genuine audit-DAG event** at session creation
+  (a real `append_event`, chained into the SHA-256 hash chain — not stapled), so the enforced
+  policy is provable after the fact via the audit-DAG viewer (U1).
+
+Note the `:memory:` carve-out precedent (`key.rs:64`, no F1 check for an in-memory DB) is
+custody-specific and does **not** apply to policy binding — a session always binds a policy
+from a trusted on-disk (or broker-in-memory-constructed trusted) source; there is no
+worker-reachable policy path.
+
+---
+
+## §6. Threat Model — one § per pitfall → named mechanism
+
+Mirrors v1.8 §6: each pitfall closed by a NAMED structural mechanism, cross-referenced to the
+§ that pins it.
+
+| # | Pitfall | Named mechanism | § |
+|---|---------|-----------------|---|
+| 1 | `git.push` credential leak (broker holds token + sees full HTTP exchange) | Token in broker-local env ONLY; `Authorization` set on the request, never persisted/minted; captured output opaque-or-scrubbed; regression test asserts no `https://…@…`/`Authorization:`/token substring in value-store/audit (carries v1.8 §2.5) | §1.4 |
+| 2 | `git.push` destination-pin bypass (redirect / DNS-rebind across the two requests) | ONE frozen resolved IP reused across info/refs GET + receive-pack POST (no re-resolve, `http_request.rs:431`); POST 3xx refused (`redirect(Policy::none())`, `http_request.rs:335`) | §1.5 |
+| 3 | `git.push` payload-vs-destination confirm TOCTOU (worker rewrites tree post-confirm) | Pack frozen/generated from the confirmed commit range **at-or-after confirm**; provenance summary shown at confirm describes the SAME bytes POSTed; broker (not worker) drives pack gen (carries v1.8 §2.7) | §1.6 |
+| 4 | `send-pack` self-egress (git subprocess opens its own socket) | seccomp `socket(AF_INET/AF_INET6) → EPERM` fail-closed backstop (`seccomp.rs:163-188`); transport delegates all network to the broker mover | §1.8 |
+| 5 | net-deny widening (a relaxation to pin a destination) | NO seccomp relaxation — provably cannot pin a destination behind a `connect()` pointer; child stays fully net-denied (`exec_child_filter`, `seccomp.rs:147`); pin is broker application-layer only (BLOCKER-1, carries v1.8 §2.1) | §1.2 |
+| 6 | `http.request` WRITE tainted-body exfil | body is I2 content-sensitive → tainted Blocks on a real DAG edge (collect-then-Block), like an email/PR body; genuinely propagated, never stapled | §2.2 |
+| 7 | `http.request` WRITE credential leak in captured response | credential broker-local env ONLY; response scrubbed or `mint_from_http`-tainted (never stapled-clean) before value-store/audit (`[rev: M1]`) | §2.4 |
+| 8 | `http.request` WRITE to a GET-only host | DISTINCT `WRITE_HOST_ALLOWLIST`, checked before any resolve — GET-readable ≠ POST/PUT-writable (`[rev: m1]`) | §2.1 |
+| 9 | policy-as-I2-override (the LOCKED anti-requirement, #1 trace risk) | I2 HARDCODED in the Rust TCB executor, unconditional on every policy-PERMITTED call; policy is a pre-I2 narrowing gate that can only add a Deny, never remove a Block (POLICY-02) | §5.2 |
+| 10 | policy from a worker-writable location (worker widens its own allowlist — F1-precedent attack) | POLICY-03 binds policy from a trusted source; F1 containment reused verbatim from `key.rs` — refuse any policy path at-or-beneath the workspace root; immutable; hash audit-DAG-recorded | §5.3 |
+| 11 | tainted / traversal policy path (unresolvable or crafted path binds an attacker policy) | F1 fail-closed: an unresolvable/absent path is a refusal (`key.rs:73,166`); canonicalize-then-`starts_with` refusal (`key.rs:88-95`) rejects at-or-beneath-workspace; no session runs on a refused policy | §5.3 |
+| 12 | policy-deny indistinguishable from an I2 Block (undermines LIVE-06 attributability) | DISTINCT machine-checkable `DenyReason::PolicyDeny` terminal tag, separate from the I2 Block; the two emit distinct terminal-event tags asserted separately (POLICY-01, LIVE-06 leg 3) | §5.1 |
+
+---
+
+## §7. Invariant Preservation
+
+Each item checked with a one-line justification (mirrors v1.8 §7):
+
+- [x] **I0 unaffected** — no new session-creation path weakens seeding; a session seeded from
+  external/untrusted content still starts draft-only and cannot auto-authorize a
+  `CommitIrreversible` push or a WRITE POST. Policy binding at session creation (§5.3)
+  *narrows* authority; it never seeds trust.
+- [x] **I1 preserved AND extended** — a WRITE response minted as an inbound value goes through
+  `mint_from_http` (untrusted-on-arrival, session demotion), exactly the I1 direction (§2.4);
+  no sink reads raw untrusted bytes into the worker. `git.push`'s network leg is broker-side;
+  the worker gains no net.
+- [x] **I2 NOT weakened or bypassed** — `git.push` (`remote`/`refspec`) and `http.request`
+  WRITE (`url`/`body`) are `PlanNode{sink,args}` from spawn and route through the UNMODIFIED
+  `submit_plan_node` collect-then-Block loop. Policy is a **pre-I2 narrowing gate only** (§5.2)
+  — it can add a Deny but never remove a Block; I2 stays HARDCODED in the executor and runs
+  unconditionally on every permitted call. New executor changes are table rows
+  (`KNOWN_SINKS`, `sink_effect_class`, sensitivity/`expected_role`) + a distinct policy-deny
+  outcome — no new `ExecutorDecision` that short-circuits I2.
+- [x] **No new raw effect-request-to-sink path** — every effect stays a plan node
+  (`submit_plan_node(session_id, PlanNode{sink, args: Vec<ValueNode>})`). This doc introduces
+  no `EffectRequest`-shaped path anywhere, so `check-invariants.sh` Gate 1
+  (`check-invariants.sh:29-36`) stays green with zero new hits. Policy narrows the plan-node
+  path; it does not add a bypass around it.
+- [x] **Sink sensitivity + I2 stay HARDCODED in the executor** — the new sinks add
+  sensitivity/effect-class/role TABLE ROWS ONLY; policy is a **separate** narrowing layer that
+  never touches the sensitivity determination. Sensitivity is a security property, not a
+  config knob (CON-i2-non-bypassable).
+- [x] **Genuine, non-stapled taint** — WRITE-response taint (if minted) is minted ONLY inside
+  `mint_from_http` at a real `http_response_received` Event (`provenance_chain[0]` == that
+  Event id); the executor never mints, never sets taint (it only `value_store.resolve()`s).
+  The policy hash is a genuine `append_event`, not stapled.
+
+---
+
+## §8. New-Mechanism Symbol Summary + mandated gate extensions
+
+New symbols the v1.9 implementation phases introduce (each appears ONLY in this DESIGN-doc
+prose this phase, NEVER under `crates/` or `cli/` yet):
+
+| Symbol | Phase | Locus |
+|--------|-------|-------|
+| `DenyReason::PolicyDeny` (distinct from the I2 Block) | 42 | `crates/executor` / `crates/runtime-core` decision type |
+| session-policy struct/schema + `policy_bound` audit-DAG event (hash recorded) | 42 | `crates/brokerd` (bind at session creation) + `crates/runtime-core` (policy type) |
+| policy F1-containment binding (reuses `key.rs` `load_or_create_key` F1 check) | 42 | `crates/brokerd` session-creation path + `cli/caprun` run entrypoint |
+| `WRITE_HOST_ALLOWLIST` (distinct from `HOST_ALLOWLIST`) | 43 | `crates/brokerd/src/sinks/http_request.rs` |
+| `http.request` WRITE sink rows (`KNOWN_SINKS`, `body` content-sensitive, `url` routing) | 43 | `crates/executor/src/{sink_schema,sink_sensitivity}.rs` |
+| `git.push` smart-HTTP transfer glue (pkt-line + info/refs GET + receive-pack POST + report-status parse) | 44 | `crates/brokerd/src/sinks/*` (Rust glue; ZERO new crates) |
+| `prepare_git_push` precheck + `git_push_succeeded`/`_failed` opaque events + entry-guard allow-list extension | 44 | `crates/brokerd/src/sinks/*` + `confirmation.rs` (Step 4.75 guard `:825-846`, Step 4.8 precheck) |
+| `git.push` = `CommitIrreversible`, new sensitivity/role rows | 44 | `crates/executor/src/{sink_schema,sink_sensitivity}.rs` |
+
+**Mandated gate extensions.** (a) **Gate 5 re-run** (§3) — `check-invariants.sh:211-233`
+re-runs after the `git.push` transport dep is chosen (Phase 44), enumerating any new transport
+deps (ring-only, aws-lc-rs/openssl-sys absent workspace-wide). (b) **Gate 4b workspace-wide**
+(HYG-01) — broaden `check-invariants.sh:180-189` to a workspace-wide grep + a feature-OFF
+guard in `compose-verify.sh`. (c) If any new `mint_from_*` call site is introduced, it MUST be
+added to Gate 3's restricted-token list (`check-invariants.sh:134-138`) in the same commit —
+`mint_from_http(` is already present (`check-invariants.sh:137`), so a WRITE response reusing
+it needs no new Gate-3 token.
+
+---
+
+## §9. Adversarial-Trace Gate (DESIGN-18) — ORCHESTRATOR-owned, re-runs on a mid-build pivot
+
+**This doc is authored by a `gsd-executor`, which does NOT run or self-perform the
+adversarial code-trace.** gsd-executors have **no Agent tool**; the fresh, non-self
+adversarial review is the **ORCHESTRATOR's** job, run AFTER this plan completes.
+
+**DECISION (DESIGN-18).** Before ANY `crates/{executor,brokerd,sandbox,runtime-core}` or
+`cli/` TCB code for a v1.9 surface is written, this doc MUST clear a **fresh, NON-SELF,
+ORCHESTRATOR-OWNED adversarial code-trace** — a different model, traced against real code
+(not a prose-read), the standing `fresh-context-adversarial-review` guardrail that has caught
+9+ real BLOCKER/MAJOR defects through v1.8 (incl. the v1.8 BLOCKER-1 that deferred `git.push`
+in the first place). Every BLOCKER/MAJOR must be resolved and folded back into this doc before
+the gate clears. The orchestrator records the outcome — verdict, findings, resolutions, and a
+final GATE CLEARED marker — in **`planning-docs/DESIGN-GATE-RECORD-v1.9.md`** (the shape of
+`DESIGN-GATE-RECORD-v1.8.md`).
+
+**Re-run trigger (`[rev: n2]`).** The trace **RE-RUNS** if the `git.push` **trust-posture or
+transport-dependency choice changes mid-implementation** — this doc itself names `git.push`
+"the riskiest surface in the project," so a mid-build transport pivot (e.g. switching the
+network mover, adding a new transport dep, or altering where the destination pin lives) MUST
+NOT bypass the one gate meant to catch it. A pivot re-runs the trace and updates
+`DESIGN-GATE-RECORD-v1.9.md` before any pivoted code lands. If the pivot cannot clear the
+trace, the §1.9 safety-valve applies (disclosed, sign-off-gated `git.push` deferral).
+
+The executor's sole responsibility is to make this doc **review-ready**: decisions pinned,
+every load-bearing claim cited to a re-verified `file:line`. The executor does not write
+`DESIGN-GATE-RECORD-v1.9.md` and does not self-attest the gate.
+
+---
+
+## §10. Acceptance Predicate — Done When
+
+Phase 41's gate is cleared when ALL are true:
+
+1. This doc pins, as **DECISIONS** (not options): (a) `git.push` = broker-performed
+   smart-HTTP destination-pinned egress with the child fully net-denied and the pin in the
+   broker application layer (never seccomp), closing all three research attack points (§1);
+   (b) `http.request` WRITE = a DISTINCT write-allowlist + taint-governed content-sensitive
+   body under I2 + differential acceptance (§2); (c) the policy↔I2 boundary incl. POLICY-03
+   F1-containment binding (§5). **(DESIGN-17.)**
+2. This doc carries forward v1.8 **§2 / §2.5 / §2.7 / §9** by reference (§0, §1.4, §1.6,
+   §1.7), pins **ring-only / ZERO new crates + the Gate-5 workspace-scoped re-run** (§3),
+   gives a **fail-closed defaults table** (§4) and a **§-per-pitfall threat model** (§6),
+   shows **invariant preservation** (§7, I0/I1/I2 unweakened, no raw `EffectRequest` path),
+   and summarizes the **new symbols + mandated gate extensions** (§8).
+3. This doc formalizes the **`git.push` safety-valve** (§1.9): if no fully-unprivileged
+   destination-pinning mechanism proves sound under the §9 trace, `git.push` DEFERS
+   (disclosed, sign-off-gated, auto-descopes from LIVE-05/06) and the other three tracks
+   proceed — **never a silent drop, never a net-allowed child**.
+4. This doc declares the fresh adversarial code-trace **ORCHESTRATOR-owned (NOT a
+   gsd-executor)** and **re-running on a mid-build `git.push` trust-posture / transport-dep
+   pivot** (§9, DESIGN-18).
+5. `scripts/check-invariants.sh` exits 0 against this doc's presence (no architectural-
+   invariant regression from its prose), and **no `crates/{executor,brokerd,sandbox,
+   runtime-core}` / `cli/` code exists yet** — `git status --porcelain -- crates cli` is
+   empty. **No TCB code is written until DESIGN-18 clears (§9).**
+
+---
+
