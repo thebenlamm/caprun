@@ -1298,6 +1298,184 @@ async fn evaluate_plan_node_and_record(
         }
     }
 
+    // 38-04 (GITHUB-01/02/04, DESIGN §4.3/§4.5/§8): on an Allowed (untainted,
+    // never-blocked) `github.pr` decision, TWO independent gates STILL stand
+    // ahead of any GitHub socket — a bare Allowed decision alone CANNOT create
+    // a PR:
+    //   (1) GRANT GATE (§4.3/§8, GITHUB-02): the session must hold a LIVE
+    //       github.pr auth-grant. Absent it, append an OPAQUE terminal
+    //       `github_pr_denied` event and STOP — no content key, no CAS, no POST.
+    //   (2) CONTENT CAS (§4.5, GITHUB-04): a content-derived key is reserved
+    //       (INSERT-OR-IGNORE) atomically with the divergent attempt/replay
+    //       marker event in ONE transaction that commits BEFORE any socket opens
+    //       — mirrors the email.send `sent_plan_nodes` CAS above VERBATIM. A
+    //       replayed identical submission is suppressed
+    //       (`github_pr_replay_suppressed`), so AT MOST ONE PR is ever created
+    //       per content (§11: a lost PR, never a second PR — deliberately NO
+    //       clear-key-on-failure, MAJOR-5 residual).
+    // Only on the FRESH branch does `invoke_github_pr` open the socket; it locks
+    // `conn` internally ONLY for its terminal append, NEVER across the POST
+    // `.await` (mirror http.request/git.commit's lock discipline). github.pr
+    // CONSUMES — it mints nothing (Gate 3 unchanged), so `output_value_id`
+    // stays `None` on this branch (exactly as the file.create/file.write arms
+    // leave it). `invoke_github_pr` (NOT `_from_resolved`, which is 38-05's
+    // confirm-release path taking a pre-locked `&Connection`) is the sink's
+    // own Plan-38-04-designated entry point.
+    if matches!(decision, runtime_core::ExecutorDecision::Allowed)
+        && plan_node.sink.0 == "github.pr"
+    {
+        let session_id_str = session_id.to_string();
+
+        // (1) GRANT GATE FIRST — fail-closed. `has_github_grant` returns false
+        // on a fresh DB, an ungranted session, OR any query error (never `true`
+        // by accident). Lock only for the synchronous check.
+        let has_grant = {
+            let locked = conn
+                .lock()
+                .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+            crate::audit::has_github_grant(&locked, &session_id_str)
+        };
+
+        if !has_grant {
+            // A bare Allowed/confirm decision cannot create a PR (§4.3/§8).
+            // Append an OPAQUE terminal denied event (email_smtp/http.request
+            // `_failed` opaque discipline: NO reason text in the hashed payload;
+            // the raw reason rides the eprintln logger line only), advance the
+            // head, and STOP — no content key is computed, no CAS row is
+            // created, `invoke_github_pr` is NEVER called.
+            eprintln!(
+                "[brokerd] github.pr denied: no live github.pr grant for session \
+                 {session_id_str} (a bare Allowed decision cannot create a PR); \
+                 effect_id={effect_id}"
+            );
+            let denied_event = Event::new(
+                Uuid::new_v4(),
+                Some(*last_event_id),
+                session_id,
+                format!("sink:github.pr:{effect_id}"),
+                "github_pr_denied".into(),
+                Utc::now(),
+                vec![],
+            );
+            let denied_hash = {
+                let locked = conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                append_event(&locked, key, &denied_event, Some(last_event_hash))
+                    .map_err(|e| anyhow::anyhow!("append github_pr_denied: {e}"))?
+            };
+            *last_event_id = denied_event.id;
+            *last_event_hash = denied_hash;
+        } else {
+            // (2) Resolve the six args from the live per-connection ValueStore
+            // into their literals — the SAME fail-closed resolve discipline as
+            // the email.send arm above (a dangling handle is a broker-internal
+            // invariant violation; validate_schema already guaranteed presence)
+            // — and compute the content-derived CAS key from those literals.
+            let mut lits: std::collections::HashMap<&str, String> =
+                std::collections::HashMap::with_capacity(6);
+            for name in ["owner", "repo", "base", "head", "title", "body"] {
+                let arg = plan_node
+                    .args
+                    .iter()
+                    .find(|a| a.name == name)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("github.pr Allowed-dispatch: missing `{name}` arg")
+                    })?;
+                let record = value_store.resolve(&arg.value_id).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "github.pr Allowed-dispatch: arg `{name}` handle did not resolve"
+                    )
+                })?;
+                lits.insert(name, record.literal.clone());
+            }
+            let content_key = crate::audit::github_pr_content_key(
+                &lits["owner"],
+                &lits["repo"],
+                &lits["base"],
+                &lits["head"],
+                &lits["title"],
+                &lits["body"],
+            );
+
+            // (3) CAS BEFORE EFFECT — the `created_prs` INSERT-OR-IGNORE and the
+            // divergent attempt/replay marker event commit in ONE atomic
+            // transaction BEFORE any socket opens (mirrors the email.send
+            // sent_plan_nodes CAS + attempt-ledger commit-before-effect exactly).
+            // A concurrent double-submit for the same content key serializes on
+            // this INSERT under the mutex; `reserve_created_pr` returns `false`
+            // on the PRIMARY KEY collision (replay). NO clear-key-on-failure.
+            let (marker_event_id, marker_hash, fresh) = {
+                let mut locked = conn
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+                let tx = locked.transaction()?;
+                let fresh = crate::audit::reserve_created_pr(
+                    &tx,
+                    &content_key,
+                    &effect_id.to_string(),
+                    &session_id_str,
+                )?;
+                let event_type = if fresh {
+                    "github_pr_attempted"
+                } else {
+                    "github_pr_replay_suppressed"
+                };
+                let marker_event = Event::new(
+                    Uuid::new_v4(),
+                    Some(*last_event_id),
+                    session_id,
+                    format!("sink:github.pr:{effect_id}"),
+                    event_type.into(),
+                    Utc::now(),
+                    vec![],
+                );
+                let marker_event_id = marker_event.id;
+                let marker_hash = append_event(&tx, key, &marker_event, Some(last_event_hash))
+                    .map_err(|e| {
+                        eprintln!(
+                            "[brokerd] {event_type} audit append FAILED (fail-closed): {e}"
+                        );
+                        anyhow::anyhow!("{event_type} append failed: {e}")
+                    })?;
+                tx.commit()?;
+                (marker_event_id, marker_hash, fresh)
+            };
+            *last_event_id = marker_event_id;
+            *last_event_hash = marker_hash.clone();
+
+            // (4) Only on the FRESH branch — the CAS row + attempt event are now
+            // durable together (or, pre-commit, neither was) — does a GitHub
+            // socket ever open. On a suppressed replay, STOP (no second PR,
+            // §4.5). `invoke_github_pr` appends its OWN opaque
+            // github_pr_succeeded/_failed terminal event FIRST, then returns Err
+            // on any failure — so the `?` here propagates AFTER a durable
+            // terminal event (mirror email.send/process.exec/git.commit `?`
+            // discipline: the terminal EVENT precedes the error unwind, never a
+            // burned dispatch with no terminal event; the P33/P34 class).
+            if fresh {
+                let (sink_event_id, sink_hash) = crate::sinks::github_pr::invoke_github_pr(
+                    conn,
+                    key,
+                    value_store,
+                    session_id,
+                    effect_id,
+                    plan_node,
+                    *last_event_id,
+                    last_event_hash,
+                )
+                .await?;
+                *last_event_id = sink_event_id;
+                *last_event_hash = sink_hash;
+            } else {
+                eprintln!(
+                    "[brokerd] github.pr replay suppressed (content key already \
+                     present in created_prs): effect_id={effect_id}"
+                );
+            }
+        }
+    }
+
     Ok((decision, output_value_id, session_demoted))
 }
 
