@@ -632,6 +632,8 @@ mod linux {
             blocked_arg_names,
             combined_digest: digest,
             workspace_root_path: workspace_root.to_string_lossy().into_owned(),
+            // EMPTY for every non-git.push block (Phase 44-04 field).
+            frozen_new_oid: String::new(),
             state: PendingConfirmationState::Pending,
             mac: String::new(),
         };
@@ -832,6 +834,8 @@ mod linux {
             blocked_arg_names,
             combined_digest: digest,
             workspace_root_path: workspace.to_string_lossy().into_owned(),
+            // EMPTY for every non-git.push block (Phase 44-04 field).
+            frozen_new_oid: String::new(),
             state: PendingConfirmationState::Pending,
             mac: String::new(),
         };
