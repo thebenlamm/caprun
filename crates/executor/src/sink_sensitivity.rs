@@ -69,6 +69,20 @@ pub fn sink_effect_class(sink: &SinkId) -> EffectClass {
         // below) so a future refactor that reorders/removes the schema gate
         // cannot silently relax github.pr's class (T-38-03).
         "github.pr" => EffectClass::CommitIrreversible,
+        // HTTP-W-01 (Phase 43), DESIGN-v1.9-egress-policy §2.0 (`[rev: MAJOR-1]`):
+        // a WRITE POST/PUT is an external, irreversible effect that crosses the
+        // trust boundary — CommitIrreversible, exactly like email.send/github.pr.
+        // This is a REAL EXPLICIT arm (not the `_ => CommitIrreversible`
+        // fail-closed default below), so a future refactor that reorders/removes
+        // the schema gate cannot silently relax the WRITE id's class (T-43-01) —
+        // exactly the github.pr precedent. It is ALSO redundantly covered by the
+        // `_ =>` default. The distinct id is LOAD-BEARING for I0: the shipped GET
+        // `http.request` id classes `Observe` and would fall through to Allowed
+        // even in a draft session (`lib.rs` I0 gate fires only for
+        // CommitIrreversible); classing the WRITE id CommitIrreversible here is
+        // what makes a draft / untrusted-seeded session I0-deny a POST (the
+        // MAJOR-1 I0-escape fix).
+        "http.request.write" => EffectClass::CommitIrreversible,
         // Test-fixture-only arm (DESIGN §9 Pitfall m2 / RESEARCH Pitfall 3): the
         // ONLY vehicle that makes TAINT-03 (Draft + Observe still Allowed)
         // testable end-to-end, since both live sinks are CommitIrreversible.
@@ -178,6 +192,26 @@ pub const GITHUB_PR_ROUTING_SENSITIVE: &[&str] = &["owner", "repo", "base", "hea
 /// genuinely propagate downstream and MUST NEVER be re-minted clean (T-38-01).
 pub const GITHUB_PR_CONTENT_SENSITIVE: &[&str] = &["title", "body"];
 
+/// Args of http.request.write that determine WHERE the WRITE (POST/PUT) lands.
+/// HTTP-W-01, DESIGN-v1.9-egress-policy §2.2: `url` is routing-sensitive — a
+/// tainted url (assembled from untrusted file/exec/http content) redirects the
+/// write to an attacker-chosen host and MUST Block on the `url` arg. `body` is
+/// deliberately ABSENT here — it is payload, not routing (no over-widening);
+/// `method` is governed by the enum gate (lib.rs), not I2 sensitivity.
+pub const HTTP_REQUEST_WRITE_ROUTING_SENSITIVE: &[&str] = &["url"];
+
+/// Args of http.request.write that determine WHAT payload leaves the trust
+/// boundary. HTTP-W-01, DESIGN-v1.9-egress-policy §2.2: `body` is the marquee
+/// exfiltration carrier — a value assembled from untrusted content routed into
+/// the POST/PUT body Blocks under the UNMODIFIED collect-then-Block loop, exactly
+/// like an email.send `body` or a github.pr `title`/`body`. `url` is ALSO
+/// content-sensitive (defense-in-depth, mirroring the GET
+/// `HTTP_REQUEST_CONTENT_SENSITIVE`) — a secret smuggled into the query string is
+/// exfiltration too, so a tainted url Blocks under the content classifier as well
+/// as routing. `method` is deliberately ABSENT — it is enum-gated (lib.rs), not
+/// a taint carrier.
+pub const HTTP_REQUEST_WRITE_CONTENT_SENSITIVE: &[&str] = &["url", "body"];
+
 /// Returns `true` iff `arg_name` is a routing-sensitive argument of `sink`.
 ///
 /// Routing-sensitive means: the attacker who controls this arg value redirects
@@ -191,6 +225,7 @@ pub fn is_routing_sensitive(sink: &SinkId, arg_name: &str) -> bool {
         "file.write" => FILE_WRITE_ROUTING_SENSITIVE.contains(&arg_name),
         "process.exec" => PROCESS_EXEC_ROUTING_SENSITIVE.contains(&arg_name),
         "http.request" => HTTP_REQUEST_ROUTING_SENSITIVE.contains(&arg_name),
+        "http.request.write" => HTTP_REQUEST_WRITE_ROUTING_SENSITIVE.contains(&arg_name),
         "github.pr" => GITHUB_PR_ROUTING_SENSITIVE.contains(&arg_name),
         // v0: all other sinks — no routing-sensitive args defined yet.
         _ => false,
@@ -212,6 +247,7 @@ pub fn is_content_sensitive(sink: &SinkId, arg_name: &str) -> bool {
         "process.exec" => PROCESS_EXEC_CONTENT_SENSITIVE.contains(&arg_name),
         "git.commit" => GIT_COMMIT_CONTENT_SENSITIVE.contains(&arg_name),
         "http.request" => HTTP_REQUEST_CONTENT_SENSITIVE.contains(&arg_name),
+        "http.request.write" => HTTP_REQUEST_WRITE_CONTENT_SENSITIVE.contains(&arg_name),
         "github.pr" => GITHUB_PR_CONTENT_SENSITIVE.contains(&arg_name),
         _ => false,
     }
@@ -342,6 +378,20 @@ pub fn expected_role(sink: &SinkId, arg_name: &str) -> Option<&'static [&'static
             // check — this `None` disables ONLY the structural role gate; it is
             // NOT an I2 bypass.
             "url" => None,
+            _ => None,
+        },
+        "http.request.write" => match arg_name {
+            // HTTP-W-01, DESIGN-v1.9-egress-policy §2.2: url/body/method are all
+            // DELIBERATELY unconstrained at the structural Step-1c role gate —
+            // reuse the process.exec/git.commit/http.request/github.pr rationale.
+            // There is no origin_role-producing mint site for a legitimately-
+            // authored write url/body, so pinning Some(...) would fail-closed-Deny
+            // the legit UserTrusted-authored WRITE flow. The Block for a tainted
+            // url/body comes entirely from is_routing_sensitive/is_content_sensitive
+            // + the untrusted-taint check — this `None` disables ONLY the structural
+            // role gate; it is NOT an I2 bypass. `method` is governed by the
+            // fail-closed enum gate in lib.rs, not this role gate.
+            "url" | "body" | "method" => None,
             _ => None,
         },
         "github.pr" => match arg_name {
@@ -857,6 +907,91 @@ mod tests {
                 expected_role(&github_pr(), arg),
                 None,
                 "github.pr `{arg}` must be role-unconstrained (None)"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // http.request.write (HTTP-W-01, DESIGN-v1.9-egress-policy §2.0/§2.2)
+    // -----------------------------------------------------------------
+
+    fn http_request_write() -> SinkId {
+        SinkId("http.request.write".to_string())
+    }
+
+    #[test]
+    fn http_request_write_is_commit_irreversible() {
+        // The EXPLICIT arm (contrast with the GET `http.request` Observe row):
+        // a WRITE POST/PUT is an external irreversible effect, so it gets the
+        // full I0-draft-deny + I2-Block + confirm-releasable discipline. This is
+        // the load-bearing MAJOR-1 I0-escape fix (§2.0) — a distinct id classed
+        // CommitIrreversible, never the Observe GET id.
+        assert_eq!(
+            sink_effect_class(&http_request_write()),
+            EffectClass::CommitIrreversible,
+            "http.request.write must be CommitIrreversible (explicit arm, §2.0)"
+        );
+        // And the GET id is DISTINCT — still Observe (unchanged).
+        assert_eq!(
+            sink_effect_class(&http_request()),
+            EffectClass::Observe,
+            "GET http.request must stay Observe — distinct from the WRITE id"
+        );
+    }
+
+    #[test]
+    fn http_request_write_url_is_routing_and_content_sensitive() {
+        // url decides WHERE the write lands (routing) AND can smuggle a secret in
+        // the query string (content, §2.2 defense-in-depth) — Blocks under either.
+        assert!(
+            is_routing_sensitive(&http_request_write(), "url"),
+            "http.request.write `url` decides WHERE the write lands — routing-sensitive"
+        );
+        assert!(
+            is_content_sensitive(&http_request_write(), "url"),
+            "http.request.write `url` can exfiltrate a secret in the query string — content-sensitive"
+        );
+    }
+
+    #[test]
+    fn http_request_write_body_content_but_not_routing_sensitive() {
+        // body is the marquee exfil payload — content-sensitive (§2.2) — but it
+        // is payload, not routing (no over-widening).
+        assert!(
+            is_content_sensitive(&http_request_write(), "body"),
+            "http.request.write `body` must be content-sensitive (exfil carrier)"
+        );
+        assert!(
+            !is_routing_sensitive(&http_request_write(), "body"),
+            "http.request.write `body` is payload, not routing — not routing-sensitive"
+        );
+    }
+
+    #[test]
+    fn http_request_write_method_not_sensitive() {
+        // method is governed by the fixed {POST,PUT} enum gate (lib.rs), NOT by
+        // I2 sensitivity — so it is neither routing- nor content-sensitive.
+        assert!(
+            !is_routing_sensitive(&http_request_write(), "method"),
+            "http.request.write `method` is enum-gated, not routing-sensitive"
+        );
+        assert!(
+            !is_content_sensitive(&http_request_write(), "method"),
+            "http.request.write `method` is enum-gated, not content-sensitive"
+        );
+    }
+
+    #[test]
+    fn http_request_write_expected_role_is_none() {
+        // url/body/method are deliberately unconstrained at the structural Step-1c
+        // role gate (reuse the http.request/github.pr rationale): no origin_role-
+        // producing mint site for a legit write. The Block comes from
+        // sensitivity + taint, not this gate — None is NOT an I2 bypass.
+        for arg in ["url", "body", "method"] {
+            assert_eq!(
+                expected_role(&http_request_write(), arg),
+                None,
+                "http.request.write `{arg}` must be role-unconstrained (None)"
             );
         }
     }
