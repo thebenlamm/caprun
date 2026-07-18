@@ -70,7 +70,7 @@ use crate::sinks::http_request::{build_pinned_client, check_body_cap, resolve_an
 // pack-gen + rev-parse children; the macOS stubs take the same signatures but do
 // not spawn, so these imports are Linux-only (mirrors the platform split).
 #[cfg(target_os = "linux")]
-use crate::sinks::process_exec::{resolve_launcher_path, run_launcher, run_launcher_capture_bytes};
+use crate::sinks::process_exec::{resolve_launcher_path, run_launcher_capture_bytes};
 
 /// The 4-byte flush-pkt marker terminating a pkt-line stream / section.
 const FLUSH_PKT: &[u8] = b"0000";
@@ -533,12 +533,19 @@ async fn generate_pack(
 }
 
 /// Resolve the local source ref to its commit oid via a confined
-/// `git rev-parse --verify <ref>^{{commit}}` child (RESEARCH §2 step 2). TEXT
-/// output, so the existing String `run_launcher` fits verbatim; same config
-/// neutralization + workspace cwd as `generate_pack`. Returns the validated oid.
-/// A non-zero exit (unknown ref) is a fail-closed `Err`. The resolved oid is the
-/// anti-TOCTOU comparand: the driver refuses if it != the human-confirmed frozen
-/// oid (WG-7, DESIGN §1.6).
+/// `git rev-parse --verify <ref>^{{commit}}` child (RESEARCH §2 step 2); same
+/// config neutralization + workspace cwd as `generate_pack`. Returns the
+/// validated oid. A non-zero exit (unknown ref) is a fail-closed `Err`. The
+/// resolved oid is the anti-TOCTOU comparand: the driver refuses if it != the
+/// human-confirmed frozen oid (WG-7, DESIGN §1.6).
+///
+/// Uses `run_launcher_capture_bytes` so the child's STDOUT (the bare oid) is
+/// captured SEPARATELY from stderr — the String `run_launcher` merges stdout+
+/// stderr, and the confined launcher writes a `[caprun-exec-launcher] Landlock
+/// …` diagnostic to stderr, which would otherwise contaminate the parsed oid
+/// (Plan 44-04 fix: a merged-stream parse made `validate_oid` fail on the
+/// interleaved diagnostic). rev-parse writes ONLY the 40/64-hex oid + LF to
+/// stdout, so trimming the isolated stdout yields the exact oid.
 #[cfg(target_os = "linux")]
 async fn resolve_new_oid(workspace_root: &WorkspaceRoot, src_ref: &str) -> Result<String> {
     let argv: Vec<String> = vec![
@@ -553,21 +560,26 @@ async fn resolve_new_oid(workspace_root: &WorkspaceRoot, src_ref: &str) -> Resul
     let cwd = workspace_root.root_path().to_string_lossy().into_owned();
     let launcher_path = resolve_launcher_path()?;
 
-    let (exit_status, output) = run_launcher(
+    // stdin = None (rev-parse reads no stdin); stdout and stderr come back as
+    // SEPARATE byte streams — parse the oid from stdout ONLY.
+    let (exit_status, stdout_bytes, stderr_bytes) = run_launcher_capture_bytes(
         &launcher_path,
         "git",
         &args_json,
         Some(cwd.as_str()),
         workspace_root,
-        &argv,
         &GIT_NEUTRALIZE_ENV,
+        None,
     )
     .await?;
 
     if !exit_status.success() {
-        bail!("git.push: git rev-parse could not resolve {src_ref:?} (fail-closed): {output}");
+        bail!(
+            "git.push: git rev-parse could not resolve {src_ref:?} (fail-closed): {}",
+            String::from_utf8_lossy(&stderr_bytes)
+        );
     }
-    let oid = output.trim().to_string();
+    let oid = String::from_utf8_lossy(&stdout_bytes).trim().to_string();
     validate_oid(&oid)?;
     Ok(oid)
 }
