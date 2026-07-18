@@ -118,6 +118,27 @@ pub const KNOWN_SINKS: &[SinkSchema] = &[
         allowed: &["owner", "repo", "base", "head", "title", "body"],
         required: &["owner", "repo", "base", "head", "title", "body"],
     },
+    SinkSchema {
+        // HTTP-W-01 (Phase 43 Plan 01), DESIGN-v1.9-egress-policy §2.0/§2.6:
+        // exact-match, all-three-required schema for the WRITE (POST/PUT) egress
+        // sink. `allowed` and `required` are BOTH exactly {url,body,method} —
+        // mirroring file.write / git.commit's exact-match shape, NOT
+        // process.exec's optional-arg asymmetry. This is a DISTINCT sink id from
+        // the shipped GET `http.request` row above (which stays single-arg {url},
+        // `Observe`): the distinct id is load-bearing for I0 (§2.0) — the WRITE
+        // id classes `CommitIrreversible` (sink_sensitivity.rs) so a draft /
+        // untrusted-seeded session I0-denies a POST, whereas the GET id is
+        // `Observe` and would fall through to Allowed. `method` is a
+        // schema-validated {POST,PUT} enum whose VALUE is checked in
+        // submit_plan_node (crates/executor/src/lib.rs, §2.6) — this Step-0 gate
+        // enforces only the arg NAME set, not the method value. `body` is
+        // content-sensitive and `url` is routing- AND content-sensitive
+        // (sink_sensitivity.rs) — a tainted value Blocks downstream, it does NOT
+        // Deny here.
+        sink: "http.request.write",
+        allowed: &["url", "body", "method"],
+        required: &["url", "body", "method"],
+    },
 ];
 
 /// Test-fixture-only sink registry (RESEARCH.md Pitfall 3 / DESIGN §9 Pitfall
@@ -555,6 +576,94 @@ mod tests {
             validate_schema(&n),
             Err(DenyReason::MissingArg("body".to_string()))
         );
+    }
+
+    // -----------------------------------------------------------------
+    // http.request.write (HTTP-W-01, DESIGN-v1.9-egress-policy §2.0/§2.6)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn http_request_write_is_registered_sink() {
+        // Registered => schema_for returns Some => never UnknownSink at Step 0.
+        assert!(
+            schema_for("http.request.write").is_some(),
+            "http.request.write must be a registered sink (never UnknownSink)"
+        );
+    }
+
+    #[test]
+    fn http_request_write_exact_args_ok() {
+        let n = node(
+            "http.request.write",
+            vec![arg("url"), arg("body"), arg("method")],
+        );
+        assert_eq!(validate_schema(&n), Ok(()));
+    }
+
+    #[test]
+    fn http_request_write_missing_body_denied() {
+        let n = node("http.request.write", vec![arg("url"), arg("method")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::MissingArg("body".to_string()))
+        );
+    }
+
+    #[test]
+    fn http_request_write_missing_url_denied() {
+        let n = node("http.request.write", vec![arg("body"), arg("method")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::MissingArg("url".to_string()))
+        );
+    }
+
+    #[test]
+    fn http_request_write_missing_method_denied() {
+        let n = node("http.request.write", vec![arg("url"), arg("body")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::MissingArg("method".to_string()))
+        );
+    }
+
+    #[test]
+    fn http_request_write_unknown_arg_denied() {
+        // No headers arg is modeled — any extra fails closed at Step 0.
+        let n = node(
+            "http.request.write",
+            vec![arg("url"), arg("body"), arg("method"), arg("headers")],
+        );
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::UnknownArg("headers".to_string()))
+        );
+    }
+
+    #[test]
+    fn http_request_write_duplicate_arg_denied() {
+        let n = node(
+            "http.request.write",
+            vec![arg("url"), arg("url"), arg("body"), arg("method")],
+        );
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::DuplicateArg("url".to_string()))
+        );
+    }
+
+    #[test]
+    fn get_http_request_row_unchanged_single_arg_url() {
+        // The DISTINCT GET `http.request` row stays single-arg {url}: adding a
+        // `body`/`method` to the GET id is still Denied(UnknownArg) — only the
+        // separate `http.request.write` id accepts them (§2.0 distinct-id pin).
+        let n = node("http.request", vec![arg("url"), arg("body")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::UnknownArg("body".to_string()))
+        );
+        // And the GET id still validates with exactly {url}.
+        assert_eq!(validate_schema(&node("http.request", vec![arg("url")])), Ok(()));
     }
 
     #[test]
