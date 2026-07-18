@@ -579,6 +579,21 @@ async fn resolve_new_oid(_workspace_root: &WorkspaceRoot, _src_ref: &str) -> Res
     bail!("git.push rev-parse is Linux-only (macOS no-op stub); exercised on the Linux gate")
 }
 
+/// Freeze the human-confirmed new-oid for a `git.push` refspec (WG-7, DESIGN
+/// §1.6) — the SINGLE freeze entry point consumed by BOTH the server.rs
+/// clean-Allowed confirm-gate arm AND the tainted-remote/refspec I2-Block insert
+/// (Plan 44-04 Task 2), so neither can insert a pending git.push without a
+/// frozen oid. Splits the refspec into `(<src>, <dst>)` and resolves the LOCAL
+/// `<src>` ref to its commit oid via the confined `resolve_new_oid` rev-parse
+/// child. The force/deletion refusal (`validate_git_refspec`) runs later in the
+/// precheck/transfer path; this only needs the `<src>` name to resolve. Linux
+/// confined child; the macOS host stubs `resolve_new_oid` (bails) — exercised on
+/// the Linux gate. Appends no event, mints nothing.
+pub async fn freeze_new_oid(workspace_root: &WorkspaceRoot, refspec: &str) -> Result<String> {
+    let (src_ref, _dst_ref) = split_refspec(refspec);
+    resolve_new_oid(workspace_root, src_ref).await
+}
+
 // ---- broker-env credential custody (RESEARCH A9, DESIGN §1.4) ----
 
 /// The broker-local env var carrying the OPTIONAL push credential (DESIGN §1.4).
@@ -786,6 +801,61 @@ fn required_literal<'a>(resolved_args: &'a [ResolvedArg], name: &str) -> Result<
         bail!("git.push: required `{name}` arg is empty (fail-closed)");
     }
     Ok(literal)
+}
+
+/// The frozen, validated PRE-PUSH inputs for a `git.push` confirm-release
+/// dispatch (mirrors `http_write::PreparedWrite` / `github_pr::PreparedPr`).
+/// Owned so a caller can validate independently of dispatch.
+pub(crate) struct PreparedGitPush {
+    /// The push remote URL literal (full https/allowlist/SSRF-pin vetting also
+    /// re-runs in the transfer driver; here it is checked constructible +
+    /// allowlisted).
+    remote: String,
+    /// The already-validated push refspec (force/deletion refused).
+    refspec: String,
+    /// The human-confirmed frozen new-oid (WG-7 anti-TOCTOU comparand).
+    frozen_new_oid: String,
+}
+
+/// The fallible, SOCKET-FREE PRE-PUSH preparation shared by the Plan 44-04
+/// Step-4.8d confirm-release precheck AND (through the SAME validators) the
+/// transfer driver's own fail-closed gates (`run_git_push`): the `remote`/
+/// `refspec` args present + non-empty, the `remote` URL constructible via
+/// `http_request::validate_url` (https-only / no userinfo / vetted port), the
+/// host on the DISTINCT `GIT_PUSH_HOST_ALLOWLIST` (WG-9), the refspec through
+/// the force/deletion `validate_git_refspec` value-gate, and a non-empty,
+/// well-formed `frozen_new_oid` (WG-7). Opens NO socket, resolves NO DNS,
+/// appends NO event — pure/read-only, so the precheck (fail-closed-RECOVERABLE)
+/// and the dispatch validate IDENTICALLY and cannot drift (the P33/P34
+/// audit-gap discipline; mirror `http_write::prepare_http_write`).
+pub(crate) fn prepare_git_push(
+    resolved_args: &[ResolvedArg],
+    frozen_new_oid: &str,
+) -> Result<PreparedGitPush> {
+    let remote = required_literal(resolved_args, "remote")?;
+    let refspec = required_literal(resolved_args, "refspec")?;
+
+    // The SAME url + DISTINCT-allowlist + refspec gates the transfer driver's
+    // `run_git_push` applies — precheck and dispatch cannot drift.
+    let host = http_request::validate_url(remote)?;
+    if !is_git_push_host_allowlisted(&host) {
+        bail!("git.push: host {host:?} is not on the git.push host allowlist (fail-closed)");
+    }
+    validate_git_refspec(refspec)?;
+
+    // The human-confirmed frozen oid must be present + shape-valid (WG-7): an
+    // empty or malformed oid can never match a live rev-parse, so it is
+    // fail-closed-refused here BEFORE the one-shot confirmation is burned.
+    if frozen_new_oid.trim().is_empty() {
+        bail!("git.push: frozen_new_oid is empty (fail-closed — no payload to freeze)");
+    }
+    validate_oid(frozen_new_oid)?;
+
+    Ok(PreparedGitPush {
+        remote: remote.to_string(),
+        refspec: refspec.to_string(),
+        frozen_new_oid: frozen_new_oid.to_string(),
+    })
 }
 
 /// Split a refspec into `(<src>, <dst>)` — the local ref whose new-oid is
@@ -1725,5 +1795,128 @@ mod tests {
         assert!(build_command_list(OID_A, OID_B, "").is_err());
         assert!(build_command_list(OID_A, OID_B, "+refs/heads/main").is_err());
         assert!(build_command_list(OID_A, OID_B, "refs/heads/ma in").is_err()); // space
+    }
+}
+
+#[cfg(test)]
+mod prepare {
+    use super::*;
+    use runtime_core::plan_node::{TaintLabel, ValueId};
+
+    /// A valid 40-hex SHA-1 oid for the frozen-oid arg.
+    const FROZEN_OID: &str = "abcdef0123456789abcdef0123456789abcdef01";
+
+    fn arg(name: &str, literal: &str) -> ResolvedArg {
+        ResolvedArg {
+            name: name.to_string(),
+            value_id: ValueId::new(),
+            literal: literal.to_string(),
+            taint: vec![TaintLabel::UserTrusted],
+            provenance_chain: vec![],
+        }
+    }
+
+    /// A well-formed `{remote, refspec}` set pointing at the mock push host —
+    /// only allowlisted under the `mock-egress-ca` feature.
+    fn mock_args() -> Vec<ResolvedArg> {
+        vec![
+            arg("remote", "https://github-mock.caprun.test/owner/repo.git"),
+            arg("refspec", "refs/heads/main:refs/heads/main"),
+        ]
+    }
+
+    // ── prepare_git_push negative gates (host-portable, default build) ──
+
+    #[test]
+    fn prepare_errs_on_missing_required_arg() {
+        for missing in ["remote", "refspec"] {
+            let mut args = mock_args();
+            args.retain(|a| a.name != missing);
+            assert!(
+                prepare_git_push(&args, FROZEN_OID).is_err(),
+                "a missing `{missing}` arg must fail closed"
+            );
+        }
+    }
+
+    #[test]
+    fn prepare_errs_on_empty_frozen_new_oid() {
+        assert!(
+            prepare_git_push(&mock_args(), "   ").is_err(),
+            "an empty frozen_new_oid must fail closed (no payload to freeze)"
+        );
+    }
+
+    #[test]
+    fn prepare_errs_on_malformed_frozen_new_oid() {
+        assert!(
+            prepare_git_push(&mock_args(), "not-a-valid-oid").is_err(),
+            "a non-hex/short frozen_new_oid must fail closed (WG-7 shape gate)"
+        );
+    }
+
+    #[test]
+    fn prepare_errs_on_force_refspec() {
+        // The SAME force/deletion value-gate the transfer driver applies — a
+        // leading '+' (force) is refused in the precheck, no drift.
+        let mut args = mock_args();
+        for a in args.iter_mut() {
+            if a.name == "refspec" {
+                a.literal = "+refs/heads/main:refs/heads/main".to_string();
+            }
+        }
+        assert!(prepare_git_push(&args, FROZEN_OID).is_err());
+    }
+
+    #[test]
+    fn prepare_errs_on_deletion_refspec() {
+        let mut args = mock_args();
+        for a in args.iter_mut() {
+            if a.name == "refspec" {
+                a.literal = ":refs/heads/main".to_string();
+            }
+        }
+        assert!(prepare_git_push(&args, FROZEN_OID).is_err());
+    }
+
+    #[test]
+    fn prepare_errs_on_non_https_remote() {
+        let mut args = mock_args();
+        for a in args.iter_mut() {
+            if a.name == "remote" {
+                a.literal = "http://github-mock.caprun.test/owner/repo.git".to_string();
+            }
+        }
+        assert!(prepare_git_push(&args, FROZEN_OID).is_err(), "a non-https remote must fail closed");
+    }
+
+    #[test]
+    fn prepare_errs_on_non_allowlisted_host() {
+        // A GET-readable host (`api.github.com`) is NOT push-allowlisted — the
+        // DISTINCT git.push allowlist gate (WG-9) runs in the precheck too, so a
+        // precheck cannot pass a host the transfer driver would reject.
+        let mut args = mock_args();
+        for a in args.iter_mut() {
+            if a.name == "remote" {
+                a.literal = "https://api.github.com/owner/repo.git".to_string();
+            }
+        }
+        assert!(prepare_git_push(&args, FROZEN_OID).is_err());
+    }
+
+    // ── prepare_git_push positive (needs the mock host on the allowlist) ──
+
+    /// FEATURE ON (`--features mock-egress-ca`): a well-formed `{remote,
+    /// refspec}` at the allowlisted mock host with a valid frozen oid prepares
+    /// OK. The default/release build has an EMPTY push allowlist (fail-closed),
+    /// so this positive path is only reachable under the mock feature (mirrors
+    /// the cred module's feature-gated positive test).
+    #[cfg(feature = "mock-egress-ca")]
+    #[test]
+    fn prepare_ok_for_well_formed_mock_args() {
+        assert!(
+            prepare_git_push(&mock_args(), FROZEN_OID).is_ok(),
+            "a well-formed allowlisted-host push must prepare OK under the mock feature"
+        );
     }
 }
