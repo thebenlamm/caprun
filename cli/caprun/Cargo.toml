@@ -33,6 +33,17 @@ hex          = { workspace = true }
 # same path-based workspace crate brokerd already depends on directly, not a
 # new external registry dependency.
 executor     = { path = "../../crates/executor" }
+# v1.9 Phase 46 (LIVE-05): the composed live proof
+# (tests/live_acceptance_v1_9_composed.rs) drives the ACTUAL production dispatch
+# arm `brokerd::server::evaluate_plan_node_and_record_for_test`, gated behind
+# brokerd's non-default `test-fixtures` feature (server.rs:1677). This dev-only
+# self-feature enable — Cargo unifies it with the normal `brokerd` dependency —
+# makes that verbatim delegate visible to the test binaries WITHOUT touching the
+# production `cargo build` (dev-dependencies are excluded from non-test builds),
+# so check-invariants Gate 4 (test-fixtures never a DEFAULT feature) and the
+# compose-verify feature-OFF release guard remain satisfied. Mirrors brokerd's
+# own self dev-dependency pattern (crates/brokerd/Cargo.toml).
+brokerd      = { path = "../../crates/brokerd", features = ["test-fixtures"] }
 
 [[bin]]
 name = "caprun"
