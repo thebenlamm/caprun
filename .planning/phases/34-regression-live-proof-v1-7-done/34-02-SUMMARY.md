@@ -159,3 +159,7 @@ EXEC-05 is closed: `process.exec` now has full confirm-release parity with the o
 ---
 *Phase: 34-regression-live-proof-v1-7-done*
 *Completed: 2026-07-18*
+
+## Self-Check: PASSED
+
+All 4 modified files confirmed present on disk; all 4 task/summary commit hashes (`38c5c5f`, `7e5639c`, `842ee12`, `0bbc0a1`) confirmed present in `git log --oneline --all`.
