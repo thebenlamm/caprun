@@ -42,6 +42,27 @@ it disturbs no prior test that relied on a push FAILING against this host):
     `/owner/repo.git` and assert `ConfirmedButSinkFailed` — they keep failing
     against the mock exactly as before, unweakened.
 
+## v1.9 Phase 46 (G3): http.request.write POST /ingest
+
+Additionally exposes a generic write sink so a CLEAN broker `http.request.write`
+POST completes with a genuine 2xx over the SAME shipped egress path (validate_url
+-> allowlist -> resolve-and-pin) unchanged, instead of 404ing for lack of a
+generic write endpoint:
+
+  * `POST /ingest` (query string ignored) -> RECORDS a receipt of the received
+    write (`path`, `body_bytes`, credential presence) to a DISTINCT in-memory
+    ledger `_WRITE_RECEIPTS` + a `mock-http-write: RECEIPT <json>` stderr line,
+    and returns HTTP 201 with a minimal JSON acknowledgement (`received: true`
+    + an opaque `id` — NO real GitHub data). A Basic-auth Authorization header
+    is RECORDED (`authenticated`) but NOT required (mirrors the receive-pack
+    mock). This is what LIVE-05's composed POST leg delivers to: a genuine 201
+    surfaces broker-side as `http_write_succeeded`.
+
+`/ingest` is routed as an ADDITIVE first-match case ahead of the pulls /
+receive-pack branches; every pre-existing route (pulls 201, `/accept/*`
+receive-pack, `/redirect/*` 302, the 404 fallbacks) is left byte-for-byte
+intact. Stdlib-only, no new dependency.
+
 NO third-party dependency and NO `git` binary: the mock parses the pkt-line
 command-list in pure Python and returns a well-formed report-status, so it runs
 unmodified on `python:3-slim` (honours CLAUDE.md "no new package-manager
@@ -125,12 +146,27 @@ def _parse_first_command(body: bytes):
 # sidecar output.
 _RECEIPTS = []
 
+# In-memory receipt ledger for `http.request.write` POST /ingest deliveries,
+# kept DISTINCT from `_RECEIPTS` (git-push) so the two delivery surfaces stay
+# independently observable. Each accepted /ingest POST appends a dict; the
+# acceptance test asserts delivery broker-side (the `http_write_succeeded`
+# event, produced ONLY after a genuine 201), this ledger + the stderr log make
+# the receipt independently observable in the sidecar output.
+_WRITE_RECEIPTS = []
+
 
 def _is_pulls_path(path: str) -> bool:
     """True for `/repos/<owner>/<repo>/pulls` (ignoring any query string)."""
     path = path.split("?", 1)[0]
     parts = [p for p in path.split("/") if p]
     return len(parts) == 4 and parts[0] == "repos" and parts[3] == "pulls"
+
+
+def _is_ingest_path(path: str) -> bool:
+    """True for exactly `/ingest` (ignoring any query string)."""
+    path = path.split("?", 1)[0]
+    parts = [p for p in path.split("/") if p]
+    return len(parts) == 1 and parts[0] == "ingest"
 
 
 def _receive_pack_repo(path: str, suffix: str):
@@ -176,7 +212,9 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0") or "0")
         body = self.rfile.read(length) if length else b""
         repo = _receive_pack_repo(self.path, "git-receive-pack")
-        if _is_pulls_path(self.path):
+        if _is_ingest_path(self.path):
+            self._handle_ingest(body)
+        elif _is_pulls_path(self.path):
             # A plausible created-PR response: enough for the opaque success
             # event + CAS to be exercised. No real GitHub data.
             self._send(201, {
@@ -194,6 +232,25 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"message": "Not Found (mock git-receive-pack: only /accept/* repos accept a push)"})
         else:
             self._send(404, {"message": "Not Found (mock github: only POST /repos/*/pulls or /accept/*/git-receive-pack)"})
+
+    def _handle_ingest(self, body: bytes) -> None:
+        """Consume a generic `http.request.write` POST /ingest, RECORD a receipt,
+        and return 201. The credential (Basic-auth Authorization header) is
+        RECORDED but NOT required — mirrors the receive-pack mock."""
+        has_auth = "Authorization" in self.headers
+        receipt = {
+            "path": self.path,
+            "body_bytes": len(body),
+            "authenticated": has_auth,
+        }
+        _WRITE_RECEIPTS.append(receipt)
+        sys.stderr.write(
+            "mock-http-write: RECEIPT " + json.dumps(receipt) + "\n"
+        )
+        self._send(201, {
+            "id": len(_WRITE_RECEIPTS),
+            "received": True,
+        })
 
     def _handle_receive_pack(self, repo: str, body: bytes) -> None:
         """Consume a `git-receive-pack` command-list + PACK, RECORD a receipt,
