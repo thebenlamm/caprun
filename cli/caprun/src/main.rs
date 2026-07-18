@@ -273,6 +273,26 @@ async fn main() -> anyhow::Result<()> {
             .map_err(|v: Vec<u8>| anyhow::anyhow!("MAC key must be 32 bytes, got {}", v.len()))?,
     );
 
+    // ── 1d. Bind the session policy from a trusted source (v1.9 Phase 42, POLICY-03) ─
+    // Alongside MAC-key custody (they share the SAME F1/containment discipline).
+    // The OPTIONAL trusted policy path comes from the `CAPRUN_POLICY` env var —
+    // the lowest-surface hook (no new CLI positional/flag; SDK-01 in Phase 45
+    // formalizes the CLI surface). `bind_policy` runs the SAME shared
+    // `refuse_if_beneath_workspace` containment check MAC-key custody uses against
+    // the policy path: a path at-or-beneath `workspace_root_dir` — the confined
+    // worker's PRIMARY reach — is a hard refusal, so a refusal propagates via `?`
+    // and NO session is created (fail-closed, DESIGN §4 policy-source row). No
+    // `CAPRUN_POLICY` → `bind_policy(None, ..)` returns the broker-constructed
+    // trusted default (`broker_default()`), so existing e2e flows (which pass no
+    // policy) stay green. The bound value is IMMUTABLE — captured here by value and
+    // threaded into `run_broker_server`; nothing re-reads the file mid-session.
+    let policy_path = std::env::var("CAPRUN_POLICY").ok();
+    let (session_policy, policy_hash) = brokerd::policy::bind_policy(
+        policy_path.as_deref().map(Path::new),
+        workspace_root_dir,
+    )
+    .context("bind_policy (POLICY-03 fail-closed trusted-source policy binding)")?;
+
     // ── 2. Create session + persist + append session_created event ──────────
     // The CLI decides seed_provenance (above); create_session (broker-side,
     // Plan 03) is the ONLY place that turns provenance into the session's
@@ -309,6 +329,37 @@ async fn main() -> anyhow::Result<()> {
         append_event(&locked, &mac_key[..], &e_session, None).context("append session_created")?
     };
 
+    // ── 2b. Record the bound policy's identity as a genuine audit-DAG event (POLICY-03) ─
+    // A REAL `append_event`, chained as a child of `session_created` (parent =
+    // `session_created_id`, `parent_hash = Some(&session_created_hash)`), so the
+    // policy identity is hashed INTO the SHA-256 chain — genuine, not stapled —
+    // and provable after the fact via `verify_chain` (DESIGN §5.3, T-42-13). Since
+    // `Event` carries no free-form metadata field (its serialized form IS the
+    // hashed payload), the policy hash rides in the `actor` field exactly as
+    // `seed_provenance` rides in the `session_created` actor above. The
+    // `policy_bound` event becomes the chain head seeded into the broker below.
+    let policy_bound_id = Uuid::new_v4();
+    let policy_actor = format!("broker:policy_bound sha256={policy_hash}");
+    let e_policy_bound = Event::new(
+        policy_bound_id,
+        Some(session_created_id),
+        session_id,
+        policy_actor,
+        "policy_bound".into(),
+        Utc::now(),
+        vec![],
+    );
+    let policy_bound_hash = {
+        let locked = conn.lock().unwrap();
+        append_event(
+            &locked,
+            &mac_key[..],
+            &e_policy_bound,
+            Some(&session_created_hash),
+        )
+        .context("append policy_bound")?
+    };
+
     // ── 3. Spawn the unified broker server ───────────────────────────────────
     // run_broker_server owns the abstract-socket bind AND the accept loop (the
     // single dispatch authority — ASM-01). It binds `\0/agentos/{session_id}`
@@ -321,12 +372,18 @@ async fn main() -> anyhow::Result<()> {
             &session_id.to_string(),
             conn_clone,
             session_id,
-            session_created_id,
-            session_created_hash,
+            // POLICY-03: the policy_bound event is the chain head seeded into the
+            // broker — the broker chains its first event onto policy_bound, NOT
+            // session_created, so the recorded policy identity is an unbroken
+            // audit-DAG edge before any effect.
+            policy_bound_id,
+            policy_bound_hash,
             initial_session_status,
             ws_root_for_broker,
             trusted_workspace_path,
             mac_key_for_broker,
+            // POLICY-03: the immutable trusted-bound session policy (by value).
+            session_policy,
         )
         .await
     });

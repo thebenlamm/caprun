@@ -158,6 +158,7 @@ mod linux_tests {
                 ws_root,
                 std::env::temp_dir().join("__harden04_featureless_no_trusted_path__"),
                 std::sync::Arc::new([0u8; 32]), // HARDEN-02 broker MAC key (test)
+                runtime_core::SessionPolicy::allow_all(), // POLICY-03 (policy-agnostic test)
             )
             .await;
         });

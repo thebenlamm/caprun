@@ -260,6 +260,7 @@ mod linux_tests {
                 ws_root_clone,
                 std::env::temp_dir().join("__planner_capability_split_no_trusted_path__"),
                 Arc::new([0u8; 32]), // HARDEN-02 broker MAC key (test)
+                runtime_core::SessionPolicy::allow_all(), // POLICY-03 (policy-agnostic test)
             )
             .await;
         });

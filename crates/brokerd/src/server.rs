@@ -202,6 +202,15 @@ pub async fn run_broker_server(
     // helpers) that would otherwise all need restructuring. Cloned per
     // connection exactly like `conn` (cheap — an `Arc` pointer clone).
     key: Arc<[u8; 32]>,
+    // v1.9 Phase 42 (POLICY-03): the session's IMMUTABLE narrowing policy, BOUND
+    // at session creation by `brokerd::policy::bind_policy` from a trusted source
+    // provably outside the confined worker's reach (DESIGN §5.3). Passed BY VALUE
+    // (captured once at bind time, never re-read from disk) and wrapped in an
+    // `Arc` at function entry (construct-once, below) so each connection clones a
+    // cheap pointer. Replaces Plan 03's internal placeholder — the live
+    // enforcement input is now the trusted-bound policy `main.rs` records as a
+    // hash-chained `policy_bound` audit event.
+    policy: runtime_core::SessionPolicy,
 ) -> anyhow::Result<()> {
     // Approach A: tokio detects the leading NUL and calls from_abstract_name internally.
     let sock_path = format!("\0/agentos/{session_id}");
@@ -273,24 +282,24 @@ pub async fn run_broker_server(
     let planner_slot_occupied = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     // v1.9 Phase 42 (POLICY-01/POLICY-02/POLICY-03): the session's narrowing
-    // policy, constructed ONCE here (construct-once, mirroring the
+    // policy, wrapped in an `Arc` ONCE here (construct-once, mirroring the
     // `session_status` cell + `trusted_inode` above) and cloned as a cheap Arc
     // pointer per connection. Immutable for the session's life (DESIGN §5.3), so
     // it is an `Arc<SessionPolicy>`, never `Arc<Mutex<..>>`.
     //
-    // FOR THIS PLAN (42-03) ONLY: the value is `broker_default()` — the EXPLICIT
-    // deny-by-default allowlist of the seven production sinks (its own doc-string
-    // pins it as the value Plan 04's `bind_policy(None, ..)` returns; it is NOT
-    // the permissive `allow_all()`, whose documented purpose is the POLICY-02
-    // proof + policy-agnostic test default). Plan 04 (POLICY-03) REPLACES this
-    // with a trusted-source-bound policy passed into `run_broker_server` as a
-    // parameter and hash-recorded into the audit DAG at session creation; this
-    // construct-here keeps the end-to-end build green in the meantime. Because
-    // `broker_default()` permits every currently-callable production sink, every
-    // existing dispatch/e2e flow still PERMITS its sink (policy adds no new deny
-    // on the live path) — the only behavioral change is that a policy-denied node
-    // would now return Denied{PolicyDeny} before the I2 loop.
-    let policy = Arc::new(runtime_core::SessionPolicy::broker_default());
+    // POLICY-03 (Plan 04): the value is the `policy` PARAMETER — the immutable
+    // policy BOUND by `brokerd::policy::bind_policy` at session creation from a
+    // trusted source provably outside the confined worker's reach, and recorded
+    // into the audit DAG as a hash-chained `policy_bound` event by `main.rs`. This
+    // REPLACES Plan 03's internal `broker_default()` construction. When `main.rs`
+    // binds with no `--policy`/`CAPRUN_POLICY` path, `bind_policy(None, ..)`
+    // returns `broker_default()`, which permits every currently-callable
+    // production sink — so existing dispatch/e2e flows stay green; the only
+    // behavioral change on the live path is that a policy-denied node now returns
+    // Denied{PolicyDeny} before the I2 loop. The bound value is never mutated and
+    // never re-read from disk, so a worker rewriting a policy file mid-session
+    // cannot change enforcement (immutability, DESIGN §5.3, T-42-12).
+    let policy = Arc::new(policy);
 
     loop {
         let (stream, _addr) = listener.accept().await?;
