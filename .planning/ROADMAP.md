@@ -190,7 +190,12 @@ Full detail archived in [`milestones/v1.7-ROADMAP.md`](milestones/v1.7-ROADMAP.m
   3. A fetched value later routed into a sensitive sink arg is deterministically **Blocked** on a genuinely-propagated (non-stapled) taint chain — an anti-staple test proves this, per the §9 genuineness standard.
   4. Requests to loopback/RFC1918/link-local/cloud-metadata IPs, `userinfo@` tricks, and default redirect-following are all denied (resolve-and-pin SSRF defense).
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 37-01-PLAN.md — runtime-core `TaintLabel::HttpRaw` (compile-forced untrusted) + executor `http.request` sink rows (Observe, url routing+content-sensitive) [wave 1]
+- [ ] 37-02-PLAN.md — brokerd reqwest(rustls/ring)+webpki-roots deps + `http_request` egress module with host-portable SSRF resolve-and-pin classifier [wave 1]
+- [ ] 37-03-PLAN.md — `mint_from_http` (event-first→mint→demote) + Gate-3 extension + server.rs Allowed-GET dispatch + anti-staple/demotion integration tests [wave 2]
 
 #### Phase 38: `github.pr` Sink
 
