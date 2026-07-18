@@ -690,9 +690,237 @@ mod linux {
             );
         }
 
-        // ── END-OF-RUN SWEEP — open the shared audit_db ONCE; every SUCCESS
-        //    session must exist with verify_chain independently true. (The
-        //    adversarial legs extend this sweep in Task 2.) ────────────────────
+        // ═══ ADVERSARIAL LEGS (LIVE-04) ═══════════════════════════════════════
+        //
+        // Each mints GENUINE http-response taint (mint_from_http on a synthetic
+        // hostile body — appends a real http_response_received event, roots the
+        // ValueRecord's provenance_chain[0] on it; mirrors s37_http_request.rs),
+        // routes it into a SENSITIVE sink arg, and asserts a deterministic
+        // BlockedPendingConfirmation anchored on that arg with the anchor's
+        // provenance root EQUAL to the real event id (non-stapled backstop). No
+        // sink effect occurs; verify_chain holds. `submit_plan_node` is passed
+        // `Active` deliberately (mirror s37): the Block is TAINT-driven (I2), not
+        // a draft-only (I1) session gate — isolating that the untrusted-on-arrival
+        // taint ALONE forces the Block, even though mint_from_http demoted the
+        // persisted session to Draft.
+
+        /// Mint a genuine http-response-derived tainted value on a fresh session,
+        /// returning `(conn, http_response_received id, chain-head id/hash after
+        /// the mint's demote append, tainted value_id, ValueStore)`. The
+        /// chain-head is the session_demoted event (the LAST appended) — a
+        /// subsequent sink_blocked MUST thread onto THAT, not the response id
+        /// (threading onto the response id forks the DAG, breaking verify_chain).
+        fn seed_genuine_http_taint(
+            audit_db_str: &str,
+            key: &[u8],
+            session_id: Uuid,
+        ) -> (rusqlite::Connection, Uuid, Uuid, String, ValueId, ValueStore) {
+            let conn = open_audit_db(audit_db_str).expect("open audit db (adversarial mint)");
+            persist_known_session(&conn, session_id);
+            let (root_id, root_hash) = seed_root_event(&conn, key, session_id);
+            let mut store = ValueStore::default();
+            let (event_id, _event_hash, value_id, demoted_id, demoted_hash) = mint_from_http(
+                &conn,
+                key,
+                &mut store,
+                session_id,
+                SYNTHETIC_HOSTILE_BODY.to_string(),
+                Some(root_id),
+                Some(&root_hash),
+            )
+            .expect("mint_from_http must succeed");
+            (conn, event_id, demoted_id, demoted_hash, value_id, store)
+        }
+
+        /// Extract the single blocked anchor from a BlockedPendingConfirmation
+        /// decision, asserting the blocked arg + sink, and that the anchor's
+        /// provenance root is the REAL minted event id (non-stapled backstop).
+        fn assert_blocked_on(
+            decision: ExecutorDecision,
+            expect_sink: &str,
+            expect_arg: &str,
+            expect_root_event: Uuid,
+        ) -> SinkBlockedAnchor {
+            match decision {
+                ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+                    assert_eq!(anchors.len(), 1, "exactly one blocked arg ({expect_arg})");
+                    let anchor = anchors.into_iter().next().expect("one anchor").anchor;
+                    assert_eq!(anchor.arg, expect_arg, "blocked arg must be {expect_arg}");
+                    assert_eq!(anchor.sink.0, expect_sink, "blocked sink must be {expect_sink}");
+                    assert_eq!(
+                        anchor.provenance_chain[0], expect_root_event,
+                        "GENUINE-TAINT BACKSTOP: anchor.provenance_chain[0] must equal the \
+                         http_response_received event id (non-stapled)"
+                    );
+                    assert_eq!(anchor.read_event_id, expect_root_event);
+                    anchor
+                }
+                other => panic!(
+                    "expected BlockedPendingConfirmation on a tainted {expect_sink} `{expect_arg}` \
+                     arg, got {other:?}"
+                ),
+            }
+        }
+
+        // ── LEG adv-a (github.pr): a tainted value in `title` Blocks; NO POST. ──
+        let adv_a_session_id = Uuid::new_v4();
+        expected_sessions.push(adv_a_session_id);
+        {
+            let (conn, resp_event_id, demoted_id, demoted_hash, tainted_vid, mut store) =
+                seed_genuine_http_taint(audit_db_str, &key, adv_a_session_id);
+
+            // Five trusted routing/other args + the tainted title (content-sensitive).
+            let mk_trusted = |store: &mut ValueStore, name: &str| PlanArg {
+                name: name.to_string(),
+                value_id: mint_trusted(store, &format!("adv-a-{name}"), None),
+            };
+            let plan_node = PlanNode {
+                sink: SinkId("github.pr".into()),
+                args: vec![
+                    mk_trusted(&mut store, "owner"),
+                    mk_trusted(&mut store, "repo"),
+                    mk_trusted(&mut store, "base"),
+                    mk_trusted(&mut store, "head"),
+                    PlanArg { name: "title".into(), value_id: tainted_vid },
+                    mk_trusted(&mut store, "body"),
+                ],
+            };
+            let decision = executor::submit_plan_node(
+                adv_a_session_id,
+                Uuid::new_v4(),
+                &plan_node,
+                &store,
+                &SessionStatus::Active,
+            );
+            let anchor =
+                assert_blocked_on(decision, "github.pr", "title", resp_event_id);
+
+            let block = Event::sink_blocked(
+                Uuid::new_v4(),
+                Some(demoted_id),
+                adv_a_session_id,
+                Utc::now(),
+                vec![anchor],
+                None,
+                vec!["title".to_string()],
+            );
+            append_event(&conn, &key, &block, Some(&demoted_hash)).expect("append sink_blocked");
+
+            assert!(
+                find_event_by_type(&conn, &adv_a_session_id.to_string(), "github_pr_succeeded")
+                    .expect("query")
+                    .is_none()
+                    && find_event_by_type(&conn, &adv_a_session_id.to_string(), "github_pr_attempted")
+                        .expect("query")
+                        .is_none(),
+                "adv-a: no PR POST may occur on a blocked github.pr"
+            );
+            assert!(
+                verify_chain(&conn, &adv_a_session_id.to_string(), &key),
+                "adv-a: verify_chain must be true"
+            );
+        }
+
+        // ── LEG adv-b (http.request): (i) tainted `url` Blocks; (ii) a
+        //    non-allowlisted / SSRF-range url Denies at the pin layer. ──────────
+        let adv_b_session_id = Uuid::new_v4();
+        expected_sessions.push(adv_b_session_id);
+        {
+            let (conn, resp_event_id, demoted_id, demoted_hash, tainted_vid, store) =
+                seed_genuine_http_taint(audit_db_str, &key, adv_b_session_id);
+
+            // (i) executor Block: a tainted url (routing + content sensitive).
+            let plan_node = PlanNode {
+                sink: SinkId("http.request".into()),
+                args: vec![PlanArg { name: "url".into(), value_id: tainted_vid }],
+            };
+            let decision = executor::submit_plan_node(
+                adv_b_session_id,
+                Uuid::new_v4(),
+                &plan_node,
+                &store,
+                &SessionStatus::Active,
+            );
+            let anchor =
+                assert_blocked_on(decision, "http.request", "url", resp_event_id);
+            let block = Event::sink_blocked(
+                Uuid::new_v4(),
+                Some(demoted_id),
+                adv_b_session_id,
+                Utc::now(),
+                vec![anchor],
+                None,
+                vec!["url".to_string()],
+            );
+            append_event(&conn, &key, &block, Some(&demoted_hash)).expect("append sink_blocked");
+            assert!(
+                verify_chain(&conn, &adv_b_session_id.to_string(), &key),
+                "adv-b: verify_chain must be true after the tainted-url Block"
+            );
+
+            // (ii) pin-layer Deny — BEFORE any socket, host-portable:
+            //   - a non-allowlisted host Errs at the allowlist gate;
+            //   - the SSRF classifier Errs on a cloud-metadata / RFC1918 IP.
+            assert!(
+                invoke_http_get("https://evil.invalid/x").await.is_err(),
+                "adv-b: a non-allowlisted host must Err at the allowlist gate (no socket)"
+            );
+            assert!(
+                ssrf_check(IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254))).is_err(),
+                "adv-b: the cloud-metadata IP must be denied by ssrf_check (SSRF range)"
+            );
+            assert!(
+                ssrf_check(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))).is_err(),
+                "adv-b: an RFC1918 IP must be denied by ssrf_check (SSRF range)"
+            );
+        }
+
+        // ── LEG adv-c (git.commit): a tainted `message` Blocks; NO commit. ─────
+        let adv_c_session_id = Uuid::new_v4();
+        expected_sessions.push(adv_c_session_id);
+        {
+            let (conn, resp_event_id, demoted_id, demoted_hash, tainted_vid, store) =
+                seed_genuine_http_taint(audit_db_str, &key, adv_c_session_id);
+
+            let plan_node = PlanNode {
+                sink: SinkId("git.commit".into()),
+                args: vec![PlanArg { name: "message".into(), value_id: tainted_vid }],
+            };
+            let decision = executor::submit_plan_node(
+                adv_c_session_id,
+                Uuid::new_v4(),
+                &plan_node,
+                &store,
+                &SessionStatus::Active,
+            );
+            let anchor =
+                assert_blocked_on(decision, "git.commit", "message", resp_event_id);
+            let block = Event::sink_blocked(
+                Uuid::new_v4(),
+                Some(demoted_id),
+                adv_c_session_id,
+                Utc::now(),
+                vec![anchor],
+                None,
+                vec!["message".to_string()],
+            );
+            append_event(&conn, &key, &block, Some(&demoted_hash)).expect("append sink_blocked");
+
+            assert!(
+                find_event_by_type(&conn, &adv_c_session_id.to_string(), "process_exited")
+                    .expect("query")
+                    .is_none(),
+                "adv-c: no commit (process_exited) may occur on a blocked git.commit"
+            );
+            assert!(
+                verify_chain(&conn, &adv_c_session_id.to_string(), &key),
+                "adv-c: verify_chain must be true"
+            );
+        }
+
+        // ── END-OF-RUN SWEEP — open the shared audit_db ONCE; every composed
+        //    session (5 SUCCESS + 3 adversarial = 8) must exist with verify_chain
+        //    independently true. ────────────────────────────────────────────────
         {
             let conn = open_audit_db(audit_db_str).expect("open shared audit DB (sweep)");
             let sids = all_session_ids(&conn);
@@ -714,11 +942,6 @@ mod linux {
                 "exactly the composed sessions must exist in the shared audit.db"
             );
         }
-
-        // Silence the SSRF import until Task 2 wires the adversarial pin-layer
-        // Deny (kept here so the success-only Task-1 commit compiles clean).
-        let _ = ssrf_check(IpAddr::V4(Ipv4Addr::new(140, 82, 112, 3)));
-        let _: Option<SinkBlockedAnchor> = None;
 
         std::fs::remove_dir_all(&tmp).ok();
     }
