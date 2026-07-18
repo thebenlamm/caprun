@@ -834,8 +834,12 @@ pub async fn confirm(
     // `Pending` (never transitioned), so a corrected `confirm()` call — once
     // the sink IS wired — can still succeed. `process.exec` confirm-release
     // dispatch is wired below (Plan 34-02, EXEC-05).
+    // `github.pr` (v1.8 Phase 38, GITHUB-02/03, DESIGN §4.6/§9): a
+    // confirm-releasable sink absent from this allow-list is denied at the
+    // guard — the entry-guard extension is REQUIRED, not optional (§9 "a new
+    // confirm-releasable sink that is NOT added here is denied at the guard").
     match pc.sink.0.as_str() {
-        "file.create" | "email.send" | "file.write" | "process.exec" => {}
+        "file.create" | "email.send" | "file.write" | "process.exec" | "github.pr" => {}
         other => {
             return Err(anyhow::anyhow!(
                 "confirm: sink `{other}` has no confirm-release dispatch wired \
@@ -864,6 +868,62 @@ pub async fn confirm(
             )
         })?;
     }
+
+    // Step 4.8b (v1.8 Phase 38, GITHUB-02/03, DESIGN §4.3/§4.6/§9): `github.pr`
+    // has TWO independent pre-effect gates that MUST both pass BEFORE Step 5
+    // appends `confirm_granted` and Step 6 burns the one-shot — mirroring the
+    // `process.exec` Step-4.8 precheck discipline (fail-closed-RECOVERABLE: the
+    // row stays `Pending`, never a burned confirmation dangling without a
+    // terminal `github_pr_*` event — the P33/P34 audit-gap class this phase
+    // closes).
+    //   (1) GRANT GATE (GITHUB-02): a bare human `confirm` is NOT sufficient to
+    //       create a PR — the SECOND independent gate. Without a live
+    //       session auth-grant the row stays Pending (fail-closed-RECOVERABLE:
+    //       run `caprun grant <session>` then re-confirm).
+    //   (2) PRECHECK: the SAME `prepare_github_pr` the Step-7 dispatch uses
+    //       (present + non-empty + url/body constructible), so precheck and
+    //       dispatch validate IDENTICALLY and cannot drift.
+    // The content-derived idempotency key (GITHUB-04, §4.5) is ALSO derived
+    // HERE, pre-burn: derivation is pure/read-only, so computing it before the
+    // burn keeps the Step-7 CAS free of any post-burn fallible arg-lookup leg
+    // (a missing arg here fails closed-RECOVERABLE, never a dangling burn). The
+    // six args are guaranteed present + non-empty by the precheck immediately
+    // above.
+    let github_pr_content_key: Option<String> = if pc.sink.0.as_str() == "github.pr" {
+        if !crate::audit::has_github_grant(conn, &pc.session_id.to_string()) {
+            return Err(anyhow::anyhow!(
+                "github.pr: no live session auth-grant (GITHUB-02) — a bare confirm \
+                 cannot create a PR; refusing before confirm_granted/state transition \
+                 (fail-closed-RECOVERABLE, row remains Pending; run `caprun grant` then \
+                 re-confirm)"
+            ));
+        }
+        crate::sinks::github_pr::prepare_github_pr(&pc.resolved_args).map_err(|e| {
+            anyhow::anyhow!(
+                "github.pr: pre-POST validation failed before confirm_granted \
+                 (fail-closed, row remains Pending): {e:#}"
+            )
+        })?;
+        let lit = |name: &str| -> Result<String> {
+            pc.resolved_args
+                .iter()
+                .find(|a| a.name == name)
+                .map(|a| a.literal.clone())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("github.pr: missing `{name}` resolved arg (pre-burn)")
+                })
+        };
+        Some(crate::audit::github_pr_content_key(
+            &lit("owner")?,
+            &lit("repo")?,
+            &lit("base")?,
+            &lit("head")?,
+            &lit("title")?,
+            &lit("body")?,
+        ))
+    } else {
+        None
+    };
 
     // Step 5: append confirm_granted, parented on the CURRENT CHAIN HEAD
     // (MAJOR-7) — NOT `pc.blocked_event_id` directly. In the single-shot case
@@ -1030,11 +1090,103 @@ pub async fn confirm(
                 Err(_) => Ok(ConfirmOutcome::ConfirmedButSinkFailed),
             }
         }
+        // v1.8 Phase 38 (GITHUB-02/03/04, DESIGN §4.3/§4.5/§4.6/§9):
+        // github.pr confirm-release. Like process.exec this arm is async and
+        // awaits. TWO gates already passed pre-burn (Step 4.8b): the live
+        // session auth-grant (GITHUB-02 — a bare confirm cannot create a PR)
+        // and the `prepare_github_pr` precheck (url/body constructible), so a
+        // dangling `confirm_granted` can never arise from a missing grant or a
+        // malformed arg. Here we (a) reserve the content-derived duplicate-PR
+        // CAS (GITHUB-04, §4.5) BEFORE the POST — mirroring the email.send
+        // `sent_plan_nodes` suppress shape — and (b) dispatch on FRESH.
+        //
+        // EVERY post-burn leg folds into a terminal `github_pr_*` event
+        // (terminal EVENT closing the burned one-shot — §9, the exact P33/P34
+        // class): FRESH invoke lets the sink append its own opaque
+        // github_pr_succeeded/github_pr_failed FIRST; a REPLAY (CAS not-fresh)
+        // appends a distinct `github_pr_replay_suppressed` marker and makes NO
+        // second POST; a CAS error itself appends `github_pr_failed`. NO
+        // clear-key-on-failure path (§11 accepted at-most-once residual). This
+        // arm does NOT mint (Gate 3's mint-site allow-list stays byte-identical
+        // — no mint token in confirmation.rs).
+        "github.pr" => {
+            let content_key = github_pr_content_key
+                .expect("github.pr content key is derived pre-burn in Step 4.8b");
+            match crate::audit::reserve_created_pr(
+                conn,
+                &content_key,
+                &pc.effect_id.to_string(),
+                &pc.session_id.to_string(),
+            ) {
+                Ok(true) => {
+                    // FRESH: this dispatch owns the effect and may POST.
+                    // invoke_github_pr_from_resolved folds every failure
+                    // (pre-POST OR transport) into an OPAQUE github_pr_failed
+                    // terminal event FIRST, then propagates — never a dangling
+                    // confirm_granted.
+                    match crate::sinks::github_pr::invoke_github_pr_from_resolved(
+                        conn,
+                        key,
+                        pc.session_id,
+                        pc.effect_id,
+                        &pc.resolved_args,
+                        granted_event_id,
+                        &granted_hash,
+                    )
+                    .await
+                    {
+                        Ok(_) => Ok(ConfirmOutcome::Released),
+                        Err(_) => Ok(ConfirmOutcome::ConfirmedButSinkFailed),
+                    }
+                }
+                Ok(false) => {
+                    // REPLAY: an identical-content PR is already reserved.
+                    // Suppress the second POST, but append a DISTINCT terminal
+                    // marker so the burned one-shot is NEVER left dangling (§9).
+                    let suppressed = runtime_core::Event::new(
+                        Uuid::new_v4(),
+                        Some(granted_event_id),
+                        pc.session_id,
+                        format!("sink:github.pr:{effect_id}"),
+                        "github_pr_replay_suppressed".into(),
+                        Utc::now(),
+                        vec![],
+                    );
+                    crate::audit::append_event(conn, key, &suppressed, Some(&granted_hash))?;
+                    eprintln!(
+                        "[brokerd] github.pr replay suppressed (content key already \
+                         reserved in created_prs): effect_id={}",
+                        pc.effect_id
+                    );
+                    Ok(ConfirmOutcome::ConfirmedButSinkFailed)
+                }
+                Err(e) => {
+                    // The CAS itself failed post-burn — fold into a terminal
+                    // github_pr_failed event so the confirmation is never left
+                    // dangling (§9/P33/P34); raw error goes only to eprintln.
+                    eprintln!(
+                        "[brokerd] github.pr CAS reservation failed (effect_id={}): {e}",
+                        pc.effect_id
+                    );
+                    let failed = runtime_core::Event::new(
+                        Uuid::new_v4(),
+                        Some(granted_event_id),
+                        pc.session_id,
+                        format!("sink:github.pr:{effect_id}"),
+                        "github_pr_failed".into(),
+                        Utc::now(),
+                        vec![],
+                    );
+                    crate::audit::append_event(conn, key, &failed, Some(&granted_hash))?;
+                    Ok(ConfirmOutcome::ConfirmedButSinkFailed)
+                }
+            }
+        }
         // Phase 33 adversarial-review MAJOR-1 fix: this arm IS reachable in
         // principle (the match is exhaustive over `&str`), but the Step 4.75
         // entry guard above already refuses any sink outside
-        // {"file.create","email.send","file.write","process.exec"} BEFORE
-        // reaching here — so hitting this arm means the guard's allow-list
+        // {"file.create","email.send","file.write","process.exec","github.pr"}
+        // BEFORE reaching here — so hitting this arm means the guard's allow-list
         // and this match's arms have drifted out of sync (a broker-internal
         // invariant violation, not a normal runtime path).
         other => Err(anyhow::anyhow!(
