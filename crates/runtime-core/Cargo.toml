@@ -10,3 +10,13 @@ serde_json = { workspace = true }
 uuid       = { workspace = true }
 thiserror  = { workspace = true }
 chrono     = { workspace = true }
+
+[features]
+# Gates the `test.observe` fixture sink into `SessionPolicy::allow_all()` so it
+# is visible to downstream integration tests (executor's `tests/`) that build
+# runtime-core as a plain dependency — plain `#[cfg(test)]` items are invisible
+# to them. Enabled ONLY via a downstream dev-dependency (e.g. executor's
+# `runtime-core = { ..., features = ["test-fixtures"] }`); NEVER a default
+# feature, so it is absent from any production build. Mirrors the identical
+# `test-fixtures` discipline in crates/executor and crates/brokerd.
+test-fixtures = []

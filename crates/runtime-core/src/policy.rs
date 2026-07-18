@@ -138,8 +138,22 @@ impl SessionPolicy {
     /// NOTE: even this permissive policy has NO Allow-and-skip path — a permit
     /// merely hands the call to the UNMODIFIED I2 loop (§5.2 LOCKED).
     pub fn allow_all() -> Self {
+        #[allow(unused_mut)]
+        let mut allowed_sinks: BTreeSet<String> =
+            PRODUCTION_SINKS.iter().map(|s| s.to_string()).collect();
+        // Test-fixtures-gated: admit the `test.observe` fixture sink so the
+        // policy-agnostic executor test call sites that pass `allow_all()` do
+        // NOT PolicyDeny a `test.observe` plan node before it reaches I2. This
+        // mirrors the IDENTICAL `#[cfg(any(test, feature = "test-fixtures"))]`
+        // gate on `test.observe` in `crates/executor/src/{sink_sensitivity,
+        // sink_schema}.rs`. NEVER present in a production build — `test-fixtures`
+        // is never a default feature — so production `allow_all()` still lists
+        // ONLY the seven real production sinks. `broker_default()` deliberately
+        // does NOT get this gate (it is the production allowlist).
+        #[cfg(any(test, feature = "test-fixtures"))]
+        allowed_sinks.insert("test.observe".to_string());
         SessionPolicy {
-            allowed_sinks: PRODUCTION_SINKS.iter().map(|s| s.to_string()).collect(),
+            allowed_sinks,
             arg_constraints: BTreeMap::new(),
         }
     }

@@ -21,7 +21,7 @@ use executor::{submit_plan_node, value_store::ValueStore};
 use sha2::{Digest, Sha256};
 use runtime_core::{
     plan_node::{PlanArg, PlanNode, SinkId, TaintLabel, ValueId},
-    DenyReason, ExecutorDecision, SessionStatus,
+    DenyReason, ExecutorDecision, SessionPolicy, SessionStatus,
 };
 use uuid::Uuid;
 
@@ -79,7 +79,7 @@ fn tainted_to_arg_blocks_with_verbatim_record_payload() {
 
     let plan = email_send_with_to(id);
     let effect_id = Uuid::new_v4();
-    let decision = submit_plan_node(Uuid::new_v4(), effect_id, &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), effect_id, &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     match decision {
         ExecutorDecision::BlockedPendingConfirmation { anchors } => {
@@ -144,7 +144,7 @@ fn untainted_to_arg_returns_allowed() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     assert_eq!(
         decision,
@@ -166,7 +166,7 @@ fn unknown_handle_returns_denied() {
     let forged_id = ValueId::new(); // never minted
 
     let plan = email_send_with_to(forged_id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     assert!(
         matches!(decision, ExecutorDecision::Denied { .. }),
@@ -197,7 +197,7 @@ fn tainted_content_sensitive_arg_blocks() {
 
     // "subject" is content-sensitive → must Block (Phase 14 CONTENT-01)
     let plan = email_send_with_arg("subject", id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     match decision {
         ExecutorDecision::BlockedPendingConfirmation { anchors } => {
@@ -237,7 +237,7 @@ fn tainted_cc_and_bcc_also_block() {
 
     for (arg_name, id) in [("cc", cc_id), ("bcc", bcc_id)] {
         let plan = email_send_with_arg(arg_name, id);
-        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
         assert!(
             matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }),
             "tainted '{arg_name}' must Block; got {decision:?}"
@@ -264,7 +264,7 @@ fn tainted_body_blocks() {
         )
         .expect("valid mint");
     let plan = email_send_with_arg("body", id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     match decision {
         ExecutorDecision::BlockedPendingConfirmation { anchors } => {
@@ -302,7 +302,7 @@ fn hard02_usertrusted_only_allows() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     assert_eq!(
         decision,
@@ -331,7 +331,7 @@ fn hard02_externaltainted_still_blocks() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     assert!(
         matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }),
@@ -387,7 +387,7 @@ fn draft_session_denies_commit_irreversible() {
             },
         ],
     };
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Draft);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Draft, &SessionPolicy::allow_all());
 
     match decision {
         ExecutorDecision::Denied {
@@ -413,7 +413,7 @@ fn draft_session_allows_observe() {
         sink: SinkId("test.observe".to_string()),
         args: vec![],
     };
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Draft);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Draft, &SessionPolicy::allow_all());
 
     assert_eq!(
         decision,
@@ -444,7 +444,7 @@ fn draft_session_tainted_routing_arg_still_blocks_not_denied() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Draft);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Draft, &SessionPolicy::allow_all());
 
     assert!(
         matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }),
@@ -495,7 +495,7 @@ fn collect_then_block_both_to_and_body() {
             },
         ],
     };
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     match decision {
         ExecutorDecision::BlockedPendingConfirmation { anchors } => {
@@ -550,7 +550,7 @@ fn body_tainted_recipient_trusted_blocks() {
             },
         ],
     };
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     match decision {
         ExecutorDecision::BlockedPendingConfirmation { anchors } => {
@@ -615,7 +615,7 @@ fn non_live_session_denies_commit_irreversible_in_all_four_states() {
                 PlanArg { name: "contents".to_string(), value_id: contents_id },
             ],
         };
-        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &status);
+        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &status, &SessionPolicy::allow_all());
 
         match decision {
             ExecutorDecision::Denied {
@@ -648,7 +648,7 @@ fn non_live_session_allows_observe() {
             sink: SinkId("test.observe".to_string()),
             args: vec![],
         };
-        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &status);
+        let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &status, &SessionPolicy::allow_all());
 
         assert_eq!(
             decision,
@@ -672,7 +672,7 @@ fn attachment_denied_unknown_arg() {
             value_id: ValueId::new(),
         }],
     };
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     match decision {
         ExecutorDecision::Denied {
@@ -708,7 +708,7 @@ fn role_mismatch_denies() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     match decision {
         ExecutorDecision::Denied {
@@ -745,7 +745,7 @@ fn role_none_at_role_checked_slot_denies() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     match decision {
         ExecutorDecision::Denied {
@@ -773,7 +773,7 @@ fn matching_role_tainted_still_blocks() {
         .expect("valid mint");
 
     let plan = email_send_with_to(id);
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     assert!(
         matches!(decision, ExecutorDecision::BlockedPendingConfirmation { .. }),
@@ -828,7 +828,7 @@ fn file_create_contents_role_mismatch_denies() {
             },
         ],
     };
-    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active);
+    let decision = submit_plan_node(Uuid::new_v4(), Uuid::new_v4(), &plan, &store, &SessionStatus::Active, &SessionPolicy::allow_all());
 
     match decision {
         ExecutorDecision::Denied {

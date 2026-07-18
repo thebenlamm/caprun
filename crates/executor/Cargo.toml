@@ -33,8 +33,14 @@ test-fixtures = []
 # integration), making the `#[cfg(any(test, feature = "test-fixtures"))]`
 # fixture sink visible to `tests/executor_decision.rs` without ever appearing
 # in a production build.
+# runtime-core with `test-fixtures` enabled so `SessionPolicy::allow_all()`
+# admits the `test.observe` fixture sink in executor's integration tests
+# (tests/executor_decision.rs, tests/policy_gate.rs) — those tests submit
+# `test.observe` nodes under `allow_all()` and would otherwise PolicyDeny them
+# before I2. Feature-unifies with the `[dependencies]` runtime-core when building
+# executor's test targets ONLY; absent from any production build.
 executor     = { path = ".", features = ["test-fixtures"] }
-runtime-core = { path = "../runtime-core" }
+runtime-core = { path = "../runtime-core", features = ["test-fixtures"] }
 uuid         = { workspace = true }
 sha2         = { workspace = true }
 hex          = { workspace = true }

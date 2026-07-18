@@ -9,12 +9,14 @@
 /// `value_store.resolve()`. It NEVER mints a ValueRecord and NEVER sets a taint
 /// field. The sole taint writer in the crate is `ValueStore::mint`.
 
+pub mod policy_gate;
 pub mod sink_schema;
 pub mod sink_sensitivity;
 pub mod value_store;
 
 use runtime_core::{
-    plan_node::PlanNode, BlockedArg, DenyReason, ExecutorDecision, SessionStatus, SinkBlockedAnchor,
+    plan_node::PlanNode, BlockedArg, DenyReason, ExecutorDecision, SessionPolicy, SessionStatus,
+    SinkBlockedAnchor,
 };
 use sha2::{Digest, Sha256};
 use sink_sensitivity::EffectClass;
@@ -57,6 +59,7 @@ pub fn submit_plan_node(
     plan_node: &PlanNode,
     value_store: &ValueStore,
     session_status: &SessionStatus,
+    policy: &SessionPolicy,
 ) -> ExecutorDecision {
     // Step 0: arg-schema gate (HARD-01/HARD-05). Runs FIRST — before any handle
     // resolve, taint, or sensitivity check. An unknown sink or malformed arg set
@@ -64,6 +67,21 @@ pub fn submit_plan_node(
     // node ever reaches the resolve/sensitivity loop. Extends the single
     // DenyReason taxonomy (no second error type).
     if let Err(reason) = sink_schema::validate_schema(plan_node) {
+        return ExecutorDecision::Denied { reason };
+    }
+
+    // Step 0.25 (POLICY-01/POLICY-02, DESIGN-v1.9-egress-policy §5.1/§5.2): the
+    // pre-I2 narrowing gate. Runs AFTER the Step-0 schema gate (so an unknown
+    // sink still Denies with `UnknownSink`, never `PolicyDeny`) and BEFORE the
+    // collect-then-Block I2 loop below. This is LOAD-BEARING placement +
+    // direction: the gate is DENY-ONLY (it returns only `Err(PolicyDeny)`; a
+    // PERMIT is `Ok(())`, which falls THROUGH to the UNMODIFIED I2 loop). There
+    // is NO Allow-and-skip-I2 path — a policy PERMIT never short-circuits the I2
+    // loop or the Step-0.5 CommitIrreversible class gate, so no policy, however
+    // permissive, can weaken an I2 Block (POLICY-02, LOCKED; T-42-07). Policy is
+    // ADDITIVE and deny-only; the I2 sensitivity map + loop stay HARDCODED and
+    // untouched (DESIGN §5.2, §7).
+    if let Err(reason) = policy_gate::policy_gate(policy, plan_node, value_store) {
         return ExecutorDecision::Denied { reason };
     }
 
