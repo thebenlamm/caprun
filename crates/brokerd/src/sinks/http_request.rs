@@ -175,7 +175,11 @@ fn is_write_host_allowlisted(host: &str) -> bool {
 /// re-check inside the broker egress fails closed on ANY other value BEFORE any
 /// socket, so the two gates cannot drift. Case-sensitive (the validated enum
 /// literal is upper-case). Host-portable.
-fn validate_write_method(method: &str) -> Result<()> {
+///
+/// `pub(crate)` so `http_write::prepare_http_write` applies the SAME enum gate
+/// as the egress — a single source of truth so the socket-free precheck and the
+/// dispatch cannot drift.
+pub(crate) fn validate_write_method(method: &str) -> Result<()> {
     match method {
         "POST" | "PUT" => Ok(()),
         other => bail!(

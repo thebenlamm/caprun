@@ -18,4 +18,5 @@ pub mod file_write;
 pub mod git_commit;
 pub mod github_pr;
 pub mod http_request;
+pub mod http_write;
 pub mod process_exec;
