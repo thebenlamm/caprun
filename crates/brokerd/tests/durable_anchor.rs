@@ -165,6 +165,7 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
     // drives ProvideIntent/RequestFd, so fresh `false` locals are correct.
     let mut intent_provided = false;
     let mut fd_requested = false;
+    let mut fd_request_count: u32 = 0;
     dispatch_request(
         BrokerRequest::SubmitPlanNode { plan_node },
         &mut server_end,
@@ -179,6 +180,7 @@ async fn build_hostile_block_db(tag: &str) -> (std::path::PathBuf, Uuid, Uuid) {
         trusted_inode,
         &mut intent_provided,
         &mut fd_requested,
+        &mut fd_request_count,
     )
     .await
     .expect("dispatch_request must succeed once the block append is durable");

@@ -68,6 +68,18 @@ use uuid::Uuid;
 /// (T-03-08 DoS mitigate: guard before vec allocation, not after).
 const MAX_MSG_SIZE: usize = 64 * 1024;
 
+/// Maximum number of `RequestFd` calls a single connection may make over its
+/// lifetime (Phase 33, FS-01, T-33-06/T-33-07).
+///
+/// FS-01's multi-file read is the EXISTING single-file
+/// `RequestFd -> read_within -> mint_from_read` path invoked repeatedly — no
+/// new read mechanism. This is a resource-exhaustion guard (fd churn,
+/// audit-DAG growth), NOT a functional gate: 256 is generous enough for a
+/// moderate repo's source tree. A hardcoded const, not a runtime knob —
+/// matches this codebase's "security params are hardcoded constants"
+/// discipline (RESEARCH Pattern 2).
+const MAX_REQUEST_FD_PER_SESSION: u32 = 256;
+
 /// A connection's fixed capability set (Phase 20, PLANNER-02/04).
 ///
 /// Decided ONCE at connection establishment — the accept loop's
@@ -495,6 +507,10 @@ async fn handle_connection(
     // re-derived from IPC).
     let mut intent_provided = false;
     let mut fd_requested = false;
+    // Phase 33 (FS-01, T-33-06/T-33-07): per-connection RequestFd count —
+    // a fail-closed resource-exhaustion guard, incremented at the TOP of the
+    // RequestFd arm (before any read work) so it cannot be dodged.
+    let mut fd_request_count: u32 = 0;
 
     loop {
         // Read 4-byte LE length prefix; clean EOF ends the connection loop.
@@ -627,6 +643,7 @@ async fn handle_connection(
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
+            &mut fd_request_count,
         )
         .await?;
     }
@@ -1239,6 +1256,13 @@ async fn create_session_arm(
 /// accepted EXACTLY ONCE and ONLY BEFORE any `RequestFd` on this connection.
 /// Both start `false` and are set at the RequestFd/ProvideIntent arms below
 /// — never reset, never re-derived from IPC.
+///
+/// `fd_request_count` (Phase 33, FS-01, T-33-06/T-33-07) is the
+/// broker-enforced, per-connection `RequestFd` call counter — incremented
+/// and bound-checked against `MAX_REQUEST_FD_PER_SESSION` at the TOP of the
+/// `RequestFd` arm, before any read work, so a worker cannot dodge it by
+/// triggering read failures. Starts `0`, never reset, never re-derived from
+/// IPC.
 #[allow(clippy::too_many_arguments)]
 pub async fn dispatch_request(
     request: BrokerRequest,
@@ -1254,6 +1278,7 @@ pub async fn dispatch_request(
     trusted_inode: Option<(u64, u64)>,
     intent_provided: &mut bool,
     fd_requested: &mut bool,
+    fd_request_count: &mut u32,
 ) -> anyhow::Result<()> {
     // v1.6 Phase 27 (X-04/F3): re-read the shared, monotonic cell HERE, at
     // the top of every dispatch_request call — never trust a value cached
@@ -1277,6 +1302,30 @@ pub async fn dispatch_request(
             // rejected fail-closed, regardless of whether this RequestFd itself
             // ultimately succeeds or errors below.
             *fd_requested = true;
+
+            // Phase 33 (FS-01, T-33-06/T-33-07): increment-then-bound-check
+            // BEFORE any read/fstat/pass_fd work, mirroring `*fd_requested =
+            // true;` immediately above — a worker cannot dodge the counter
+            // by triggering read failures, since every attempt (successful
+            // or not) counts. Fail-closed: past the bound, deny THIS
+            // request only — `return Ok(())`, NEVER `break` — the
+            // connection stays open (mirrors the ProvideIntent-reject
+            // error-then-continue shape above, not a connection kill).
+            *fd_request_count += 1;
+            if *fd_request_count > MAX_REQUEST_FD_PER_SESSION {
+                send_response(
+                    stream,
+                    &BrokerResponse::Error {
+                        message: format!(
+                            "RequestFd count {} exceeded the per-session limit ({}) \
+                             — fail-closed resource-exhaustion guard",
+                            *fd_request_count, MAX_REQUEST_FD_PER_SESSION
+                        ),
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
 
             // HARD-04: resolve the worker-supplied path BENEATH the workspace
             // dirfd anchor via a single openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)
@@ -1947,6 +1996,7 @@ mod tests {
             harness();
         let mut intent_provided = false;
         let mut fd_requested = false;
+        let mut fd_request_count: u32 = 0;
         let (mut server_end, mut client_end) =
             tokio::net::UnixStream::pair().expect("UnixStream::pair");
 
@@ -1964,6 +2014,7 @@ mod tests {
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
+            &mut fd_request_count,
         )
         .await
         .expect("ProvideIntent before any RequestFd must succeed");
@@ -1986,6 +2037,7 @@ mod tests {
             harness();
         let mut intent_provided = false;
         let mut fd_requested = false;
+        let mut fd_request_count: u32 = 0;
         let (mut server_end, mut client_end) =
             tokio::net::UnixStream::pair().expect("UnixStream::pair");
 
@@ -2003,6 +2055,7 @@ mod tests {
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
+            &mut fd_request_count,
         )
         .await
         .expect("first ProvideIntent must succeed");
@@ -2025,6 +2078,7 @@ mod tests {
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
+            &mut fd_request_count,
         )
         .await
         .expect("dispatch must complete (Error response, not a transport failure)");
@@ -2069,6 +2123,7 @@ mod tests {
 
         let mut intent_provided = false;
         let mut fd_requested = false;
+        let mut fd_request_count: u32 = 0;
         let (mut server_end, mut client_end) =
             tokio::net::UnixStream::pair().expect("UnixStream::pair");
 
@@ -2086,6 +2141,7 @@ mod tests {
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
+            &mut fd_request_count,
         )
         .await
         .expect("RequestFd must succeed");
@@ -2117,6 +2173,7 @@ mod tests {
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
+            &mut fd_request_count,
         )
         .await
         .expect("dispatch must complete (Error response, not a transport failure)");
