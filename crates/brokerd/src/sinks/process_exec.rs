@@ -216,10 +216,16 @@ pub async fn invoke_process_exec(
 /// helper — broker-spawned confined child (Landlock + seccomp + default-deny
 /// net + rlimits), wall-clock timeout, byte cap on captured stdout/stderr.
 ///
-/// This module still NEVER mints the captured output — the sole mint call
-/// site for exec output stays in `confirmation.rs`'s Step-7 arm (D-10); this
-/// function only spawns + audits and returns the raw `combined_output` for
-/// the caller to mint.
+/// This module still NEVER mints the captured output. On the confirm-release
+/// path the output is NOT minted at all (34-03 adversarial-review MINOR fix):
+/// `confirmation.rs`'s Step-7 arm discards `combined_output` — unlike the
+/// Allowed path (server.rs), the human-driven `caprun confirm` process has no
+/// live `ValueStore` and no downstream plan node to receive a minted `ValueId`.
+/// This function only spawns + audits — the durable, non-stapled taint anchor
+/// is the `process_exited` Event it appends ({ExternalUntrusted, ExecRaw},
+/// chained on `confirm_granted`) — and returns `combined_output` to its caller
+/// unmodified. The sole exec-output mint site remains the Allowed path in
+/// `server.rs` (Gate 3 allow-list: server.rs + quarantine.rs only).
 ///
 /// # Arguments
 /// * `conn`            — plain, unlocked rusqlite connection (broker-owned).
