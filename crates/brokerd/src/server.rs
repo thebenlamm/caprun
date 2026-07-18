@@ -1132,6 +1132,39 @@ async fn evaluate_plan_node_and_record(
         output_value_id = Some(value_id);
     }
 
+    // 36-02 (GIT-01): on an Allowed `git.commit` decision, invoke the live sink
+    // (Pattern B — git IS an exec under the confined launcher, DESIGN §1.1/§1.4),
+    // mirroring the process.exec arm above verbatim: same head-advance discipline
+    // and the SAME `mint_from_exec` (git output is exec output — no new mint
+    // site, no new TaintLabel). The mint call MUST stay HERE in server.rs (Gate
+    // 3's sanctioned locus); `invoke_git_commit` itself never mints.
+    if matches!(decision, runtime_core::ExecutorDecision::Allowed)
+        && plan_node.sink.0 == "git.commit"
+    {
+        let (sink_event_id, sink_hash, combined_output) =
+            crate::sinks::git_commit::invoke_git_commit(
+                conn,
+                key,
+                value_store,
+                session_id,
+                effect_id,
+                plan_node,
+                workspace_root,
+                *last_event_id,
+                last_event_hash,
+            )
+            .await?;
+        *last_event_id = sink_event_id;
+        *last_event_hash = sink_hash;
+
+        // mint_from_exec roots provenance_chain[0] on `sink_event_id` — the SAME
+        // `process_exited` event id invoke_git_commit just appended (genuine,
+        // non-stapled "one event, both roles" anchor — DESIGN §1.4).
+        let value_id =
+            crate::quarantine::mint_from_exec(value_store, session_id, combined_output, sink_event_id)?;
+        output_value_id = Some(value_id);
+    }
+
     Ok((decision, output_value_id))
 }
 
