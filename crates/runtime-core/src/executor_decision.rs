@@ -71,6 +71,27 @@ pub enum DenyReason {
     /// deserializes it); borrowed references are not deserializable
     /// (DESIGN F1, MAJOR).
     SlotTypeMismatch { sink: String, arg: String, expected: Vec<String>, found: Option<String> },
+
+    // ── v1.9 Phase 42 addition (POLICY-01, DESIGN-v1.9-egress-policy §5.1/§8) ──
+    /// The pre-I2 narrowing gate refused a call: the target sink is not in the
+    /// session policy's allowlist, or a coarse arg constraint (allowlisted
+    /// host/path/repo) rejected the literal. DISTINCT from an I2 Block — a
+    /// policy-deny says "this call was never permitted"; an I2 Block says "this
+    /// permitted call carried an attacker-tainted value into a sensitive arg"
+    /// (§5.1, §6 row 12). The two stay independently attributable
+    /// (`code()=="policy_deny"`) so LIVE-06 leg 3 can distinguish them; a
+    /// policy-deny is a `Denied{reason}` outcome, NEVER a
+    /// `BlockedPendingConfirmation`.
+    ///
+    /// Field types follow the v1.5 `SlotTypeMismatch` precedent EXACTLY: plain
+    /// owned `String`/`Option<String>`, never borrowed `&'static str` — this
+    /// enum derives `Deserialize` and the decision crosses the IPC wire
+    /// (worker.rs deserializes it); borrowed references are not deserializable
+    /// (DESIGN F1, MAJOR). Field semantics: `sink` = the offending sink id;
+    /// `arg` = the offending arg name when arg-scoped, `None` for a sink-level
+    /// deny; `constraint` = a short machine-readable tag of which rule refused
+    /// (e.g. `sink-not-allowed`, `arg-not-allowlisted`).
+    PolicyDeny { sink: String, arg: Option<String>, constraint: String },
 }
 
 impl DenyReason {
@@ -91,6 +112,7 @@ impl DenyReason {
                 "non_live_session_denies_commit_irreversible"
             }
             DenyReason::SlotTypeMismatch { .. } => "slot_type_mismatch",
+            DenyReason::PolicyDeny { .. } => "policy_deny",
         }
     }
 }
@@ -131,6 +153,17 @@ impl std::fmt::Display for DenyReason {
                 f,
                 "value routed into `{arg}` of sink `{sink}` has role {found:?}, expected one of {expected:?}"
             ),
+            DenyReason::PolicyDeny {
+                sink,
+                arg,
+                constraint,
+            } => match arg {
+                Some(arg) => write!(
+                    f,
+                    "policy denies arg `{arg}` of sink `{sink}` ({constraint})"
+                ),
+                None => write!(f, "policy denies sink `{sink}` ({constraint})"),
+            },
         }
     }
 }
@@ -249,5 +282,38 @@ mod tests {
         assert!(!rendered.is_empty());
         assert!(rendered.contains("email.send"));
         assert!(rendered.contains("to"));
+    }
+
+    #[test]
+    fn policy_deny_code_and_display() {
+        // Sink-level deny (arg = None).
+        let sink_deny = DenyReason::PolicyDeny {
+            sink: "git.push".to_string(),
+            arg: None,
+            constraint: "sink-not-allowed".to_string(),
+        };
+        assert_eq!(sink_deny.code(), "policy_deny");
+        let rendered = sink_deny.to_string();
+        assert!(!rendered.is_empty());
+        assert!(rendered.contains("git.push"));
+
+        // Arg-scoped deny names the arg too.
+        let arg_deny = DenyReason::PolicyDeny {
+            sink: "http.request".to_string(),
+            arg: Some("url".to_string()),
+            constraint: "arg-not-allowlisted".to_string(),
+        };
+        assert_eq!(arg_deny.code(), "policy_deny");
+        let rendered = arg_deny.to_string();
+        assert!(rendered.contains("http.request"));
+        assert!(rendered.contains("url"));
+
+        // A PolicyDeny is a Denied outcome, never a BlockedPendingConfirmation.
+        let decision = ExecutorDecision::Denied { reason: arg_deny };
+        assert!(matches!(decision, ExecutorDecision::Denied { .. }));
+        assert!(!matches!(
+            decision,
+            ExecutorDecision::BlockedPendingConfirmation { .. }
+        ));
     }
 }
