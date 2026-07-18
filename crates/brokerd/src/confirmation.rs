@@ -838,8 +838,13 @@ pub async fn confirm(
     // confirm-releasable sink absent from this allow-list is denied at the
     // guard — the entry-guard extension is REQUIRED, not optional (§9 "a new
     // confirm-releasable sink that is NOT added here is denied at the guard").
+    // `http.request.write` (v1.9 Phase 43, HTTP-W-01, DESIGN-v1.9-egress-policy
+    // §2): a confirm-releasable WRITE egress — REQUIRED in this allow-list (a
+    // confirm-releasable sink absent from it is denied at the guard), kept in
+    // sync with its Step-7 dispatch arm below.
     match pc.sink.0.as_str() {
-        "file.create" | "email.send" | "file.write" | "process.exec" | "github.pr" => {}
+        "file.create" | "email.send" | "file.write" | "process.exec" | "github.pr"
+        | "http.request.write" => {}
         other => {
             return Err(anyhow::anyhow!(
                 "confirm: sink `{other}` has no confirm-release dispatch wired \
@@ -924,6 +929,25 @@ pub async fn confirm(
     } else {
         None
     };
+
+    // Step 4.8c (v1.9 Phase 43, HTTP-W-01, DESIGN-v1.9-egress-policy §2):
+    // `http.request.write` has a fallible pre-write validation (all three args
+    // present + non-empty, the {POST,PUT} method-enum, and a constructible url).
+    // Run it HERE — before Step 5 appends `confirm_granted` and Step 6 burns the
+    // one-shot — using the SAME `prepare_http_write` the Step-7 dispatch calls,
+    // so precheck and dispatch validate url/method/body IDENTICALLY and cannot
+    // drift. A failure returns fail-closed-RECOVERABLE: the row stays `Pending`
+    // (the operator can `deny` it, or re-`confirm` once corrected), NEVER a burned
+    // confirmation with a dangling `confirm_granted` and no terminal event (the
+    // P33/P34 confirm-release audit-gap class this phase's discipline guards).
+    if pc.sink.0.as_str() == "http.request.write" {
+        crate::sinks::http_write::prepare_http_write(&pc.resolved_args).map_err(|e| {
+            anyhow::anyhow!(
+                "http.request.write: pre-write validation failed before confirm_granted \
+                 (fail-closed-RECOVERABLE, row remains Pending): {e:#}"
+            )
+        })?;
+    }
 
     // Step 5: append confirm_granted, parented on the CURRENT CHAIN HEAD
     // (MAJOR-7) — NOT `pc.blocked_event_id` directly. In the single-shot case
@@ -1182,13 +1206,42 @@ pub async fn confirm(
                 }
             }
         }
+        // 43-03 (HTTP-W-01, DESIGN-v1.9-egress-policy §2): http.request.write
+        // confirm-release. Like process.exec/github.pr this arm is async and
+        // awaits. The pre-burn Step-4.8c precheck (`prepare_http_write`) already
+        // validated url/method/body, so a dangling `confirm_granted` can never
+        // arise from a malformed arg. `invoke_http_write_from_resolved` folds
+        // EVERY failure (pre-write OR transport) into an OPAQUE `http_write_failed`
+        // terminal event FIRST, then propagates — never a burned confirmation
+        // with no terminal event (§9/P33/P34). No CAS/dedup: DESIGN §2 defines
+        // http.request.write as a single confirm-releasable write. This arm does
+        // NOT mint (Gate 3's mint-site allow-list stays byte-identical — no mint
+        // token in confirmation.rs).
+        "http.request.write" => {
+            match crate::sinks::http_write::invoke_http_write_from_resolved(
+                conn,
+                key,
+                pc.session_id,
+                pc.effect_id,
+                &pc.resolved_args,
+                granted_event_id,
+                &granted_hash,
+            )
+            .await
+            {
+                Ok(_) => Ok(ConfirmOutcome::Released),
+                // The sink already appended a durable opaque http_write_failed
+                // terminal event; state stays Confirmed, no retry (DESIGN Step 4a.5).
+                Err(_) => Ok(ConfirmOutcome::ConfirmedButSinkFailed),
+            }
+        }
         // Phase 33 adversarial-review MAJOR-1 fix: this arm IS reachable in
         // principle (the match is exhaustive over `&str`), but the Step 4.75
         // entry guard above already refuses any sink outside
-        // {"file.create","email.send","file.write","process.exec","github.pr"}
-        // BEFORE reaching here — so hitting this arm means the guard's allow-list
-        // and this match's arms have drifted out of sync (a broker-internal
-        // invariant violation, not a normal runtime path).
+        // {"file.create","email.send","file.write","process.exec","github.pr",
+        //  "http.request.write"} BEFORE reaching here — so hitting this arm means
+        // the guard's allow-list and this match's arms have drifted out of sync
+        // (a broker-internal invariant violation, not a normal runtime path).
         other => Err(anyhow::anyhow!(
             "confirm: unreachable — sink `{other}` passed the Step 4.75 entry \
              guard but has no Step 7 dispatch arm (guard/match drift)"
@@ -2644,6 +2697,243 @@ mod tests {
             cas_rows, 0,
             "no created_prs CAS row may be reserved when the precheck refuses pre-burn"
         );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // ── v1.9 Phase 43: http.request.write confirm-release (HTTP-W-01, P33/P34) ──
+
+    /// Seed a Blocked `http.request.write` PendingConfirmation whose `body`
+    /// resolves from an untrusted-tainted value — the I2 exfil vector for the
+    /// write egress. `url` + `method` are UserTrusted; only `body` carries
+    /// `ExternalUntrusted` taint, so it Blocks under I2. All three args are
+    /// present so the pre-burn `prepare_http_write` precheck passes for a
+    /// non-empty body. Returns `(effect_id, session_id, blocked_event_id)`.
+    fn seed_pending_http_write_block(
+        conn: &rusqlite::Connection,
+        body_literal: &str,
+        root_path: &str,
+    ) -> (Uuid, Uuid, Uuid) {
+        let session_id = Uuid::new_v4();
+        let effect_id = Uuid::new_v4();
+        let read_event_id = Uuid::new_v4();
+
+        let root_evt = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "session_created".into(),
+            chrono::Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(conn, TEST_KEY, &root_evt, None).unwrap();
+
+        let resolved_args = vec![
+            ResolvedArg {
+                name: "url".to_string(),
+                value_id: ValueId::new(),
+                literal: "https://write-mock.caprun.test/ingest".to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![],
+            },
+            ResolvedArg {
+                name: "method".to_string(),
+                value_id: ValueId::new(),
+                literal: "POST".to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![],
+            },
+            ResolvedArg {
+                name: "body".to_string(),
+                value_id: ValueId::new(),
+                literal: body_literal.to_string(),
+                taint: vec![TaintLabel::ExternalUntrusted],
+                provenance_chain: vec![read_event_id],
+            },
+        ];
+
+        let digest = combined_digest(
+            &resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let blocked_arg_names = vec!["body".to_string()];
+
+        let literal_sha256 = {
+            let mut h = Sha256::new();
+            h.update(body_literal.as_bytes());
+            hex::encode(h.finalize())
+        };
+        let anchor = SinkBlockedAnchor {
+            effect_id,
+            sink: SinkId("http.request.write".into()),
+            arg: "body".into(),
+            value_id: ValueId::new(),
+            literal_sha256,
+            taint: vec![TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![read_event_id],
+            read_event_id,
+        };
+        let blocked_event = Event::sink_blocked(
+            Uuid::new_v4(),
+            Some(root_evt.id),
+            session_id,
+            chrono::Utc::now(),
+            vec![anchor],
+            Some(digest.clone()),
+            blocked_arg_names.clone(),
+        );
+        let blocked_event_id = blocked_event.id;
+        append_event(conn, TEST_KEY, &blocked_event, Some(&root_hash)).unwrap();
+        insert_blocked_literal(conn, &blocked_event_id.to_string(), "body", body_literal).unwrap();
+
+        let pc = PendingConfirmation {
+            effect_id,
+            session_id,
+            blocked_event_id,
+            sink: SinkId("http.request.write".into()),
+            resolved_args,
+            blocked_arg_names,
+            combined_digest: digest,
+            workspace_root_path: root_path.to_string(),
+            state: PendingConfirmationState::Pending,
+            mac: String::new(),
+        };
+        insert_pending_confirmation(conn, TEST_KEY, &pc).unwrap();
+        (effect_id, session_id, blocked_event_id)
+    }
+
+    /// HTTP-W-01 + §9 (P33/P34): a tainted-body `http.request.write` Blocks, and
+    /// `confirm()` releases it EXACTLY ONCE — `confirm_granted` IS appended AND
+    /// is FOLLOWED by a terminal `http_write_*` event (on this host the live write
+    /// stubs/gate-fails, so the terminal event is `http_write_failed` — that still
+    /// proves the no-dangling property), and `verify_chain` is true. No auth-grant
+    /// gate (unlike github.pr): a single confirm-releasable write (DESIGN §2).
+    #[tokio::test]
+    async fn confirm_on_pending_http_write_releases_exactly_once_no_dangling() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_httpw_confirm_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, _bid) = seed_pending_http_write_block(
+            &conn,
+            "exfil AKIA-LEAKED-SECRET-0xDEADBEEF",
+            &root.to_string_lossy(),
+        );
+
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await;
+
+        // On the host write stub / empty WRITE_HOST_ALLOWLIST the sink fails ->
+        // ConfirmedButSinkFailed (a TERMINAL outcome). The load-bearing assertion
+        // is the no-dangling property below, not the specific outcome.
+        let outcome = outcome.expect("confirm must not error once the precheck passes");
+        assert!(
+            matches!(
+                outcome,
+                ConfirmOutcome::Released | ConfirmOutcome::ConfirmedButSinkFailed
+            ),
+            "with a valid precheck confirm must dispatch (Released on a live 2xx, \
+             ConfirmedButSinkFailed on the host write stub), got {outcome:?}"
+        );
+
+        // confirm_granted IS present (the one-shot was burned) ...
+        let granted = find_event_by_type(&conn, &session_id.to_string(), "confirm_granted")
+            .unwrap()
+            .expect("confirm_granted must be appended once the precheck passes");
+
+        // ... AND is FOLLOWED by a terminal http_write_* event (no dangling — §9).
+        let terminal = find_event_by_type(&conn, &session_id.to_string(), "http_write_failed")
+            .unwrap()
+            .or_else(|| {
+                find_event_by_type(&conn, &session_id.to_string(), "http_write_succeeded")
+                    .unwrap()
+            })
+            .expect(
+                "a terminal http_write_* event MUST follow confirm_granted — no dangling \
+                 confirm_granted-without-terminal-event (§9 P33/P34)",
+            );
+        assert_eq!(
+            terminal.parent_id,
+            Some(granted.id),
+            "the terminal http_write event must chain directly on confirm_granted"
+        );
+
+        // The row is burned Confirmed — a SECOND confirm releases nothing more.
+        let second = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws)
+            .await
+            .expect("second confirm must not error");
+        assert_eq!(
+            second,
+            ConfirmOutcome::AlreadyTerminal,
+            "the write is confirm-releasable EXACTLY ONCE — a second confirm is a no-op"
+        );
+
+        // The chain verifies end-to-end.
+        assert!(
+            crate::audit::verify_chain(&conn, &session_id.to_string(), TEST_KEY),
+            "verify_chain must be true throughout the confirm-release dispatch"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// §9 (P33/P34) REGRESSION — the recurring confirm-release audit-gap class
+    /// (mirrors `github_pr_confirm_malformed_precheck_does_not_burn` /
+    /// `confirm_on_process_exec_malformed_args_does_not_burn_confirmation`): an
+    /// `http.request.write` confirm whose frozen `body` resolves EMPTY fails at
+    /// the pre-burn `prepare_http_write` precheck (present-but-empty is
+    /// fail-closed) BEFORE Step 5. The row stays Pending and NO `confirm_granted`
+    /// is appended (no dangling confirm state, no burned one-shot).
+    #[tokio::test]
+    async fn confirm_on_http_write_malformed_precheck_does_not_burn() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_httpw_malformed_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        // A present-but-EMPTY body — passes validate_schema (name present) but
+        // must fail prepare_http_write's non-empty precheck before the burn.
+        let (effect_id, session_id, _bid) =
+            seed_pending_http_write_block(&conn, "   ", &root.to_string_lossy());
+
+        let result = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await;
+        assert!(
+            result.is_err(),
+            "confirm on an http.request.write block with an empty frozen `body` must \
+             fail closed at the pre-burn precheck, not silently succeed"
+        );
+
+        let found = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .expect("row must still exist");
+        assert_eq!(
+            found.state,
+            PendingConfirmationState::Pending,
+            "the Step-4.8c precheck must refuse BEFORE Step 6's state transition — a \
+             malformed arg must leave the row Pending (recoverable), not Confirmed"
+        );
+
+        assert!(
+            find_event_by_type(&conn, &session_id.to_string(), "confirm_granted")
+                .unwrap()
+                .is_none(),
+            "the precheck must refuse BEFORE Step 5 appends confirm_granted — no \
+             dangling confirm_granted with no terminal http.request.write event may \
+             exist (the P33/P34 audit-gap class)"
+        );
+        for terminal in ["http_write_succeeded", "http_write_failed"] {
+            assert!(
+                find_event_by_type(&conn, &session_id.to_string(), terminal)
+                    .unwrap()
+                    .is_none(),
+                "no {terminal} event may exist — the precheck refused before dispatch"
+            );
+        }
 
         std::fs::remove_dir_all(&root).ok();
     }
