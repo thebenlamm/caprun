@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Git/GitHub Adapters
-current_phase: 37
-current_phase_name: `http.request` GET Egress
+current_phase: 38
+current_phase_name: `github.pr` Sink
 status: planning
 stopped_at: v1.8 roadmap created (Phases 35-40)
-last_updated: "2026-07-18T07:19:09.168Z"
+last_updated: "2026-07-18T08:44:47.084Z"
 last_activity: 2026-07-18
-last_activity_desc: Phase 36 complete, transitioned to Phase 37
+last_activity_desc: Phase 37 complete, transitioned to Phase 38
 progress:
   total_phases: 6
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
-  percent: 33
+  completed_phases: 3
+  total_plans: 7
+  completed_plans: 8
+  percent: 50
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 ## Current Position
 
-Phase: 37 — `http.request` GET Egress
+Phase: 38 — `github.pr` Sink
 Plan: Not started
 Status: Roadmapped, ready to plan Phase 35
-Last activity: 2026-07-18 — Phase 36 complete, transitioned to Phase 37
+Last activity: 2026-07-18 — Phase 37 complete, transitioned to Phase 38
 
 ## Performance Metrics
 

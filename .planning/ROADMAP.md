@@ -193,9 +193,10 @@ Full detail archived in [`milestones/v1.7-ROADMAP.md`](milestones/v1.7-ROADMAP.m
 **Plans**: 3 plans
 
 Plans:
-- [ ] 37-01-PLAN.md — runtime-core `TaintLabel::HttpRaw` (compile-forced untrusted) + executor `http.request` sink rows (Observe, url routing+content-sensitive) [wave 1]
-- [ ] 37-02-PLAN.md — brokerd reqwest(rustls/ring)+webpki-roots deps + `http_request` egress module with host-portable SSRF resolve-and-pin classifier [wave 1]
-- [ ] 37-03-PLAN.md — `mint_from_http` (event-first→mint→demote) + Gate-3 extension + server.rs Allowed-GET dispatch + anti-staple/demotion integration tests [wave 2]
+
+- [x] 37-01-PLAN.md — runtime-core `TaintLabel::HttpRaw` (compile-forced untrusted) + executor `http.request` sink rows (Observe, url routing+content-sensitive) [wave 1]
+- [x] 37-02-PLAN.md — brokerd reqwest(rustls/ring)+webpki-roots deps + `http_request` egress module with host-portable SSRF resolve-and-pin classifier [wave 1]
+- [x] 37-03-PLAN.md — `mint_from_http` (event-first→mint→demote) + Gate-3 extension + server.rs Allowed-GET dispatch + anti-staple/demotion integration tests [wave 2]
 
 #### Phase 38: `github.pr` Sink
 
@@ -278,7 +279,7 @@ Plans:
 | 34. Regression & Live Proof (v1.7 DONE) | v1.7 | 4/4 | Complete    | 2026-07-18 |
 | 35. DESIGN Gate + Fresh Adversarial Code-Trace | v1.8 | 2/2 | Complete    | 2026-07-18 |
 | 36. `git.commit` Sink | v1.8 | 2/2 | Complete    | 2026-07-18 |
-| 37. `http.request` GET Egress | v1.8 | 0/TBD | Not started | - |
+| 37. `http.request` GET Egress | v1.8 | 4/3 | Complete    | 2026-07-18 |
 | 38. `github.pr` Sink | v1.8 | 0/TBD | Not started | - |
 | 39. `git.push` Sink | v1.8 | 0/TBD | Not started | - |
 | 40. CLI Compose, Sidecar env_clear() & Composed Live Proof (v1.8 DONE) | v1.8 | 0/TBD | Not started | - |

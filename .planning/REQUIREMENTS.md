@@ -30,9 +30,9 @@ are new families starting at 01).
 
 ### HTTP Egress
 
-- [ ] **HTTP-01**: An `http.request` sink performs a broker-mediated outbound **GET to an allowlisted host only** (read-only; POST/write egress explicitly out of scope for v1.8), classified **Observe**; the request `url` is an I2-gated sink arg.
-- [ ] **HTTP-02**: The HTTP response body is minted untrusted-on-arrival via a new `mint_from_http` mint site (rooted on a genuine `http_response_received` audit event) and demotes the session to draft-only (I1); a fetched value later routed into a sensitive sink arg is Blocked on a **genuinely-propagated, non-stapled** taint chain (the §9 genuineness standard, with an anti-staple test).
-- [ ] **HTTP-03**: `http.request` defends against SSRF — resolve-and-pin the destination IP, deny loopback/RFC1918/link-local/cloud-metadata ranges, do not follow redirects by default, and reject `userinfo@`/IP-encoding allowlist-bypass tricks.
+- [x] **HTTP-01**: An `http.request` sink performs a broker-mediated outbound **GET to an allowlisted host only** (read-only; POST/write egress explicitly out of scope for v1.8), classified **Observe**; the request `url` is an I2-gated sink arg.
+- [x] **HTTP-02**: The HTTP response body is minted untrusted-on-arrival via a new `mint_from_http` mint site (rooted on a genuine `http_response_received` audit event) and demotes the session to draft-only (I1); a fetched value later routed into a sensitive sink arg is Blocked on a **genuinely-propagated, non-stapled** taint chain (the §9 genuineness standard, with an anti-staple test).
+- [x] **HTTP-03**: `http.request` defends against SSRF — resolve-and-pin the destination IP, deny loopback/RFC1918/link-local/cloud-metadata ranges, do not follow redirects by default, and reject `userinfo@`/IP-encoding allowlist-bypass tricks.
 
 ### Egress Env Hygiene
 
@@ -87,9 +87,9 @@ Which phases cover which requirements. Populated during roadmap creation.
 | GITHUB-02 | Phase 38 | Pending |
 | GITHUB-03 | Phase 38 | Pending |
 | GITHUB-04 | Phase 38 | Pending |
-| HTTP-01 | Phase 37 | Pending |
-| HTTP-02 | Phase 37 | Pending |
-| HTTP-03 | Phase 37 | Pending |
+| HTTP-01 | Phase 37 | Complete |
+| HTTP-02 | Phase 37 | Complete |
+| HTTP-03 | Phase 37 | Complete |
 | ENV-01 | Phase 40 | Pending |
 | LIVE-03 | Phase 40 | Pending |
 | LIVE-04 | Phase 40 | Pending |
