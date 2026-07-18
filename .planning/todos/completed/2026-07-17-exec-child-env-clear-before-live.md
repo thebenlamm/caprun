@@ -51,3 +51,14 @@ absent from captured output).
 - Landlock grants read+`Execute` on all of `/usr`,`/bin`,`/lib`,`/lib64` — broad
   but necessary and already flagged as an in-container tightening item in
   DESIGN §8. Acceptable for v0.
+
+## RESOLVED (2026-07-18, Phase 34 gap-closure)
+
+Fixed in commit `3d18a9d`: `run_launcher` now `env_clear()`s + a minimal
+`SAFE_EXEC_PATH` + only the `EXEC_*` vars — fixing BOTH the Allowed and
+confirm-release exec paths in the one shared helper. Linux-gated regression test
+`run_launcher_env_clear_prevents_broker_secret_leak` asserts the broker's secrets
+are absent from a confined `/usr/bin/env` child's output. Fresh non-self Fable-5
+trace APPROVED; full Linux regression green (391/391, true-exit-0). Adjacent
+worker-spawn leak also fixed (`b0a7f49`, APPROVED, e2e-verified); planner-sidecar
+variant deferred to `2026-07-18-planner-sidecar-env-clear.md` (v1.8).
