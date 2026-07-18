@@ -105,6 +105,44 @@ async fn main() -> anyhow::Result<()> {
             };
             std::process::exit(code);
         }
+
+        // ── grant dispatch (v1.8 Phase 38, GITHUB-02) ──────────────────────
+        // `caprun grant <session_id> [audit-db-path]` records the durable,
+        // session-scoped github.pr auth-grant. It is a DISTINCT human action
+        // from confirm/deny (a bearer token's authority exceeds one PR —
+        // DESIGN §4.3, FORK 3), so it gets its OWN verb and its OWN helper
+        // (`run_grant`), never folded into `run_confirm_or_deny`. Arg is a
+        // SESSION id (not an effect_id) — the capability is session-scoped.
+        // Handled here, before the intent-kind parse, and exits explicitly.
+        if verb == "grant" {
+            let usage = "usage: caprun grant <session_id> [audit-db-path]";
+            let session_id = match raw_args.get(1) {
+                Some(s) => s.as_str(),
+                None => {
+                    eprintln!("{usage}");
+                    std::process::exit(1);
+                }
+            };
+            // Fail-closed: a malformed session id is a usage error (exit 1),
+            // never a silent pass-through into record_github_grant (which
+            // would otherwise persist a grant keyed by a non-UUID string).
+            if uuid::Uuid::parse_str(session_id).is_err() {
+                eprintln!("error: <session_id> is not a valid UUID: {session_id}");
+                std::process::exit(1);
+            }
+            let audit_path = raw_args
+                .get(2)
+                .cloned()
+                .unwrap_or_else(|| ":memory:".to_string());
+            let code = match run_grant(session_id, &audit_path) {
+                Ok(code) => code,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            };
+            std::process::exit(code);
+        }
     }
 
     let mut idx = 0usize;
@@ -524,6 +562,65 @@ async fn run_confirm_or_deny(verb: &str, effect_id: &str, audit_path: &str) -> a
         eprintln!("caprun {verb}: {msg}");
     }
     Ok(code)
+}
+
+/// Record a durable, session-scoped github.pr auth-grant (v1.8 Phase 38,
+/// GITHUB-02, DESIGN §4.3, FORK 3) — the WRITE side of the NEW capability
+/// model both github.pr dispatch paths (Plans 38-04/38-05) gate on.
+///
+/// Mirrors `run_confirm_or_deny`'s "open DB, load the F1 fail-closed
+/// cross-process MAC key, call into brokerd, map to an exit code" shape, but
+/// for the grant capability rather than a per-effect confirm. Loads the SAME
+/// broker key `caprun run` persisted at `<audit_path>.key` (via the shared
+/// custody helper) so the appended `github_grant_authorized` event chains
+/// consistently onto the session's existing keyed chain, then prints the
+/// minimal-PAT operator notice and exits 0.
+fn run_grant(session_id: &str, audit_path: &str) -> anyhow::Result<i32> {
+    let conn = open_audit_db(audit_path).context("open_audit_db")?;
+    let key = load_grant_key(audit_path)?;
+
+    brokerd::audit::record_github_grant(&conn, &key, session_id)
+        .context("record_github_grant")?;
+
+    println!("caprun grant: github.pr auth-grant recorded for session {session_id}");
+    println!(
+        "OPERATOR NOTICE: the PAT in CAPRUN_GITHUB_TOKEN MUST be minimal-scope — a \
+         fine-grained token with 'Pull requests: write' + 'Contents: read' ONLY \
+         (DESIGN-git-github-http-sinks.md §4.4/§11). A broader token grants \
+         arbitrary egress to a credential-bearing child."
+    );
+    Ok(0)
+}
+
+/// Load the cross-process broker MAC key for a `caprun grant`, via the SAME F1
+/// fail-closed custody helper `run_confirm_or_deny` uses (`key::
+/// load_or_create_key`) — never a hand-rolled key reader.
+///
+/// `caprun grant` has no workspace file of its own, so it has no
+/// `PendingConfirmation.workspace_root_path` to feed the F1 containment check
+/// (unlike confirm/deny). For a persistent DB we therefore hand F1 a dedicated
+/// throwaway workspace root that is a SIBLING of the audit DB
+/// (`<audit_path>.grant-ws`, never an ANCESTOR of it), which satisfies F1 by
+/// construction — the audit DB and its `.key` sibling are NOT beneath it — so
+/// the helper reads back the EXISTING key (the load-bearing cross-process
+/// stability: the grant event must chain under the same key as the rest of
+/// the session). The dir is created only for the `canonicalize()`-based
+/// containment check and removed immediately after. For `:memory:` the helper
+/// returns an ephemeral key before any F1 check (no persisted chain to stay
+/// consistent with), so the workspace root is irrelevant.
+fn load_grant_key(audit_path: &str) -> anyhow::Result<Vec<u8>> {
+    if audit_path == ":memory:" {
+        return key::load_or_create_key(audit_path, Path::new(".")).context(
+            "load_or_create_key (F1 fail-closed MAC-key custody, grant, :memory:)",
+        );
+    }
+    let grant_ws = std::path::PathBuf::from(format!("{audit_path}.grant-ws"));
+    std::fs::create_dir_all(&grant_ws)
+        .with_context(|| format!("create grant workspace dir {}", grant_ws.display()))?;
+    let key = key::load_or_create_key(audit_path, &grant_ws)
+        .context("load_or_create_key (F1 fail-closed MAC-key custody, grant)");
+    std::fs::remove_dir_all(&grant_ws).ok();
+    key
 }
 
 /// Print the audit DAG for `session_id` in causal order (depth-first CTE walk).
