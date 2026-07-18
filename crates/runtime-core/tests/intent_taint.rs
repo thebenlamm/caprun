@@ -86,3 +86,11 @@ fn is_untrusted_exec_raw_returns_true() {
         "ExecRaw is raw output captured from a broker-spawned confined exec child — untrusted origin, must block on sensitive args"
     );
 }
+
+#[test]
+fn is_untrusted_http_raw_returns_true() {
+    assert!(
+        TaintLabel::HttpRaw.is_untrusted(),
+        "HttpRaw is raw response-body bytes fetched from an allowlisted external host over broker-mediated egress — untrusted origin, must block on sensitive args"
+    );
+}

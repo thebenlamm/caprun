@@ -26,15 +26,22 @@ pub enum TaintLabel {
     /// paired with `ExternalUntrusted`, exactly like the other untrusted-origin
     /// labels (e.g. `EmailRaw`, `PathRaw`).
     ExecRaw,
+    /// Raw response-body bytes fetched from an allowlisted external host over
+    /// broker-mediated egress (untrusted origin —
+    /// DESIGN-git-github-http-sinks.md §3.4). Always minted paired with
+    /// `ExternalUntrusted`, exactly like the other untrusted-origin labels
+    /// (e.g. `EmailRaw`, `ExecRaw`) — the inbound `http.request` response
+    /// demotes the session at mint time (Plan 03).
+    HttpRaw,
 }
 
 impl TaintLabel {
     /// Returns `true` for labels that signal hostile/external origin.
     ///
     /// `UserTrusted` and `LocalWorkspace` are TRUSTED provenance labels — they do NOT block.
-    /// The seven untrusted labels (`ExternalUntrusted`, `EmailRaw`, `PdfRaw`,
-    /// `LlmGenerated`, `WorkerExtracted`, `PathRaw`, `ExecRaw`) return `true` and
-    /// trigger an executor block on routing-sensitive sink arguments (HARD-02).
+    /// The eight untrusted labels (`ExternalUntrusted`, `EmailRaw`, `PdfRaw`,
+    /// `LlmGenerated`, `WorkerExtracted`, `PathRaw`, `ExecRaw`, `HttpRaw`) return
+    /// `true` and trigger an executor block on routing-sensitive sink arguments (HARD-02).
     ///
     /// # Security invariant — exhaustive match (Pitfall 5)
     ///
@@ -50,7 +57,8 @@ impl TaintLabel {
             | TaintLabel::LlmGenerated
             | TaintLabel::WorkerExtracted
             | TaintLabel::PathRaw
-            | TaintLabel::ExecRaw => true,
+            | TaintLabel::ExecRaw
+            | TaintLabel::HttpRaw => true,
             TaintLabel::UserTrusted | TaintLabel::LocalWorkspace => false,
         }
     }
