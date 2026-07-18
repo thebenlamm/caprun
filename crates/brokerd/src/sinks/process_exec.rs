@@ -541,3 +541,197 @@ fn resolved_literal_optional<'a>(resolved_args: &'a [ResolvedArg], name: &str) -
         .find(|a| a.name == name)
         .map(|a| a.literal.as_str())
 }
+
+// ── invoke_process_exec_from_resolved (EXEC-05 confirm-release, frozen-literal
+// re-invocation) ─────────────────────────────────────────────────────────
+//
+// Linux-only (mirrors `crates/brokerd/tests/process_exec_spawn.rs`'s
+// discipline): this function genuinely spawns the real
+// `caprun-exec-launcher` binary, whose confinement primitives (rlimits ->
+// Landlock -> seccomp) are macOS no-op stubs — a Mac run would compile these
+// tests but prove nothing about the confined spawn path. `cargo test -p
+// brokerd` on macOS shows 0 tests from this module — expected
+// (cfg-linux-test-blindness), never treated as a pass. Run for real via
+// `scripts/mailpit-verify.sh` (Colima/Linux container).
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod from_resolved_tests {
+    use super::*;
+    use crate::audit::{find_event_by_type, open_audit_db, verify_chain};
+    use runtime_core::plan_node::ValueId;
+
+    /// Fixed, non-secret test MAC key (mirrors `process_exec_spawn.rs`'s
+    /// `TEST_KEY`).
+    const TEST_KEY: &[u8] = b"process-exec-from-resolved-rs-unit-test-key";
+
+    /// A frozen `ResolvedArg` snapshot for {command, args} — mirrors what a
+    /// `PendingConfirmation.resolved_args` payload would carry (args already
+    /// JSON-serialized, matching DESIGN's locked decision 1).
+    fn resolved_args_for(command: &str, args: &[&str]) -> Vec<ResolvedArg> {
+        let ev = Uuid::new_v4();
+        let args_vec: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let args_json = serde_json::to_string(&args_vec).unwrap();
+        vec![
+            ResolvedArg {
+                name: "command".into(),
+                value_id: ValueId::new(),
+                literal: command.to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![ev],
+            },
+            ResolvedArg {
+                name: "args".into(),
+                value_id: ValueId::new(),
+                literal: args_json,
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![ev],
+            },
+        ]
+    }
+
+    /// Seed a causal-root event in a fresh in-memory DB (stands in for the
+    /// `confirm_granted` head this function chains onto per D-04). Returns
+    /// (conn, session_id, root_id, root_hash).
+    fn seed_root() -> (rusqlite::Connection, Uuid, Uuid, String) {
+        let conn = open_audit_db(":memory:").unwrap();
+        let session_id = Uuid::new_v4();
+        let root = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "confirm_granted".into(),
+            Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(&conn, TEST_KEY, &root, None).unwrap();
+        (conn, session_id, root.id, root_hash)
+    }
+
+    /// A temp workspace root — `EXEC_WORKSPACE_ROOT` is required by the
+    /// launcher even though these tests don't exercise file I/O under it.
+    fn temp_workspace(tag: &str) -> (std::path::PathBuf, WorkspaceRoot) {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_pe_resolved_{tag}_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+        (root, ws)
+    }
+
+    /// On success, invoke_process_exec_from_resolved spawns the confined
+    /// launcher from frozen literals (never a ValueStore), returns the
+    /// captured combined output, and records a `process_exited` event
+    /// chained onto the passed `parent_id`/`parent_hash` (the
+    /// `confirm_granted` head, per D-04 — never a fresh root).
+    #[tokio::test]
+    async fn invoke_process_exec_from_resolved_success_appends_process_exited_chained_on_parent()
+    {
+        let (root, ws) = temp_workspace("ok");
+        let (conn, session_id, parent_id, parent_hash) = seed_root();
+        let effect_id = Uuid::new_v4();
+        let resolved_args = resolved_args_for("/bin/echo", &["hello-from-confirm"]);
+
+        let (evt_id, hash, combined_output) = invoke_process_exec_from_resolved(
+            &conn,
+            TEST_KEY,
+            session_id,
+            effect_id,
+            &resolved_args,
+            &ws,
+            parent_id,
+            &parent_hash,
+        )
+        .await
+        .expect("invoke_process_exec_from_resolved must succeed via the confined launcher");
+
+        assert!(!hash.is_empty());
+        assert!(
+            combined_output.contains("hello-from-confirm"),
+            "combined_output was: {combined_output:?}"
+        );
+
+        let evt = find_event_by_type(&conn, &session_id.to_string(), "process_exited")
+            .unwrap()
+            .expect("process_exited event must exist");
+        assert_eq!(evt.id, evt_id);
+        assert_eq!(evt.actor, format!("sink:process.exec:{effect_id}"));
+        assert_eq!(
+            evt.parent_id,
+            Some(parent_id),
+            "process_exited must chain onto the passed confirm_granted parent, not a fresh root"
+        );
+        assert_eq!(
+            evt.taint,
+            vec![TaintLabel::ExternalUntrusted, TaintLabel::ExecRaw],
+            "process_exited must carry the untrusted-origin exec taint pair"
+        );
+        assert!(
+            find_event_by_type(&conn, &session_id.to_string(), "process_spawn_failed")
+                .unwrap()
+                .is_none(),
+            "no process_spawn_failed on the success path"
+        );
+        assert!(
+            verify_chain(&conn, &session_id.to_string(), TEST_KEY),
+            "the causal chain must stay intact after appending process_exited"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// An output-flooding command (`/bin/yes`) trips the combined 10 MiB
+    /// byte cap fail-closed inside `run_launcher` — the same genuine
+    /// spawn-path failure `process_exec_spawn.rs`'s Allowed-path twin uses
+    /// (a nonexistent target command does NOT surface as an `Err` here: the
+    /// launcher's own `execve` failure is a normal nonzero-exit-code process
+    /// exit captured as a successful `process_exited`, not a spawn failure —
+    /// this test exercises a genuine `run_launcher` `Err` instead). Asserts
+    /// a durably-appended `process_spawn_failed` event chained on the passed
+    /// parent, and an `Err` return (no double-spawn, no retry — D-06).
+    #[tokio::test]
+    async fn invoke_process_exec_from_resolved_spawn_failure_appends_process_spawn_failed() {
+        let (root, ws) = temp_workspace("cap");
+        let (conn, session_id, parent_id, parent_hash) = seed_root();
+        let effect_id = Uuid::new_v4();
+        let resolved_args = resolved_args_for("/bin/yes", &[]);
+
+        let result = invoke_process_exec_from_resolved(
+            &conn,
+            TEST_KEY,
+            session_id,
+            effect_id,
+            &resolved_args,
+            &ws,
+            parent_id,
+            &parent_hash,
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "/bin/yes's unbounded output must trip the byte cap and fail closed"
+        );
+
+        let evt = find_event_by_type(&conn, &session_id.to_string(), "process_spawn_failed")
+            .unwrap()
+            .expect("process_spawn_failed event must exist");
+        assert_eq!(evt.actor, format!("sink:process.exec:{effect_id}"));
+        assert_eq!(
+            evt.parent_id,
+            Some(parent_id),
+            "process_spawn_failed must chain onto the passed confirm_granted parent"
+        );
+        assert!(
+            find_event_by_type(&conn, &session_id.to_string(), "process_exited")
+                .unwrap()
+                .is_none(),
+            "no process_exited on the byte-cap failure path"
+        );
+        assert!(
+            verify_chain(&conn, &session_id.to_string(), TEST_KEY),
+            "the causal chain must stay intact after appending process_spawn_failed"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+}
