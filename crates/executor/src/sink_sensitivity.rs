@@ -62,6 +62,13 @@ pub fn sink_effect_class(sink: &SinkId) -> EffectClass {
         // is a table row only; it introduces NO new ExecutorDecision variant
         // and does not weaken I2.
         "http.request" => EffectClass::Observe,
+        // GITHUB-01 (Phase 38), DESIGN-git-github-http-sinks.md §4.1: opening a
+        // pull request is an external, irreversible effect that crosses the trust
+        // boundary — CommitIrreversible, exactly like email.send. This is a REAL
+        // explicit arm (not the `_ => CommitIrreversible` fail-closed default
+        // below) so a future refactor that reorders/removes the schema gate
+        // cannot silently relax github.pr's class (T-38-03).
+        "github.pr" => EffectClass::CommitIrreversible,
         // Test-fixture-only arm (DESIGN §9 Pitfall m2 / RESEARCH Pitfall 3): the
         // ONLY vehicle that makes TAINT-03 (Draft + Observe still Allowed)
         // testable end-to-end, since both live sinks are CommitIrreversible.
@@ -154,6 +161,23 @@ pub const HTTP_REQUEST_ROUTING_SENSITIVE: &[&str] = &["url"];
 /// under the content classifier too, not only routing.
 pub const HTTP_REQUEST_CONTENT_SENSITIVE: &[&str] = &["url"];
 
+/// Args of github.pr that determine WHERE the PR lands. GITHUB-01/03,
+/// DESIGN-git-github-http-sinks.md §4.4: `owner`/`repo` name the target
+/// repository; `base`/`head` name the branches the PR merges between. A tainted
+/// value in any of these mis-routes the PR to an attacker-chosen destination and
+/// MUST Block on that arg (T-38-02). These are routing-only — they do NOT carry
+/// the PR payload, so they are deliberately absent from
+/// `GITHUB_PR_CONTENT_SENSITIVE` (no over-widening).
+pub const GITHUB_PR_ROUTING_SENSITIVE: &[&str] = &["owner", "repo", "base", "head"];
+
+/// Args of github.pr that determine WHAT payload leaves the trust boundary.
+/// GITHUB-01/03, DESIGN-git-github-http-sinks.md §4.4: `title`/`body` are the PR
+/// text — the marquee secret-exfil-via-PR-text arg. A tainted value (assembled
+/// from `http_response`/`ExecRaw`/`doc_fragment` content) Blocks under the
+/// UNMODIFIED collect-then-Block loop, exactly like an email.send `body`. It must
+/// genuinely propagate downstream and MUST NEVER be re-minted clean (T-38-01).
+pub const GITHUB_PR_CONTENT_SENSITIVE: &[&str] = &["title", "body"];
+
 /// Returns `true` iff `arg_name` is a routing-sensitive argument of `sink`.
 ///
 /// Routing-sensitive means: the attacker who controls this arg value redirects
@@ -167,6 +191,7 @@ pub fn is_routing_sensitive(sink: &SinkId, arg_name: &str) -> bool {
         "file.write" => FILE_WRITE_ROUTING_SENSITIVE.contains(&arg_name),
         "process.exec" => PROCESS_EXEC_ROUTING_SENSITIVE.contains(&arg_name),
         "http.request" => HTTP_REQUEST_ROUTING_SENSITIVE.contains(&arg_name),
+        "github.pr" => GITHUB_PR_ROUTING_SENSITIVE.contains(&arg_name),
         // v0: all other sinks — no routing-sensitive args defined yet.
         _ => false,
     }
@@ -187,6 +212,7 @@ pub fn is_content_sensitive(sink: &SinkId, arg_name: &str) -> bool {
         "process.exec" => PROCESS_EXEC_CONTENT_SENSITIVE.contains(&arg_name),
         "git.commit" => GIT_COMMIT_CONTENT_SENSITIVE.contains(&arg_name),
         "http.request" => HTTP_REQUEST_CONTENT_SENSITIVE.contains(&arg_name),
+        "github.pr" => GITHUB_PR_CONTENT_SENSITIVE.contains(&arg_name),
         _ => false,
     }
 }
@@ -316,6 +342,20 @@ pub fn expected_role(sink: &SinkId, arg_name: &str) -> Option<&'static [&'static
             // check — this `None` disables ONLY the structural role gate; it is
             // NOT an I2 bypass.
             "url" => None,
+            _ => None,
+        },
+        "github.pr" => match arg_name {
+            // GITHUB-01/03, DESIGN-git-github-http-sinks.md §4.4: all six args
+            // are DELIBERATELY unconstrained at the structural Step-1c role gate
+            // — reuse the process.exec/git.commit/http.request rationale. There
+            // is no origin_role-producing mint site for a legitimately-authored
+            // PR field (owner/repo/base/head/title/body), so pinning Some(...)
+            // would fail-closed-Deny the legit UserTrusted-authored PR flow. The
+            // Block for a tainted value comes entirely from
+            // is_routing_sensitive/is_content_sensitive + the untrusted-taint
+            // check — this `None` disables ONLY the structural role gate; it is
+            // NOT an I2 bypass.
+            "owner" | "repo" | "base" | "head" | "title" | "body" => None,
             _ => None,
         },
         _ => None, // any other sink: unconstrained, out of v1.5 scope
