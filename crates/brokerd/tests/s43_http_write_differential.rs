@@ -44,7 +44,7 @@
 
 #![cfg(test)]
 
-use brokerd::audit::{append_event, open_audit_db, verify_chain};
+use brokerd::audit::{append_event, current_chain_head, open_audit_db, verify_chain};
 use brokerd::quarantine::{mint_from_http, mint_from_intent};
 use brokerd::session::{create_session, persist_session};
 use chrono::Utc;
@@ -81,8 +81,17 @@ fn setup() -> (
 ) {
     let conn = open_audit_db(":memory:").unwrap();
     let store = ValueStore::default();
+    let (session_id, root_id, root_hash) = seed_session(&conn);
+    (conn, store, session_id, root_id, root_hash)
+}
+
+/// Persist a fresh Active session on `conn` and seed its `session_created` causal
+/// root. Returns `(session_id, root_event_id, root_hash)`. Extracted so a single
+/// audit db can host TWO independent sessions (the clean-leg and tainted-leg
+/// sessions of the dispatch-level differential, Task 2).
+fn seed_session(conn: &rusqlite::Connection) -> (Uuid, Uuid, String) {
     let session = create_session(Uuid::new_v4(), SeedProvenance::TrustedArg);
-    persist_session(&conn, &session).unwrap();
+    persist_session(conn, &session).unwrap();
     assert_eq!(
         session.status,
         SessionStatus::Active,
@@ -97,8 +106,8 @@ fn setup() -> (
         Utc::now(),
         vec![],
     );
-    let root_hash = append_event(&conn, TEST_KEY, &root, None).unwrap();
-    (conn, store, session.id, root.id, root_hash)
+    let root_hash = append_event(conn, TEST_KEY, &root, None).unwrap();
+    (session.id, root.id, root_hash)
 }
 
 /// Mint a CLEAN (`UserTrusted`) value through the REAL broker UserTrusted mint path
@@ -418,4 +427,253 @@ fn leg_d_method_outside_enum_denies_fail_closed() {
              confirmable Block) — got {other:?}"
         ),
     }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// TASK 2 — DISPATCH-LEVEL differential: the clean leg REACHES egress, the tainted
+// leg does NOT (and no write is attempted).
+//
+// These drive the ACTUAL production dispatch arm via
+// `brokerd::server::evaluate_plan_node_and_record_for_test` — the
+// `test-fixtures`-gated VERBATIM delegate to `evaluate_plan_node_and_record` (the
+// same arm the live broker runs; closes the Phase-38 mirror-drift finding). The
+// clean Allowed decision flows into the `invoke_http_write_sink` write dispatch;
+// the tainted decision Blocks and records `sink_blocked` WITHOUT ever reaching the
+// write arm (`matches!(decision, Allowed)` is false).
+//
+// HOST-PORTABILITY NOTE (documented deviation from the plan's "socket legs
+// Linux-gated" phrasing): under the DEFAULT feature set `WRITE_HOST_ALLOWLIST` is
+// EMPTY (`http_request.rs`), so `invoke_http_write` bails at the write-allowlist
+// gate BEFORE any DNS/socket on BOTH macOS and Linux — appending the OPAQUE
+// `http_write_failed` terminal event FIRST, then propagating Err. That terminal
+// event proves the egress dispatch was REACHED (the clean body was NOT Blocked and
+// the write path ran), NOT merely "not blocked" — and it is produced identically
+// on both platforms with NO socket touched, so these assertions are host-portable
+// and need no `#[cfg(target_os = "linux")]` gate (a gate would only make the test a
+// macOS no-op, REDUCING coverage). The genuine live mock-endpoint DELIVERY (the
+// `mock-egress-ca` feature's real TLS POST to `github-mock.caprun.test` on Linux)
+// and the credential-absence-after-a-real-write assertion compose in Phase 46
+// (LIVE-06); this test proves the differential at the decision + dispatch boundary.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Count durable events of `event_type` in `session_id`.
+fn count_events(conn: &rusqlite::Connection, session_id: Uuid, event_type: &str) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM events WHERE session_id = ?1 AND event_type = ?2",
+        rusqlite::params![session_id.to_string(), event_type],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+/// Assert `needle` appears in NO hashed event payload for `session_id` (opacity).
+fn assert_absent_from_all_payloads(conn: &rusqlite::Connection, session_id: Uuid, needle: &str) {
+    let mut stmt = conn
+        .prepare("SELECT payload FROM events WHERE session_id = ?1")
+        .unwrap();
+    let rows = stmt
+        .query_map(rusqlite::params![session_id.to_string()], |row| {
+            row.get::<_, String>(0)
+        })
+        .unwrap();
+    for payload in rows {
+        let payload = payload.unwrap();
+        assert!(
+            !payload.contains(needle),
+            "`{needle}` must NEVER appear in any hashed event payload (opaque audit, T-43-07)"
+        );
+    }
+}
+
+/// LEG C at the dispatch boundary: a CLEAN-body Allowed decision, driven through
+/// the REAL dispatch arm, REACHES the write egress and records a terminal
+/// `http_write_*` event (here `http_write_failed`, because the default empty
+/// `WRITE_HOST_ALLOWLIST` bails pre-socket — either way the write path was
+/// REACHED, proving delivery-INTENT, not merely "not blocked"). The write payload
+/// carries NO url/body (opaque). `verify_chain` stays intact.
+#[tokio::test]
+async fn dispatch_clean_body_reaches_egress_terminal_event() {
+    use std::sync::{Arc, Mutex};
+
+    let conn = open_audit_db(":memory:").unwrap();
+    let (session_id, _root_id, _root_hash) = seed_session(&conn);
+    let session_id_str = session_id.to_string();
+
+    // Clean args, minted through the REAL UserTrusted path (no demotion → session
+    // stays Active → the executor Allows).
+    let mut store = ValueStore::default();
+    let (head_id, head_hash) = current_chain_head(&conn, &session_id_str)
+        .expect("chain head query")
+        .expect("session_created root seeded");
+    let (url, head_id, head_hash) = mint_clean(&conn, &mut store, session_id, WRITE_URL, head_id, &head_hash);
+    let (method, head_id, head_hash) =
+        mint_clean(&conn, &mut store, session_id, WRITE_METHOD, head_id, &head_hash);
+    let (body, head_id, head_hash) =
+        mint_clean(&conn, &mut store, session_id, BODY_LITERAL, head_id, &head_hash);
+    let node = write_node(&url, &method, &body);
+
+    let conn = Arc::new(Mutex::new(conn));
+    let workspace = Arc::new(
+        adapter_fs::workspace::WorkspaceRoot::open(&std::env::temp_dir())
+            .expect("open temp workspace root"),
+    );
+    let mut last_event_id = head_id;
+    let mut last_event_hash = head_hash;
+
+    // The write bails at the empty WRITE_HOST_ALLOWLIST → invoke_http_write_sink
+    // appends http_write_failed FIRST, then the arm's `?` propagates Err. The Err
+    // is EXPECTED and load-bearing (a burned dispatch would have NO terminal event);
+    // the durable http_write_failed proves the egress was reached.
+    let result = brokerd::server::evaluate_plan_node_and_record_for_test(
+        &node,
+        &conn,
+        TEST_KEY,
+        session_id,
+        &mut store,
+        &workspace,
+        &SessionStatus::Active,
+        &SessionPolicy::broker_default(),
+        &mut last_event_id,
+        &mut last_event_hash,
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "the clean write bails at the empty WRITE_HOST_ALLOWLIST (pre-socket) and \
+         propagates Err AFTER appending the opaque terminal event — never swallowed"
+    );
+
+    let locked = conn.lock().expect("lock conn");
+
+    // The egress dispatch was REACHED: exactly one terminal http_write_failed, and
+    // NO http_write_succeeded (no live endpoint). Either terminal proves the write
+    // path ran — the clean body was NOT Blocked.
+    assert_eq!(
+        count_events(&locked, session_id, "http_write_failed"),
+        1,
+        "the clean Allowed leg must REACH the egress dispatch (one terminal \
+         http_write_failed event)"
+    );
+    assert_eq!(
+        count_events(&locked, session_id, "http_write_succeeded"),
+        0,
+        "no live endpoint → no success event (the failed terminal still proves \
+         dispatch was reached)"
+    );
+    // Crucially, the clean leg did NOT Block: no sink_blocked event exists.
+    assert_eq!(
+        count_events(&locked, session_id, "sink_blocked"),
+        0,
+        "the clean body must NOT Block — a sink_blocked here would be a \
+         block-everything regression (fails the differential, T-43-12)"
+    );
+
+    // Opaque audit: neither the url nor the body literal is in ANY payload.
+    assert_absent_from_all_payloads(&locked, session_id, WRITE_URL);
+    assert_absent_from_all_payloads(&locked, session_id, BODY_LITERAL);
+
+    // The genuine audit DAG stays intact across the dispatch + terminal append.
+    assert!(
+        verify_chain(&locked, &session_id_str, TEST_KEY),
+        "verify_chain must hold for the clean-leg session after the dispatch"
+    );
+}
+
+/// LEG B at the dispatch boundary: a TAINTED-body decision, driven through the SAME
+/// real dispatch arm, records a `sink_blocked` (I2 Block) and NO `http_write_*`
+/// terminal event — the write is NEVER attempted (`matches!(decision, Allowed)` is
+/// false, so the write arm is never entered). `verify_chain` stays intact. This is
+/// the differential complement of the clean leg above: a blanket-allow regression
+/// would produce an http_write_* terminal here and fail this test.
+#[tokio::test]
+async fn dispatch_tainted_body_blocks_and_never_writes() {
+    use std::sync::{Arc, Mutex};
+
+    let conn = open_audit_db(":memory:").unwrap();
+    let (session_id, _root_id, _root_hash) = seed_session(&conn);
+    let session_id_str = session_id.to_string();
+
+    // Clean url/method + a genuinely-TAINTED body (mint_from_http, real
+    // http_response_received provenance). mint_from_http demotes the persisted
+    // session to Draft, but the dispatch is driven with `SessionStatus::Active`
+    // EXPLICITLY so the Block under test is TAINT-driven (I2), not a draft-session
+    // gate — isolating taint as the sole cause, mirroring the s37 discipline.
+    let mut store = ValueStore::default();
+    let (head_id, head_hash) = current_chain_head(&conn, &session_id_str)
+        .expect("chain head query")
+        .expect("session_created root seeded");
+    let (url, head_id, head_hash) = mint_clean(&conn, &mut store, session_id, WRITE_URL, head_id, &head_hash);
+    let (method, head_id, head_hash) =
+        mint_clean(&conn, &mut store, session_id, WRITE_METHOD, head_id, &head_hash);
+    let (body, _head_id, _head_hash) =
+        mint_tainted_body(&conn, &mut store, session_id, BODY_LITERAL, head_id, &head_hash);
+    let node = write_node(&url, &method, &body);
+
+    // Re-read the chain head AFTER the tainted mint's session_demoted appends, so
+    // the dispatch threads onto the true head (mint_from_http advanced it).
+    let (head_id, head_hash) = current_chain_head(&conn, &session_id_str)
+        .expect("chain head query")
+        .expect("chain head after mints");
+
+    let conn = Arc::new(Mutex::new(conn));
+    let workspace = Arc::new(
+        adapter_fs::workspace::WorkspaceRoot::open(&std::env::temp_dir())
+            .expect("open temp workspace root"),
+    );
+    let mut last_event_id = head_id;
+    let mut last_event_hash = head_hash;
+
+    let (decision, output_value_id, _session_demoted) =
+        brokerd::server::evaluate_plan_node_and_record_for_test(
+            &node,
+            &conn,
+            TEST_KEY,
+            session_id,
+            &mut store,
+            &workspace,
+            // Active: isolate the Block as TAINT-driven (I2), not a draft gate.
+            &SessionStatus::Active,
+            &SessionPolicy::broker_default(),
+            &mut last_event_id,
+            &mut last_event_hash,
+        )
+        .await
+        .expect("a Blocked decision is a normal Ok outcome — the write arm is never entered");
+
+    match &decision {
+        ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+            assert_eq!(anchors.len(), 1, "only the tainted body Blocks; got {anchors:?}");
+            assert_eq!(anchors[0].anchor.arg, "body");
+        }
+        other => panic!("the tainted-body dispatch must Block on `body` — got {other:?}"),
+    }
+    assert!(
+        output_value_id.is_none(),
+        "a Blocked http.request.write mints nothing"
+    );
+
+    let locked = conn.lock().expect("lock conn");
+
+    // The Block is durable AND the write was NEVER attempted.
+    assert_eq!(
+        count_events(&locked, session_id, "sink_blocked"),
+        1,
+        "the tainted leg must record exactly one sink_blocked (I2 Block)"
+    );
+    assert_eq!(
+        count_events(&locked, session_id, "http_write_failed"),
+        0,
+        "the tainted leg must NOT reach the write — no http_write_failed"
+    );
+    assert_eq!(
+        count_events(&locked, session_id, "http_write_succeeded"),
+        0,
+        "the tainted leg must NOT reach the write — no http_write_succeeded"
+    );
+
+    // The genuine audit DAG stays intact (unbroken taint chain, not stapled).
+    assert!(
+        verify_chain(&locked, &session_id_str, TEST_KEY),
+        "verify_chain must hold for the tainted-leg session after the Block"
+    );
 }
