@@ -45,17 +45,22 @@ v1.9 external surfaces, before any TCB code exists:
    Closes the research's three adversarial attack points (credential leak; redirect/
    DNS-rebind pin-bypass; payload-vs-destination confirm TOCTOU). Effect-class
    `CommitIrreversible`.
-2. **`http.request` WRITE (POST/PUT)** (§2) — a **distinct** write host-allowlist
-   (separate from the shipped GET allowlist), taint-governed content-sensitive body under
-   I2, routing-sensitive `url`, broker-env-only credential custody with response scrub, and
+2. **`http.request` WRITE (POST/PUT)** (§2) — a **distinct sink id** (`http.request.write`)
+   classified **`EffectClass::CommitIrreversible`** (§2.0, so a draft/untrusted-seeded
+   session cannot Allow a POST — it does NOT inherit the GET id's `Observe` class), a
+   **distinct** write host-allowlist (separate from the shipped GET allowlist),
+   taint-governed content-sensitive body under I2, a **schema-validated `method` enum**,
+   routing-sensitive `url`, broker-env-only credential custody with response scrub, and
    **differential** acceptance.
 3. **The policy↔I2 boundary** (§5), incl. **POLICY-03 binding** — policy is a **pre-I2
    narrowing gate** (which sinks/args are callable), refusing with a distinct
    machine-checkable policy-deny outcome; it can NEVER disable/override I2; I2 stays
    **HARDCODED** in the Rust TCB executor, unconditional on every policy-permitted call;
    the policy is bound by the broker at session creation from a trusted source outside the
-   confined worker's reach (F1 containment reused verbatim from `cli/caprun/src/key.rs`),
-   immutable, hash recorded as an audit-DAG event.
+   confined worker's reach (F1 containment **EXTRACTED into one shared, unit-tested helper**
+   called by BOTH MAC-key custody and policy binding — the inline `cli/caprun/src/key.rs`
+   check is `pub(crate)` and unreachable from the broker binder, so it is factored out, not
+   reused verbatim; §5.3), immutable, hash recorded as an audit-DAG event.
 
 Plus: the **crypto-provider / supply-chain** decision (§3 — ring-only, ZERO new crates),
 the **fail-closed defaults table** (§4), a **§-per-pitfall threat model** (§6),
@@ -119,14 +124,19 @@ SSRF resolve-and-pin (`http_request.rs`). Git's smart-HTTP push is a well-specif
 2. `POST $URL/git-receive-pack` (`Content-Type: application/x-git-receive-pack-request`),
    body = pkt-line command-list (`<old> <new> <ref>`) + `"PACK" <binary>`.
 
-**DECISION — the git-native split.** The broker plays the **HTTP-mover role** (reqwest,
-TLS broker-side, `.resolve(host, pinned_ip)` = the pin) driving **`git send-pack
---stateless-rpc` running as the net-denied child** for pure-local delta + pack computation
-(no socket). TLS and the entire network leg live **broker-side**; the child never opens an
-`AF_INET`/`AF_INET6` socket. (Implementation may alternatively generate the receive-pack
-body directly from the workspace `.git` in the broker — the broker has fs access — but the
-security posture is identical: the child is net-denied either way; Phase 44 picks the
-realization under the §1.9 constraint.)
+**DECISION — the git-native split (`[rev: MINOR-5]` realization preference).** The broker
+plays the **HTTP-mover role** (reqwest, TLS broker-side, `.resolve(host, pinned_ip)` = the
+pin); TLS and the entire network leg live **broker-side**, and the child never opens an
+`AF_INET`/`AF_INET6` socket. The research rates the `git send-pack --stateless-rpc`
+realization only **MEDIUM confidence**, so the **PRIMARY realization is: the broker generates
+the `receive-pack` request body DIRECTLY** from the workspace `.git` (the broker has fs
+access) — pkt-line command-list + `PACK` — which **avoids the `send-pack` URL-arg /
+subprocess-invocation surface entirely**. The **documented ALTERNATIVE** is driving **`git
+send-pack --stateless-rpc` as the net-denied child** for pure-local delta + pack computation
+(no socket), reading request bodies on stdin / writing stdout while the broker owns the
+socket. **Either way the child is net-denied**; Phase 44 picks the realization under the §1.9
+constraint, **preferring direct body generation** to shrink the invocation surface — with the
+§1.8 seccomp fail-closed backstop and the §1.9 safety-valve applying to **both** realizations.
 
 The child's **local dispatch is `git.commit`'s Pattern-B path unchanged** (v1.8 §1.1 /
 §2): broker spawns the `caprun-exec-launcher`, which self-confines then `execve`s `git`;
@@ -182,8 +192,11 @@ broker holds the credential AND sees the full HTTP exchange — the highest-valu
 
 - The credential lives in **broker-local env ONLY** — never a `ValueNode`, plan-node arg,
   audit-DAG literal, the confined worker, or the planner sidecar. It is supplied to the
-  transfer as the `Authorization` header value on the reqwest POST (the `bearer`/basic slot
-  of `invoke_pinned_post`, `http_request.rs:506-517`) — set on the request, never persisted.
+  transfer as the `Authorization` header value on the **single frozen-IP POST request**
+  (§1.5) — the `bearer`/basic header slot used by `invoke_pinned_post`
+  (`http_request.rs:506-517`), but set on the POST issued through the ONE `build_pinned_client`
+  client of §1.5 (**NOT** through `invoke_pinned_post`'s re-resolving wrapper — `[rev:
+  MINOR-3]`) — set on the request, never persisted.
 - If the push instead drives `git` for the network leg in any variant, the credential is the
   ONE explicitly-injected non-`SAFE_EXEC_PATH` env var (`extra_env`, `process_exec.rs:394`)
   scoped to that child alone, riding `run_launcher`'s `env_clear()` discipline
@@ -196,8 +209,15 @@ broker holds the credential AND sees the full HTTP exchange — the highest-valu
   body is **either not minted at all** (only a broker-side opaque `git_push_succeeded`/
   `_failed` event carrying `effect_id`) **or scrubbed of any `https://…@…` userinfo /
   `Authorization:` / token / proxy-auth substring before minting**. A regression test MUST
-  assert **no credential or remote-URL substring survives into the value store or the audit
-  chain** (LIVE-06 leg 5, the post-push credential-absence assertion).
+  assert **no credential or remote-URL substring survives into the value store, the audit
+  chain, OR broker LOG output** on the git-push HTTP legs (LIVE-06 leg 5, the post-push
+  credential-absence assertion). This closes research attack-point (i)'s **broker-log** leak
+  vector (`[rev: MINOR-4]`): `do_pinned_post`'s error path (`http_request.rs:542`) can embed
+  URL/redirect material (proxy-auth `407`, URL echoes on `401`) into a broker log line, so on
+  those legs the broker MUST NOT log the response body / remote URL — or, equivalently, the
+  credential-absence assertion MUST cover the broker's log sink, not only the value store +
+  audit chain (consistent with the §4 `git.push credential custody` row, which already lists
+  `broker-log` as a violation surface).
 
 ### 1.5 Attack point (ii) — destination-pin bypass via redirect / DNS-rebind
 
@@ -209,16 +229,29 @@ The two-request exchange opens a rebind/redirect window the single-request GET d
   re-resolve between requests**. `resolve_and_pin` (`http_request.rs:431`) already returns a
   client bound to the exact vetted IP set (its doc: "The resolved IPs are the EXACT set
   vetted and pinned (no re-resolve later — DNS-rebind TOCTOU close)"). Phase 44 MUST build
-  the POST client from the SAME pinned `SocketAddr` the GET used — not a fresh
-  `resolve_and_pin` call — so a DNS answer that flips between requests cannot move the POST.
+  the POST from the SAME pinned `SocketAddr` the GET used — so a DNS answer that flips between
+  requests cannot move the POST.
+- **`invoke_pinned_post` CANNOT be reused as-is for the two-request git flow (`[rev:
+  MINOR-3]`, reconciles §1.4).** The shipped `invoke_pinned_post` (`http_request.rs:506`)
+  calls `resolve_and_pin` **internally** (`http_request.rs:531`), which performs a **fresh DNS
+  resolve** (`http_request.rs:435-444`). Driving the `git-receive-pack` POST through
+  `invoke_pinned_post` would therefore **re-resolve between the GET and the POST** — reopening
+  the exact DNS-rebind window this section exists to close (the GET's vetted IP and the POST's
+  could differ). So Phase 44 MUST instead build a **single `reqwest::Client` ONCE** — from
+  **one** vetted `SocketAddr` via `build_pinned_client` (`http_request.rs:333`) — and issue
+  **BOTH** the `info/refs` GET and the receive-pack POST through that one frozen-IP client.
+  The reusable primitive is **`build_pinned_client`** (it takes an already-vetted addr), NOT
+  `invoke_pinned_post` (which re-resolves). The §1.4 credential pointer is reconciled to this:
+  the `Authorization` header is set on the POST issued by that one client, not by
+  `invoke_pinned_post`.
 - **POST 3xx redirects refused.** `build_pinned_client` sets
   `.redirect(reqwest::redirect::Policy::none())` (`http_request.rs:335`) — a followed
   redirect = arbitrary egress = the exfil primitive. This governs the **POST**, not just the
   GET: a `git-receive-pack` 3xx (renamed repo / org redirect) MUST be refused, never
-  followed. The shipped `invoke_pinned_post` (`http_request.rs:525-542`) already builds its
-  client via the SAME `resolve_and_pin` → `build_pinned_client` path, so redirect-none is
-  already in force for the POST; Phase 44 MUST NOT introduce a redirect-following client for
-  the git leg.
+  followed. Because Phase 44 builds BOTH requests from the SAME `build_pinned_client` client
+  (redirect-none already set at `http_request.rs:335`), redirect-none is in force for the POST
+  **without** routing through the re-resolving `invoke_pinned_post` (`http_request.rs:525-542`);
+  Phase 44 MUST NOT introduce a redirect-following client for the git leg.
 
 ### 1.6 Attack point (iii) — payload-vs-destination confirm TOCTOU (carries v1.8 §2.7)
 
@@ -296,6 +329,36 @@ v1.8 shipped `http.request` GET (Pattern A) and, for `github.pr`, an authenticat
 `invoke_pinned_post` (`http_request.rs:506`). v1.9 generalizes WRITE into a first-class,
 I2-governed sink. **DECISIONS:**
 
+### 2.0 A DISTINCT WRITE sink id (`http.request.write`), classed `CommitIrreversible` — the I0-gate pin (`[rev: MAJOR-1]`, BLOCKER-class)
+
+**DECISION (BLOCKER-level — closes an I0-gate escape).** `http.request` WRITE is a
+**DISTINCT sink id — `http.request.write`** — **NOT** an extension of the shipped GET id
+`http.request`. This is load-bearing for I0. `sink_effect_class`
+(`crates/executor/src/sink_sensitivity.rs:40-83`) keys on **sink-id ONLY**, and the shipped
+`"http.request" => EffectClass::Observe` row (`sink_sensitivity.rs:64`) classes the GET id
+**`Observe`**. The I0/Draft lifecycle deny (`crates/executor/src/lib.rs:206-239`) fires
+**only** when `sink_effect_class == CommitIrreversible` (`lib.rs:217`); an `Observe`-classed
+sink **falls through → Allowed even in a draft / untrusted-seeded session**. So *extending*
+the existing `http.request` id to also carry POST/PUT keeps it `Observe` and lets a **WRITE
+POST escape the I0 gate** — a prompt-injected, draft-only session could exfiltrate through a
+POST body with no confirm. A distinct id is the fix:
+
+- **`http.request.write` is classified `EffectClass::CommitIrreversible`** — **explicitly**
+  (a dedicated `"http.request.write" => EffectClass::CommitIrreversible` match row), AND
+  redundantly **fail-closed** by the `_ => EffectClass::CommitIrreversible` default
+  (`sink_sensitivity.rs:83`) that already makes any UNKNOWN/new sink-id fail closed. The
+  distinct CommitIrreversible id gets the full irreversible discipline: **I0 draft-deny**
+  (`lib.rs:217`) + **I2 collect-then-Block** + **confirm-releasable** — matching the
+  "distinct WRITE allowlist" framing in §2.1 and the `IrreversibleEffect` ontology (v1.8
+  §2.1).
+- **Confirm-releasability (resolved — was open in §1.7-style language).** CommitIrreversible
+  ⇒ a **tainted-body WRITE Blocks under I2** and is **confirm-releasable** via the SAME
+  single-shot human-confirm discipline as `github.pr` — the P33/P34 `prepare_*` precheck +
+  terminal-audit-event-before-terminal-state gate (§1.7). A clean-body WRITE to a
+  write-allowlisted host on a non-draft session proceeds; a tainted-body WRITE Blocks and can
+  be released only by an explicit human confirm of the specific request (never a standing
+  license).
+
 ### 2.1 A DISTINCT write host-allowlist (separate from the GET allowlist)
 
 The shipped read/GET allowlist is `HOST_ALLOWLIST = ["api.github.com"]`
@@ -353,6 +416,19 @@ endpoint on real Linux** (the mock records receipt). A block-everything I2 regre
 pass this — a passing run requires the clean body to arrive AND the tainted body to Block,
 attributable to I2 specifically (LIVE-06).
 
+### 2.6 The `method` arg is a schema-validated enum, never a free tainted literal (`[rev: MINOR-5]`)
+
+The WRITE sink's `method` arg is **schema-validated against a FIXED enum** (e.g. `{POST,
+PUT}`) at the Step-0 schema gate — it is **NEVER a free-form / tainted literal**. An
+unrecognized, missing, or tainted-literal method → **Deny at the schema gate** (fail-closed,
+§4). Crucially, the **WRITE-vs-GET allowlist + effect-class selection keys off the VALIDATED
+method**: a request whose validated method is a write verb routes through the **distinct
+`WRITE_HOST_ALLOWLIST`** (§2.1) and the **`http.request.write` `CommitIrreversible` id**
+(§2.0); a GET routes through the shipped read path (`HOST_ALLOWLIST`, `Observe`). Selection is
+driven by the **validated enum**, never by an attacker-supplied string — so a tainted/garbage
+`method` can neither steer a write onto the GET-readable allowlist (escaping the write
+gate/I0 class) nor vice-versa.
+
 ---
 
 ## §3. Crypto provider + supply-chain — ring-only, ZERO new crates (HYG-01)
@@ -397,6 +473,8 @@ only; v1.8's table (its §8) carries forward for the shared GET/`github.pr`/SSRF
 | `http.request` WRITE host | routing | **distinct** `WRITE_HOST_ALLOWLIST`, checked BEFORE any resolve | non-write-allowlisted host → Deny at the gate (a GET-readable host is NOT implicitly writable) |
 | `http.request` WRITE `body` | content-sensitive (I2) | taint carrier, never re-minted clean | tainted → Block (collect-then-Block); unknown/missing → Deny at Step 0 schema gate |
 | `http.request` WRITE `url` | routing-sensitive (I2) | resolve-and-pin; redirect-none | SSRF-range/redirect/`userinfo@`/non-https → Deny; tainted → Block |
+| `http.request` WRITE `method` | structural (schema enum) | validated against a FIXED `{POST,PUT}` enum; the validated verb drives WRITE-vs-GET allowlist + effect-class selection | unrecognized/missing/tainted-literal method → Deny at the Step-0 schema gate; never a free tainted literal |
+| `http.request.write` effect class | lifecycle (I0) | DISTINCT sink id classed `CommitIrreversible` (explicit row + `_ =>` default), NOT the GET id's `Observe` | a draft/untrusted-seeded session cannot Allow the POST (I0 deny fires only on `CommitIrreversible`, `lib.rs:217`); tainted body Blocks under I2, confirm-releasable |
 | `http.request` WRITE credential + response | secret / untrusted | broker-local env only; response scrubbed or `mint_from_http`-tainted | credential in value-store/audit → violated; response stapled-clean → violated |
 | session policy source (POLICY-03) | trust binding | bound by broker at session creation from a trusted path outside worker reach (F1) | policy path at-or-beneath workspace root, or unresolvable/absent → **refuse to run** (fail-closed, no session) |
 | policy vs I2 (POLICY-02) | invariant | policy narrows which sinks/args are callable | policy PERMIT never disables I2 — a tainted sensitive arg on a permitted call still Blocks; policy can only add a Deny, never remove a Block |
@@ -442,24 +520,49 @@ Scope).
 
 ### 5.3 POLICY-03 — the broker binds policy at session creation from a trusted source outside worker reach
 
-**DECISION (`[rev: B1 + Matt #1` — both reviewers converged, BLOCKER-class).** The session
-policy is **bound by the broker at session creation from a trusted source provably outside
-the confined worker's reach**. The binding reuses the **F1 containment check verbatim from
-`cli/caprun/src/key.rs`** — the exact fail-closed refusal already shipped for MAC-key custody:
+**DECISION (`[rev: B1 + Matt #1` — both reviewers converged, BLOCKER-class; EXTRACTION
+mandate added by `[rev: MAJOR-2]`).** The session policy is **bound by the broker at session
+creation from a trusted source provably outside the confined worker's reach**, enforcing the
+**SAME containment predicate** as MAC-key custody — but that predicate MUST be **EXTRACTED
+into a single shared, unit-tested helper**, NOT "reused verbatim" / re-inlined. Today the F1
+logic is **inline** in `load_or_create_key` (`cli/caprun/src/key.rs:60-110`): canonicalize
+the workspace root (`std::fs::canonicalize(workspace_root)`, `key.rs:74`), canonicalize each
+candidate via `canonicalize_existing_or_parent` (`key.rs:82,166`), and **refuse — hard `Err`,
+nothing returned/written — if the canonical candidate `starts_with` the canonical workspace
+root** (`key.rs:88-95`). There is **NO standalone containment fn**, AND `load_or_create_key`
+is **`pub(crate)` in the `cli/caprun` binary crate**, while POLICY-03 binding runs
+**broker-side (`crates/brokerd`, a TCB crate)** — so the check is **not even reachable**, let
+alone callable verbatim, from the policy binder. Therefore:
 
-- `load_or_create_key` (`key.rs:60`) canonicalizes the workspace root
-  (`std::fs::canonicalize(workspace_root)`, `key.rs:74`) and each candidate path, then
-  **refuses — hard `Err`, nothing returned/written — if the canonical candidate
-  `starts_with` the canonical workspace root** (`key.rs:88-95`). The policy binding MUST run
-  this SAME check against the policy path: **refuse if the policy path resolves at-or-beneath
-  the workspace root**, because the confined worker — caprun's PRIMARY adversary — could
-  `RequestFd` any file beneath the workspace root via the SAME `WorkspaceRoot::read_within`
-  reach the broker grants for legitimate reads (`key.rs:13-26` F1 rationale), then rewrite
-  its own policy to widen its allowlist (the F1-precedent attack, `.planning/REQUIREMENTS.md`
-  Out of Scope "Policy loaded from a session/worker-writable location").
-- **An unresolvable/absent policy path is itself a refusal** (fail-closed, never fail-open) —
-  `canonicalize_existing_or_parent` (`key.rs:166`) + the `with_context` bails at `key.rs:74`/
-  `key.rs:82` mean a path that cannot be resolved refuses to run, exactly as key custody does.
+- **EXTRACT the containment predicate into ONE shared helper** — e.g.
+  `fn refuse_if_beneath_workspace(path: &Path, workspace_root: &Path) -> Result<()>` — placed
+  in a crate reachable by **BOTH** call sites. Because `key.rs` lives in `cli/caprun`
+  (`pub(crate)`) and the policy binder lives in `crates/brokerd`, the helper **lifts into a
+  shared locus** — most likely `crates/runtime-core`, or a shared `brokerd`/`sandbox` util the
+  CLI also depends on (Phase 42 picks the crate, but it MUST be one BOTH sites can call). BOTH
+  MAC-key custody (`load_or_create_key`) AND the policy binding call the **identical** fn. A
+  **regression test MUST assert both sites call the shared fn** (not two divergent copies that
+  can drift).
+- **Preserve the fail-closed-on-unresolvable semantics** exactly. `canonicalize_existing_or_parent`
+  (`key.rs:166`): a **nonexistent** path canonicalizes its **parent** then rejoins the final
+  component — a naive `std::fs::canonicalize()` would error/drift on a not-yet-existing path,
+  so the helper MUST keep the parent-then-rejoin behavior. Preserve too the
+  `canonicalize(workspace_root)` **requires-root-exists** behavior (`key.rs:74`): an
+  **unresolvable/absent policy path is itself a refusal** (fail-closed, never fail-open) —
+  the `with_context` bails at `key.rs:74`/`key.rs:82` mean a path that cannot be resolved
+  refuses to run, exactly as key custody does.
+- **The `starts_with` check is already component-wise correct.** `std::path::Path::starts_with`
+  matches whole path components, so `/ws-foo` does **NOT** match `/ws` — there is **no
+  sibling-prefix bug**. The **only** gap MAJOR-2 closes is the **factoring** (extract + share
+  across the crate boundary so the broker binder can actually call it), not the predicate
+  logic.
+- The policy binding MUST run this SAME shared helper against the policy path: **refuse if the
+  policy path resolves at-or-beneath the workspace root**, because the confined worker —
+  caprun's PRIMARY adversary — could `RequestFd` any file beneath the workspace root via the
+  SAME `WorkspaceRoot::read_within` reach the broker grants for legitimate reads
+  (`key.rs:13-26` F1 rationale), then rewrite its own policy to widen its allowlist (the
+  F1-precedent attack, `.planning/REQUIREMENTS.md` Out of Scope "Policy loaded from a
+  session/worker-writable location").
 - The bound policy is **immutable for the session's life** — a confined worker that
   writes/rewrites a policy file mid-session does **NOT** change the enforced allowlist
   (proven by a **negative live leg**).
@@ -500,10 +603,16 @@ Mirrors v1.8 §6: each pitfall closed by a NAMED structural mechanism, cross-ref
 
 Each item checked with a one-line justification (mirrors v1.8 §7):
 
-- [x] **I0 unaffected** — no new session-creation path weakens seeding; a session seeded from
-  external/untrusted content still starts draft-only and cannot auto-authorize a
-  `CommitIrreversible` push or a WRITE POST. Policy binding at session creation (§5.3)
-  *narrows* authority; it never seeds trust.
+- [x] **I0 unaffected — and now CITED, not merely asserted, for the WRITE POST** — no new
+  session-creation path weakens seeding; a session seeded from external/untrusted content
+  still starts draft-only and cannot auto-authorize a `CommitIrreversible` push or a WRITE
+  POST. **The WRITE POST is I0-gated precisely because `http.request.write` is a DISTINCT
+  sink id classed `EffectClass::CommitIrreversible`** (§2.0; explicit match row + the `_ =>`
+  default, `sink_sensitivity.rs:83`): the I0/Draft lifecycle deny fires only on
+  `CommitIrreversible` (`lib.rs:217`), so a draft/untrusted-seeded session cannot Allow the
+  POST. Were WRITE folded into the shipped `Observe`-classed `http.request` id, it would
+  **fall through** the I0 gate (`lib.rs:206-239` never fires for `Observe`) — the escape §2.0
+  closes. Policy binding at session creation (§5.3) *narrows* authority; it never seeds trust.
 - [x] **I1 preserved AND extended** — a WRITE response minted as an inbound value goes through
   `mint_from_http` (untrusted-on-arrival, session demotion), exactly the I1 direction (§2.4);
   no sink reads raw untrusted bytes into the worker. `git.push`'s network leg is broker-side;
@@ -540,9 +649,10 @@ prose this phase, NEVER under `crates/` or `cli/` yet):
 |--------|-------|-------|
 | `DenyReason::PolicyDeny` (distinct from the I2 Block) | 42 | `crates/executor` / `crates/runtime-core` decision type |
 | session-policy struct/schema + `policy_bound` audit-DAG event (hash recorded) | 42 | `crates/brokerd` (bind at session creation) + `crates/runtime-core` (policy type) |
-| policy F1-containment binding (reuses `key.rs` `load_or_create_key` F1 check) | 42 | `crates/brokerd` session-creation path + `cli/caprun` run entrypoint |
+| shared `refuse_if_beneath_workspace` containment helper (**EXTRACTED** from `key.rs`'s inline F1 check; called by BOTH MAC-key custody + policy binding; regression-tested that both sites call it) (`[rev: MAJOR-2]`) | 42 | shared crate (e.g. `crates/runtime-core` / shared util) + callers in `crates/brokerd` (policy bind) & `cli/caprun` (key custody + run entrypoint) |
 | `WRITE_HOST_ALLOWLIST` (distinct from `HOST_ALLOWLIST`) | 43 | `crates/brokerd/src/sinks/http_request.rs` |
-| `http.request` WRITE sink rows (`KNOWN_SINKS`, `body` content-sensitive, `url` routing) | 43 | `crates/executor/src/{sink_schema,sink_sensitivity}.rs` |
+| `http.request.write` = **DISTINCT sink id**, `sink_effect_class` ⇒ `CommitIrreversible` (explicit match row + `_ =>` fail-closed default `sink_sensitivity.rs:83`) — NOT the GET id's `Observe` (`[rev: MAJOR-1]`) | 43 | `crates/executor/src/sink_sensitivity.rs` |
+| `http.request` WRITE sink rows (`KNOWN_SINKS`, `body` content-sensitive, `url` routing, `method` schema-validated `{POST,PUT}` enum) | 43 | `crates/executor/src/{sink_schema,sink_sensitivity}.rs` |
 | `git.push` smart-HTTP transfer glue (pkt-line + info/refs GET + receive-pack POST + report-status parse) | 44 | `crates/brokerd/src/sinks/*` (Rust glue; ZERO new crates) |
 | `prepare_git_push` precheck + `git_push_succeeded`/`_failed` opaque events + entry-guard allow-list extension | 44 | `crates/brokerd/src/sinks/*` + `confirmation.rs` (Step 4.75 guard `:825-846`, Step 4.8 precheck) |
 | `git.push` = `CommitIrreversible`, new sensitivity/role rows | 44 | `crates/executor/src/{sink_schema,sink_sensitivity}.rs` |
@@ -594,10 +704,14 @@ Phase 41's gate is cleared when ALL are true:
 
 1. This doc pins, as **DECISIONS** (not options): (a) `git.push` = broker-performed
    smart-HTTP destination-pinned egress with the child fully net-denied and the pin in the
-   broker application layer (never seccomp), closing all three research attack points (§1);
-   (b) `http.request` WRITE = a DISTINCT write-allowlist + taint-governed content-sensitive
-   body under I2 + differential acceptance (§2); (c) the policy↔I2 boundary incl. POLICY-03
-   F1-containment binding (§5). **(DESIGN-17.)**
+   broker application layer (never seccomp), closing all three research attack points (§1) —
+   incl. the §1.4 credential/remote-URL absence assertion **extended to broker LOG output**
+   (LIVE-06 leg 5) and the §1.5 single-frozen-IP client that does NOT re-resolve for the POST;
+   (b) `http.request` WRITE = a **DISTINCT sink id (`http.request.write`) classed
+   `CommitIrreversible`** (§2.0) + a DISTINCT write-allowlist + taint-governed
+   content-sensitive body under I2 + a schema-validated `method` enum + differential
+   acceptance (§2); (c) the policy↔I2 boundary incl. POLICY-03 F1-containment binding via a
+   **shared EXTRACTED helper** (§5). **(DESIGN-17.)**
 2. This doc carries forward v1.8 **§2 / §2.5 / §2.7 / §9** by reference (§0, §1.4, §1.6,
    §1.7), pins **ring-only / ZERO new crates + the Gate-5 workspace-scoped re-run** (§3),
    gives a **fail-closed defaults table** (§4) and a **§-per-pitfall threat model** (§6),
@@ -614,6 +728,53 @@ Phase 41's gate is cleared when ALL are true:
    invariant regression from its prose), and **no `crates/{executor,brokerd,sandbox,
    runtime-core}` / `cli/` code exists yet** — `git status --porcelain -- crates cli` is
    empty. **No TCB code is written until DESIGN-18 clears (§9).**
+
+---
+
+## Round-1 Amendments (DESIGN-18 adversarial trace)
+
+A fresh, non-self, orchestrator-owned adversarial code-trace (DESIGN-18) surfaced 2 MAJOR +
+3 MINOR findings, each VERIFIED against live code. All 5 are folded below; every fix is a
+DESIGN decision (prose/pin), no TCB code.
+
+- **MAJOR-1 (BLOCKER-level) — `http.request` WRITE effect class pinned so it can't escape the
+  I0 gate.** `sink_effect_class` (`sink_sensitivity.rs:40-83`) keys on sink-id only, and
+  `"http.request" => Observe` (`:64`) means the I0/Draft deny (`lib.rs:206-239`, fires only on
+  `CommitIrreversible` at `:217`) would NOT fire for a WRITE folded into the GET id → Allowed
+  in a draft session. Fix: WRITE is a **DISTINCT sink id `http.request.write`** classed
+  **`CommitIrreversible`** (explicit row + `_ =>` fail-closed default `:83`). Added §2.0
+  (new); updated §0(2), the §7 I0 checkbox (now cites the class), §8 (new effect-class row),
+  and §4 (new effect-class row). Confirm-releasability resolved: tainted body Blocks under I2,
+  confirm-releasable via the P33/P34 precheck like `github.pr`.
+- **MAJOR-2 — POLICY-03 F1 containment EXTRACTED into a shared tested helper, not "reused
+  verbatim."** The F1 logic is inline in `load_or_create_key` (`key.rs:60-110`) and
+  `pub(crate)` in `cli/caprun`, so it is unreachable from the broker-side (`brokerd`) policy
+  binder. Fix: §5.3 (and §0) now mandate **extracting** `refuse_if_beneath_workspace(path,
+  workspace_root)` into a crate BOTH sites can call (e.g. `runtime-core`), preserving
+  `canonicalize_existing_or_parent`'s parent-then-rejoin fail-closed semantics and the
+  requires-root-exists behavior, with a regression test that BOTH sites call the shared fn.
+  Noted the `starts_with` check is already component-wise correct (no sibling-prefix bug — the
+  only gap is factoring). Updated §8 symbol row.
+- **MINOR-3 — `invoke_pinned_post` re-resolves DNS; §1.4/§1.5 reconciled.**
+  `invoke_pinned_post` (`http_request.rs:506`) calls `resolve_and_pin` internally (`:531` →
+  fresh resolve `:435-444`), reopening the DNS-rebind window. Fix: §1.5 now states
+  `invoke_pinned_post` CANNOT be reused as-is; Phase 44 builds a **single `reqwest::Client`
+  once** via `build_pinned_client` (`:333`) from one vetted `SocketAddr` and issues BOTH the
+  info/refs GET and the receive-pack POST through it. §1.4 credential pointer reconciled to the
+  same single-client POST.
+- **MINOR-4 — credential/URL-absence assertion extended to broker LOGS.** Research
+  attack-point (i) names broker error-log lines (proxy-auth `407`, URL echoes) as a leak
+  vector; `do_pinned_post`'s error path (`http_request.rs:542`) can embed URL/redirect
+  material into a log line. Fix: §1.4's credential-absence assertion (and §10 acceptance, →
+  LIVE-06 leg 5) now also asserts **no credential/remote-URL material reaches broker LOG
+  output** on the git-push HTTP legs (or the broker never logs body/URL on those legs).
+- **MINOR-5 — stateless-rpc confidence + method-arg validation.** Research rates
+  `send-pack --stateless-rpc` MEDIUM confidence. Fix: §1.1 now makes **broker-generates-the-
+  receive-pack-body-directly** the PRIMARY realization (avoids the send-pack URL-arg /
+  invocation surface), keeping stateless-rpc as the documented alternative + the §1.8 seccomp
+  backstop + §1.9 safety-valve. §2.6 (new) pins `method` as a **schema-validated enum**
+  (`{POST,PUT}`, never a free tainted literal), with WRITE-vs-GET allowlist/class selection
+  keyed off the VALIDATED method; §4 gains a `method` row.
 
 ---
 
