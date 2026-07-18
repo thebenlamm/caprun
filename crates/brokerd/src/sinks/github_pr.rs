@@ -58,6 +58,16 @@ use crate::sinks::http_request;
 /// unless `CAPRUN_GITHUB_API_BASE` overrides it for the Phase-40 mock harness.
 const DEFAULT_API_BASE: &str = "https://api.github.com";
 
+/// Serializes any test that mutates the process-global `CAPRUN_GITHUB_*` env
+/// vars — SHARED across this module's tests AND `confirmation.rs`'s github.pr
+/// confirm-release tests (Plan 38-05) so both cannot race on the same
+/// process-wide environment (mirrors `email_smtp::SMTP_ENV_LOCK`).
+/// `#[cfg(test)]`-gated (only the SAME brokerd lib test binary references it) +
+/// `pub(crate)` so it is reachable cross-module as
+/// `crate::sinks::github_pr::GITHUB_ENV_LOCK`.
+#[cfg(test)]
+pub(crate) static GITHUB_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The exact six-arg set for `github.pr` (executor sink schema, Plan 38-01).
 const PR_ARGS: [&str; 6] = ["owner", "repo", "base", "head", "title", "body"];
 
@@ -332,10 +342,9 @@ mod tests {
     /// Fixed, non-secret test MAC key (mirrors `email_smtp.rs`'s `TEST_KEY`).
     const TEST_KEY: &[u8] = b"github-pr-rs-unit-test-key-not-secret";
 
-    /// Serializes tests in THIS module that mutate the process-global
-    /// `CAPRUN_GITHUB_*` env vars — the multi-threaded test runner would
-    /// otherwise let two race on the same process-wide environment.
-    static GITHUB_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // `GITHUB_ENV_LOCK` is the module-level `pub(crate)` lock (above), brought
+    // into scope by `use super::*` — SHARED with confirmation.rs's github.pr
+    // confirm-release tests so both serialize on the SAME process-wide env.
 
     fn arg(name: &str, literal: &str) -> ResolvedArg {
         ResolvedArg {

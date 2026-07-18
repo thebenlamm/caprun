@@ -2236,6 +2236,418 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    // ── v1.8 Phase 38: github.pr confirm-release (GITHUB-02/03, P33/P34) ──────
+
+    /// Seed a Blocked `github.pr` PendingConfirmation whose `blocked_arg`
+    /// (`title` or `body`) resolves from an untrusted-tainted value — the
+    /// GITHUB-03 exfil vector. All SIX PR args are present + non-empty so the
+    /// pre-burn `prepare_github_pr` precheck passes; only `blocked_arg` carries
+    /// `ExternalUntrusted` taint. Returns `(effect_id, session_id,
+    /// blocked_event_id)`.
+    fn seed_pending_github_pr_block(
+        conn: &rusqlite::Connection,
+        blocked_arg: &str,
+        tainted_literal: &str,
+        root_path: &str,
+    ) -> (Uuid, Uuid, Uuid) {
+        let session_id = Uuid::new_v4();
+        let effect_id = Uuid::new_v4();
+        let read_event_id = Uuid::new_v4();
+
+        let root_evt = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "session_created".into(),
+            chrono::Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(conn, TEST_KEY, &root_evt, None).unwrap();
+
+        let base_vals = [
+            ("owner", "octocat"),
+            ("repo", "hello-world"),
+            ("base", "main"),
+            ("head", "feature"),
+            ("title", "My PR"),
+            ("body", "PR description"),
+        ];
+        let resolved_args: Vec<ResolvedArg> = base_vals
+            .iter()
+            .map(|(name, dflt)| {
+                let is_blocked = *name == blocked_arg;
+                ResolvedArg {
+                    name: name.to_string(),
+                    value_id: ValueId::new(),
+                    literal: if is_blocked {
+                        tainted_literal.to_string()
+                    } else {
+                        dflt.to_string()
+                    },
+                    taint: if is_blocked {
+                        vec![TaintLabel::ExternalUntrusted]
+                    } else {
+                        vec![TaintLabel::UserTrusted]
+                    },
+                    provenance_chain: if is_blocked {
+                        vec![read_event_id]
+                    } else {
+                        vec![]
+                    },
+                }
+            })
+            .collect();
+
+        let digest = combined_digest(
+            &resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let blocked_arg_names = vec![blocked_arg.to_string()];
+
+        let literal_sha256 = {
+            let mut h = Sha256::new();
+            h.update(tainted_literal.as_bytes());
+            hex::encode(h.finalize())
+        };
+        let anchor = SinkBlockedAnchor {
+            effect_id,
+            sink: SinkId("github.pr".into()),
+            arg: blocked_arg.into(),
+            value_id: ValueId::new(),
+            literal_sha256,
+            taint: vec![TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![read_event_id],
+            read_event_id,
+        };
+        let blocked_event = Event::sink_blocked(
+            Uuid::new_v4(),
+            Some(root_evt.id),
+            session_id,
+            chrono::Utc::now(),
+            vec![anchor],
+            Some(digest.clone()),
+            blocked_arg_names.clone(),
+        );
+        let blocked_event_id = blocked_event.id;
+        append_event(conn, TEST_KEY, &blocked_event, Some(&root_hash)).unwrap();
+        insert_blocked_literal(
+            conn,
+            &blocked_event_id.to_string(),
+            blocked_arg,
+            tainted_literal,
+        )
+        .unwrap();
+
+        let pc = PendingConfirmation {
+            effect_id,
+            session_id,
+            blocked_event_id,
+            sink: SinkId("github.pr".into()),
+            resolved_args,
+            blocked_arg_names,
+            combined_digest: digest,
+            workspace_root_path: root_path.to_string(),
+            state: PendingConfirmationState::Pending,
+            mac: String::new(),
+        };
+        insert_pending_confirmation(conn, TEST_KEY, &pc).unwrap();
+        (effect_id, session_id, blocked_event_id)
+    }
+
+    /// GITHUB-03: a `github.pr` whose `title` (and, separately, `body`) resolves
+    /// from an untrusted-tainted value Blocks (BlockedPendingConfirmation), and
+    /// `render_block_display` shows the tainted literal VERBATIM, marked
+    /// `[BLOCKED]` — the human sees EXACTLY what would leave the boundary.
+    #[test]
+    fn github_pr_tainted_title_blocks_and_shows_verbatim() {
+        let root = std::env::temp_dir();
+
+        // (a) tainted TITLE — the marquee exfil vector.
+        let conn = open_audit_db(":memory:").unwrap();
+        let exfil_title = "Exfil AKIA-LEAKED-SECRET-0xDEADBEEF";
+        let (effect_id, _session_id, _bid) =
+            seed_pending_github_pr_block(&conn, "title", exfil_title, &root.to_string_lossy());
+        let pc = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .expect("blocked github.pr row must exist");
+        assert_eq!(
+            pc.state,
+            PendingConfirmationState::Pending,
+            "a tainted-title github.pr must be Blocked pending confirmation"
+        );
+        let display = render_block_display(&pc);
+        assert!(
+            display.contains("Effect blocked pending confirmation"),
+            "the block narration header must be shown"
+        );
+        assert!(
+            display.contains(&format!("\"{exfil_title}\"")),
+            "the tainted title literal must appear VERBATIM at confirm (GITHUB-03) — \
+             the human sees exactly what would leave the boundary"
+        );
+        assert!(
+            display.contains("title [BLOCKED]"),
+            "the tainted title arg must be marked [BLOCKED]"
+        );
+
+        // (b) tainted BODY — same verbatim/blocked property on the other exfil arg.
+        let conn2 = open_audit_db(":memory:").unwrap();
+        let exfil_body = "Body exfil: -----BEGIN KEY----- leaked -----END KEY-----";
+        let (eid2, _s2, _b2) =
+            seed_pending_github_pr_block(&conn2, "body", exfil_body, &root.to_string_lossy());
+        let pc2 = find_pending_confirmation(&conn2, &eid2.to_string())
+            .unwrap()
+            .expect("blocked github.pr (body) row must exist");
+        let display2 = render_block_display(&pc2);
+        assert!(
+            display2.contains(&format!("\"{exfil_body}\"")),
+            "the tainted body literal must appear VERBATIM at confirm (GITHUB-03)"
+        );
+        assert!(
+            display2.contains("body [BLOCKED]"),
+            "the tainted body arg must be marked [BLOCKED]"
+        );
+    }
+
+    /// GITHUB-02: `confirm()` on a tainted-title github.pr block with NO live
+    /// session auth-grant fails closed — a bare confirm CANNOT create a PR. The
+    /// row stays Pending (fail-closed-RECOVERABLE), NO `confirm_granted` is
+    /// appended (the grant gate refuses BEFORE Step 5), and NO github.pr
+    /// dispatch/terminal event exists (no PR was attempted).
+    #[tokio::test]
+    async fn github_pr_confirm_without_grant_does_not_burn() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_ghpr_nogrant_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, _bid) = seed_pending_github_pr_block(
+            &conn,
+            "title",
+            "Exfil no-grant path",
+            &root.to_string_lossy(),
+        );
+
+        // NO record_github_grant call — the grant gate must refuse.
+        let result = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await;
+        assert!(
+            result.is_err(),
+            "confirm without a live github.pr grant must fail closed (GITHUB-02) — \
+             a bare confirm cannot create a PR"
+        );
+
+        let found = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .expect("row must still exist");
+        assert_eq!(
+            found.state,
+            PendingConfirmationState::Pending,
+            "the missing-grant refusal must leave the row Pending (recoverable), \
+             never a burned confirmation"
+        );
+
+        assert!(
+            find_event_by_type(&conn, &session_id.to_string(), "confirm_granted")
+                .unwrap()
+                .is_none(),
+            "the grant gate must refuse BEFORE Step 5 appends confirm_granted — no \
+             dangling confirm_granted may exist on the missing-grant path"
+        );
+        for terminal in [
+            "github_pr_succeeded",
+            "github_pr_failed",
+            "github_pr_replay_suppressed",
+        ] {
+            assert!(
+                find_event_by_type(&conn, &session_id.to_string(), terminal)
+                    .unwrap()
+                    .is_none(),
+                "no {terminal} event may exist — a bare confirm attempts no PR"
+            );
+        }
+        assert!(
+            crate::audit::verify_chain(&conn, &session_id.to_string(), TEST_KEY),
+            "the audit chain must verify throughout"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// GITHUB-02/03 + §9 (P33/P34): `confirm()` WITH a live grant proceeds to
+    /// the Step-7 dispatch. `confirm_granted` IS appended AND is FOLLOWED by a
+    /// terminal `github_pr_*` event (on macOS the live POST stubs Err, so the
+    /// terminal event is `github_pr_failed` — that still proves the no-dangling
+    /// property), the `created_prs` CAS row is reserved, and `verify_chain` is
+    /// true. Mirrors the process.exec no-burn/terminal-event discipline.
+    #[tokio::test]
+    async fn github_pr_confirm_with_grant_proceeds_no_dangling() {
+        let _guard = crate::sinks::github_pr::GITHUB_ENV_LOCK.lock().unwrap();
+        std::env::set_var("CAPRUN_GITHUB_TOKEN", "ghp_test_token_for_confirm_dispatch");
+        std::env::remove_var("CAPRUN_GITHUB_API_BASE");
+
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_ghpr_grant_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, _bid) = seed_pending_github_pr_block(
+            &conn,
+            "title",
+            "Exfil with-grant path",
+            &root.to_string_lossy(),
+        );
+
+        // Record the live session auth-grant BEFORE confirm (GITHUB-02).
+        crate::audit::record_github_grant(&conn, TEST_KEY, &session_id.to_string()).unwrap();
+
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await;
+
+        std::env::remove_var("CAPRUN_GITHUB_TOKEN");
+
+        // On the macOS POST stub the sink fails -> ConfirmedButSinkFailed (a
+        // TERMINAL outcome). The load-bearing assertion is the no-dangling
+        // property below, not the specific outcome.
+        let outcome = outcome.expect("confirm must not error once grant + precheck pass");
+        assert!(
+            matches!(
+                outcome,
+                ConfirmOutcome::Released | ConfirmOutcome::ConfirmedButSinkFailed
+            ),
+            "with a grant + valid precheck confirm must dispatch (Released on a live \
+             2xx, ConfirmedButSinkFailed on the macOS POST stub), got {outcome:?}"
+        );
+
+        // confirm_granted IS present (the one-shot was burned) ...
+        let granted = find_event_by_type(&conn, &session_id.to_string(), "confirm_granted")
+            .unwrap()
+            .expect("confirm_granted must be appended once the grant + precheck pass");
+
+        // ... AND is FOLLOWED by a terminal github.pr event (no dangling — §9).
+        // On macOS that is github_pr_failed (POST stub); a live 2xx would be
+        // github_pr_succeeded. Either closes the burned confirmation.
+        let terminal = find_event_by_type(&conn, &session_id.to_string(), "github_pr_failed")
+            .unwrap()
+            .or_else(|| {
+                find_event_by_type(&conn, &session_id.to_string(), "github_pr_succeeded")
+                    .unwrap()
+            })
+            .expect(
+                "a terminal github_pr_* event MUST follow confirm_granted — no dangling \
+                 confirm_granted-without-terminal-event (§9 P33/P34)",
+            );
+        assert_eq!(
+            terminal.parent_id,
+            Some(granted.id),
+            "the terminal github.pr event must chain directly on confirm_granted"
+        );
+
+        // The duplicate-PR CAS row was reserved (GITHUB-04) ...
+        let cas_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM created_prs WHERE effect_id = ?1",
+                rusqlite::params![effect_id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cas_rows, 1, "the created_prs CAS row must be reserved");
+
+        // ... and the chain verifies end-to-end.
+        assert!(
+            crate::audit::verify_chain(&conn, &session_id.to_string(), TEST_KEY),
+            "verify_chain must be true throughout the confirm-release dispatch"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// §9 (P33/P34) REGRESSION — the recurring confirm-release audit-gap class
+    /// this phase exists to close (mirrors
+    /// `confirm_on_process_exec_malformed_args_does_not_burn_confirmation`): a
+    /// `github.pr` confirm whose frozen `title` resolves EMPTY fails at the
+    /// pre-burn `prepare_github_pr` precheck (present-but-empty is fail-closed)
+    /// BEFORE Step 5 — even WITH a live grant. The row stays Pending and NO
+    /// `confirm_granted` is appended (no dangling confirm state).
+    #[tokio::test]
+    async fn github_pr_confirm_malformed_precheck_does_not_burn() {
+        let _guard = crate::sinks::github_pr::GITHUB_ENV_LOCK.lock().unwrap();
+        std::env::set_var("CAPRUN_GITHUB_TOKEN", "ghp_test_token_malformed_precheck");
+        std::env::remove_var("CAPRUN_GITHUB_API_BASE");
+
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_ghpr_malformed_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        // A present-but-EMPTY title — passes validate_schema (name present) but
+        // must fail prepare_github_pr's non-empty precheck before the burn.
+        let (effect_id, session_id, _bid) =
+            seed_pending_github_pr_block(&conn, "title", "   ", &root.to_string_lossy());
+
+        // Even WITH a grant, the malformed precheck must refuse before the burn.
+        crate::audit::record_github_grant(&conn, TEST_KEY, &session_id.to_string()).unwrap();
+
+        let result = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await;
+
+        std::env::remove_var("CAPRUN_GITHUB_TOKEN");
+
+        assert!(
+            result.is_err(),
+            "confirm on a github.pr block with an empty frozen `title` must fail \
+             closed at the pre-burn precheck, not silently succeed"
+        );
+
+        let found = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .expect("row must still exist");
+        assert_eq!(
+            found.state,
+            PendingConfirmationState::Pending,
+            "the precheck must refuse BEFORE Step 6's state transition — a malformed \
+             arg must leave the row Pending (recoverable), not Confirmed"
+        );
+
+        assert!(
+            find_event_by_type(&conn, &session_id.to_string(), "confirm_granted")
+                .unwrap()
+                .is_none(),
+            "the precheck must refuse BEFORE Step 5 appends confirm_granted — no \
+             dangling confirm_granted with no terminal github.pr event may exist \
+             (the P33/P34 audit-gap class)"
+        );
+        // And no CAS row / terminal event may have been created.
+        for terminal in [
+            "github_pr_succeeded",
+            "github_pr_failed",
+            "github_pr_replay_suppressed",
+        ] {
+            assert!(
+                find_event_by_type(&conn, &session_id.to_string(), terminal)
+                    .unwrap()
+                    .is_none(),
+                "no {terminal} event may exist — the precheck refused before dispatch"
+            );
+        }
+        let cas_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM created_prs WHERE effect_id = ?1",
+                rusqlite::params![effect_id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            cas_rows, 0,
+            "no created_prs CAS row may be reserved when the precheck refuses pre-burn"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     /// (c) deny on a fresh Pending block records a durable denial: a
     /// confirm_denied event exists, state is Denied, and a subsequent confirm
     /// refuses (durable deny, CONFIRM-03). The sink is never invoked.
