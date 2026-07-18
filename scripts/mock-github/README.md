@@ -26,9 +26,20 @@ and the mock host + cert are unreachable in any default/release build.
   (RFC 6761); the cert is self-signed with no real CA in its chain and covers a
   non-real domain. The private key is checked in deliberately — it has no
   production value.
-- The cert carries `CA:TRUE` + `keyCertSign,digitalSignature` and **no** EKU
-  extension, so rustls/webpki accepts it BOTH as the trust anchor AND as a
-  server end-entity cert for `github-mock.caprun.test`.
+- The cert carries `CA:FALSE` + `keyUsage=digitalSignature` +
+  `extendedKeyUsage=serverAuth`, so rustls/webpki accepts it BOTH as the trust
+  anchor (rustls `RootCertStore::add` trusts an explicitly-provided cert
+  regardless of the CA bit) AND as a server end-entity cert for
+  `github-mock.caprun.test`. Two rustls-webpki requirements the Plan 40-04
+  composed live proof caught the hard way (openssl does NOT enforce either, so
+  `openssl s_client` verified OK while rustls rejected the handshake as "error
+  sending request"):
+    - `basicConstraints=CA:FALSE` is REQUIRED — a `CA:TRUE` cert presented as
+      the server leaf is rejected with `CaUsedAsEndEntity` (an end-entity must
+      not be a CA).
+    - `extendedKeyUsage=serverAuth` is REQUIRED — rustls-webpki verifies the
+      leaf with `KeyUsage::server_auth()` and rejects a cert that does not
+      assert it (`RequiredEkuNotFound`).
 
 ### Reproduce (offline, openssl only — no Rust cert-gen dependency)
 
@@ -45,8 +56,9 @@ openssl req -x509 -newkey rsa:2048 -nodes \
   -days   36500 \
   -subj   "/CN=github-mock.caprun.test" \
   -addext "subjectAltName=DNS:github-mock.caprun.test" \
-  -addext "basicConstraints=critical,CA:TRUE" \
-  -addext "keyUsage=critical,keyCertSign,digitalSignature"
+  -addext "basicConstraints=critical,CA:FALSE" \
+  -addext "keyUsage=critical,digitalSignature" \
+  -addext "extendedKeyUsage=serverAuth"
 
 # derive the broker's DER trust anchor from the SAME cert:
 openssl x509 -in github-mock.caprun.test.pem -outform DER \

@@ -28,11 +28,20 @@ openssl req -x509 -newkey rsa:2048 -nodes \
   -days   36500 \
   -subj   "/CN=github-mock.caprun.test" \
   -addext "subjectAltName=DNS:github-mock.caprun.test" \
-  -addext "basicConstraints=critical,CA:TRUE" \
-  -addext "keyUsage=critical,keyCertSign,digitalSignature"
+  -addext "basicConstraints=critical,CA:FALSE" \
+  -addext "keyUsage=critical,digitalSignature" \
+  -addext "extendedKeyUsage=serverAuth"
 
 openssl x509 -in mock-egress-ca.cert.pem -outform DER -out mock-egress-ca.der
 ```
+
+`CA:FALSE` + `extendedKeyUsage=serverAuth` are BOTH required by rustls-webpki for
+a cert presented as a TLS server leaf — even one that is also its own trust
+anchor. The Plan 40-04 composed live proof caught the original `CA:TRUE`/no-EKU
+cert: rustls rejected the handshake (`CaUsedAsEndEntity`, then `RequiredEkuNotFound`)
+as an "error sending request" on the github.pr POST leg, while `openssl s_client`
+— which enforces neither — verified OK. rustls `RootCertStore::add` still trusts
+this `CA:FALSE` cert as the explicit egress anchor.
 
 (The exact byte content is not reproducible run-to-run — a fresh keypair is
 generated each time. Regenerating produces an equivalent, equally-valid test

@@ -64,6 +64,13 @@ set -euo pipefail
 COMPOSE_NET="${COMPOSE_NET:-caprun-compose-net}"
 COMPOSE_SUBNET="${COMPOSE_SUBNET:-203.0.113.0/24}"
 MOCK_GITHUB_IP="${MOCK_GITHUB_IP:-203.0.113.2}"
+# Mailpit is pinned to a FIXED IP distinct from MOCK_GITHUB_IP. On a freshly
+# created network docker's IPAM hands the FIRST container the lowest free address
+# (.2) — which is the mock's fixed IP — so an unpinned Mailpit races the mock for
+# .2 and the mock then fails to bind ("Address already in use"). Pinning Mailpit
+# to .3 keeps .2 free for the mock's explicit --ip. Mailpit's address is still
+# resolved dynamically below (docker inspect), so this only removes the collision.
+MAILPIT_IP_FIXED="${MAILPIT_IP_FIXED:-203.0.113.3}"
 MAILPIT_NAME="${MAILPIT_NAME:-caprun-compose-mailpit}"
 MOCK_GITHUB_NAME="${MOCK_GITHUB_NAME:-caprun-compose-mock-github}"
 MOCK_GITHUB_HOST="github-mock.caprun.test"
@@ -90,6 +97,7 @@ docker network create --subnet "${COMPOSE_SUBNET}" "${COMPOSE_NET}" >/dev/null 2
 
 echo "Starting Mailpit sidecar (${MAILPIT_NAME}) on ${COMPOSE_NET} ..."
 docker run -d --rm --name "${MAILPIT_NAME}" --network "${COMPOSE_NET}" \
+    --ip "${MAILPIT_IP_FIXED}" \
     --network-alias mailpit \
     -p 8025:8025 -p 1025:1025 \
     axllent/mailpit >/dev/null
