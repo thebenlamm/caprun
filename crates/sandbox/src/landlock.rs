@@ -42,12 +42,15 @@ pub fn deny_all_filesystem() -> std::io::Result<()> {
 /// DESIGN §1.3 Option B).
 ///
 /// Unlike `deny_all_filesystem()` (zero allow-rules — everything denied),
-/// this ruleset grants exactly two carve-outs so an arbitrary target binary
+/// this ruleset grants exactly three carve-outs so an arbitrary target binary
 /// can actually load and run:
 ///   - `ReadFile + Execute` on an enumerated, hardcoded system-path allow-list
 ///     (loading + running the target binary and its shared libraries).
-///   - `ReadFile + WriteFile` on `workspace_root` ONLY — no `Execute` there,
-///     so a worker-planted binary inside the workspace can never be run.
+///   - `ReadFile + WriteFile + …` (the fuller create/list/remove/rename set) on
+///     `workspace_root` ONLY — no `Execute` there, so a worker-planted binary
+///     inside the workspace can never be run.
+///   - `ReadFile + WriteFile` on the single device file `/dev/null` (the
+///     canonical bit-bucket) — see the git.commit neutralization note below.
 ///
 /// The system path list (`/usr`, `/bin`, `/lib`, `/lib64`) is an enumerated,
 /// explicitly-hardcoded allow-list, NEVER a PATH walk or directory scan — per
@@ -92,8 +95,40 @@ pub fn exec_child_ruleset(workspace_root: &std::path::Path) -> std::io::Result<(
     let system_paths = ["/usr", "/bin", "/lib", "/lib64"];
     let system_access = AccessFs::ReadFile | AccessFs::ReadDir | AccessFs::Execute;
 
-    // Workspace: ReadFile + WriteFile + MakeReg — no Execute (never run a
-    // worker-planted binary), matching "narrowest that works."
+    // Device carve-outs (Phase 36 git.commit fix) — the ONLY paths outside the
+    // system-lib + workspace allow-list. Each is a SINGLE, universally-safe
+    // device FILE (never the `/dev` directory, never `ReadDir`, never `MakeReg`/
+    // `Execute`), so nothing can be created, listed, or run under `/dev` — no
+    // escape surface. process.exec targets that never touch these are
+    // unaffected (a granted-but-unused path changes nothing). Both grants were
+    // empirically required, discovered by running `git commit` through the real
+    // launcher in the mandatory Linux container (cfg-linux-test-blindness — this
+    // path never ran on Mac):
+    //
+    //   * `/dev/null` (r/w): the git.commit neutralization env
+    //     (`GIT_CONFIG_GLOBAL=/dev/null` — the documented way to strip global
+    //     config; `-c core.hooksPath=/dev/null`) makes `git` OPEN `/dev/null`
+    //     O_RDWR. Without it: `fatal: could not open '/dev/null' for reading and
+    //     writing: Permission denied` (EACCES), before any commit.
+    //   * `/dev/urandom` + `/dev/random` (read-only): `git`'s CSPRNG reads an
+    //     entropy device to generate the random temp-object filename
+    //     (`.git/objects/tmp_obj_*`) before renaming it into place. seccomp
+    //     ALLOWS the `getrandom(2)` syscall (mismatch-Allow), so this is purely
+    //     the Landlock `/dev/urandom` open being denied. Without it: `error:
+    //     unable to get random bytes for temporary file: Permission denied` ->
+    //     `insufficient permission for adding an object to repository database
+    //     .git/objects`. Read-only entropy sources: no write, no escape.
+    let devnull_paths = ["/dev/null"];
+    let devnull_access = AccessFs::ReadFile | AccessFs::WriteFile;
+    let devrandom_paths = ["/dev/urandom", "/dev/random"];
+    let devrandom_access = AccessFs::ReadFile;
+
+    // Workspace: the fuller write/list/create/remove/rename right set — still
+    // NO Execute (never run a worker-planted binary), still scoped to
+    // `workspace_root` ONLY. The worker already may freely mutate its own
+    // workspace, so granting the full non-exec filesystem right set WITHIN it
+    // widens nothing about the security boundary (no escape, no execute, net
+    // stays default-deny via the separate seccomp filter).
     //
     // MakeReg (32-06 fix): `WriteFile` alone governs opening/truncating an
     // EXISTING file; Landlock gates CREATING a brand-new file via the
@@ -103,7 +138,32 @@ pub fn exec_child_ruleset(workspace_root: &std::path::Path) -> std::io::Result<(
     // even though `WriteFile` is granted — empirically discovered running a
     // benign in-workspace write through the real launcher in the mandatory
     // Linux container.
-    let workspace_access = AccessFs::ReadFile | AccessFs::WriteFile | AccessFs::MakeReg;
+    //
+    // ReadDir + MakeDir + RemoveFile + RemoveDir + Refer + Truncate (Phase 36
+    // git.commit fix): `git commit` writing into `.git/` under the workspace
+    // needs more than create-a-regular-file. It ENUMERATES object/ref
+    // directories (`ReadDir`), CREATES new fan-out object dirs like
+    // `.git/objects/xx/` and the `.git/logs/` reflog tree (`MakeDir`), writes
+    // and then REMOVES lock files (`index.lock`, `*.lock`; `RemoveFile`), and
+    // atomically RENAMES those locks over their targets (`Refer` for any
+    // cross-directory reparent; a same-directory rename needs no `Refer`, so
+    // the index/ref lock renames work even on the ABI floor). `RemoveDir` +
+    // `Truncate` are included to complete the fuller write set (git tooling may
+    // prune empty dirs / truncate in place). ABI note: `Refer` is Landlock ABI
+    // V2 (kernel ≥5.19) and `Truncate` is ABI V3 (≥5.19); the `landlock`
+    // crate's best-effort compatibility (default for `Ruleset::default()`)
+    // strips the unsupported bits on a ≥5.13 / <5.19 kernel WITHOUT failing, so
+    // the 5.13 floor is preserved — and because git's lock renames are
+    // same-directory, a commit still succeeds there without `Refer`.
+    let workspace_access = AccessFs::ReadFile
+        | AccessFs::WriteFile
+        | AccessFs::ReadDir
+        | AccessFs::MakeReg
+        | AccessFs::MakeDir
+        | AccessFs::RemoveFile
+        | AccessFs::RemoveDir
+        | AccessFs::Refer
+        | AccessFs::Truncate;
 
     let status = Ruleset::default()
         .handle_access(AccessFs::from_all(abi))
@@ -111,6 +171,15 @@ pub fn exec_child_ruleset(workspace_root: &std::path::Path) -> std::io::Result<(
         .create()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?
         .add_rules(path_beneath_rules(system_paths.iter(), system_access))
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?
+        // `/dev/null` r/w + `/dev/urandom`,`/dev/random` read — the only paths
+        // outside the system-lib + workspace allow-list (git.commit opens
+        // `/dev/null` for config neutralization and reads an entropy device for
+        // temp-object filenames). Single device files, no MakeReg/Execute/ReadDir
+        // → no escape surface.
+        .add_rules(path_beneath_rules(devnull_paths.iter(), devnull_access))
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?
+        .add_rules(path_beneath_rules(devrandom_paths.iter(), devrandom_access))
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?
         // `path_beneath_rules` takes path-LIKE items (`P: AsRef<Path>`) and
         // resolves each to a `PathFd` INTERNALLY (crates.io landlock 0.4.5,

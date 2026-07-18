@@ -158,32 +158,32 @@ pub async fn invoke_git_commit(
     )
     .await;
 
-    match spawn_result {
-        Ok((_exit_status, combined_output)) => {
-            // Success: append `process_exited`, tainted untrusted-origin — this
-            // event id is the mint-root server.rs's `mint_from_exec` chains its
-            // `provenance_chain[0]` onto (one event, both roles; DESIGN §1.4).
-            let event = Event::new(
-                Uuid::new_v4(),
-                Some(parent_id),
-                session_id,
-                format!("sink:git.commit:{effect_id}"),
-                "process_exited".into(),
-                Utc::now(),
-                vec![TaintLabel::ExternalUntrusted, TaintLabel::ExecRaw],
-            );
-            let hash = {
-                let locked = conn
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
-                append_event(&locked, key, &event, Some(parent_hash))
-                    .context("append process_exited")?
+    // Outcome triage. A non-zero `git` exit is a SINK FAILURE — a commit was
+    // NOT made — and MUST NOT be reported as success. This diverges
+    // DELIBERATELY from `process.exec`, where a non-zero exit is a normal,
+    // successful `process_exited` (the command ran; its output is the effect).
+    // For `git.commit` the effect IS the commit: if `git` exits non-zero the
+    // effect did not occur, so we treat it like any other spawn failure. The
+    // previous code bound `_exit_status` and appended `process_exited`
+    // unconditionally, falsely claiming success (and minting exec taint) on a
+    // failed commit — the Phase 36 exit-code bug this fixes.
+    //
+    // Both failure shapes (spawn `Err`, or `Ok` with a non-zero exit) fold into
+    // ONE failure path that appends a terminal `process_spawn_failed` event
+    // FIRST, then propagates the error — never a terminal STATE ahead of the
+    // terminal EVENT that justifies it (P33/P34 audit-gap discipline). NO
+    // automatic retry.
+    let combined_output = match spawn_result {
+        Ok((exit_status, output)) if exit_status.success() => output,
+        outcome => {
+            let err = match outcome {
+                Ok((exit_status, output)) => anyhow::anyhow!(
+                    "git.commit: git exited with non-zero status {exit_status}; no commit was \
+                     made. git output:\n{output}"
+                ),
+                Err(e) => e.context("git.commit invoke_git_commit failed"),
             };
-            Ok((event.id, hash, combined_output))
-        }
-        Err(e) => {
-            // Two-phase durable audit: record the failure outcome FIRST, then
-            // propagate. NO automatic retry (mirrors process.exec's failure arm).
+            // Terminal EVENT before any terminal disposition (P33/P34).
             let event = Event::new(
                 Uuid::new_v4(),
                 Some(parent_id),
@@ -200,9 +200,31 @@ pub async fn invoke_git_commit(
                 append_event(&locked, key, &event, Some(parent_hash))
                     .context("append process_spawn_failed")?;
             }
-            Err(e.context("git.commit invoke_git_commit failed"))
+            return Err(err);
         }
-    }
+    };
+
+    // Success (git exited 0 — the commit was made): append `process_exited`,
+    // tainted untrusted-origin — this event id is the mint-root server.rs's
+    // `mint_from_exec` chains its `provenance_chain[0]` onto (one event, both
+    // roles; DESIGN §1.4).
+    let event = Event::new(
+        Uuid::new_v4(),
+        Some(parent_id),
+        session_id,
+        format!("sink:git.commit:{effect_id}"),
+        "process_exited".into(),
+        Utc::now(),
+        vec![TaintLabel::ExternalUntrusted, TaintLabel::ExecRaw],
+    );
+    let hash = {
+        let locked = conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
+        append_event(&locked, key, &event, Some(parent_hash))
+            .context("append process_exited")?
+    };
+    Ok((event.id, hash, combined_output))
 }
 
 /// Resolve a required named plan-node arg to its broker-owned literal
