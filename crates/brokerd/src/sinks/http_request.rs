@@ -100,6 +100,24 @@ fn check_body_cap(total: usize, cap: usize) -> Result<()> {
 /// broker-local trusted config, NOT a swappable policy file.
 const HOST_ALLOWLIST: &[&str] = &["api.github.com"];
 
+/// The DISTINCT WRITE (POST/PUT) host allowlist (DESIGN-v1.9-egress-policy §2.1
+/// — a host being GET-readable does NOT imply it is POST/PUT-writable). This is
+/// a SEPARATE constant from the GET `HOST_ALLOWLIST`; the WRITE egress path
+/// (`invoke_http_write`) gates on THIS list, never on `HOST_ALLOWLIST`. Like the
+/// GET allowlist it is a broker-local trusted-config SECURITY PROPERTY (an
+/// operator-surfaced deployment constant), never runtime-configurable from a
+/// plan node / `ValueNode` / audit DB.
+///
+/// It ships EMPTY (fail-closed): the release build is writable to NOTHING until
+/// an operator surfaces a write target here — the maximally fail-closed default
+/// for §2.1's "operator-surfaced deployment constant". This is a deliberate
+/// security posture, NOT a stub. Under the NON-DEFAULT `mock-egress-ca` feature
+/// the Phase-46 write mock host (`MOCK_EGRESS_HOST`) is ADDITIONALLY admitted so
+/// the composed live-proof can POST/PUT over the local TLS mock; that one host
+/// is ABSENT from every production/default build (see the `not(mock-egress-ca)`
+/// invariant test below).
+const WRITE_HOST_ALLOWLIST: &[&str] = &[];
+
 /// NON-DEFAULT `mock-egress-ca` feature ONLY: the single extra test host the
 /// Plan 40-03 composed live-proof POSTs to over the local TLS mock. Compiled
 /// OUT of — and thus absent from — every production/default build; the release
@@ -125,6 +143,45 @@ fn is_host_allowlisted(host: &str) -> bool {
         return true;
     }
     false
+}
+
+/// True iff `host` is on the DISTINCT `WRITE_HOST_ALLOWLIST` (case-insensitive).
+/// A non-write-allowlisted host is rejected by `invoke_http_write` BEFORE any
+/// DNS resolve (fail-closed, §2.1). Pure, host-portable.
+///
+/// Mirrors `is_host_allowlisted` but over the SEPARATE write list: a host that
+/// is GET-readable (`is_host_allowlisted`) is NOT thereby writable — the
+/// write-vs-read split (T-43-05). The default/release write allowlist is
+/// `WRITE_HOST_ALLOWLIST` (empty) ONLY; under the NON-DEFAULT `mock-egress-ca`
+/// feature the SINGLE `MOCK_EGRESS_HOST` is additionally accepted (the only
+/// write-egress relaxation the feature makes — it does NOT touch `validate_url`
+/// https-only, `ssrf_check`, the IP pin, redirect-none, or the method gate).
+fn is_write_host_allowlisted(host: &str) -> bool {
+    if WRITE_HOST_ALLOWLIST
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(host))
+    {
+        return true;
+    }
+    #[cfg(feature = "mock-egress-ca")]
+    if MOCK_EGRESS_HOST.eq_ignore_ascii_case(host) {
+        return true;
+    }
+    false
+}
+
+/// Defense-in-depth WRITE-method gate (DESIGN §2.6): the `method` arg is a
+/// schema-validated enum (`{POST, PUT}`) at the executor Step-0 gate; this pure
+/// re-check inside the broker egress fails closed on ANY other value BEFORE any
+/// socket, so the two gates cannot drift. Case-sensitive (the validated enum
+/// literal is upper-case). Host-portable.
+fn validate_write_method(method: &str) -> Result<()> {
+    match method {
+        "POST" | "PUT" => Ok(()),
+        other => bail!(
+            "http.request.write: method {other:?} is not a permitted write verb (only POST/PUT)"
+        ),
+    }
 }
 
 /// Validate a fetch URL and return its DNS hostname. Rejects a `userinfo@`
@@ -571,6 +628,108 @@ async fn do_pinned_post(
     bail!("github.pr live POST is Linux-only (macOS no-op stub); deferred to Phase 40")
 }
 
+/// Broker-side generic WRITE egress (DESIGN-v1.9-egress-policy §2, HTTP-W-01):
+/// ONE `POST` or `PUT` to a pinned, WRITE-allowlisted destination — the network
+/// leg the `http.request.write` sink needs.
+///
+/// This is DELIBERATELY separate from `invoke_pinned_post` (which gates on the
+/// GET `HOST_ALLOWLIST` and hardcodes GitHub headers). Order is IDENTICAL to
+/// `invoke_http_get` (DESIGN §2.3): `validate_url` (rejects userinfo/non-https/
+/// explicit-port/IP-encoding) → `validate_write_method` (defense-in-depth enum
+/// re-check, §2.6) → the DISTINCT `is_write_host_allowlisted` gate (Err BEFORE
+/// any resolve, fail-closed §2.1 — a GET-readable host is NOT implicitly
+/// writable) → [Linux] the SAME `resolve_and_pin`→`vet_resolved`→`ssrf_check`→
+/// `build_pinned_client` pin path the GET uses (NO classifier re-implemented) →
+/// redirect-free POST/PUT with the caller-serialized body, a bearer auth header
+/// set ONLY when `bearer` is `Some` → `(status_code, capped body text)`. The
+/// connect/total timeouts and the fail-closed response-body byte cap are the
+/// SAME as the GET path. A SINGLE write is one request through the shipped pin —
+/// no re-resolve/rebind window is introduced (DESIGN-GATE-RECORD MINOR-3).
+///
+/// The `bearer`, when `Some`, comes from broker-local env ONLY (the caller in
+/// `http_write.rs` reads it; it is NEVER a plan arg / `ValueNode` / audit
+/// literal). Like `invoke_http_get`, this performs NO minting, appends NO audit
+/// event, and never touches session status (keeps this module out of Gate 3's
+/// mint-site restriction).
+pub async fn invoke_http_write(
+    url: &str,
+    method: &str,
+    body: &str,
+    bearer: Option<&str>,
+) -> Result<(u16, String)> {
+    let host = validate_url(url)?;
+    // Defense-in-depth method gate BEFORE any socket (§2.6, fail-closed).
+    validate_write_method(method)?;
+    // Distinct WRITE allowlist gate — BEFORE any DNS resolve or socket (§2.1
+    // fail-closed). A host on the GET `HOST_ALLOWLIST` is NOT thereby writable.
+    if !is_write_host_allowlisted(&host) {
+        bail!("http.request.write: host {host:?} is not on the write allowlist");
+    }
+    do_pinned_write(url, &host, method, body, bearer).await
+}
+
+/// Linux: resolve-and-pin (shared with the GET — the classifiers are invoked,
+/// never re-implemented) → redirect-free `POST`/`PUT` (selected by the already-
+/// validated method) → `(status, capped body text)`. The optional `bearer` sets
+/// a `.bearer_auth` header only when `Some`. Redirect following is DISABLED (a
+/// 30x cannot bounce the write to a denied range), and the response body is
+/// byte-capped by the SAME fail-closed streaming read as the GET. Live-HTTPS
+/// behavior is deferred to Phase 46 (mock endpoint).
+#[cfg(target_os = "linux")]
+async fn do_pinned_write(
+    url: &str,
+    host: &str,
+    method: &str,
+    body: &str,
+    bearer: Option<&str>,
+) -> Result<(u16, String)> {
+    let client = resolve_and_pin(host).await?;
+    // The method was already validated by `validate_write_method`; re-match here
+    // to pick the reqwest builder (fail-closed on the impossible other arm).
+    let mut req = match method {
+        "POST" => client.post(url),
+        "PUT" => client.put(url),
+        other => bail!("http.request.write: unsupported method {other:?} (only POST/PUT)"),
+    };
+    if let Some(b) = bearer {
+        req = req.bearer_auth(b);
+    }
+    let mut resp = req
+        .body(body.to_string())
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("http.request.write: {method} failed: {e}"))?;
+
+    let status = resp.status().as_u16();
+
+    // Stream the response body with the SAME fail-closed byte cap as the GET
+    // (FIX 3, DoS) — never resp.text() (unbounded buffer).
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| {
+        anyhow::anyhow!("http.request.write: reading response body failed: {e}")
+    })? {
+        buf.extend_from_slice(&chunk);
+        check_body_cap(buf.len(), MAX_RESPONSE_BODY_BYTES)?;
+    }
+    Ok((status, String::from_utf8_lossy(&buf).into_owned()))
+}
+
+/// Non-Linux (dev macOS) no-op stub — mirrors `do_pinned_post`'s cfg split: the
+/// pure gates (`validate_url`, `validate_write_method`, `is_write_host_allowlisted`,
+/// `build_pinned_client` wiring) are host-portable and tested, but the real
+/// socket leg is Linux-only (CLAUDE.md); live write behavior is deferred to
+/// Phase 46 (mock endpoint).
+#[cfg(not(target_os = "linux"))]
+async fn do_pinned_write(
+    _url: &str,
+    _host: &str,
+    _method: &str,
+    _body: &str,
+    _bearer: Option<&str>,
+) -> Result<(u16, String)> {
+    bail!("http.request.write live POST/PUT is Linux-only (macOS no-op stub); deferred to Phase 46")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -938,6 +1097,121 @@ mod tests {
         // smuggling) before any resolve — same defense as the GET path.
         assert!(
             invoke_pinned_post("https://user:pass@api.github.com/x", "tok", "{}")
+                .await
+                .is_err()
+        );
+    }
+
+    // ---- WRITE egress: distinct allowlist, method gate, SSRF-pin reuse
+    // (DESIGN-v1.9-egress-policy §2, HTTP-W-01). Host-portable pre-socket gates. ----
+
+    /// The write-vs-read split (T-43-05 / §2.1): `api.github.com` is GET-readable
+    /// but NOT POST/PUT-writable. GET-readable ≠ writable.
+    #[test]
+    fn write_vs_read_allowlist_split() {
+        assert!(is_host_allowlisted("api.github.com"));
+        assert!(
+            !is_write_host_allowlisted("api.github.com"),
+            "a GET-readable host must NOT be implicitly write-allowlisted"
+        );
+    }
+
+    /// RELEASE / default build: the WRITE allowlist ships EMPTY (fail-closed) —
+    /// writable to NOTHING until an operator surfaces a target. Gated
+    /// `not(mock-egress-ca)`: asserts the feature-OFF invariant.
+    #[cfg(not(feature = "mock-egress-ca"))]
+    #[test]
+    fn write_allowlist_default_build_is_empty_base_set() {
+        assert!(
+            WRITE_HOST_ALLOWLIST.is_empty(),
+            "the release WRITE allowlist must ship empty (fail-closed)"
+        );
+        // A GET-readable host is not writable; the Phase-46 mock host is not
+        // reachable without the feature.
+        assert!(!is_write_host_allowlisted("api.github.com"));
+        assert!(!is_write_host_allowlisted("github-mock.caprun.test"));
+    }
+
+    /// FEATURE ON (`--features mock-egress-ca`): the WRITE allowlist admits
+    /// EXACTLY the one Phase-46 mock host — and still NOT the GET-only host.
+    #[cfg(feature = "mock-egress-ca")]
+    #[test]
+    fn write_allowlist_feature_on_admits_only_the_mock_host() {
+        assert!(is_write_host_allowlisted("github-mock.caprun.test"));
+        assert!(is_write_host_allowlisted("GITHUB-MOCK.CAPRUN.TEST")); // case-insensitive
+        // The GET-only production host is still NOT write-allowlisted.
+        assert!(!is_write_host_allowlisted("api.github.com"));
+    }
+
+    /// §2.6 method gate: only the validated write enum {POST, PUT} is accepted.
+    #[test]
+    fn validate_write_method_accepts_post_and_put() {
+        assert!(validate_write_method("POST").is_ok());
+        assert!(validate_write_method("PUT").is_ok());
+    }
+
+    #[test]
+    fn validate_write_method_rejects_other_verbs() {
+        assert!(validate_write_method("GET").is_err());
+        assert!(validate_write_method("DELETE").is_err());
+        assert!(validate_write_method("PATCH").is_err());
+        assert!(validate_write_method("post").is_err()); // case-sensitive enum literal
+        assert!(validate_write_method("").is_err());
+    }
+
+    #[test]
+    fn build_pinned_client_constructs_for_a_pinned_write_host() {
+        // The pin/client wiring is host-agnostic (no allowlist check) — it builds
+        // a redirect-free, IP-pinned client for a write destination on macOS with
+        // no socket opened.
+        let pinned: SocketAddr = "203.0.113.10:443".parse().unwrap();
+        assert!(build_pinned_client("github-mock.caprun.test", pinned).is_ok());
+    }
+
+    #[tokio::test]
+    async fn invoke_http_write_rejects_non_write_allowlisted_host_before_resolve() {
+        // api.github.com is GET-allowlisted but NOT write-allowlisted → Err at the
+        // write-allowlist gate, BEFORE any DNS resolve/socket (write-vs-read split).
+        assert!(invoke_http_write("https://api.github.com/x", "POST", "{}", None)
+            .await
+            .is_err());
+        // An unresolvable host also Errs at the gate (a bypassed gate would show as
+        // a resolve attempt; the fast Err proves the gate precedes resolve).
+        assert!(invoke_http_write("https://evil.invalid/x", "POST", "{}", None)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn invoke_http_write_rejects_non_https() {
+        // validate_url runs first: a non-https URL Errs before the allowlist/socket.
+        assert!(
+            invoke_http_write("http://github-mock.caprun.test/x", "POST", "{}", None)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn invoke_http_write_rejects_userinfo() {
+        // A userinfo-bearing URL is rejected at validate_url (SSRF/credential
+        // smuggling) before any resolve — same defense as the GET/POST paths.
+        assert!(invoke_http_write(
+            "https://user:pass@github-mock.caprun.test/x",
+            "POST",
+            "{}",
+            None
+        )
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn invoke_http_write_rejects_unsupported_method_before_socket() {
+        // A valid https URL but a non-write verb Errs at the §2.6 method gate,
+        // which runs before the socket (and regardless of the mock feature).
+        assert!(
+            invoke_http_write("https://github-mock.caprun.test/x", "DELETE", "{}", None)
                 .await
                 .is_err()
         );
