@@ -3,10 +3,13 @@
 //!
 //! # Security role (Pattern A, broker-resident — NEVER the confined worker)
 //!
-//! This is the ONLY code path that performs an outbound HTTP GET, and it lives
-//! in the broker exactly like `email_smtp.rs`'s SMTP call — the confined worker
-//! stays fully net-denied. The `reqwest`/`rustls`/`ring`/`webpki-roots` deps are
-//! broker-only (see `Cargo.toml`).
+//! This is the ONLY code path that performs an outbound HTTP GET, and it is
+//! INVOKED only in broker-resident code, exactly like `email_smtp.rs`'s SMTP
+//! call. The confined worker cannot perform this GET not because these deps are
+//! absent from its binary image (they are linked in via `cli/caprun` →
+//! `brokerd`) but because it runs under a KERNEL-ENFORCED default-deny network
+//! sandbox — the real boundary is kernel net-deny, not the dependency graph
+//! (FIX 6; see `Cargo.toml`).
 //!
 //! # SSRF resolve-and-pin (DESIGN §3.6, threats T-37-01/03/04)
 //!

@@ -40,9 +40,17 @@ chrono       = { workspace = true }
 # verification). Mailpit needs no TLS at all; builder_dangerous bypasses it.
 lettre       = "0.11.22"
 # Phase 37 (HTTP-01/03): broker-side, read-only `http.request` GET egress
-# (Pattern A, DESIGN §3.1). BROKER-ONLY — reqwest/rustls/ring/webpki-roots are
-# NEVER a dependency of the confined worker (which stays fully net-denied); the
-# egress leg lives in the broker exactly like `email_smtp.rs`'s SMTP call.
+# (Pattern A, DESIGN §3.1). The egress leg is INVOKED only in broker-resident
+# code, exactly like `email_smtp.rs`'s SMTP call.
+#
+# ACCURACY (FIX 6): these crates (reqwest/rustls/ring/webpki-roots) ARE present
+# in the caprun-worker binary IMAGE — `cli/caprun` depends on `brokerd`, and the
+# worker is spawned from the same `caprun` binary, so the dependency graph links
+# them in. The worker's inability to make network egress is therefore NOT a
+# property of the dependency graph; it is enforced by the kernel: the confined
+# worker runs under a default-deny network sandbox (namespaces + no egress) and
+# self-confines after connecting to the broker. The real boundary is kernel
+# net-deny, not "these deps are absent from the worker."
 #
 # Supply-chain evidence (crates.io, verified 2026-07-18): reqwest is already
 # vetted in-workspace at cli/caprun-planner (PLANNER-04) — seanmonstar/hyper,

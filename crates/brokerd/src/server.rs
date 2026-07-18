@@ -1211,11 +1211,21 @@ async fn evaluate_plan_node_and_record(
 
         // Fetch OUTSIDE any conn lock (invoke_http_get is async; NEVER hold the
         // audit-db mutex across `.await`). On Err (non-allowlisted host,
-        // SSRF-range resolution, redirect, or transport failure — DESIGN §8),
-        // surface a broker-side Deny: log via the eprintln convention (never the
-        // hash chain), append no mint, do NOT demote, return no output value (the
-        // effect did not occur). Raw response text + url never enter any audit
-        // payload (opaque discipline, email_smtp convention).
+        // SSRF-range resolution, non-default port, body-cap/timeout, or a
+        // transport failure — DESIGN §8), surface a broker-side Deny: log via the
+        // eprintln convention (never the hash chain), append no mint, do NOT
+        // demote, append an OPAQUE http_request_failed terminal event (FIX 4),
+        // return no output value (the effect did not occur). Raw response text +
+        // url never enter any audit payload (opaque discipline, email_smtp
+        // convention).
+        //
+        // NOTE (FIX 6): a 30x redirect is NOT an Err here. With
+        // `redirect::Policy::none()` (build_pinned_client, T-37-04) reqwest does
+        // not follow the redirect and does not error — the 30x is returned as an
+        // `Ok` response whose (small, non-followed) body flows into the Ok arm and
+        // is minted + demotes like any other body. The redirect is neutralized by
+        // NOT being followed (so it can never bounce the connection to a denied
+        // range), not by being turned into an error.
         match crate::sinks::http_request::invoke_http_get(&url).await {
             Ok(body) => {
                 // mint_from_http appends its OWN http_response_received event
