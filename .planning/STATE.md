@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: — Authorized Egress + Policy & Audit Surface
-current_phase: 44
-current_phase_name: git.push — Broker-Performed Destination-Pinned Egress
+current_phase: 45
+current_phase_name: Thin CLI/SDK + Read-Only Audit-DAG Viewer
 status: planning
-stopped_at: Phase 43 (http-write egress, HTTP-W-01) complete & verified — transitioned to Phase 44
-last_updated: "2026-07-18T17:30:00.000Z"
+stopped_at: Phase 44 (git.push, GIT-02/03 + HYG-01) complete & verified — transitioned to Phase 45
+last_updated: "2026-07-18T19:45:00.000Z"
 last_activity: 2026-07-18
-last_activity_desc: Phase 43 complete (compose-verify 584/0, Fable-5 APPROVE), transitioned to Phase 44
+last_activity_desc: Phase 44 git.push SHIPPED (compose-verify 668/0, Fable-5 APPROVE 0 defects), transitioned to Phase 45
 progress:
   total_phases: 6
-  completed_phases: 3
-  total_plans: 9
-  completed_plans: 9
-  percent: 50
+  completed_phases: 4
+  total_plans: 14
+  completed_plans: 14
+  percent: 67
 ---
 
 # Project State
@@ -24,14 +24,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3) with content-sensitive body blocking + a real broker-mediated SMTP send, (v1.4) with coherent cross-connection trust state + a boundary proven indifferent to planner intelligence, (v1.5) with slot-type binding (T2), (v1.6) hardening the standing residuals into enforced guarantees, (v1.7) extending the real sinks — `process.exec` + filesystem read/write breadth, (v1.8) adding `git.commit` + read-only `http.request` GET + `github.pr` (git.push gate-deferred), and now (v1.9) completing the authorized-write-egress loop (git.push + http-write) and adding the first trust-surface layer (a minimal per-session policy + a CLI/audit-DAG viewer) toward a design-partner-runnable slice — without weakening I0/I1/I2 or adding any raw `EffectRequest` path.
-**Current focus:** Phase 44 — `git.push` broker-performed destination-pinned egress (GIT-02/03 + HYG-01): a fully-unprivileged, broker-mediated smart-HTTP transfer (net-denied child, application-layer destination pin), trusted-intent remote/refspec, force/delete hard-denied by construction, broker-env credential custody + redirect-refusal + payload-vs-destination confirm anti-TOCTOU + confirm-release; the supply-chain absence gate re-runs after the transport-dep choice. Research (`research/GIT-PUSH-EGRESS.md`, HIGH conf) assesses candidate-b FEASIBLE → plans to SHIP; the gate-authorized safety-valve defers a 3rd time only if no sound unprivileged mechanism proves out.
+**Current focus:** Phase 45 — Thin CLI/SDK + Read-Only Audit-DAG Viewer (SDK-01, U1): a design-partner-runnable trust surface. Define an intent → point at a workspace with a trusted policy → run end-to-end against the broker (extends the existing `caprun confirm`/`deny`/`grant`/`review` verbs; the run entrypoint binds the trusted policy at session creation = the POLICY-03 enforcement point); on an I2 Block surface the blocked effect_id + a `caprun review` pointer; SDK-constructed values carry trusted provenance ONLY for genuinely operator-typed literals (file/stream/env-sourced content minted TAINTED, not laundered). Plus a read-only audit-DAG viewer that renders a session's events/decisions + surfaces `verify_chain`, reusing the exact `load_or_create_key` MAC-key custody + F1 containment refusal (fails CLOSED — refuses a verify_chain verdict — if the key is absent, never a fresh/`:memory:` key), and control-char-neutralizes all tainted literal bytes before display (audit-line-spoofing surface closed). ON THE ACCEPTANCE CRITICAL PATH — LIVE-05 requires the composed proof be DRIVEN + INSPECTED via this CLI+viewer.
 
 ## Current Position
 
-Phase: 44 — `git.push` Broker-Performed Destination-Pinned Egress
+Phase: 45 — Thin CLI/SDK + Read-Only Audit-DAG Viewer
 Plan: Not started
-Status: Roadmapped; Phases 41-43 complete
-Last activity: 2026-07-18 — Phase 43 (http-write egress, HTTP-W-01) complete & verified, transitioned to Phase 44
+Status: Roadmapped; Phases 41-44 complete
+Last activity: 2026-07-18 — Phase 44 (git.push, GIT-02/03 + HYG-01) SHIPPED & verified, transitioned to Phase 45
+
+### Phase 44 close (2026-07-18)
+- 5 plans executed sequentially on `main`. `git.push` SHIPPED — did NOT defer a 3rd time (the research-pinned Candidate (b) broker-performed smart-HTTP transfer proved sound under the fresh adversarial trace; §1.9 safety-valve not triggered). Broker-performed two-request smart-HTTP (info/refs GET + git-receive-pack POST) over the shipped reqwest-ring resolve-and-pin with the IP FROZEN across both requests (WG-1) + redirect refused; pack-gen child net-denied under the unchanged exec_child_filter (WG-2 `run_launcher_capture_bytes` + `git pack-objects`); force/`--force-with-lease`/`:delete`/`+`refspec HARD-DENIED by construction; broker-env-only credential (Basic x-access-token) scrubbed from value-store/audit/logs; opaque non-minting audit; **ALWAYS confirm-gated — NO auto-dispatch arm** (clean Allowed → synthetic BlockedPendingConfirmation with a MAC'd frozen-new-oid pending row; `invoke_git_push_from_resolved` confirm-release-only, single non-test caller) + WG-7 anti-TOCTOU freeze + WG-8 taint-provenance renderer + P33/P34 precheck-before-burn; HYG-01 zero-new-crate re-asserted.
+- **Linux gate (independent orchestrator re-run):** compose-verify 668/0, exit 0, all 5 s44 legs green incl. leg_c real delivery to mock git-receive-pack + leg_d force/delete refused + leg_e redirect refused; no v1.0–v1.8 regression. check-invariants all gates PASS.
+- **Fresh Fable-5 adversarial trace:** APPROVE, 0 security defects across 8 surfaces. ONE non-security functional note (recorded as a Deferred Item): `generate_pack` uses the shared 10 MB `MAX_COMBINED_OUTPUT_BYTES` cap → a >10MB pack fails CLOSED (safe, no partial push) but would block large-repo pushes; revisit before/at LIVE-05/06 (Phase 46 pushes a small mock repo, so not blocking for 46).
+- Process: [[cfg-linux-test-blindness]] re-hit TWICE (two latent Linux-only defects from 44-03/44-04 caught only by the FULL compose-verify, not scoped runs — fixed in 44-05); a real 44-03 bug (`resolve_new_oid` reading the merged stream) caught+fixed by 44-04; a 44-01 brokerd-test gap (ran only runtime-core) caught+fixed by 44-02. See `44-VERIFICATION.md`.
 
 ### Phase 43 close (2026-07-18)
 - 4 plans executed sequentially on `main`, zero deviations. A distinct `http.request.write` CommitIrreversible sink (the MAJOR-1 I0-escape fix) + taint-governed body/url under I2 + exact {POST,PUT} method-enum gate + distinct fail-closed `WRITE_HOST_ALLOWLIST` reusing the shipped SSRF resolve-and-pin + broker-env-only optional credential + opaque non-minting two-phase audit + Allowed-dispatch & single-shot confirm-release (P33/P34 precheck-before-burn) + a differential acceptance test (taint the sole variable).
@@ -166,3 +172,4 @@ Items acknowledged and deferred at prior milestone closes, re-reviewed at v1.9 r
 | todo (security) | v1.3-phase16-v2-security-obligations — deferred v2 security obligations (recorded, not dropped) | pending |
 | todo (tooling) | gsd-executors-must-not-write-phase-completion-state | pending (GSD process, not caprun product) |
 | todo (tooling) | gsd-phases-clear-deletes-all-milestones | pending (GSD process, not caprun product) |
+| functional (caprun) | git.push `generate_pack` uses the shared 10 MB `MAX_COMBINED_OUTPUT_BYTES` cap → a >10MB pack fails CLOSED (safe, no partial push) but blocks large-repo pushes (Fable-5 Phase-44 non-security note) | pending — revisit before/at LIVE-05/06 (Phase 46 pushes a small mock repo, non-blocking for 46) |

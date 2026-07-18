@@ -16,8 +16,8 @@ Requirements for the v1.9 milestone. Each maps to exactly one roadmap phase (see
 
 ### Authorized Egress — git.push
 
-- [ ] **GIT-02**: `git.push` sink — a fully-unprivileged, broker-mediated, destination-pinned egress with the push child kept net-denied (no seccomp relaxation). The remote URL + refspec are captured from TRUSTED intent, never the untrusted repo's `.git/config`. `--force`/`--force-with-lease`/ref-deletion/`+`-force-refspec are hard-denied by construction (unreachable even via human confirm). The push credential lives in broker-local env only (never a ValueNode/plan-arg/audit-literal/the child/planner) and is never followed across a `receive-pack` redirect (`[rev: research attack-point]`). Captured child/transport output is scrubbed of any credential/URL material (or not minted at all) before it can reach the value store or audit chain (§2.5). **Safety-valve:** if the design gate proves no sound unprivileged mechanism exists (research currently assesses one FEASIBLE), GIT-02 defers rather than shipping arbitrary child egress — a disclosed, sign-off-gated deferral, never a silent drop (see LIVE-05).
-- [ ] **GIT-03**: A tainted push `remote`/`refspec` deterministically Blocks at the sink under I2 and is releasable only by single-shot human confirmation, whose terminal audit event is written before the terminal state (P33/P34 `prepare_git_push` precheck discipline). At the confirm prompt the human is shown the pushed payload — commit range/branch + a provenance summary flagging any pushed file whose content derives from untrusted taint (§2.7) — and the pack pushed is generated from that confirmed commit range at-or-after confirm (no payload-vs-destination confirm TOCTOU, `[rev: research attack-point]`), not just the destination. (Defers with GIT-02.)
+- [x] **GIT-02**: `git.push` sink — a fully-unprivileged, broker-mediated, destination-pinned egress with the push child kept net-denied (no seccomp relaxation). The remote URL + refspec are captured from TRUSTED intent, never the untrusted repo's `.git/config`. `--force`/`--force-with-lease`/ref-deletion/`+`-force-refspec are hard-denied by construction (unreachable even via human confirm). The push credential lives in broker-local env only (never a ValueNode/plan-arg/audit-literal/the child/planner) and is never followed across a `receive-pack` redirect (`[rev: research attack-point]`). Captured child/transport output is scrubbed of any credential/URL material (or not minted at all) before it can reach the value store or audit chain (§2.5). **Safety-valve:** if the design gate proves no sound unprivileged mechanism exists (research currently assesses one FEASIBLE), GIT-02 defers rather than shipping arbitrary child egress — a disclosed, sign-off-gated deferral, never a silent drop (see LIVE-05).
+- [x] **GIT-03**: A tainted push `remote`/`refspec` deterministically Blocks at the sink under I2 and is releasable only by single-shot human confirmation, whose terminal audit event is written before the terminal state (P33/P34 `prepare_git_push` precheck discipline). At the confirm prompt the human is shown the pushed payload — commit range/branch + a provenance summary flagging any pushed file whose content derives from untrusted taint (§2.7) — and the pack pushed is generated from that confirmed commit range at-or-after confirm (no payload-vs-destination confirm TOCTOU, `[rev: research attack-point]`), not just the destination. (Defers with GIT-02.)
 
 ### Authorized Egress — http.request WRITE
 
@@ -36,7 +36,7 @@ Requirements for the v1.9 milestone. Each maps to exactly one roadmap phase (see
 
 ### Supply-Chain & Invariant Hygiene
 
-- [ ] **HYG-01** `[rev: Matt #6 + m2]`: An automated, workspace-scoped supply-chain **absence assertion** — prove zero new forbidden C-crypto dependency crept in (`cargo tree --workspace -i <dep>` = absent for aws-lc-rs/openssl-sys; ring-only + webpki-roots), the resolver-3 feature-unification lesson. The check **re-runs after the git.push transport dependency is chosen**, enumerating any new transport deps (not just deps known at planning time); if a new dep IS added it must honor the ring-only recipe. Folds in the two v1.8-adversarial-trace-flagged hygiene items: a feature-OFF guard step in `compose-verify.sh` and broadening `check-invariants` Gate 4b to a workspace-wide grep.
+- [x] **HYG-01** `[rev: Matt #6 + m2]`: An automated, workspace-scoped supply-chain **absence assertion** — prove zero new forbidden C-crypto dependency crept in (`cargo tree --workspace -i <dep>` = absent for aws-lc-rs/openssl-sys; ring-only + webpki-roots), the resolver-3 feature-unification lesson. The check **re-runs after the git.push transport dependency is chosen**, enumerating any new transport deps (not just deps known at planning time); if a new dep IS added it must honor the ring-only recipe. Folds in the two v1.8-adversarial-trace-flagged hygiene items: a feature-OFF guard step in `compose-verify.sh` and broadening `check-invariants` Gate 4b to a workspace-wide grep.
 
 ### Live Proof (v1.9 DONE gate)
 
@@ -84,9 +84,9 @@ Which phases cover which requirements. Populated during roadmap creation (`/gsd-
 | POLICY-02 | Phase 42 | Complete |
 | POLICY-03 | Phase 42 | Complete |
 | HTTP-W-01 | Phase 43 | Complete (sink + differential proven P43; live mock-receipt → P46 LIVE-05/06) |
-| GIT-02 | Phase 44 | Pending |
-| GIT-03 | Phase 44 | Pending |
-| HYG-01 | Phase 44 | Pending |
+| GIT-02 | Phase 44 | Complete |
+| GIT-03 | Phase 44 | Complete |
+| HYG-01 | Phase 44 | Complete |
 | SDK-01 | Phase 45 | Pending |
 | U1 | Phase 45 | Pending |
 | LIVE-05 | Phase 46 | Pending |
