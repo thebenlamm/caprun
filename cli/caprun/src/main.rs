@@ -359,13 +359,29 @@ async fn main() -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("caprun has no parent dir"))?
             .join("caprun-planner");
         let mut cmd = std::process::Command::new(&planner_binary);
-        cmd.env("PLANNER_SOCK", &planner_sock);
+        // SECURITY (ENV-01, 40-CONTEXT decision 1): env_clear() the sidecar the
+        // same way the worker spawn (step 4) does, so it inherits NONE of the
+        // unconfined caprun parent's ambient environment — notably CAPRUN_SMTP_*,
+        // which the sidecar never needs. This is defense-in-depth: the sidecar is
+        // trusted code (it runs no untrusted instructions), but there is no reason
+        // for it to hold ambient broker secrets it does not use.
+        //
+        // env_clear() is HERMETIC for the sidecar's outbound OpenAI HTTPS/TLS call:
+        // the egress reqwest stack uses rustls-no-provider + ring + compiled-in
+        // webpki-roots (Phase-37 MAJOR-1 fix), so server-cert validation needs NO
+        // SSL_CERT_* env var and no readable system cert store. The only TLS-env
+        // the allowlist forwards is HTTPS_PROXY/NO_PROXY, and only when present
+        // (proxy passthrough). See DESIGN-git-github-http-sinks.md §5.2.
+        cmd.env_clear();
+        // OPENAI_API_KEY is the ONLY secret the sidecar legitimately receives —
+        // set it explicitly (exactly as before), separate from the non-secret
+        // allowlist builder so the secret is never enumerated over the parent env.
         if let Ok(key) = std::env::var("OPENAI_API_KEY") {
             cmd.env("OPENAI_API_KEY", key);
         }
-        if let Ok(model) = std::env::var("CAPRUN_PLANNER_MODEL") {
-            cmd.env("CAPRUN_PLANNER_MODEL", model);
-        }
+        // The non-secret surviving env: PLANNER_SOCK + minimal PATH always, plus
+        // optional CAPRUN_PLANNER_MODEL / HTTPS_PROXY / NO_PROXY when present.
+        cmd.envs(planner_sidecar_allowlist_env(&planner_sock));
         let child = cmd.spawn().context("spawn caprun-planner sidecar")?;
         planner_sidecar = Some(child);
         worker_planner_env.push(("PLANNER_SOCK", planner_sock));
@@ -663,6 +679,40 @@ fn print_audit_dag(conn: &rusqlite::Connection, session_id: &str) -> anyhow::Res
         );
     }
     Ok(())
+}
+
+/// Non-secret environment allowlist for the caprun-planner sidecar spawn (ENV-01,
+/// 40-CONTEXT decision 1). The sidecar `Command` is `env_clear()`'d before this is
+/// applied, so ONLY these keys survive — the unconfined caprun parent's ambient
+/// env (notably `CAPRUN_SMTP_*`) never reaches the sidecar.
+///
+/// `env_clear()` is HERMETIC for the sidecar's outbound OpenAI HTTPS/TLS call: the
+/// egress reqwest stack uses rustls-no-provider + ring + compiled-in webpki-roots
+/// (Phase-37 MAJOR-1 fix), so server-cert validation needs no `SSL_CERT_*` env var
+/// and no readable system cert store (DESIGN-git-github-http-sinks.md §5.2).
+///
+/// This builder returns NON-SECRET vars only. `OPENAI_API_KEY` (the sole secret) is
+/// set on the Command separately, never enumerated here. The builder reads the
+/// parent env for the optional entries by NAME — it never enumerates the full env.
+fn planner_sidecar_allowlist_env(planner_sock: &str) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = Vec::new();
+    // Always present: the planner UDS path the sidecar binds, plus a minimal PATH.
+    // (The sidecar never `execve`s, so PATH is belt-and-suspenders, not required.)
+    env.push(("PLANNER_SOCK".to_string(), planner_sock.to_string()));
+    env.push(("PATH".to_string(), "/usr/bin:/bin:/usr/local/bin".to_string()));
+    // Optional passthroughs — forwarded ONLY when present AND non-empty in the
+    // parent env (never forwarded as an empty string; mirrors the mailpit-verify.sh
+    // empty-model bug note). CAPRUN_PLANNER_MODEL selects the OpenAI model;
+    // HTTPS_PROXY/NO_PROXY let the sidecar's HTTPS egress traverse a corporate
+    // proxy when one is configured.
+    for key in ["CAPRUN_PLANNER_MODEL", "HTTPS_PROXY", "NO_PROXY"] {
+        if let Ok(v) = std::env::var(key) {
+            if !v.is_empty() {
+                env.push((key.to_string(), v));
+            }
+        }
+    }
+    env
 }
 
 #[cfg(test)]
