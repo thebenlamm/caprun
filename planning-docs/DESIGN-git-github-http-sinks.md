@@ -261,3 +261,206 @@ branch so a burned one-shot confirmation can never dangle without a
 in §9.
 
 ---
+
+## §3. read-only `http.request` GET — Pattern A + `mint_from_http` (HTTP-01..03)
+
+### 3.1 Dispatch — Pattern A, `reqwest` (not `octocrab`)
+
+The HTTP client runs in the broker / a broker-helper (Pattern A), NOT in a
+confined child and NEVER in the worker — the same in-broker-egress shape as
+`email_smtp.rs`, the project's only existing network-egress sink
+(`email_smtp.rs:1-5`). Stack: raw `reqwest =0.13.4` (rustls), NOT `octocrab`
+(`35-CONTEXT.md` Stack). Only the GET method is in scope this milestone; POST /
+write egress is deferred to v1.9+ (§0).
+
+### 3.2 Effect-class — `Observe`, but the response demotes the session
+
+`http.request` GET is pinned `Observe` (`sink_sensitivity.rs:18-22` EffectClass;
+the FIRST real `Observe` sink — `test.observe` is today the only `Observe`
+mapping and it is test-only, `sink_sensitivity.rs:55-56`). A GET is therefore
+**allowed even in an I1-demoted (draft-only) session** — reading is not an
+external mutation. BUT its inbound response is untrusted-on-arrival and **demotes
+the session** the moment it is minted (§3.3): fetching untrusted bytes is
+exactly the I1 direction (mirroring `mint_from_read`'s session demotion,
+`quarantine.rs:391-401`).
+
+### 3.3 The one genuinely NEW mechanism — `mint_from_http` (closes P8)
+
+`mint_from_http` is a NEW mint site in the sanctioned
+`crates/brokerd/src/quarantine.rs` locus, mirroring `mint_from_read`
+(`quarantine.rs:301`) and `mint_from_exec` (`quarantine.rs:838`) in shape. It
+MUST, in this exact order (the non-stapled-taint genesis, `quarantine.rs:316-389`):
+
+1. **Append a real `http_response_received` audit `Event` FIRST** (a NEW event
+   type, analogous to `mint_from_read`'s `file_read` at `quarantine.rs:361-369`
+   and `mint_from_exec`'s `process_exited` root at `process_exec.rs:160-176`),
+   obtaining its id + row hash via `append_event`.
+2. **THEN mint the inbound response body** as untrusted-on-arrival via
+   `ValueStore::mint`, with `provenance_chain = [that Event's id]`
+   (non-stapled — `provenance_chain[0]` EQUALS the `http_response_received`
+   Event id, exactly like `mint_from_read`'s anchor identity guarantee,
+   `quarantine.rs:374-389` + the `mint_from_read_anchor_identity` test at
+   `quarantine.rs:917-928`). Taint vector: `vec![ExternalUntrusted, HttpRaw]`
+   (mirroring `mint_from_exec`'s `vec![ExternalUntrusted, ExecRaw]`,
+   `quarantine.rs:848`); `origin_role = Some("http_response")`.
+3. **Demote the session to draft-only (I1)** — DECIDED YES (`35-CONTEXT.md`
+   mint_from_http). Same atomic in-`conn` demotion `mint_from_read` performs at
+   `quarantine.rs:391-401` (`UPDATE sessions SET status='Draft'` + a
+   `session_demoted` Event chained onto the mint event) — never a second lock,
+   never stapled.
+
+### 3.4 `TaintLabel::HttpRaw` — compile-forced into the exhaustive match
+
+A NEW `TaintLabel::HttpRaw` variant is added to the enum
+(`plan_node.rs:13-29`, today `UserTrusted`, `LocalWorkspace`,
+`ExternalUntrusted`, `EmailRaw`, `PdfRaw`, `LlmGenerated`, `WorkerExtracted`,
+`PathRaw`, `ExecRaw`), mirroring the `ExecRaw` naming/pairing convention exactly
+(`plan_node.rs:28`). Adding the variant is a **compile-time-enforced** change:
+`is_untrusted()`'s exhaustive `match self` with NO wildcard arm
+(`plan_node.rs:45-56`, doc-commented "Adding a new `TaintLabel` variant without
+updating this match is a compile error, not a silent false-allow") FORCES
+Phase 37 to place `HttpRaw` in the untrusted arm — the compiler catches an
+omission a runtime default could silently miss.
+
+### 3.5 Anti-staple discipline (closes P11 + stapled-taint)
+
+Taint is genuinely propagated through the DAG: a fetched value routed into a
+sensitive sink arg (a PR body, a commit message, an email body) Blocks on a
+**real DAG edge** rooted at `http_response_received`, never stapled at the
+consuming sink — the same discipline the executor already enforces (it never
+mints, never sets taint; it only reads through `value_store.resolve()`). An
+**anti-staple test is REQUIRED** (the §9/§12 genuineness standard): assert that
+`store.resolve(fetched_value_id).provenance_chain[0]` equals the
+`http_response_received` Event id AND that a downstream sensitive-slot routing
+of that value Blocks — mirroring `mint_from_read_anchor_identity`
+(`quarantine.rs:917-928`).
+
+### 3.6 SSRF resolve-and-pin (closes P7/P10)
+
+The `url` arg is I2-gated (routing-sensitive, §8). The fetch model:
+- **Resolve the host, PIN the destination IP**, and connect to that pinned IP
+  (with SNI/Host = the original hostname) — closing DNS-rebind TOCTOU.
+- **Deny** loopback (`127.0.0.0/8`, `::1`), RFC1918 (`10/8`, `172.16/12`,
+  `192.168/16`), link-local (`169.254/16`, `fe80::/10`), CGNAT
+  (`100.64/10`), cloud-metadata (`169.254.169.254`), ULA (`fc00::/7`), and
+  IPv6-mapped equivalents (`::ffff:0:0/96`).
+- **NO redirect following** by default (a 30x cannot bounce to a denied range).
+- **Reject** `userinfo@` in the URL, any non-`https` scheme, and IP-encoding
+  tricks (decimal/octal/hex-packed addresses).
+- **Host allowlist** — the fetch target must be on an explicit allowlist
+  (an operator-surfaced deployment constant, §11), never arbitrary.
+
+---
+
+## §4. `github.pr` — Pattern A, `CommitIrreversible` (FORK 3) + duplicate-PR CAS
+
+### 4.1 Dispatch — Pattern A, one REST POST via `reqwest`
+
+`github.pr` runs in the broker (Pattern A), reusing the Phase-37 `http.request`
+egress infra: one REST `POST /repos/{owner}/{repo}/pulls` via `reqwest`, with a
+broker-held bearer token. Effect-class = pinned `CommitIrreversible`
+(`sink_sensitivity.rs:40-58`).
+
+### 4.2 Credential hygiene (closes P5/P8)
+
+The bearer token is read from **broker-local env ONLY** (same D-04 custody as
+`email_smtp.rs:87-112`) — never a `ValueNode`, plan-node arg, audit-DAG literal,
+the confined worker, or the planner sidecar. Audit events for `github.pr` carry
+OPAQUE payloads (only `effect_id` in the `actor` field + a static event-type
+marker), mirroring `email_smtp.rs`'s opaque `email_send_succeeded`/`_failed`
+convention (`email_smtp.rs:58-65,256-301`) — the token and raw API response text
+never enter the hash chain.
+
+### 4.3 FORK 3 — DECIDED: session-scoped capability grant, independent of per-PR confirm
+
+**FORK 3 is DECIDED = session-scoped capability grant, separate from per-effect
+confirm** (`35-CONTEXT.md` FORK 3). Rationale: a bearer token's authority far
+exceeds one PR (push / merge / cross-repo read), it opens a default-deny-net
+hole, and it is a broker-held secret — so **confirming a PR body ≠ authorizing
+the credential**. Mechanism — TWO independent gates:
+
+1. **Capability grant (NEW):** a distinct human action `caprun grant <session>
+   ...` authorizes the broker to USE the token for that session, recorded as its
+   OWN audit event, session-scoped (the grant's lifetime is the Session; it does
+   not persist across sessions). Mirrors the v1.4 `ConnectionRole` capability
+   precedent.
+2. **Per-effect I2 confirm:** the ordinary per-PR I2 confirm of the (sink, args)
+   triple (§4.4).
+
+A PR **cannot be created on a bare confirm alone** — absent a live grant the
+sink Denies (§8), independent of any per-PR confirm. The exact `caprun grant`
+verb + session-scoped lifetime are FINALIZED here as the model; the precise CLI
+surface is a Phase 38 detail (§11).
+
+### 4.4 Tainted-PR-body block (the marquee P6-exfil — closes it) + token scoping
+
+- **`title` / `body`** are content-sensitive sink args (reuse CONTENT-01,
+  `is_content_sensitive`, `sink_sensitivity.rs:140`), so a value assembled from
+  untrusted content (an `http_response`-tainted, `ExecRaw`-tainted, or
+  `doc_fragment`-tainted string) Blocks under the UNMODIFIED collect-then-Block
+  loop. This is the marquee exfiltration threat: without this, a
+  prompt-injected worker could smuggle secrets out through a PR body. Taint is
+  genuinely propagated; the **verbatim, provenance-annotated `title`/`body` is
+  shown to the human at confirm** (the human sees exactly what would leave the
+  boundary).
+- **`owner`/`repo`/`base`/`head`** are routing-sensitive (they determine WHERE
+  the PR lands), I2-gated.
+- **Token scoping (closes P6-overscope):** MINIMAL scopes — a fine-grained PAT
+  with `Pull requests: write` + `Contents: read` only — stated as an operator
+  responsibility surfaced at grant time (§11).
+
+### 4.5 Duplicate-PR CAS (closes P16 — replay)
+
+A content-derived idempotency key — a digest over
+`(owner, repo, base, head, title, body)` — is committed to a CAS table
+**BEFORE** the GitHub API call, mirroring v1.6 HARDEN-03's Allowed-path replay
+defense (`DESIGN-security-hardening.md` §c, `email_smtp.rs:16-20`): the CAS +
+attempt append commit as one atomic unit BEFORE any socket opens; a
+PRIMARY-KEY-constraint violation on replay IS the CAS, suppressing the second
+call. Result: a replayed identical submission creates **at most one PR**. The
+key MUST be **derived** from resolved plan-node content, never carried as a new
+`PlanNode` field, and never keyed on `effect_id` (a fresh `effect_id` per
+resubmit would defeat it — `DESIGN-security-hardening.md` §c's load-bearing
+fact). Accepted scope caveat (D-08, inherited): this is at-most-once PER PLAN
+NODE, not a per-session send budget.
+
+### 4.6 Confirm-release (P33/P34 class — see §9)
+
+`github.pr` is `CommitIrreversible` + confirm-releasable: the confirm-release
+path writes the TERMINAL AUDIT EVENT before the terminal state via a
+`prepare_github_pr` precheck (the `prepare_process_exec` pattern,
+`confirmation.rs:847-866`). Full mandate in §9.
+
+---
+
+## §5. Crypto provider (FORK 2) + `env_clear()` TLS-cert allowlist policy (ENV-01)
+
+### 5.1 FORK 2 — DECIDED: lean `ring`
+
+**FORK 2 is DECIDED = lean `ring` (pure-Rust) for the new egress** (`35-CONTEXT.md`
+FORK 2). Rationale: "minimize untrusted C in the TCB" — the net egress runs
+inside the TCB boundary (broker / confined child), so any new C crypto is a
+conscious add; `ring` is pure-Rust and well-audited. The planner sidecar already
+ships `aws-lc-rs` but is a SEPARATE process, so no in-process rustls
+`CryptoProvider` conflict forces a match. `aws-lc-rs` is ACCEPTABLE if
+provider-consistency turns out materially cleaner at Phase 37 — this is
+low-stakes either way (both well-audited); the doc picks `ring`, and the
+reviewer sanity-checks rather than over-constrains.
+
+### 5.2 `env_clear()` webpki-roots TLS policy (ENV-01, realized Phase 40)
+
+CA roots = compiled-in **`webpki-roots 1.0.8`** (NOT `rustls-platform-verifier`)
+so that `env_clear()` is **HERMETIC** — a TLS-egress process needs no
+`SSL_CERT_*` env var and no readable system cert store to validate a server
+cert. Consequence: the surviving env allowlist for any TLS-egress process is
+ONLY `HTTPS_PROXY`/`NO_PROXY` (when behind a proxy) + minimal `PATH`/locale.
+This closes the deferred v1.7 planner-sidecar `env_clear()` todo: the planner
+sidecar spawn is TODAY **NOT** `env_clear()`'d (`cli/caprun/src/main.rs:314-335`
+— it forwards `OPENAI_API_KEY` explicitly at `main.rs:325-327` but inherits the
+rest of the broker env by inheritance), UNLIKE the worker spawn which IS
+`env_clear()`'d with an explicit allowlist (`main.rs:357-358`). Phase 40 must
+`env_clear()` the sidecar the same way. This MUST be validated by a **LIVE HTTPS
+run** — the only place a TLS-env regression manifests; offline/mocked tests do
+NOT catch a missing-cert-root failure (§11, §12).
+
+---
