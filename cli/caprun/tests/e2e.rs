@@ -131,10 +131,12 @@ fn substrate_demo() {
 }
 
 /// dag_chain_integrity — verifies the unbroken hash chain:
-/// session_created → intent_received(recipient) → intent_received(subject) →
-/// intent_received(body) → fd_granted → plan_node_evaluated →
-/// email_send_attempted → email_send_succeeded (the 8-event benign chain,
-/// UPDATED Phase 16 / 16-04, CONTROL-01/BLOCKER-3 — see BLOCKER note below).
+/// session_created → policy_bound → intent_received(recipient) →
+/// intent_received(subject) → intent_received(body) → fd_granted →
+/// plan_node_evaluated → email_send_attempted → email_send_succeeded (the
+/// 9-event benign chain, UPDATED Phase 42 POLICY-03 which inserts policy_bound
+/// after session_created; prior UPDATE Phase 16 / 16-04, CONTROL-01/BLOCKER-3 —
+/// see BLOCKER note below).
 /// EMPIRICALLY VERIFIED under Colima/Docker (Linux) at 15-04 time for the
 /// first 6 events — this is not a Mac-side inference. The trailing two
 /// events are new as of Phase 16's email.send Allowed-dispatch and require
@@ -171,11 +173,17 @@ fn substrate_demo() {
 /// reaches the new email.send Allowed-dispatch branch in `server.rs`. That
 /// branch appends a durable `email_send_attempted` event (MAJOR-4) BEFORE
 /// invoking the real SMTP adapter, then (under a live Mailpit listener, i.e.
-/// `scripts/mailpit-verify.sh`) an `email_send_succeeded` event. The full
-/// benign chain is now session_created → intent_received(recipient) →
-/// intent_received(subject) → intent_received(body) → fd_granted →
-/// plan_node_evaluated → email_send_attempted → email_send_succeeded (8
-/// events total). The §9 BLOCK path is exercised by
+/// `scripts/mailpit-verify.sh`) an `email_send_succeeded` event.
+///
+/// FINALLY (Phase 42 / POLICY-03): `caprun run` now records the bound session
+/// policy's identity as a genuine `policy_bound` audit event, hash-chained onto
+/// `session_created` and installed as the broker's seed chain head — so the
+/// first broker event (`intent_received` recipient) parents onto `policy_bound`,
+/// not `session_created`. The full benign chain is now session_created →
+/// policy_bound → intent_received(recipient) → intent_received(subject) →
+/// intent_received(body) → fd_granted → plan_node_evaluated →
+/// email_send_attempted → email_send_succeeded (9 events total). The §9 BLOCK
+/// path is exercised by
 /// `crates/brokerd/tests/s9_acceptance.rs` and (live) by
 /// `s9_live_block.rs::s9_live_email_hostile_block`.
 #[cfg(target_os = "linux")]
@@ -266,10 +274,11 @@ fn dag_chain_integrity() {
 
     assert_eq!(
         events.len(),
-        8,
-        "audit DAG must contain exactly 8 events (session_created, THREE \
-         intent_received — recipient/subject/body, Phase 15 finding #6 — \
-         fd_granted, plan_node_evaluated, email_send_attempted, \
+        9,
+        "audit DAG must contain exactly 9 events (session_created, policy_bound \
+         — Phase 42 POLICY-03, chained onto session_created as the broker's seed \
+         head — THREE intent_received — recipient/subject/body, Phase 15 finding \
+         #6 — fd_granted, plan_node_evaluated, email_send_attempted, \
          email_send_succeeded — Phase 16 CONTROL-01); got {}: {:?}",
         events.len(),
         events.iter().map(|(et, _, _)| et.as_str()).collect::<Vec<_>>()
@@ -293,7 +302,8 @@ fn dag_chain_integrity() {
     let (e4_type, e4_parent, e4_hash) = &events[4];
     let (e5_type, e5_parent, e5_hash) = &events[5];
     let (e6_type, e6_parent, e6_hash) = &events[6];
-    let (e7_type, e7_parent, _e7_hash) = &events[7];
+    let (e7_type, e7_parent, e7_hash) = &events[7];
+    let (e8_type, e8_parent, _e8_hash) = &events[8];
 
     assert_eq!(e0_type, "session_created", "event[0] must be session_created");
     assert!(
@@ -301,42 +311,53 @@ fn dag_chain_integrity() {
         "session_created must have no parent_hash; got {e0_parent:?}"
     );
 
-    assert_eq!(e1_type, "intent_received", "event[1] must be intent_received (recipient)");
+    // Phase 42 (POLICY-03): the bound session policy's identity is recorded as a
+    // genuine `policy_bound` audit event, chained onto session_created and made
+    // the broker's seed chain head — so the first broker event (intent_received)
+    // now parents onto policy_bound, NOT session_created.
+    assert_eq!(e1_type, "policy_bound", "event[1] must be policy_bound (Phase 42 POLICY-03)");
     assert_eq!(
         e1_parent.as_deref(),
         Some(e0_hash.as_str()),
-        "intent_received(recipient).parent_hash must equal session_created.hash"
+        "policy_bound.parent_hash must equal session_created.hash"
     );
 
-    assert_eq!(e2_type, "intent_received", "event[2] must be intent_received (subject)");
+    assert_eq!(e2_type, "intent_received", "event[2] must be intent_received (recipient)");
     assert_eq!(
         e2_parent.as_deref(),
         Some(e1_hash.as_str()),
-        "intent_received(subject).parent_hash must equal intent_received(recipient).hash"
+        "intent_received(recipient).parent_hash must equal policy_bound.hash"
     );
 
-    assert_eq!(e3_type, "intent_received", "event[3] must be intent_received (body)");
+    assert_eq!(e3_type, "intent_received", "event[3] must be intent_received (subject)");
     assert_eq!(
         e3_parent.as_deref(),
         Some(e2_hash.as_str()),
-        "intent_received(body).parent_hash must equal intent_received(subject).hash"
+        "intent_received(subject).parent_hash must equal intent_received(recipient).hash"
     );
 
-    assert_eq!(e4_type, "fd_granted", "event[4] must be fd_granted");
+    assert_eq!(e4_type, "intent_received", "event[4] must be intent_received (body)");
     assert_eq!(
         e4_parent.as_deref(),
         Some(e3_hash.as_str()),
+        "intent_received(body).parent_hash must equal intent_received(subject).hash"
+    );
+
+    assert_eq!(e5_type, "fd_granted", "event[5] must be fd_granted");
+    assert_eq!(
+        e5_parent.as_deref(),
+        Some(e4_hash.as_str()),
         "fd_granted.parent_hash must equal intent_received(body).hash"
     );
 
     assert_eq!(
-        e5_type, "plan_node_evaluated",
-        "event[5] must be plan_node_evaluated (Phase 15 / 15-04 — the benign send \
+        e6_type, "plan_node_evaluated",
+        "event[6] must be plan_node_evaluated (Phase 15 / 15-04 — the benign send \
          now always submits an all-UserTrusted plan node, which the executor Allows)"
     );
     assert_eq!(
-        e5_parent.as_deref(),
-        Some(e4_hash.as_str()),
+        e6_parent.as_deref(),
+        Some(e5_hash.as_str()),
         "plan_node_evaluated.parent_hash must equal fd_granted.hash \
          (no file_read event intervenes — zero doc-fragment claims for this benign content)"
     );
@@ -346,25 +367,25 @@ fn dag_chain_integrity() {
     // (MAJOR-4) BEFORE invoking the adapter, then — under a live Mailpit
     // listener (scripts/mailpit-verify.sh) — email_send_succeeded.
     assert_eq!(
-        e6_type, "email_send_attempted",
-        "event[6] must be email_send_attempted (MAJOR-4 durable attempt ledger, \
+        e7_type, "email_send_attempted",
+        "event[7] must be email_send_attempted (MAJOR-4 durable attempt ledger, \
          appended BEFORE the SMTP socket ever opens)"
-    );
-    assert_eq!(
-        e6_parent.as_deref(),
-        Some(e5_hash.as_str()),
-        "email_send_attempted.parent_hash must equal plan_node_evaluated.hash"
-    );
-
-    assert_eq!(
-        e7_type, "email_send_succeeded",
-        "event[7] must be email_send_succeeded — this test MUST run under \
-         scripts/mailpit-verify.sh (a live Mailpit listener); under the bare \
-         rust:1 recipe (no listener) this would instead be email_send_failed"
     );
     assert_eq!(
         e7_parent.as_deref(),
         Some(e6_hash.as_str()),
+        "email_send_attempted.parent_hash must equal plan_node_evaluated.hash"
+    );
+
+    assert_eq!(
+        e8_type, "email_send_succeeded",
+        "event[8] must be email_send_succeeded — this test MUST run under \
+         scripts/mailpit-verify.sh (a live Mailpit listener); under the bare \
+         rust:1 recipe (no listener) this would instead be email_send_failed"
+    );
+    assert_eq!(
+        e8_parent.as_deref(),
+        Some(e7_hash.as_str()),
         "email_send_succeeded.parent_hash must equal email_send_attempted.hash"
     );
 
