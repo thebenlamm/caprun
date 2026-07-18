@@ -1,16 +1,20 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.9
-milestone_name: Authorized Egress + Policy & Audit Surface
-status: roadmapped
-last_updated: "2026-07-18T00:00:00.000Z"
+milestone_name: — Authorized Egress + Policy & Audit Surface
+current_phase: 44
+current_phase_name: git.push — Broker-Performed Destination-Pinned Egress
+status: planning
+stopped_at: Phase 43 (http-write egress, HTTP-W-01) complete & verified — transitioned to Phase 44
+last_updated: "2026-07-18T17:30:00.000Z"
 last_activity: 2026-07-18
+last_activity_desc: Phase 43 complete (compose-verify 584/0, Fable-5 APPROVE), transitioned to Phase 44
 progress:
   total_phases: 6
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 3
+  total_plans: 9
+  completed_plans: 9
+  percent: 50
 ---
 
 # Project State
@@ -20,14 +24,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3) with content-sensitive body blocking + a real broker-mediated SMTP send, (v1.4) with coherent cross-connection trust state + a boundary proven indifferent to planner intelligence, (v1.5) with slot-type binding (T2), (v1.6) hardening the standing residuals into enforced guarantees, (v1.7) extending the real sinks — `process.exec` + filesystem read/write breadth, (v1.8) adding `git.commit` + read-only `http.request` GET + `github.pr` (git.push gate-deferred), and now (v1.9) completing the authorized-write-egress loop (git.push + http-write) and adding the first trust-surface layer (a minimal per-session policy + a CLI/audit-DAG viewer) toward a design-partner-runnable slice — without weakening I0/I1/I2 or adding any raw `EffectRequest` path.
-**Current focus:** Phase 41 — v1.9 DESIGN Gate + Fresh Adversarial Code-Trace (DESIGN-17/18: one DESIGN doc pinning git.push egress + http-write egress + the policy-vs-I2 boundary incl. POLICY-03 binding, cleared by a fresh non-self orchestrator-owned adversarial code-trace before any TCB code)
+**Current focus:** Phase 44 — `git.push` broker-performed destination-pinned egress (GIT-02/03 + HYG-01): a fully-unprivileged, broker-mediated smart-HTTP transfer (net-denied child, application-layer destination pin), trusted-intent remote/refspec, force/delete hard-denied by construction, broker-env credential custody + redirect-refusal + payload-vs-destination confirm anti-TOCTOU + confirm-release; the supply-chain absence gate re-runs after the transport-dep choice. Research (`research/GIT-PUSH-EGRESS.md`, HIGH conf) assesses candidate-b FEASIBLE → plans to SHIP; the gate-authorized safety-valve defers a 3rd time only if no sound unprivileged mechanism proves out.
 
 ## Current Position
 
-Phase: Not started (v1.9 roadmap created — Phases 41-46)
-Plan: —
-Status: Roadmapped, awaiting Phase 41 planning
-Last activity: 2026-07-18 — Milestone v1.9 roadmapped (6 phases, 13/13 requirements mapped)
+Phase: 44 — `git.push` Broker-Performed Destination-Pinned Egress
+Plan: Not started
+Status: Roadmapped; Phases 41-43 complete
+Last activity: 2026-07-18 — Phase 43 (http-write egress, HTTP-W-01) complete & verified, transitioned to Phase 44
+
+### Phase 43 close (2026-07-18)
+- 4 plans executed sequentially on `main`, zero deviations. A distinct `http.request.write` CommitIrreversible sink (the MAJOR-1 I0-escape fix) + taint-governed body/url under I2 + exact {POST,PUT} method-enum gate + distinct fail-closed `WRITE_HOST_ALLOWLIST` reusing the shipped SSRF resolve-and-pin + broker-env-only optional credential + opaque non-minting two-phase audit + Allowed-dispatch & single-shot confirm-release (P33/P34 precheck-before-burn) + a differential acceptance test (taint the sole variable).
+- **Linux gate:** `compose-verify.sh` 584 passed / 0 failed, no v1.0–v1.8 regression (all prior composed live proofs green), no cfg-linux-blindness. check-invariants all gates PASS (Gate 3 mint-site byte-identical, Gate 5 no new crate).
+- **Fresh non-self Fable-5 adversarial code-trace:** APPROVE, 0 defects (2 non-actionable NITs; NIT-1 log-scrub tracked for Phase 44).
+- HTTP-W-01 Complete for what Phase 43 owns (sink + differential at the decision+dispatch boundary); the requirement's live-mock-receipt sub-clause is by-design carried to Phase 46 (LIVE-05/06) — write allowlist ships empty, no live write mock until the composed proof. See `43-VERIFICATION.md`.
 
 ## Performance Metrics
 
@@ -36,7 +46,7 @@ Last activity: 2026-07-18 — Milestone v1.9 roadmapped (6 phases, 13/13 require
 - Total plans completed: 132 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 + v1.4: 14 + v1.5: 8 + v1.6: 14 + v1.7: 17 + v1.8: 17)
 - Average duration: — min
 
-*Updated after each plan completion. v1.8 (phases 35-38,40) shipped 2026-07-18. v1.9 (phases 41-46) roadmapped 2026-07-18, no plans yet.*
+*Updated after each plan completion. v1.8 (phases 35-38,40) shipped 2026-07-18. v1.9 (phases 41-46) IN PROGRESS 2026-07-18 — Phases 41 (design gate) + 42 (policy layer, 5 plans) + 43 (http-write, 4 plans) complete; Phase 44 (git.push) next.*
 
 ## Accumulated Context
 

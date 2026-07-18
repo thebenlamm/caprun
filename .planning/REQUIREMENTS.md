@@ -11,8 +11,8 @@ Requirements for the v1.9 milestone. Each maps to exactly one roadmap phase (see
 
 ### Design Gate (blocks all TCB code)
 
-- [ ] **DESIGN-17**: A single DESIGN doc pins the TCB mechanisms for v1.9 — (a) the fully-unprivileged, broker-mediated, destination-pinned `git.push` egress (child net-denied; the pin lives in a broker/netfilter/application layer that can SEE the destination, NEVER in seccomp — the research-recommended mechanism is a **broker-performed git smart-HTTP transfer** reusing the shipped reqwest+rustls(ring)+webpki-roots+SSRF resolve-and-pin stack, child does only local pack generation; see `.planning/research/GIT-PUSH-EGRESS.md`); (b) the `http.request` WRITE (POST/PUT) egress; (c) the **policy-vs-I2 boundary** — exactly what policy can and cannot do, AND where policy comes from / how it binds (POLICY-03). Carries forward v1.8 §2/§2.5(credential scrub)/§2.7(payload-at-confirm)/§9(confirm-release). If no fully-unprivileged destination-pinning mechanism proves sound, the doc formalizes deferring `git.push` (the other tracks proceed).
-- [ ] **DESIGN-18**: The DESIGN doc clears a fresh, non-self, orchestrator-owned adversarial code-trace (NOT a gsd-executor) before any `crates/{executor,brokerd,sandbox,runtime-core}` TCB code — unbroken precedent through v1.8 P35. `[rev: n2]` The trace **re-runs if the git.push trust-posture or transport-dependency choice changes mid-implementation** — the deferral doc itself calls git.push "the riskiest surface in the project," so a mid-build transport pivot must not bypass the one gate meant to catch it.
+- [x] **DESIGN-17**: A single DESIGN doc pins the TCB mechanisms for v1.9 — (a) the fully-unprivileged, broker-mediated, destination-pinned `git.push` egress (child net-denied; the pin lives in a broker/netfilter/application layer that can SEE the destination, NEVER in seccomp — the research-recommended mechanism is a **broker-performed git smart-HTTP transfer** reusing the shipped reqwest+rustls(ring)+webpki-roots+SSRF resolve-and-pin stack, child does only local pack generation; see `.planning/research/GIT-PUSH-EGRESS.md`); (b) the `http.request` WRITE (POST/PUT) egress; (c) the **policy-vs-I2 boundary** — exactly what policy can and cannot do, AND where policy comes from / how it binds (POLICY-03). Carries forward v1.8 §2/§2.5(credential scrub)/§2.7(payload-at-confirm)/§9(confirm-release). If no fully-unprivileged destination-pinning mechanism proves sound, the doc formalizes deferring `git.push` (the other tracks proceed).
+- [x] **DESIGN-18**: The DESIGN doc clears a fresh, non-self, orchestrator-owned adversarial code-trace (NOT a gsd-executor) before any `crates/{executor,brokerd,sandbox,runtime-core}` TCB code — unbroken precedent through v1.8 P35. `[rev: n2]` The trace **re-runs if the git.push trust-posture or transport-dependency choice changes mid-implementation** — the deferral doc itself calls git.push "the riskiest surface in the project," so a mid-build transport pivot must not bypass the one gate meant to catch it.
 
 ### Authorized Egress — git.push
 
@@ -21,13 +21,13 @@ Requirements for the v1.9 milestone. Each maps to exactly one roadmap phase (see
 
 ### Authorized Egress — http.request WRITE
 
-- [ ] **HTTP-W-01**: `http.request` WRITE (POST/PUT) to an allowlisted host. The request BODY is taint-governed and content-sensitive under I2 (a tainted body deterministically Blocks, exactly like an email/PR body); the `url` is routing-sensitive. Reuses v1.8's SSRF resolve-and-pin (loopback/RFC1918/link-local/metadata/userinfo@/redirect denied) + webpki-roots egress. `[rev: M1]` Any write credential lives in broker-local env only (never a ValueNode/plan-arg/audit-literal/the worker/planner), and the captured response is scrubbed of credential material (or not minted) before value-store/audit. `[rev: m1]` The WRITE (mutating) host-allowlist is **distinct** from the read/GET allowlist — a host being GET-readable does not imply it is POST/PUT-writable. `[rev: M4]` Acceptance is **differential**: the tainted-body-Blocks leg and the clean-body-Allowed leg are identical in host/url/method/policy (taint is the sole variable), and the clean leg is confirmed to have actually delivered the body to the mock endpoint on real Linux (mock records receipt) — not merely "not blocked," so a block-everything I2 regression cannot pass.
+- [x] **HTTP-W-01** *(sink + differential proven at the decision+dispatch boundary in Phase 43; the "clean leg actually delivered to a live mock endpoint (mock records receipt)" sub-clause is by-design carried to Phase 46 LIVE-05/06 — Phase 43 ships `WRITE_HOST_ALLOWLIST` empty/fail-closed, so no live write mock exists until the composed proof)*: `http.request` WRITE (POST/PUT) to an allowlisted host. The request BODY is taint-governed and content-sensitive under I2 (a tainted body deterministically Blocks, exactly like an email/PR body); the `url` is routing-sensitive. Reuses v1.8's SSRF resolve-and-pin (loopback/RFC1918/link-local/metadata/userinfo@/redirect denied) + webpki-roots egress. `[rev: M1]` Any write credential lives in broker-local env only (never a ValueNode/plan-arg/audit-literal/the worker/planner), and the captured response is scrubbed of credential material (or not minted) before value-store/audit. `[rev: m1]` The WRITE (mutating) host-allowlist is **distinct** from the read/GET allowlist — a host being GET-readable does not imply it is POST/PUT-writable. `[rev: M4]` Acceptance is **differential**: the tainted-body-Blocks leg and the clean-body-Allowed leg are identical in host/url/method/policy (taint is the sole variable), and the clean leg is confirmed to have actually delivered the body to the mock endpoint on real Linux (mock records receipt) — not merely "not blocked," so a block-everything I2 regression cannot pass.
 
 ### Policy (which-sinks-callable only — NEVER overrides I2)
 
-- [ ] **POLICY-01**: A minimal declarative per-session policy — a hardcoded-schema struct/file (NOT Cedar) specifying which sinks are callable + coarse arg constraints (allowlisted hosts/paths/repos). A sink or arg not permitted by the session's policy is refused with a **distinct, machine-checkable policy-deny outcome** (separate from an I2 Block).
-- [ ] **POLICY-02** (LOCKED INVARIANT): Policy may only gate WHICH sinks/args are callable — it can NEVER disable or override I2. An attacker-tainted value in a sensitive sink arg still Blocks regardless of policy; the I2 decision stays HARDCODED in the Rust TCB executor (DEC/CON-i2-non-bypassable). `[rev: m3]` I2 executes unconditionally on every policy-**permitted** call and can never be short-circuited by any policy outcome (policy is a pre-I2 narrowing gate, never a post-I2 override). Proven by a live leg where a permissive policy does NOT weaken the I2 taint Block.
-- [ ] **POLICY-03** `[rev: B1 + Matt #1 — BLOCKER, both reviewers converged]`: The session policy is **bound by the broker at session creation from a trusted source provably outside the confined worker's reach** — canonicalized and refused if it resolves at-or-beneath the workspace root (reuse the F1 containment check from `key.rs` verbatim), immutable for the session's life, with its identity/hash recorded as a genuine audit-DAG event. A confined worker cannot mutate its own policy. Proven by a negative live leg: a worker that writes/rewrites a policy file mid-session does NOT change the enforced allowlist.
+- [x] **POLICY-01**: A minimal declarative per-session policy — a hardcoded-schema struct/file (NOT Cedar) specifying which sinks are callable + coarse arg constraints (allowlisted hosts/paths/repos). A sink or arg not permitted by the session's policy is refused with a **distinct, machine-checkable policy-deny outcome** (separate from an I2 Block).
+- [x] **POLICY-02** (LOCKED INVARIANT): Policy may only gate WHICH sinks/args are callable — it can NEVER disable or override I2. An attacker-tainted value in a sensitive sink arg still Blocks regardless of policy; the I2 decision stays HARDCODED in the Rust TCB executor (DEC/CON-i2-non-bypassable). `[rev: m3]` I2 executes unconditionally on every policy-**permitted** call and can never be short-circuited by any policy outcome (policy is a pre-I2 narrowing gate, never a post-I2 override). Proven by a live leg where a permissive policy does NOT weaken the I2 taint Block.
+- [x] **POLICY-03** `[rev: B1 + Matt #1 — BLOCKER, both reviewers converged]`: The session policy is **bound by the broker at session creation from a trusted source provably outside the confined worker's reach** — canonicalized and refused if it resolves at-or-beneath the workspace root (reuse the F1 containment check from `key.rs` verbatim), immutable for the session's life, with its identity/hash recorded as a genuine audit-DAG event. A confined worker cannot mutate its own policy. Proven by a negative live leg: a worker that writes/rewrites a policy file mid-session does NOT change the enforced allowlist.
 
 ### Trust Surface — CLI/SDK + Audit-DAG Viewer
 
@@ -78,12 +78,12 @@ Which phases cover which requirements. Populated during roadmap creation (`/gsd-
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DESIGN-17 | Phase 41 | Pending |
-| DESIGN-18 | Phase 41 | Pending |
-| POLICY-01 | Phase 42 | Pending |
-| POLICY-02 | Phase 42 | Pending |
-| POLICY-03 | Phase 42 | Pending |
-| HTTP-W-01 | Phase 43 | Pending |
+| DESIGN-17 | Phase 41 | Complete |
+| DESIGN-18 | Phase 41 | Complete |
+| POLICY-01 | Phase 42 | Complete |
+| POLICY-02 | Phase 42 | Complete |
+| POLICY-03 | Phase 42 | Complete |
+| HTTP-W-01 | Phase 43 | Complete (sink + differential proven P43; live mock-receipt → P46 LIVE-05/06) |
 | GIT-02 | Phase 44 | Pending |
 | GIT-03 | Phase 44 | Pending |
 | HYG-01 | Phase 44 | Pending |
@@ -93,11 +93,13 @@ Which phases cover which requirements. Populated during roadmap creation (`/gsd-
 | LIVE-06 | Phase 46 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 13 total
 - Mapped to phases: 13 ✓ (Phases 41-46, 6 phases)
 - Unmapped: 0 ✓ (no orphans, no duplicates)
 
 **Phase → requirement rollup:**
+
 - **Phase 41** (DESIGN gate): DESIGN-17, DESIGN-18
 - **Phase 42** (Policy layer): POLICY-01, POLICY-02, POLICY-03
 - **Phase 43** (http-write egress): HTTP-W-01
