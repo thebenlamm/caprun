@@ -852,16 +852,60 @@ pub fn mint_from_exec(
         .map_err(|e| anyhow::anyhow!("mint invariant: {e:?}"))
 }
 
-/// (37-03 RED stub — replaced by the real body in the GREEN commit.)
+/// Mint the body of an inbound `http.request` GET response as an
+/// untrusted-on-arrival `ValueNode`, rooted on a genuine `http_response_received`
+/// audit Event, and atomically demote the session to draft-only (I1).
+///
+/// # SOLE BROKER HTTP-TAINT MINT SITE (HTTP-02, DESIGN-git-github-http-sinks.md §3.3)
+///
+/// The one genuinely-new taint mechanism of Phase 37. Unlike `mint_from_exec`
+/// (which roots on an event the sink module already appended), this function
+/// appends its OWN `http_response_received` Event FIRST, THEN mints the body
+/// referencing that event id — the exact event-first → mint → demote ordering
+/// `mint_from_read` uses (§3.3). This is what makes the taint GENUINE and
+/// NON-STAPLED: `provenance_chain[0] == http_response_received.id` rides a real
+/// audit-DAG edge, never a tag stapled at the consuming sink (§3.5 / §9).
+///
+/// Order (identical shape to `mint_from_read`'s Steps 1-4):
+///   1. Build an `http_response_received` Event with taint
+///      `[ExternalUntrusted, HttpRaw]`, threading `parent_id` onto the causal
+///      chain head; actor `"http-egress"`.
+///   2. `append_event` to obtain the row hash.
+///   3. `store.mint(body, [ExternalUntrusted, HttpRaw], [event_id],
+///      Some("http_response"))` — `provenance_chain[0] == event_id`, the
+///      non-stapled anchor.
+///   4. Atomic in-`conn` I1 demotion (the SAME `conn`, already locked by the
+///      caller — NEVER a second lock): `update_session_status(Draft)` then a
+///      `session_demoted` Event parented on the `http_response_received` Event.
+///
+/// WARNING (carried verbatim from `mint_from_read`): "one event, both roles" is
+/// NOT how this works — the value-lineage anchor (`provenance_chain[0]`) and the
+/// causal `parent_id` edge are SEPARATE graphs, never conflated. The
+/// `session_demoted` Event's `parent_id` is the CAUSAL edge; the minted record's
+/// `provenance_chain[0]` is the VALUE-LINEAGE anchor.
+///
+/// Taint is set HERE — at response-arrival time — never at sink-evaluation time
+/// (anti-stapling, mirrors T-04-03). `is_untrusted(HttpRaw)` forces an I2 Block
+/// in any routing/content-sensitive slot (the anti-staple test proves it, §3.5).
+///
+/// # Returns
+/// `(event_id, event_hash, value_id, chain_head_id, chain_head_hash)` — same
+/// shape as `mint_from_read`. `event_id` is the `http_response_received` id (the
+/// value-lineage anchor + DAG lookup key). `chain_head_id`/`chain_head_hash` are
+/// the LAST appended event (the `session_demoted` event) — callers continuing
+/// the connection's causal chain MUST thread THESE onward as the next event's
+/// `parent_id`/`parent_hash`, NOT `event_id` (using `event_id` would fork the
+/// DAG into a sibling of `session_demoted`, breaking `verify_chain`'s linear
+/// walk — the documented parent-forking bug `mint_from_read` warns about).
 #[allow(clippy::too_many_arguments)]
 pub fn mint_from_http(
-    _conn: &rusqlite::Connection,
-    _key: &[u8],
-    _store: &mut ValueStore,
-    _session_id: Uuid,
-    _body: String,
-    _parent_id: Option<Uuid>,
-    _parent_hash: Option<&str>,
+    conn: &rusqlite::Connection,
+    key: &[u8],
+    store: &mut ValueStore,
+    session_id: Uuid,
+    body: String,
+    parent_id: Option<Uuid>,
+    parent_hash: Option<&str>,
 ) -> Result<(
     Uuid,
     String,
@@ -869,7 +913,62 @@ pub fn mint_from_http(
     Uuid,
     String,
 )> {
-    unimplemented!("mint_from_http: RED stub (37-03)")
+    // Taint is structural: an inbound HTTP response body is untrusted by
+    // construction, exactly like exec output (mint_from_exec) — there is no
+    // classification branch to get wrong. Mirrors mint_from_exec's
+    // `[ExternalUntrusted, ExecRaw]` convention as `[ExternalUntrusted, HttpRaw]`.
+    let taint = vec![TaintLabel::ExternalUntrusted, TaintLabel::HttpRaw];
+
+    // Step 1: Build the http_response_received audit Event. `parent_id` threads
+    // the CAUSAL DAG on the connection chain head (DESIGN §0); standalone
+    // callers (unit tests minting an isolated root) pass `None`.
+    let event_id = Uuid::new_v4();
+    let event = Event::new(
+        event_id,
+        parent_id,
+        session_id,
+        "http-egress".into(),
+        "http_response_received".into(),
+        Utc::now(),
+        taint.clone(),
+    );
+
+    // Step 2: Append the event to the audit DAG, obtaining the row hash.
+    let event_hash = append_event(conn, key, &event, parent_hash)?;
+
+    // Step 3: Mint the ValueRecord. provenance_chain[0] == event_id — the
+    // genuine-taint, non-stapled anchor (§3.5). Propagate the typed invariant
+    // error into anyhow so a future regression fails closed.
+    let value_id = store
+        .mint(
+            body,
+            taint,
+            vec![event_id],
+            Some("http_response".to_string()),
+        )
+        .map_err(|e| anyhow::anyhow!("mint invariant: {e:?}"))?;
+
+    // Step 4 (HTTP-02, DESIGN §3.3): atomic I1 demotion under the SAME `conn`
+    // already passed in — NEVER a second lock acquisition (RESEARCH Pitfall 5).
+    // Identical shape to mint_from_read's demotion and the RequestFd exemplar.
+    // 4a. Mutable read-model update: UPDATE sessions SET status = 'Draft'.
+    update_session_status(conn, session_id, &SessionStatus::Draft)?;
+    // 4b. Append-only ledger entry: a session_demoted Event whose parent_id is
+    // the http_response_received Event just appended (the CAUSAL edge — a
+    // SEPARATE graph from the Step-3 value-lineage anchor, never conflated).
+    let demoted_event_id = Uuid::new_v4();
+    let demoted_event = Event::new(
+        demoted_event_id,
+        Some(event_id),
+        session_id,
+        "broker".into(),
+        "session_demoted".into(),
+        Utc::now(),
+        vec![],
+    );
+    let demoted_hash = append_event(conn, key, &demoted_event, Some(&event_hash))?;
+
+    Ok((event_id, event_hash, value_id, demoted_event_id, demoted_hash))
 }
 
 #[cfg(test)]

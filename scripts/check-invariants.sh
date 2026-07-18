@@ -81,7 +81,7 @@ fi
 # An inline `<!-- planner-discipline-allow: TOKEN -->` annotation is also
 # honored for any other intentional mention (mirrors Gate 1).
 # ──────────────────────────────────────────────────────────────────────────────
-echo "Gate 3: checking mint-call-site restriction (mint_from_read / mint_from_derivation / mint_from_exec / .mint()) ..."
+echo "Gate 3: checking mint-call-site restriction (mint_from_read / mint_from_derivation / mint_from_exec / mint_from_http / .mint()) ..."
 
 gate3_fail=0
 
@@ -134,10 +134,11 @@ check_mint_token() {
 check_mint_token "mint_from_read(" "crates/brokerd/src/quarantine.rs" "crates/brokerd/src/server.rs"
 check_mint_token "mint_from_derivation(" "crates/brokerd/src/quarantine.rs" "crates/brokerd/src/server.rs"
 check_mint_token "mint_from_exec(" "crates/brokerd/src/quarantine.rs" "crates/brokerd/src/server.rs"
+check_mint_token "mint_from_http(" "crates/brokerd/src/quarantine.rs" "crates/brokerd/src/server.rs"
 check_mint_token ".mint(" "crates/brokerd/src/quarantine.rs" "crates/brokerd/src/server.rs" "crates/executor/src/value_store.rs"
 
 if [ "$gate3_fail" -eq 0 ]; then
-    echo "  PASS — mint_from_read / mint_from_derivation / mint_from_exec / .mint() restricted to sanctioned loci"
+    echo "  PASS — mint_from_read / mint_from_derivation / mint_from_exec / mint_from_http / .mint() restricted to sanctioned loci"
 else
     overall=$FAIL
 fi
