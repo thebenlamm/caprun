@@ -165,7 +165,7 @@ Full detail archived in [`milestones/v1.8-ROADMAP.md`](milestones/v1.8-ROADMAP.m
 
 **Structure (both reviewers' agreed sequencing):** design-gate-first (Phase 41, standing precedent) → the policy foundation before the sinks it gates (Phase 42) → the two write-egress sinks, split by blast radius so a `git.push` deferral leaves http-write untouched (Phase 43 http-write, Phase 44 git.push) → the CLI/SDK + audit-DAG viewer trust surface, on the acceptance critical path (Phase 45) → composed live proof (Phase 46). `git.push` is gate-deferrable: research assesses a fully-unprivileged broker-performed smart-HTTP egress FEASIBLE and the roadmap plans it to SHIP, but if the Phase-41 gate cannot pin a sound fully-unprivileged destination-pinning mechanism, GIT-02/03 defer a 3rd time (disclosed + sign-off-gated, never silent) and the other three tracks still ship.
 
-- [ ] **Phase 41: v1.9 DESIGN Gate + Fresh Adversarial Code-Trace** — one DESIGN doc pins git.push egress + http-write egress + the policy-vs-I2 boundary (incl. POLICY-03 binding/provenance); clears a fresh non-self orchestrator-owned adversarial code-trace before any TCB code
+- [x] **Phase 41: v1.9 DESIGN Gate + Fresh Adversarial Code-Trace** — one DESIGN doc pins git.push egress + http-write egress + the policy-vs-I2 boundary (incl. POLICY-03 binding/provenance); clears a fresh non-self orchestrator-owned adversarial code-trace before any TCB code (completed 2026-07-18)
 - [ ] **Phase 42: Policy Layer — Binding, Enforcement & the I2 Boundary** — a minimal per-session policy narrows which sinks/args are callable, is bound from a trusted source outside the worker's reach, and can never override I2
 - [ ] **Phase 43: `http.request` WRITE (POST/PUT) Egress** — POST/PUT to an allowlisted host with the request body taint-governed under I2, on a distinct write-allowlist, proven differentially
 - [ ] **Phase 44: `git.push` — Broker-Performed Destination-Pinned Egress** — a fully-unprivileged, broker-mediated, destination-pinned push with the child net-denied (or a disclosed deferral); + the supply-chain absence gate & hygiene items
@@ -173,71 +173,94 @@ Full detail archived in [`milestones/v1.8-ROADMAP.md`](milestones/v1.8-ROADMAP.m
 - [ ] **Phase 46: Composed Live Proof (v1.9 DONE)** — the full authorized-write loop, driven & inspected via the new CLI+viewer on real Linux, every adversarial/negative leg independently attributable
 
 ### Phase 41: v1.9 DESIGN Gate + Fresh Adversarial Code-Trace
+
 **Goal**: A single reviewed DESIGN doc pins all three v1.9 TCB mechanisms — git.push egress, http-write egress, and the policy-vs-I2 boundary — and clears a fresh non-self adversarial code-trace before ANY `crates/{executor,brokerd,sandbox,runtime-core}` TCB code (unbroken precedent: v1.0 P2, v1.2 P8, v1.3 P12, v1.4 P18, v1.5 P23, v1.6 P26, v1.7 P31, v1.8 P35).
 **Depends on**: Nothing new (first v1.9 phase; builds on the v1.8-shipped substrate)
 **Requirements**: DESIGN-17, DESIGN-18
 **Success Criteria** (what must be TRUE):
+
   1. A DESIGN doc exists pinning (a) the fully-unprivileged, broker-mediated, destination-pinned `git.push` egress (child net-denied; the pin in a broker/application layer that SEES the destination, NEVER seccomp — the research-recommended broker-performed git smart-HTTP transfer reusing the shipped reqwest+rustls(ring)+webpki-roots+SSRF resolve-and-pin stack), (b) the `http.request` WRITE (POST/PUT) egress, (c) the policy-vs-I2 boundary — exactly what policy can/cannot do AND where policy comes from / how it binds (POLICY-03) — carrying forward v1.8 §2 / §2.5 credential-scrub / §2.7 payload-at-confirm / §9 confirm-release.
   2. The doc formalizes the `git.push` safety-valve: if no fully-unprivileged destination-pinning mechanism proves sound, `git.push` defers (the other three tracks proceed) — a disclosed decision, never a silent drop.
   3. The DESIGN doc clears a fresh, non-self, **orchestrator-owned** adversarial code-trace (NOT a gsd-executor), with every BLOCKER/MAJOR resolved before the gate clears.
   4. No v1.9 TCB code exists until the gate clears; and the trace re-runs if the git.push trust-posture or transport-dependency choice changes mid-implementation ("the riskiest surface in the project" must not bypass its one gate).
+
 **Plans**: 1 plan
-- [ ] 41-01-PLAN.md — Author planning-docs/DESIGN-v1.9-egress-policy.md (docs-only): pin git.push egress + http-write egress + policy-vs-I2 boundary incl. POLICY-03 binding; carry forward v1.8 §2/§2.5/§2.7/§9; declare the orchestrator-owned adversarial-trace gate (DESIGN-17/18)
+
+- [x] 41-01-PLAN.md — Author planning-docs/DESIGN-v1.9-egress-policy.md (docs-only): pin git.push egress + http-write egress + policy-vs-I2 boundary incl. POLICY-03 binding; carry forward v1.8 §2/§2.5/§2.7/§9; declare the orchestrator-owned adversarial-trace gate (DESIGN-17/18)
 
 ### Phase 42: Policy Layer — Binding, Enforcement & the I2 Boundary
+
 **Goal**: A minimal declarative per-session policy narrows WHICH sinks/args are callable, is bound by the broker from a trusted source provably outside the confined worker's reach, is immutable for the session, and can NEVER disable or override I2 — the #1 adversarial-trace risk, made structural. Lands before the sinks it gates.
 **Depends on**: Phase 41 (design gate)
 **Requirements**: POLICY-01, POLICY-02, POLICY-03
 **Success Criteria** (what must be TRUE):
+
   1. A hardcoded-schema per-session policy (NOT Cedar) specifies which sinks are callable + coarse arg constraints (allowlisted hosts/paths/repos); a sink or arg the policy does not permit is refused with a **distinct, machine-checkable policy-deny outcome** separate from an I2 Block.
   2. The broker binds the policy at session creation from a trusted source, canonicalizing and **refusing** any policy that resolves at-or-beneath the workspace root (F1 containment reused verbatim from `key.rs`); the policy is immutable for the session's life and its identity/hash is recorded as a genuine audit-DAG event.
   3. A confined worker that writes/rewrites a policy file mid-session does NOT change the enforced allowlist (negative live leg).
   4. I2 executes **unconditionally on every policy-permitted call** and can never be short-circuited by any policy outcome (policy is a pre-I2 narrowing gate, never a post-I2 override) — proven by a live leg where a permissive policy does NOT weaken an I2 taint Block on an existing sink; the I2 decision stays HARDCODED in the Rust TCB executor.
-**Plans**: TBD
+
+**Plans**: 4 plans (waves: 01+02 → 03 → 04)
+- [ ] 42-01-PLAN.md — SessionPolicy hardcoded-schema type (runtime-core) + distinct DenyReason::PolicyDeny [POLICY-01]
+- [ ] 42-02-PLAN.md — Extract shared F1 containment helper (adapter-fs) + rewire key.rs + anti-drift gate [POLICY-03 foundation]
+- [ ] 42-03-PLAN.md — Executor deny-only pre-I2 policy gate + threading + POLICY-01/POLICY-02 enforcement-order proof [POLICY-01, POLICY-02]
+- [ ] 42-04-PLAN.md — POLICY-03 binding at session creation: trusted source, F1 refusal, immutability, hash-chained audit event [POLICY-03]
 
 ### Phase 43: `http.request` WRITE (POST/PUT) Egress
+
 **Goal**: caprun can POST/PUT to an allowlisted host with the request BODY taint-governed and content-sensitive under I2 — the simpler write-egress sink, extending the shipped `http.request` GET path, split from git.push so a push deferral leaves it untouched.
 **Depends on**: Phase 41 (design gate), Phase 42 (policy gates the write sink)
 **Requirements**: HTTP-W-01
 **Success Criteria** (what must be TRUE):
+
   1. `http.request` supports POST/PUT to a host on a **WRITE allowlist distinct from the read/GET allowlist** (a host being GET-readable does not imply it is POST/PUT-writable).
   2. A tainted request body deterministically Blocks under I2 (content-sensitive, exactly like an email/PR body); the `url` is routing-sensitive; the shipped SSRF resolve-and-pin (loopback/RFC1918/link-local/metadata/userinfo@/redirect denied) + webpki-roots egress is reused.
   3. Any write credential lives in broker-local env only (never a ValueNode/plan-arg/audit-literal/worker/planner); the captured response is scrubbed of credential material (or not minted) before it reaches the value store or audit chain.
   4. Acceptance is **differential** on real Linux: the tainted-body-Blocks leg and the clean-body-Allowed leg are identical in host/url/method/policy (taint is the sole variable), and the clean leg's body is confirmed to have actually delivered to the mock endpoint (mock records receipt) — not merely "not blocked," so a block-everything I2 regression cannot pass.
+
 **Plans**: TBD
 
 ### Phase 44: `git.push` — Broker-Performed Destination-Pinned Egress
+
 **Goal**: caprun can push to a TRUSTED-intent remote via a fully-unprivileged, broker-mediated, destination-pinned egress with the push child kept net-denied — completing the edit→test→commit→push→open-PR loop — or, if the gate proved no sound mechanism, defer disclosed. Carries the supply-chain absence gate + two hygiene items (the transport-dep choice lands here).
 **Depends on**: Phase 41 (design gate), Phase 42 (policy), Phase 43 (write-egress path proven)
 **Requirements**: GIT-02, GIT-03, HYG-01
 **Success Criteria** (what must be TRUE):
+
   1. `git.push` performs a broker-mediated smart-HTTP transfer with the destination pinned in the application layer (reqwest resolve-and-pin, IP frozen across the two-request exchange); the push child stays net-denied (no seccomp relaxation); remote/refspec come from TRUSTED intent, never the untrusted repo's `.git/config`; `--force`/`--force-with-lease`/ref-deletion/`+`-force-refspec are hard-denied by construction (unreachable even via confirm).
   2. The push credential lives in broker-local env only (never a ValueNode/plan-arg/audit-literal/child/planner), is never followed across a `receive-pack` redirect, and captured child/transport output is scrubbed of credential/URL material before value-store/audit (§2.5).
   3. A tainted push `remote`/`refspec` deterministically Blocks under I2, releasable only by single-shot human confirm whose terminal audit event precedes the terminal state (P33/P34 `prepare_git_push` precheck); at confirm the human sees the pushed payload (commit range/branch + a summary flagging any pushed file whose content derives from untrusted taint) and the pushed pack is generated from that confirmed range **at-or-after confirm** (no payload-vs-destination TOCTOU).
   4. The workspace-scoped supply-chain **absence assertion** re-runs after the transport-dep choice (`cargo tree --workspace -i` = absent for aws-lc-rs/openssl-sys; ring-only + webpki-roots), enumerating any new transport deps; plus the `compose-verify.sh` feature-OFF guard and the workspace-wide `check-invariants` Gate 4b grep (HYG-01).
   5. **Safety-valve:** if the Phase-41 gate proved no sound fully-unprivileged destination-pinning mechanism exists, GIT-02/03 defer a 3rd time — a disclosed, sign-off-gated deferral (the git.push leg auto-descopes from LIVE-05/06), never shipping arbitrary child egress and never a silent drop.
+
 **Plans**: TBD
 
 ### Phase 45: Thin CLI/SDK + Read-Only Audit-DAG Viewer
+
 **Goal**: An operator can define an intent, point it at a workspace with a trusted policy, run it end-to-end, and INSPECT the proof — the design-partner-runnable trust surface. On the acceptance critical path (LIVE-05 requires the composed proof be driven AND inspected via this CLI + viewer), not trailing tooling. No web UI.
 **Depends on**: Phase 42 (binds the trusted policy — the POLICY-03 enforcement point), Phase 43 & Phase 44 (something to drive and inspect)
 **Requirements**: SDK-01, U1
 **Success Criteria** (what must be TRUE):
+
   1. A thin CLI/SDK defines an intent, points at a workspace, and runs it end-to-end against the broker (extends, does not replace, the existing `caprun confirm`/`deny`/`grant`/`review` verbs); the run entrypoint takes the trusted policy path and binds it at session creation.
   2. When a sink Blocks under I2 the entrypoint surfaces the blocked `effect_id` (+ the `caprun review` pointer) so the operator can reach confirm/deny/grant; SDK-constructed values carry trusted provenance ONLY for genuinely operator-typed literals — any file-/stream-/env-sourced content the SDK ingests is minted TAINTED (draft-only per I0/I1), not laundered.
   3. A read-only audit-DAG viewer renders a session's events/decisions and surfaces `verify_chain`, reusing the exact `load_or_create_key` MAC-key custody + F1 containment refusal — failing closed (refusing to render a `verify_chain` verdict) if the key is absent, never loading a fresh/`:memory:` key, out of the confined worker's reach.
   4. All tainted literal bytes (e.g. a tainted commit message or POST body) are control-char-neutralized/escaped before display — the terminal viewer never interprets attacker-tainted content as ANSI/formatting (audit-line-spoofing surface closed).
+
 **Plans**: TBD
 
 ### Phase 46: Composed Live Proof (v1.9 DONE)
+
 **Goal**: The full authorized-write loop runs and is inspected on real Linux, with every adversarial/negative leg independently attributable — the v1.9 DONE gate. Mirrors v1.2 P11, v1.3 P17, v1.4 P22, v1.5 P25, v1.6 P30, v1.7 P34, v1.8 P40.
 **Depends on**: Phases 42, 43, 44, 45 (all sinks + policy + the CLI/viewer driver-inspector)
 **Requirements**: LIVE-05, LIVE-06
 **Success Criteria** (what must be TRUE):
+
   1. A composed workflow — `process.exec` (test) → filesystem edit → `git.commit` → `git.push` → `github.pr` PLUS an `http.request` POST leg — runs on real Linux (mock git remote + mock endpoint), **DRIVEN and INSPECTED via the new CLI + audit-DAG viewer**, with every step gated/tainted/audit-DAG-chained and `verify_chain` true across the run.
   2. Five **independently attributable** negative legs each deterministically Block/refuse: (1) a tainted push remote/refspec (I2 Blocks); (2) a tainted POST body (I2 Blocks); (3) a policy-deny leg (an off-allowlist sink refused via the distinct policy-deny outcome) — where the I2-Block legs run a sink+arg the policy explicitly PERMITS (distinct machine-checkable terminal-event tags asserted separately); (4) a destination-pin negative (a push/POST redirected/off-pin refused at the broker/application layer); (5) a credential-absence assertion (after a real push, no credential or remote-URL material in the value store or audit chain).
   3. Full-workspace regression green on real Linux, no v1.0–v1.8 regression.
   4. If GIT-02 deferred, the `git.push` leg auto-descopes AND the deferral is recorded as a disclosed milestone gap requiring explicit user sign-off — never an orchestrator-autonomous silent drop.
+
 **Plans**: TBD
 
 ## Progress
@@ -284,7 +307,7 @@ Full detail archived in [`milestones/v1.8-ROADMAP.md`](milestones/v1.8-ROADMAP.m
 | 38. `github.pr` Sink | v1.8 | 6/5 | Complete    | 2026-07-18 |
 | 39. `git.push` Sink | v1.8 | — | ⛔ Deferred → v1.9 | 2026-07-18 |
 | 40. CLI Compose, Sidecar env_clear() & Composed Live Proof (v1.8 DONE) | v1.8 | 4/4 | Complete    | 2026-07-18 |
-| 41. v1.9 DESIGN Gate + Fresh Adversarial Code-Trace | v1.9 | 0/? | Not started | - |
+| 41. v1.9 DESIGN Gate + Fresh Adversarial Code-Trace | v1.9 | 1/1 | Complete    | 2026-07-18 |
 | 42. Policy Layer — Binding, Enforcement & the I2 Boundary | v1.9 | 0/? | Not started | - |
 | 43. `http.request` WRITE (POST/PUT) Egress | v1.9 | 0/? | Not started | - |
 | 44. `git.push` — Broker-Performed Destination-Pinned Egress | v1.9 | 0/? | Not started | - |
