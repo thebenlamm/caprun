@@ -563,6 +563,91 @@ fn short_evt(id: &Uuid) -> String {
     format!("evt_{}", &id.to_string()[..8])
 }
 
+/// Neutralize terminal control characters in an attacker-influenceable literal
+/// BEFORE it is written to the confirm prompt (WG-8 / T-44-19, mirrors the U1 /
+/// VIEW-01 viewer discipline): a tainted refspec / remote / filename could embed
+/// ANSI escapes (ESC `0x1b`, the CSI sequence) or other C0/C1 control bytes to
+/// SPOOF or HIDE audit lines in the human's terminal. Every `char::is_control()`
+/// byte (C0 incl. ESC/CR/LF/TAB, the C1 range, and DEL) is replaced with a
+/// visible `\xNN` / `\u{NNNN}` escape; ordinary printable text — including
+/// non-ASCII UTF-8 — is preserved verbatim so the human still reads the real
+/// value. Pure/deterministic; performs no I/O.
+fn neutralize_control_chars(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_control() {
+            let cp = c as u32;
+            if cp <= 0xff {
+                out.push_str(&format!("\\x{cp:02x}"));
+            } else {
+                out.push_str(&format!("\\u{{{cp:04x}}}"));
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Render the git.push payload-provenance summary appended to the confirm prompt
+/// (WG-8, DESIGN-v1.9-egress-policy §1.6, GIT-03). Empty string for any
+/// non-git.push confirmation (so every other sink's block is UNAFFECTED).
+///
+/// The pushed commit RANGE is the LOCALLY-computed tip of the human-confirmed
+/// `frozen_new_oid` — this renderer performs NO network read (the remote's
+/// advertised old-oid is unknown until the dispatch-time info/refs GET, Plan
+/// 44-03) and NO git read (it is a pure function over the frozen snapshot). The
+/// per-arg provenance summary surfaces each routing arg (remote, refspec) — the
+/// payload-destination values the human authorizes — flagging any whose content
+/// derives from untrusted taint, with EVERY displayed literal control-char-
+/// neutralized (T-44-19). Per §1.6 this SURFACES provenance for human judgment;
+/// it does NOT itself Block, and it does NOT over-promise that the pushed delta
+/// is byte-identical to this locally-computed range (the accepted residual).
+fn render_git_push_payload_summary(pc: &PendingConfirmation) -> String {
+    if pc.sink.0 != "git.push" {
+        return String::new();
+    }
+
+    // Byte-wise-ascending arg order (the SAME canonical order the per-arg
+    // narration + combined_digest use), so a human reading top-to-bottom sees a
+    // stable ordering.
+    let mut sorted_args: Vec<&ResolvedArg> = pc.resolved_args.iter().collect();
+    sorted_args.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut per_arg = String::new();
+    for arg in &sorted_args {
+        let untrusted = arg.taint.iter().any(|t| t.is_untrusted());
+        let flag = if untrusted { "[UNTRUSTED-DERIVED]" } else { "[trusted]" };
+        let taint_str = arg
+            .taint
+            .iter()
+            .map(taint_label_display)
+            .collect::<Vec<_>>()
+            .join(", ");
+        per_arg.push_str(&format!(
+            "  {name:<8} {flag}  value: \"{literal}\"  taint: [{taint_str}]\n",
+            name = arg.name,
+            literal = neutralize_control_chars(&arg.literal),
+        ));
+    }
+
+    format!(
+        "\n\
+         Push payload provenance (git.push — WG-8 / DESIGN §1.6):\n\
+         Pushed commit (frozen new-oid): {frozen}\n\
+         {per_arg}\
+         NOTE: the range shown is the LOCALLY-computed tip of the frozen new-oid.\n\
+         The remote's advertised base is unknown until the dispatch-time info/refs\n\
+         GET, so this SURFACES provenance for your judgment — it is NOT a promise\n\
+         that the pushed delta is byte-identical to this exact range (DESIGN §1.6\n\
+         accepted residual). Any arg marked untrusted-derived above carries\n\
+         content derived from untrusted taint: confirming authorizes pushing to a\n\
+         destination influenced by untrusted content. The pushed PACK is frozen to\n\
+         this exact commit oid (anti-TOCTOU, WG-7).\n",
+        frozen = neutralize_control_chars(&pc.frozen_new_oid),
+    )
+}
+
 /// Render the exact terminal output for a Pending block (DESIGN
 /// "caprun confirm CLI Contract" + "Block Narration for Every Arg", Round-6).
 /// Shown by `confirm`, `deny`, AND the read-only `review` verb, so a human
@@ -624,6 +709,18 @@ pub fn render_block_display(pc: &PendingConfirmation) -> String {
         }
         chain_str.push_str("(this arg)");
 
+        // WG-8 / T-44-19 (git.push ONLY): a tainted remote/refspec literal could
+        // embed ANSI/control bytes to spoof audit lines in the confirm prompt.
+        // Control-char-neutralize the DISPLAYED literal for git.push, preserving
+        // the byte-verbatim T-10-04 display for every other sink (their block is
+        // unaffected). Neutralization escapes control bytes to visible `\xNN` —
+        // it never truncates/elides, so the full value is still shown.
+        let shown_literal = if pc.sink.0 == "git.push" {
+            neutralize_control_chars(&arg.literal)
+        } else {
+            arg.literal.clone()
+        };
+
         per_arg.push_str(&format!(
             "\n\
              Arg:                {name} [{marker}]\n\
@@ -632,10 +729,15 @@ pub fn render_block_display(pc: &PendingConfirmation) -> String {
              Source:             {source_evt}  (session {session_id})\n\
              Provenance chain:   {chain_str}\n",
             name = arg.name,
-            literal = arg.literal,
+            literal = shown_literal,
             session_id = pc.session_id,
         ));
     }
+
+    // WG-8 (git.push only): append the payload-provenance summary — the frozen
+    // commit oid + a control-char-neutralized per-routing-arg taint flag. Empty
+    // for every other sink (their block is unaffected).
+    let git_push_summary = render_git_push_payload_summary(pc);
 
     let effect_id = pc.effect_id;
     format!(
@@ -643,7 +745,8 @@ pub fn render_block_display(pc: &PendingConfirmation) -> String {
          \n\
          Effect ID:         {effect_id}\n\
          Sink:               {sink}\n\
-         {per_arg}\n\
+         {per_arg}\
+         {git_push_summary}\n\
          This session is Draft / untrusted-seeded (I0/I1): it was seeded from\n\
          untrusted content read during this session. Confirming authorizes an\n\
          IRREVERSIBLE EXTERNAL send of every literal shown above, EXACTLY as\n\
@@ -2389,6 +2492,118 @@ mod tests {
         assert_eq!(again, ConfirmOutcome::AlreadyTerminal);
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    // ── WG-8 git.push confirm-prompt payload-provenance renderer (Task 3) ──
+
+    /// Build an in-memory git.push PendingConfirmation (no DB) for the pure
+    /// render tests. `remote_taint` sets the remote arg's taint; the refspec is
+    /// UserTrusted.
+    fn git_push_pc_for_render(
+        remote_literal: &str,
+        remote_taint: Vec<TaintLabel>,
+        frozen_new_oid: &str,
+    ) -> PendingConfirmation {
+        PendingConfirmation {
+            effect_id: Uuid::new_v4(),
+            session_id: Uuid::new_v4(),
+            blocked_event_id: Uuid::new_v4(),
+            sink: SinkId("git.push".into()),
+            resolved_args: vec![
+                ResolvedArg {
+                    name: "remote".to_string(),
+                    value_id: ValueId::new(),
+                    literal: remote_literal.to_string(),
+                    taint: remote_taint,
+                    provenance_chain: vec![],
+                },
+                ResolvedArg {
+                    name: "refspec".to_string(),
+                    value_id: ValueId::new(),
+                    literal: "refs/heads/main:refs/heads/main".to_string(),
+                    taint: vec![TaintLabel::UserTrusted],
+                    provenance_chain: vec![],
+                },
+            ],
+            blocked_arg_names: vec!["remote".to_string(), "refspec".to_string()],
+            combined_digest: "deadbeef".to_string(),
+            workspace_root_path: "/unused-for-render".to_string(),
+            frozen_new_oid: frozen_new_oid.to_string(),
+            state: PendingConfirmationState::Pending,
+            mac: String::new(),
+        }
+    }
+
+    /// The git.push confirm block renders the frozen commit oid + the payload
+    /// provenance summary, and flags an untrusted-derived routing arg
+    /// [UNTRUSTED-DERIVED]. Pure — no network/git read (renders with no live
+    /// remote and no workspace).
+    #[test]
+    fn git_push_render_flags_untrusted_arg_and_shows_frozen_oid() {
+        const FROZEN: &str = "abcdef0123456789abcdef0123456789abcdef01";
+        let pc = git_push_pc_for_render(
+            "https://evil.example.com/x.git",
+            vec![TaintLabel::ExternalUntrusted],
+            FROZEN,
+        );
+        let out = render_block_display(&pc);
+        assert!(out.contains("Push payload provenance (git.push"), "WG-8 section header present");
+        assert!(out.contains(FROZEN), "the frozen new-oid (pushed commit) is surfaced");
+        assert!(
+            out.contains("[UNTRUSTED-DERIVED]"),
+            "an untrusted-tainted routing arg must be flagged: {out}"
+        );
+        assert!(
+            out.contains("accepted residual"),
+            "the §1.6 no-byte-identity residual note is shown (no over-promise)"
+        );
+    }
+
+    /// A tainted routing literal carrying embedded control characters (an ANSI
+    /// ESC sequence) is control-char-NEUTRALIZED in the payload summary — the raw
+    /// ESC byte never reaches the terminal (T-44-19 audit-line-spoofing defense).
+    #[test]
+    fn git_push_render_neutralizes_control_chars() {
+        const FROZEN: &str = "abcdef0123456789abcdef0123456789abcdef01";
+        // remote literal embeds ESC (0x1b) + a CSI colour code + a CR.
+        let evil = "https://x.test/\u{1b}[31mHACKED\u{1b}[0m\r.git";
+        let pc = git_push_pc_for_render(evil, vec![TaintLabel::ExternalUntrusted], FROZEN);
+        let out = render_block_display(&pc);
+        assert!(
+            !out.contains('\u{1b}'),
+            "the raw ESC byte MUST be neutralized before display (no ANSI injection)"
+        );
+        assert!(!out.contains('\r'), "the raw CR MUST be neutralized");
+        assert!(out.contains("\\x1b"), "ESC is shown as a visible \\x1b escape: {out}");
+    }
+
+    /// A CLEAN (all-UserTrusted) git.push renders [trusted] and NO
+    /// [UNTRUSTED-DERIVED] flag.
+    #[test]
+    fn git_push_render_clean_shows_no_untrusted_flag() {
+        const FROZEN: &str = "1234567890123456789012345678901234567890";
+        let pc = git_push_pc_for_render(
+            "https://github-mock.caprun.test/owner/repo.git",
+            vec![TaintLabel::UserTrusted],
+            FROZEN,
+        );
+        let out = render_block_display(&pc);
+        assert!(out.contains("[trusted]"), "a clean routing arg renders [trusted]");
+        assert!(
+            !out.contains("[UNTRUSTED-DERIVED]"),
+            "a clean git.push must NOT flag any arg untrusted-derived: {out}"
+        );
+    }
+
+    /// A NON-git.push confirm block is UNAFFECTED — no payload-provenance section.
+    #[test]
+    fn non_git_push_render_has_no_payload_summary() {
+        let pc = make_pending_confirmation(Uuid::new_v4());
+        let out = render_block_display(&pc);
+        assert!(
+            !out.contains("Push payload provenance"),
+            "only git.push blocks carry the WG-8 payload summary"
+        );
     }
 
     /// Entry-guard (Step 4.75): an un-dispatchable sink's blocked confirmation
