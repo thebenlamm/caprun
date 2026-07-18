@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: — Effect Breadth I
 current_phase: 34
-current_phase_name: v1.7 DONE
+current_phase_name: regression-live-proof-v1-7-done
 status: executing
 stopped_at: v1.7 roadmap created (Phases 31-34)
-last_updated: "2026-07-18T02:04:23.192Z"
+last_updated: "2026-07-18T02:08:58.215Z"
 last_activity: 2026-07-18
-last_activity_desc: Phase 33 complete, transitioned to Phase 34
+last_activity_desc: Phase 34 execution started
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 13
+  total_plans: 17
   completed_plans: 13
   percent: 75
 ---
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-17)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, (v1.5, SHIPPED) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into (closing the v1.4 T2 residual), (v1.6, SHIPPED) hardening the standing residuals that made several of those guarantees "true only incidentally" into enforced guarantees, and now (v1.7) extending the set of real sinks — `process.exec` (captured+tainted command output) and filesystem read/write breadth — each through the same plan-node → taint → executor(I2) → audit path, toward the Safe Coding Agent anchor.
-**Current focus:** Phase 33 — Filesystem Read/Write Breadth
+**Current focus:** Phase 34 — regression-live-proof-v1-7-done
 
 ## Current Position
 
-Phase: 34 — Regression & Live Proof (v1.7 DONE)
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-18 — Phase 33 complete, transitioned to Phase 34
+Phase: 34 (regression-live-proof-v1-7-done) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 34
+Last activity: 2026-07-18 — Phase 34 execution started
 
 ## Performance Metrics
 
