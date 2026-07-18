@@ -809,6 +809,30 @@ pub fn confirm(
         return Ok(ConfirmOutcome::DigestMismatch);
     }
 
+    // Step 4.75 (Phase 33 adversarial-review MAJOR-1 fix): entry guard —
+    // refuse to proceed for any sink this dispatch cannot actually invoke,
+    // BEFORE Step 5 appends confirm_granted or Step 6 transitions state.
+    // Without this guard, `caprun confirm` on a blocked sink with no
+    // dispatch arm (e.g. `process.exec`, Phase 32) would durably burn the
+    // one-shot confirmation (`confirm_granted` appended, state -> Confirmed)
+    // with no write ever performed and no terminal `sink_executed`/
+    // `sink_execution_failed` event — an audit-DAG gap. This list MUST stay
+    // in sync with the sink match arms in Step 7 below. Fail-closed-
+    // RECOVERABLE: the row is left `Pending` (never transitioned), so a
+    // corrected `confirm()` call — once the sink IS wired — can still
+    // succeed. Full `process.exec` confirm-release dispatch remains a
+    // documented follow-up (not wired this pass).
+    match pc.sink.0.as_str() {
+        "file.create" | "email.send" | "file.write" => {}
+        other => {
+            return Err(anyhow::anyhow!(
+                "confirm: sink `{other}` has no confirm-release dispatch wired \
+                 — refusing before confirm_granted/state transition (fail-closed, \
+                 row remains Pending)"
+            ));
+        }
+    }
+
     // Step 5: append confirm_granted, parented on the CURRENT CHAIN HEAD
     // (MAJOR-7) — NOT `pc.blocked_event_id` directly. In the single-shot case
     // (nothing appended since the Block) the head IS `blocked_event_id`, so
@@ -852,6 +876,28 @@ pub fn confirm(
     // executor::submit_plan_node (CON-i2-non-bypassable, T-10-05).
     match pc.sink.0.as_str() {
         "file.create" => match crate::sinks::file_create::invoke_file_create_from_resolved(
+            conn,
+            key,
+            pc.session_id,
+            pc.effect_id,
+            &pc.resolved_args,
+            workspace_root,
+            granted_event_id,
+            &granted_hash,
+        ) {
+            Ok(_) => Ok(ConfirmOutcome::Released),
+            // The sink adapter already appended a durable sink_invocation_failed
+            // event; state stays Confirmed, no retry (DESIGN Step 4a.5).
+            Err(_) => Ok(ConfirmOutcome::ConfirmedButSinkFailed),
+        },
+        // Phase 33 adversarial-review MAJOR-1 fix: mirrors the "file.create"
+        // arm immediately above verbatim (same two-phase audit shape, same
+        // ConfirmOutcome mapping) — a blocked `file.write` previously had NO
+        // Step-7 dispatch arm here, so a human `confirm` would durably burn
+        // the one-shot confirmation with no write and no terminal audit
+        // event; the Step 4.75 entry guard now also prevents this
+        // (defense-in-depth: this arm plus the guard).
+        "file.write" => match crate::sinks::file_write::invoke_file_write_from_resolved(
             conn,
             key,
             pc.session_id,
@@ -912,8 +958,19 @@ pub fn confirm(
                 Err(_) => Ok(ConfirmOutcome::EmailSendFailed),
             }
         }
+        // Phase 33 adversarial-review MAJOR-1 fix: this arm IS reachable in
+        // principle (the match is exhaustive over `&str`), but the Step 4.75
+        // entry guard above already refuses any sink outside
+        // {"file.create","email.send","file.write"} BEFORE reaching here —
+        // so hitting this arm means the guard's allow-list and this match's
+        // arms have drifted out of sync (a broker-internal invariant
+        // violation, not a normal runtime path). `process.exec`'s full
+        // confirm-release dispatch remains a documented follow-up (Phase 32,
+        // not wired this pass) — it is refused earlier, at the guard, with
+        // the row left `Pending` rather than reaching this arm at all.
         other => Err(anyhow::anyhow!(
-            "confirm: unreachable sink `{other}` — not a registered v1.2 sink"
+            "confirm: unreachable — sink `{other}` passed the Step 4.75 entry \
+             guard but has no Step 7 dispatch arm (guard/match drift)"
         )),
     }
 }
@@ -1546,6 +1603,277 @@ mod tests {
             entries.len(),
             1,
             "a second confirm must not create any additional file"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // ── Phase 33 adversarial-review MAJOR-1 fix: file.write confirm-release
+    // + entry-guard tests ─────────────────────────────────────────────────
+
+    /// Seed a Pending file.write block: a causal-root event, a `sink_blocked`
+    /// event carrying a genuine `SinkBlockedAnchor`, its `blocked_literals` row,
+    /// and a matching `PendingConfirmation` — mirrors
+    /// `seed_pending_file_create_block` exactly, substituting the sink and the
+    /// pre-existing-target requirement (`write_within` is existing-file-only;
+    /// the caller MUST create `path` under `workspace_root_path` before
+    /// seeding).
+    ///
+    /// Returns `(effect_id, session_id, blocked_event_id)`.
+    fn seed_pending_file_write_block(
+        conn: &rusqlite::Connection,
+        path: &str,
+        contents: &str,
+        workspace_root_path: &str,
+    ) -> (Uuid, Uuid, Uuid) {
+        let session_id = Uuid::new_v4();
+        let effect_id = Uuid::new_v4();
+        let read_event_id = Uuid::new_v4();
+
+        let root = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "session_created".into(),
+            chrono::Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(conn, TEST_KEY, &root, None).unwrap();
+
+        let literal_sha256 = {
+            let mut hasher = Sha256::new();
+            hasher.update(path.as_bytes());
+            hex::encode(hasher.finalize())
+        };
+        let anchor = SinkBlockedAnchor {
+            effect_id,
+            sink: SinkId("file.write".into()),
+            arg: "path".into(),
+            value_id: ValueId::new(),
+            literal_sha256,
+            taint: vec![TaintLabel::PathRaw],
+            provenance_chain: vec![read_event_id],
+            read_event_id,
+        };
+
+        let resolved_args = vec![
+            ResolvedArg {
+                name: "path".to_string(),
+                value_id: ValueId::new(),
+                literal: path.to_string(),
+                taint: vec![TaintLabel::PathRaw],
+                provenance_chain: vec![read_event_id],
+            },
+            ResolvedArg {
+                name: "contents".to_string(),
+                value_id: ValueId::new(),
+                literal: contents.to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![],
+            },
+        ];
+        let digest = combined_digest(
+            &resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let blocked_arg_names = vec!["path".to_string()];
+
+        let blocked_event = Event::sink_blocked(
+            Uuid::new_v4(),
+            Some(root.id),
+            session_id,
+            chrono::Utc::now(),
+            vec![anchor],
+            Some(digest.clone()),
+            blocked_arg_names.clone(),
+        );
+        let blocked_event_id = blocked_event.id;
+        append_event(conn, TEST_KEY, &blocked_event, Some(&root_hash)).unwrap();
+        insert_blocked_literal(conn, &blocked_event_id.to_string(), "path", path).unwrap();
+
+        let pc = PendingConfirmation {
+            effect_id,
+            session_id,
+            blocked_event_id,
+            sink: SinkId("file.write".into()),
+            resolved_args,
+            blocked_arg_names,
+            combined_digest: digest,
+            workspace_root_path: workspace_root_path.to_string(),
+            state: PendingConfirmationState::Pending,
+            mac: String::new(),
+        };
+        insert_pending_confirmation(conn, TEST_KEY, &pc).unwrap();
+
+        (effect_id, session_id, blocked_event_id)
+    }
+
+    /// confirm on a Pending file.write block releases exactly once: the
+    /// pre-existing target's contents are overwritten, a confirm_granted event
+    /// exists chained onto the sink_blocked event, a chained sink_executed
+    /// event exists, `verify_chain` is true, and the row transitions to
+    /// Confirmed (MAJOR-1 fix — previously this dispatch arm did not exist).
+    #[test]
+    fn confirm_on_pending_file_write_releases_and_writes_file() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_confirm_fw_ok_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        // write_within is existing-file-only — pre-create the target.
+        std::fs::write(root.join("existing.txt"), b"original").unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, blocked_event_id) = seed_pending_file_write_block(
+            &conn,
+            "existing.txt",
+            "released by confirm",
+            &root.to_string_lossy(),
+        );
+
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).expect("confirm");
+        assert_eq!(outcome, ConfirmOutcome::Released);
+
+        let on_disk = std::fs::read_to_string(root.join("existing.txt")).unwrap();
+        assert_eq!(on_disk, "released by confirm");
+
+        let granted = find_event_by_type(&conn, &session_id.to_string(), "confirm_granted")
+            .unwrap()
+            .expect("confirm_granted event must exist");
+        assert_eq!(granted.actor, format!("confirm:{effect_id}"));
+        assert_eq!(granted.parent_id, Some(blocked_event_id));
+
+        let sink_executed = find_event_by_type(&conn, &session_id.to_string(), "sink_executed")
+            .unwrap()
+            .expect("sink_executed event must exist — the write was actually released");
+        assert_eq!(sink_executed.actor, format!("sink:file.write:{effect_id}"));
+        assert_eq!(sink_executed.parent_id, Some(granted.id));
+
+        assert!(
+            crate::audit::verify_chain(&conn, &session_id.to_string(), TEST_KEY),
+            "the chain must remain unbroken after a file.write confirm-release"
+        );
+
+        let pc = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .unwrap();
+        assert_eq!(pc.state, PendingConfirmationState::Confirmed);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Entry-guard (Step 4.75): an un-dispatchable sink's blocked confirmation
+    /// (e.g. `process.exec`, which has no Step 7 dispatch arm) must NOT be
+    /// burned by `confirm()` — the row must remain `Pending`, no
+    /// `confirm_granted` event may exist, and the state-transitioning function
+    /// must return `Err` rather than silently succeeding or leaving an
+    /// orphaned `confirm_granted`-with-no-terminal-event audit gap.
+    #[test]
+    fn confirm_on_undispatchable_sink_does_not_burn_confirmation() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_confirm_guard_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let session_id = Uuid::new_v4();
+        let effect_id = Uuid::new_v4();
+        let read_event_id = Uuid::new_v4();
+
+        let root_evt = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "session_created".into(),
+            chrono::Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(&conn, TEST_KEY, &root_evt, None).unwrap();
+
+        let literal_sha256 = {
+            let mut hasher = Sha256::new();
+            hasher.update(b"rm -rf /");
+            hex::encode(hasher.finalize())
+        };
+        let anchor = SinkBlockedAnchor {
+            effect_id,
+            sink: SinkId("process.exec".into()),
+            arg: "command".into(),
+            value_id: ValueId::new(),
+            literal_sha256,
+            taint: vec![TaintLabel::ExecRaw],
+            provenance_chain: vec![read_event_id],
+            read_event_id,
+        };
+        let resolved_args = vec![ResolvedArg {
+            name: "command".to_string(),
+            value_id: ValueId::new(),
+            literal: "rm -rf /".to_string(),
+            taint: vec![TaintLabel::ExecRaw],
+            provenance_chain: vec![read_event_id],
+        }];
+        let digest = combined_digest(
+            &resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let blocked_arg_names = vec!["command".to_string()];
+
+        let blocked_event = Event::sink_blocked(
+            Uuid::new_v4(),
+            Some(root_evt.id),
+            session_id,
+            chrono::Utc::now(),
+            vec![anchor],
+            Some(digest.clone()),
+            blocked_arg_names.clone(),
+        );
+        let blocked_event_id = blocked_event.id;
+        append_event(&conn, TEST_KEY, &blocked_event, Some(&root_hash)).unwrap();
+        insert_blocked_literal(&conn, &blocked_event_id.to_string(), "command", "rm -rf /").unwrap();
+
+        let pc = PendingConfirmation {
+            effect_id,
+            session_id,
+            blocked_event_id,
+            sink: SinkId("process.exec".into()),
+            resolved_args,
+            blocked_arg_names,
+            combined_digest: digest,
+            workspace_root_path: root.to_string_lossy().to_string(),
+            state: PendingConfirmationState::Pending,
+            mac: String::new(),
+        };
+        insert_pending_confirmation(&conn, TEST_KEY, &pc).unwrap();
+
+        let result = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws);
+        assert!(
+            result.is_err(),
+            "confirm on an un-dispatchable sink must fail closed, not silently succeed"
+        );
+
+        // The confirmation must NOT be burned: still Pending.
+        let found = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .expect("row must still exist");
+        assert_eq!(
+            found.state,
+            PendingConfirmationState::Pending,
+            "the entry guard must refuse BEFORE Step 6's state transition — \
+             an un-dispatchable sink must leave the row Pending, not Confirmed"
+        );
+
+        // No confirm_granted event may have been appended (Step 5 never ran).
+        assert!(
+            find_event_by_type(&conn, &session_id.to_string(), "confirm_granted")
+                .unwrap()
+                .is_none(),
+            "the entry guard must refuse BEFORE Step 5 appends confirm_granted — \
+             no audit-DAG gap (confirm_granted with no terminal sink event) may exist"
         );
 
         std::fs::remove_dir_all(&root).ok();

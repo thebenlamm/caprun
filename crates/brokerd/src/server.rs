@@ -1340,7 +1340,14 @@ pub async fn dispatch_request(
             // request only — `return Ok(())`, NEVER `break` — the
             // connection stays open (mirrors the ProvideIntent-reject
             // error-then-continue shape above, not a connection kill).
-            *fd_request_count += 1;
+            // Phase 33 adversarial-review MINOR-2 fix: `saturating_add`, not
+            // `+=` — a plain `+=` would wrap `u32` back to 0 after 2^32
+            // denied round-trips (no `overflow-checks` profile anywhere in
+            // this workspace to catch it), silently failing the guard OPEN
+            // for another `MAX_REQUEST_FD_PER_SESSION` fresh reads per wrap.
+            // Saturating at `u32::MAX` keeps the guard permanently tripped
+            // instead.
+            *fd_request_count = fd_request_count.saturating_add(1);
             if *fd_request_count > MAX_REQUEST_FD_PER_SESSION {
                 send_response(
                     stream,
