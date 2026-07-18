@@ -1087,7 +1087,17 @@ mod capture_bytes_tests {
 
         assert!(status.success(), "cat should exit 0");
         assert_eq!(stdout, payload, "stdout bytes must be BYTE-IDENTICAL (non-lossy) to the stdin");
-        assert!(stderr.is_empty(), "cat writes nothing to stderr");
+        // `/bin/cat` writes nothing to stderr, but on a Landlock-enforcing kernel
+        // the confined launcher prepends a benign `[caprun-exec-launcher] Landlock
+        // exec_child_ruleset status: ...` diagnostic to its OWN stderr (a no-op on
+        // the macOS stub, which is why this used to assert `is_empty()`). The
+        // load-bearing property is that the binary payload survives INTACT on
+        // stdout and NEVER leaks onto stderr — assert that, tolerant of the
+        // launcher's diagnostic.
+        assert!(
+            !stderr.windows(payload.len()).any(|w| w == payload.as_slice()),
+            "the stdin payload must never leak onto stderr (streams captured separately)"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -1110,7 +1120,20 @@ mod capture_bytes_tests {
 
         assert!(status.success());
         assert_eq!(stdout, b"OUTDATA", "stdout must carry ONLY the stdout stream");
-        assert_eq!(stderr, b"ERRDATA", "stderr must be SEPARATE, never merged into stdout");
+        // The child's stderr (`ERRDATA`) rides the SEPARATE stderr stream and is
+        // NEVER merged into stdout. On a Landlock-enforcing kernel the confined
+        // launcher ALSO prepends a benign `[caprun-exec-launcher] Landlock ...`
+        // diagnostic to stderr (a no-op on the macOS stub, which is why this used
+        // to assert exact equality). Assert the load-bearing property — ERRDATA is
+        // present on stderr and absent from stdout — tolerant of that diagnostic.
+        assert!(
+            String::from_utf8_lossy(&stderr).contains("ERRDATA"),
+            "the child's stderr (ERRDATA) must appear on the SEPARATE stderr stream, got {stderr:?}"
+        );
+        assert!(
+            !stdout.windows(b"ERRDATA".len()).any(|w| w == b"ERRDATA".as_slice()),
+            "ERRDATA must NEVER leak into stdout (streams captured separately)"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 }
