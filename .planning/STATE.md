@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Git/GitHub Adapters (Effect Breadth II)
-status: planning
-last_updated: "2026-07-18T05:46:22.959Z"
+status: roadmapped
+last_updated: "2026-07-18T06:10:00.000Z"
 last_activity: 2026-07-18
 progress:
-  total_phases: 0
+  total_phases: 6
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -19,70 +19,78 @@ progress:
 
 See: .planning/PROJECT.md (updated 2026-07-18)
 
-**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, (v1.5, SHIPPED) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into (closing the v1.4 T2 residual), (v1.6, SHIPPED) hardening the standing residuals that made several of those guarantees "true only incidentally" into enforced guarantees, and now (v1.7) extending the set of real sinks — `process.exec` (captured+tainted command output) and filesystem read/write breadth — each through the same plan-node → taint → executor(I2) → audit path, toward the Safe Coding Agent anchor.
-**Current focus:** v1.7 shipped (2026-07-18) — planning next milestone (v1.8 — Git/GitHub Adapters)
+**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, (v1.5, SHIPPED) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into (closing the v1.4 T2 residual), (v1.6, SHIPPED) hardening the standing residuals that made several of those guarantees "true only incidentally" into enforced guarantees, (v1.7, SHIPPED) extending the set of real sinks — `process.exec` (captured+tainted command output) and filesystem read/write breadth, and now (v1.8) adding the external-effect sinks that make a coding agent's work durable and shareable — `git.commit`, `git.push`, `github.pr`, and read-only `http.request` egress — proving the Safe Coding Agent anchor end-to-end.
+**Current focus:** Phase 35 — DESIGN Gate + Fresh Adversarial Code-Trace (DESIGN-15/16, `DESIGN-git-github-http-sinks.md` + fresh non-self adversarial code-trace)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 35 — DESIGN Gate + Fresh Adversarial Code-Trace (not started)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-07-18 — Milestone v1.8 started
+Status: Roadmapped, ready to plan Phase 35
+Last activity: 2026-07-18 — v1.8 roadmap created (`/gsd-roadmapper`), 6 phases (35-40), 15/15 requirements mapped
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 64 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 + v1.4: 14 + v1.5: 8 + v1.6: 14)
+- Total plans completed: 115 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 + v1.4: 14 + v1.5: 8 + v1.6: 14 + v1.7: 17)
 - Average duration: — min
 
-*Updated after each plan completion. v1.6 (phases 26-30) shipped 2026-07-17 — 14/14 plans complete. v1.7 (phases 31-34) roadmapped 2026-07-17, no plans yet.*
+*Updated after each plan completion. v1.7 (phases 31-34) shipped 2026-07-18 — 17/17 plans complete. v1.8 (phases 35-40) roadmapped 2026-07-18, no plans yet.*
 
 ## Accumulated Context
 
 ### Decisions
 
-**v1.7 roadmap phase structure (`/gsd-roadmapper`, 2026-07-17):** 4 phases
-(31-34), 11/11 requirements mapped, 0 orphans, 0 duplicates. Continues numbering
-from v1.6's Phase 30 (does NOT reset). Mirrors this project's established
+**v1.8 roadmap phase structure (`/gsd-roadmapper`, 2026-07-18):** 6 phases
+(35-40), 15/15 requirements mapped, 0 orphans, 0 duplicates. Continues numbering
+from v1.7's Phase 34 (does NOT reset). Mirrors this project's established
 design-gate → implementation → live-proof precedent (v1.0 P2, v1.2 P8, v1.3 P12,
-v1.4 P18, v1.5 P23, v1.6 P26 — each a standalone reviewed DESIGN doc before any
-TCB code, followed by implementation, followed by a separate live-proof phase):
+v1.4 P18, v1.5 P23, v1.6 P26, v1.7 P31 — each a standalone reviewed DESIGN doc
+before any TCB code, followed by implementation, followed by a separate
+live-proof phase). Dependency-forced ordering per research (`research/SUMMARY.md`,
+HIGH confidence):
 
-- **Phase 31** is the design gate (DESIGN-13/14 — `DESIGN-effect-breadth-exec.md`
-  pinning the broker-spawned confined-child-`exec` model + the fs read/write-breadth
-  model + fail-closed defaults for both new sinks, cleared by a fresh non-self
-  adversarial code-trace). HARD-BLOCKS Phases 32-34. `process.exec` under
-  Landlock+seccomp is the riskiest primitive to date; the ORCHESTRATOR (not a
-  gsd-executor) owns the review spawn. No `crates/executor`/`brokerd`/`sandbox`/
-  `runtime-core` TCB code before this gate clears.
-
-- The 7 implementation requirements split into **2 implementation phases by blast
-  radius / subsystem coherence** rather than one bundled phase or seven
-  single-requirement phases: **Phase 32** is `process.exec` alone (EXEC-01..04) —
-  a genuinely new confined-child spawn path in the broker + sandbox, the riskiest
-  primitive, substantial enough for its own phase. **Phase 33** is filesystem
-  breadth (FS-01..03) — the adapter-fs fd-passing seam (read many files + write/
-  edit existing files beyond `file.create`'s `O_EXCL`). Independent of each other;
-  both depend only on Phase 31.
-
-- **Phase 34** is the regression/live-proof phase (LIVE-01/02 — composed
-  acceptance on real Linux: exec-tainted Block + clean Allow + fs write/edit
-  audited, genuine non-stapled taint chain, `verify_chain` true; full-workspace
-  regression green with no regression to v1.0–v1.6, true-exit-before-pipe, a
-  dedicated negative test per new sink). Mirrors v1.2 P11, v1.3 P17, v1.4 P22,
-  v1.5 P25, v1.6 P30. Depends on Phases 32 AND 33 both landing.
+- **Phase 35** is the design gate (DESIGN-15/16 — `DESIGN-git-github-http-sinks.md`
+  pinning effect-class per sink, `mint_from_http` inbound-taint + demotion, git
+  config/hook neutralization, git.push destination pinning + credential-injection
+  mechanism, the SSRF resolve-and-pin model, the github.pr human auth-grant model,
+  the env_clear() TLS-cert allowlist policy, duplicate-PR CAS semantics, and new
+  TaintLabel variants — closing all 11 design-gate-blocking pitfalls). HARD-BLOCKS
+  Phases 36-40. The ORCHESTRATOR (not a gsd-executor) owns the review spawn. No
+  `crates/executor`/`brokerd`/`sandbox`/`runtime-core` TCB code before this gate
+  clears.
+- **Phase 36** is `git.commit` alone (GIT-01) — lowest risk, reuses the v1.7
+  `caprun-exec-launcher` + `mint_from_exec` pattern near-verbatim.
+- **Phase 37** is `http.request` GET (HTTP-01..03) — establishes the NEW
+  `mint_from_http` inbound-taint mechanism that `github.pr` reuses; must land
+  before Phase 38.
+- **Phase 38** is `github.pr` (GITHUB-01..04) — reuses the Phase-37 http egress
+  infra + inbound mint; adds the bearer token, the new human auth-grant, and
+  duplicate-PR CAS.
+- **Phase 39** is `git.push` (GIT-02/03) — hardest: network-from-confined-child +
+  push-credential injection; done after the credential boundary is proven by
+  Phase 38's `github.pr`.
+- **Phase 40** is CLI compose + sidecar env_clear() (ENV-01) + the composed live
+  Linux proof with adversarial attack legs (LIVE-03/04). Mirrors v1.2 P11, v1.3
+  P17, v1.4 P22, v1.5 P25, v1.6 P30, v1.7 P34. Depends on Phases 36-39 all
+  landing.
 
 ### Blockers/Concerns
 
-- Phases 32, 33 (implementation) and Phase 34 (regression/live proof) are
-  hard-blocked on Phase 31's DESIGN doc (`planning-docs/DESIGN-effect-breadth-exec.md`)
+- Phases 36-39 (implementation) and Phase 40 (regression/live proof) are
+  hard-blocked on Phase 35's DESIGN doc (`planning-docs/DESIGN-git-github-http-sinks.md`)
   clearing a fresh (non-self) adversarial code-trace. No `crates/executor` /
-  `crates/brokerd` / `crates/sandbox` / `crates/runtime-core` TCB code before that gate.
-
-- `process.exec` fundamentally changes the confinement model (a new
-  broker-spawned confined-child spawn path) — this is why v1.7 opens with a design
-  gate + adversarial review rather than a bare "add a sink" plan.
+  `crates/brokerd` / `crates/sandbox` / `crates/runtime-core` TCB code before that
+  gate.
+- Phase 38 (`github.pr`) is hard-blocked on Phase 37 (`http.request`) landing
+  first — `github.pr` reuses `mint_from_http`, which does not exist until Phase 37.
+- Phase 39 (`git.push`) is hard-blocked on Phase 38 (`github.pr`) landing first —
+  the push-credential-injection design is meant to be proven incrementally after
+  the bearer-token boundary is proven by `github.pr`.
+- The DESIGN doc must settle two genuine forks before it can clear review: the
+  `git.push` network path (net-allowed confined child vs. in-broker git lib —
+  reopens default-deny-net) and the rustls crypto provider (aws-lc-rs vs. ring).
 
 ### Standing GSD-tooling mitigations (carried forward)
 
@@ -96,21 +104,21 @@ TCB code, followed by implementation, followed by a separate live-proof phase):
 
 ## Session Continuity
 
-Last session: 2026-07-17
-Stopped at: v1.7 roadmap created (Phases 31-34)
+Last session: 2026-07-18
+Stopped at: v1.8 roadmap created (Phases 35-40)
 Resume file: None
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Plan Phase 35 (the design gate) with `/gsd-plan-phase 35`.
 
 ## Deferred Items
 
-Items acknowledged and deferred at the v1.7 milestone close (2026-07-18). None are v1.7 requirements; all are pre-existing tech debt or a v1.8 follow-up. Closeout: override_closeout (all 31-34 phases verified passed; deferrals below).
+Items acknowledged and deferred at the v1.7 milestone close (2026-07-18), re-reviewed at v1.8 roadmap creation (2026-07-18).
 
 | Category | Item | Status |
 |----------|------|--------|
-| todo (security) | planner-sidecar-env-clear — env_clear() the caprun-planner sidecar spawn | pending (v1.8; lower risk — trusted code, TLS-env regression risk) |
+| todo (security) | planner-sidecar-env-clear — env_clear() the caprun-planner sidecar spawn | in progress — directly in scope as v1.8 ENV-01 (Phase 40); close this todo once v1.8 ships |
 | todo (security) | v1.3-phase16-v2-security-obligations — deferred v2 security obligations (recorded, not dropped) | pending |
 | todo (tooling) | gsd-executors-must-not-write-phase-completion-state | pending (GSD process, not caprun product) |
 | todo (tooling) | gsd-phases-clear-deletes-all-milestones | pending (GSD process, not caprun product) |

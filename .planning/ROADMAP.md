@@ -10,6 +10,7 @@
 - ✅ **v1.5 — Slot-Type Binding Enforcement (T2)** — Phases 23-25 (shipped 2026-07-12)
 - ✅ **v1.6 — Security Hardening (close the residuals)** — Phases 26-30 (shipped 2026-07-17)
 - ✅ **v1.7 — Effect Breadth I (`process.exec` + Filesystem Breadth)** — Phases 31-34 (shipped 2026-07-18)
+- 🚧 **v1.8 — Git/GitHub Adapters (Effect Breadth II)** — Phases 35-40 (in progress)
 
 ## Phases
 
@@ -139,6 +140,75 @@ Full detail archived in [`milestones/v1.7-ROADMAP.md`](milestones/v1.7-ROADMAP.m
 
 </details>
 
+### 🚧 v1.8 — Git/GitHub Adapters (Effect Breadth II) (In Progress)
+
+**Milestone Goal:** Add the external-effect sinks that make a coding agent's work durable and shareable — `git.commit`, `git.push`, `github.pr`, and read-only `http.request` egress — each routed through caprun's locked plan-node → taint → executor(I2) → audit-DAG path, proving the Safe Coding Agent anchor end-to-end. Design-gate-first (Phase 35), then mechanical/wiring phases ordered so each new mechanism is proven before the sink that depends on it — Phase 36 `git.commit` (lowest risk, reuses the v1.7 exec-launcher + `mint_from_exec`), Phase 37 `http.request` GET (establishes the NEW `mint_from_http` inbound-taint mechanism), Phase 38 `github.pr` (reuses http egress + inbound mint, adds the bearer token + human auth-grant + duplicate-PR CAS), Phase 39 `git.push` (hardest — network-from-confined-child + push-credential injection, done after the credential boundary is proven by github.pr) — dedicated composed live-proof close (Phase 40).
+
+**Standing precedent honored:** no `crates/executor` / `crates/brokerd` / `crates/sandbox` / `crates/runtime-core` TCB code before Phase 35's DESIGN doc clears a fresh non-self adversarial code-trace (v1.0 P2, v1.2 P8, v1.3 P12, v1.4 P18, v1.5 P23, v1.6 P26, v1.7 P31). The orchestrator — not a gsd-executor — owns that review spawn.
+
+#### Phase 35: DESIGN Gate + Fresh Adversarial Code-Trace
+**Goal**: A reviewed DESIGN doc pins the mechanism + fail-closed default for all four new sinks (`git.commit`, `git.push`, `github.pr`, `http.request`) and clears a fresh non-self adversarial code-trace — hard-blocking every subsequent TCB-code phase.
+**Depends on**: Phase 34 (v1.7 shipped)
+**Requirements**: DESIGN-15, DESIGN-16
+**Success Criteria** (what must be TRUE):
+  1. `planning-docs/DESIGN-git-github-http-sinks.md` exists and pins: per-sink effect-class (`git.commit`=MutateReversible, `git.push`/`github.pr`=CommitIrreversible, `http.request`=Observe); the `mint_from_http` inbound-taint mechanism + session demotion; the git config/hook neutralization surface; `git.push` destination-pinning + credential-injection mechanism; the SSRF resolve-and-pin model; the `github.pr` human auth-grant model; the `env_clear()` TLS-cert allowlist policy; duplicate-PR CAS semantics; and the new `TaintLabel` variants.
+  2. The doc explicitly closes all 11 design-gate-blocking pitfalls identified in research (git config/hook RCE, swapped-remote push, tainted PR-body/commit-message exfil, SSRF, credential leak, replay, etc.) with a named mechanism per pitfall — nothing in it disables or bypasses I2, and no new raw `EffectRequest` path is introduced.
+  3. A fresh, **non-self** adversarial code-trace review (orchestrator-owned, not a gsd-executor) clears the doc (all findings resolved), recorded in a gate record; no `crates/executor`/`brokerd`/`sandbox`/`runtime-core` TCB code is written before this gate clears.
+**Plans**: TBD
+
+#### Phase 36: `git.commit` Sink
+**Goal**: caprun can commit staged workspace changes via a broker-spawned confined-child `git`, with the commit message's taint genuinely propagated and git config/hooks neutralized.
+**Depends on**: Phase 35
+**Requirements**: GIT-01
+**Success Criteria** (what must be TRUE):
+  1. A `git.commit` plan-node sink runs `git commit` via the broker-spawned confined-child launcher (reusing the v1.7 `caprun-exec-launcher` + `mint_from_exec` pattern), classified **MutateReversible** so it survives an I1-demoted session.
+  2. A tainted commit message routed through the sink genuinely propagates downstream (not re-minted clean) — verifiable as an unbroken audit-DAG edge.
+  3. git system config and hooks are neutralized in the child (`GIT_CONFIG_NOSYSTEM`, `core.hooksPath=/dev/null`, no aliases, `env_clear()`'d) — a planted malicious hook/alias in the workspace repo does not execute.
+**Plans**: TBD
+
+#### Phase 37: `http.request` GET Egress
+**Goal**: caprun can make an allowlisted, read-only outbound HTTP GET whose response is minted untrusted-on-arrival and demotes the session, defended against SSRF.
+**Depends on**: Phase 35
+**Requirements**: HTTP-01, HTTP-02, HTTP-03
+**Success Criteria** (what must be TRUE):
+  1. An `http.request` sink performs a broker-mediated GET to an allowlisted host only, classified **Observe**, with `url` as an I2-gated sink arg — a non-allowlisted host is denied.
+  2. The HTTP response body is minted untrusted via a new `mint_from_http` mint site rooted on a genuine `http_response_received` audit event, and the session demotes to draft-only (I1) on that response.
+  3. A fetched value later routed into a sensitive sink arg is deterministically **Blocked** on a genuinely-propagated (non-stapled) taint chain — an anti-staple test proves this, per the §9 genuineness standard.
+  4. Requests to loopback/RFC1918/link-local/cloud-metadata IPs, `userinfo@` tricks, and default redirect-following are all denied (resolve-and-pin SSRF defense).
+**Plans**: TBD
+
+#### Phase 38: `github.pr` Sink
+**Goal**: caprun can open a GitHub pull request via a broker-held bearer token with explicit human auth-grant, tainted title/body sections deterministically blocked, and replay-safe.
+**Depends on**: Phase 37 (reuses `mint_from_http` + the http egress infra)
+**Requirements**: GITHUB-01, GITHUB-02, GITHUB-03, GITHUB-04
+**Success Criteria** (what must be TRUE):
+  1. A `github.pr` sink creates a GitHub PR via a broker-held session bearer token that is never present in the confined worker, the planner sidecar, a ValueNode, or the audit-DAG literal, classified **CommitIrreversible**.
+  2. Creating a PR requires an explicit human auth-grant for the credential, distinct from single-shot confirm — a PR cannot be created on a bare confirm alone (a token's authority exceeds one PR).
+  3. A tainted PR title/body section is deterministically **Blocked** (I2, reusing CONTENT-01 content-sensitivity) — the verbatim, provenance-annotated title/body is shown to the human at confirm.
+  4. A replayed `github.pr` submission creates **at most one PR** (content-derived idempotency CAS committed before the API call, mirroring HARDEN-03).
+**Plans**: TBD
+
+#### Phase 39: `git.push` Sink
+**Goal**: caprun can push to a remote pinned to the session's trusted intent-origin, with a tainted remote/refspec deterministically blocked and human-releasable.
+**Depends on**: Phase 38 (the credential boundary is proven incrementally by `github.pr` before `git.push`'s credential-injection path is built)
+**Requirements**: GIT-02, GIT-03
+**Success Criteria** (what must be TRUE):
+  1. A `git.push` sink pushes to a remote+branch pinned to the session's trusted intent-origin and passed explicitly (never resolved from the untrusted repo's `.git/config`), classified **CommitIrreversible**.
+  2. `--force` and ref-deletion are hard-denied regardless of confirmation.
+  3. A tainted push remote/refspec is deterministically **Blocked** at the sink (I2) and releasable only by single-shot human confirmation, with the confirm-release path writing the terminal audit event **before** the terminal state (the recurring P33/P34 audit-gap discipline).
+**Plans**: TBD
+
+#### Phase 40: CLI Compose, Sidecar `env_clear()` & Composed Live Proof (v1.8 DONE)
+**Goal**: The full Safe Coding Agent workflow is proven end-to-end on real Linux, the planner sidecar's `env_clear()` is hermetic under compiled-in TLS roots, and every adversarial attack leg is deterministically blocked.
+**Depends on**: Phase 36, Phase 37, Phase 38, Phase 39
+**Requirements**: ENV-01, LIVE-03, LIVE-04
+**Success Criteria** (what must be TRUE):
+  1. The `caprun-planner` sidecar spawn is `env_clear()`'d and given only the minimal env it needs; all new broker-side TLS egress uses compiled-in `webpki-roots` so `env_clear()` is hermetic (no `SSL_CERT_*` / readable system store required), validated by a **live** HTTPS run.
+  2. A composed agent workflow is proven on **real Linux** — `process.exec` (test) → filesystem edit → `git.commit` → `git.push` → `github.pr`, plus an `http.request` GET leg — with every step gated, tainted, and audit-DAG-chained, and `verify_chain` true across the run.
+  3. Each adversarial attack leg — (a) tainted push remote/refspec, (b) tainted PR-body section, (c) tainted GET url (SSRF/exfil) — is deterministically **Blocked** with `verify_chain` true, plus a post-`env_clear()` **live** HTTPS call succeeds.
+  4. Full-workspace regression is green on real Linux with **no regression to v1.0–v1.7**.
+**Plans**: TBD
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -177,3 +247,9 @@ Full detail archived in [`milestones/v1.7-ROADMAP.md`](milestones/v1.7-ROADMAP.m
 | 32. `process.exec` Sink — Broker-Spawned Confined Child | v1.7 | 6/6 | Complete    | 2026-07-17 |
 | 33. Filesystem Read/Write Breadth | v1.7 | 5/5 | Complete    | 2026-07-18 |
 | 34. Regression & Live Proof (v1.7 DONE) | v1.7 | 4/4 | Complete    | 2026-07-18 |
+| 35. DESIGN Gate + Fresh Adversarial Code-Trace | v1.8 | 0/TBD | Not started | - |
+| 36. `git.commit` Sink | v1.8 | 0/TBD | Not started | - |
+| 37. `http.request` GET Egress | v1.8 | 0/TBD | Not started | - |
+| 38. `github.pr` Sink | v1.8 | 0/TBD | Not started | - |
+| 39. `git.push` Sink | v1.8 | 0/TBD | Not started | - |
+| 40. CLI Compose, Sidecar env_clear() & Composed Live Proof (v1.8 DONE) | v1.8 | 0/TBD | Not started | - |

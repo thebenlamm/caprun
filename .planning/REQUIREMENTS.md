@@ -76,27 +76,27 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DESIGN-15 | Phase [N] | Pending |
-| DESIGN-16 | Phase [N] | Pending |
-| GIT-01 | Phase [N] | Pending |
-| GIT-02 | Phase [N] | Pending |
-| GIT-03 | Phase [N] | Pending |
-| GITHUB-01 | Phase [N] | Pending |
-| GITHUB-02 | Phase [N] | Pending |
-| GITHUB-03 | Phase [N] | Pending |
-| GITHUB-04 | Phase [N] | Pending |
-| HTTP-01 | Phase [N] | Pending |
-| HTTP-02 | Phase [N] | Pending |
-| HTTP-03 | Phase [N] | Pending |
-| ENV-01 | Phase [N] | Pending |
-| LIVE-03 | Phase [N] | Pending |
-| LIVE-04 | Phase [N] | Pending |
+| DESIGN-15 | Phase 35 | Pending |
+| DESIGN-16 | Phase 35 | Pending |
+| GIT-01 | Phase 36 | Pending |
+| GIT-02 | Phase 39 | Pending |
+| GIT-03 | Phase 39 | Pending |
+| GITHUB-01 | Phase 38 | Pending |
+| GITHUB-02 | Phase 38 | Pending |
+| GITHUB-03 | Phase 38 | Pending |
+| GITHUB-04 | Phase 38 | Pending |
+| HTTP-01 | Phase 37 | Pending |
+| HTTP-02 | Phase 37 | Pending |
+| HTTP-03 | Phase 37 | Pending |
+| ENV-01 | Phase 40 | Pending |
+| LIVE-03 | Phase 40 | Pending |
+| LIVE-04 | Phase 40 | Pending |
 
 **Coverage:**
 - v1 requirements: 15 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 15 ⚠️
+- Mapped to phases: 15
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-18*
-*Last updated: 2026-07-18 after initial definition*
+*Last updated: 2026-07-18 after roadmap creation (Phases 35-40, 15/15 mapped)*
