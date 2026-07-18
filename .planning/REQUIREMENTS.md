@@ -63,7 +63,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)`, taint-minted as untrusted like
   the existing read path.
 
-- [ ] **FS-02**: A filesystem **write/edit sink modifies an existing file**
+- [x] **FS-02**: A filesystem **write/edit sink modifies an existing file**
   within `WorkspaceRoot` (beyond `file.create`'s `O_EXCL` new-file-only),
   fail-closed on path schema, kernel-confined, and durably audited.
 
@@ -137,7 +137,7 @@ maps to exactly one phase (`/gsd-roadmapper`, 2026-07-17).
 | EXEC-03 | Phase 32 | Complete |
 | EXEC-04 | Phase 32 | Complete |
 | FS-01 | Phase 33 | Pending |
-| FS-02 | Phase 33 | Pending |
+| FS-02 | Phase 33 | Complete |
 | FS-03 | Phase 33 | Pending |
 | LIVE-01 | Phase 34 | Pending |
 | LIVE-02 | Phase 34 | Pending |
