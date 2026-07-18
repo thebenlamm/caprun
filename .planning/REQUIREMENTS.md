@@ -31,8 +31,8 @@ Requirements for the v1.9 milestone. Each maps to exactly one roadmap phase (see
 
 ### Trust Surface — CLI/SDK + Audit-DAG Viewer
 
-- [ ] **SDK-01**: A thin CLI/SDK to define an intent, point it at a workspace, and run it end-to-end against the broker — manual-ops-first, no framework (extends the existing `caprun confirm`/`deny`/`grant`/`review` verbs, does not replace them). `[rev: Matt #3]` The run entrypoint takes the trusted policy path (POLICY-03) and binds it at session creation — this is the enforcement point that connects Track 3 to Track 4. `[rev: Matt #2]` When a sink Blocks under I2, the entrypoint surfaces the blocked `effect_id` (+ the `caprun review` pointer) so the operator can reach the existing confirm/deny/grant verbs — the sub-capability that makes the loop actually design-partner-runnable. `[rev: M7]` SDK-constructed values carry trusted provenance ONLY for genuinely operator-typed literals; any file-/stream-/env-sourced content the SDK ingests is minted TAINTED (draft-only per I0/I1), exactly like any other raw read — the SDK is not a provenance-laundering path.
-- [ ] **U1** (VIEW-01): A read-only audit-DAG viewer over the SQLite audit chain that renders a session's events/decisions and surfaces `verify_chain` — the trust surface a design partner uses to INSPECT the proof. No web UI. `[rev: M2]` The viewer reuses the exact `load_or_create_key` MAC-key custody + F1 containment refusal, fails closed (refuses to render a `verify_chain` verdict) if the key is absent, and never loads a fresh/`:memory:` key (which would make the verdict meaningless); it must be out of the confined worker's reach. `[rev: M3]` All tainted literal bytes (e.g. a tainted commit message or POST body) are control-char-neutralized/escaped before display — a terminal viewer must never interpret attacker-tainted content as ANSI/formatting (audit-line spoofing surface).
+- [x] **SDK-01**: A thin CLI/SDK to define an intent, point it at a workspace, and run it end-to-end against the broker — manual-ops-first, no framework (extends the existing `caprun confirm`/`deny`/`grant`/`review` verbs, does not replace them). `[rev: Matt #3]` The run entrypoint takes the trusted policy path (POLICY-03) and binds it at session creation — this is the enforcement point that connects Track 3 to Track 4. `[rev: Matt #2]` When a sink Blocks under I2, the entrypoint surfaces the blocked `effect_id` (+ the `caprun review` pointer) so the operator can reach the existing confirm/deny/grant verbs — the sub-capability that makes the loop actually design-partner-runnable. `[rev: M7]` SDK-constructed values carry trusted provenance ONLY for genuinely operator-typed literals; any file-/stream-/env-sourced content the SDK ingests is minted TAINTED (draft-only per I0/I1), exactly like any other raw read — the SDK is not a provenance-laundering path.
+- [x] **U1** (VIEW-01): A read-only audit-DAG viewer over the SQLite audit chain that renders a session's events/decisions and surfaces `verify_chain` — the trust surface a design partner uses to INSPECT the proof. No web UI. `[rev: M2]` The viewer reuses the exact `load_or_create_key` MAC-key custody + F1 containment refusal, fails closed (refuses to render a `verify_chain` verdict) if the key is absent, and never loads a fresh/`:memory:` key (which would make the verdict meaningless); it must be out of the confined worker's reach. `[rev: M3]` All tainted literal bytes (e.g. a tainted commit message or POST body) are control-char-neutralized/escaped before display — a terminal viewer must never interpret attacker-tainted content as ANSI/formatting (audit-line spoofing surface).
 
 ### Supply-Chain & Invariant Hygiene
 
@@ -87,8 +87,8 @@ Which phases cover which requirements. Populated during roadmap creation (`/gsd-
 | GIT-02 | Phase 44 | Complete |
 | GIT-03 | Phase 44 | Complete |
 | HYG-01 | Phase 44 | Complete |
-| SDK-01 | Phase 45 | Pending |
-| U1 | Phase 45 | Pending |
+| SDK-01 | Phase 45 | Complete |
+| U1 | Phase 45 | Complete |
 | LIVE-05 | Phase 46 | Pending |
 | LIVE-06 | Phase 46 | Pending |
 

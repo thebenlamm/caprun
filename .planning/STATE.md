@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: — Authorized Egress + Policy & Audit Surface
-current_phase: 45
-current_phase_name: Thin CLI/SDK + Read-Only Audit-DAG Viewer
+current_phase: 46
+current_phase_name: Composed Live Proof (v1.9 DONE)
 status: planning
-stopped_at: Phase 44 (git.push, GIT-02/03 + HYG-01) complete & verified — transitioned to Phase 45
-last_updated: "2026-07-18T19:45:00.000Z"
+stopped_at: Phase 45 (CLI/SDK + audit-DAG viewer, SDK-01 + U1) complete & verified — transitioned to Phase 46 (the v1.9 DONE gate)
+last_updated: "2026-07-18T21:30:00.000Z"
 last_activity: 2026-07-18
-last_activity_desc: Phase 44 git.push SHIPPED (compose-verify 668/0, Fable-5 APPROVE 0 defects), transitioned to Phase 45
+last_activity_desc: Phase 45 SHIPPED (compose-verify 691/0, Fable-5 APPROVE; M7 + viewer fail-closed sound; BiDi neutralizer hardened), transitioned to Phase 46
 progress:
   total_phases: 6
-  completed_phases: 4
-  total_plans: 14
-  completed_plans: 14
-  percent: 67
+  completed_phases: 5
+  total_plans: 18
+  completed_plans: 18
+  percent: 83
 ---
 
 # Project State
@@ -24,14 +24,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3) with content-sensitive body blocking + a real broker-mediated SMTP send, (v1.4) with coherent cross-connection trust state + a boundary proven indifferent to planner intelligence, (v1.5) with slot-type binding (T2), (v1.6) hardening the standing residuals into enforced guarantees, (v1.7) extending the real sinks — `process.exec` + filesystem read/write breadth, (v1.8) adding `git.commit` + read-only `http.request` GET + `github.pr` (git.push gate-deferred), and now (v1.9) completing the authorized-write-egress loop (git.push + http-write) and adding the first trust-surface layer (a minimal per-session policy + a CLI/audit-DAG viewer) toward a design-partner-runnable slice — without weakening I0/I1/I2 or adding any raw `EffectRequest` path.
-**Current focus:** Phase 45 — Thin CLI/SDK + Read-Only Audit-DAG Viewer (SDK-01, U1): a design-partner-runnable trust surface. Define an intent → point at a workspace with a trusted policy → run end-to-end against the broker (extends the existing `caprun confirm`/`deny`/`grant`/`review` verbs; the run entrypoint binds the trusted policy at session creation = the POLICY-03 enforcement point); on an I2 Block surface the blocked effect_id + a `caprun review` pointer; SDK-constructed values carry trusted provenance ONLY for genuinely operator-typed literals (file/stream/env-sourced content minted TAINTED, not laundered). Plus a read-only audit-DAG viewer that renders a session's events/decisions + surfaces `verify_chain`, reusing the exact `load_or_create_key` MAC-key custody + F1 containment refusal (fails CLOSED — refuses a verify_chain verdict — if the key is absent, never a fresh/`:memory:` key), and control-char-neutralizes all tainted literal bytes before display (audit-line-spoofing surface closed). ON THE ACCEPTANCE CRITICAL PATH — LIVE-05 requires the composed proof be DRIVEN + INSPECTED via this CLI+viewer.
+**Current focus:** Phase 46 — Composed Live Proof (LIVE-05/06), the v1.9 DONE gate. A composed workflow — `process.exec` (test) → filesystem edit → `git.commit` → `git.push` → `github.pr` PLUS an `http.request` POST leg — runs on real Linux (mock git remote + mock endpoint), DRIVEN via `caprun run` and INSPECTED via `caprun audit`, every step gated/tainted/audit-DAG-chained + `verify_chain` true. Plus 5 independently-attributable negative legs (LIVE-06): (1) tainted push remote/refspec I2-Blocks, (2) tainted POST body I2-Blocks, (3) a policy-deny leg (distinct machine-checkable tag from the I2-Block, where the I2 legs run a policy-PERMITTED sink+arg so policy is provably not what's blocking), (4) a destination-pin negative (redirected/off-pin push/POST refused at the broker/app layer), (5) a credential-absence assertion (no credential/URL material in the value store or audit chain after a real push). Full-workspace regression green, no v1.0–v1.8 regression. Depends on Phases 42-45.
 
 ## Current Position
 
-Phase: 45 — Thin CLI/SDK + Read-Only Audit-DAG Viewer
+Phase: 46 — Composed Live Proof (v1.9 DONE)
 Plan: Not started
-Status: Roadmapped; Phases 41-44 complete
-Last activity: 2026-07-18 — Phase 44 (git.push, GIT-02/03 + HYG-01) SHIPPED & verified, transitioned to Phase 45
+Status: Roadmapped; Phases 41-45 complete
+Last activity: 2026-07-18 — Phase 45 (CLI/SDK + audit-DAG viewer, SDK-01 + U1) SHIPPED & verified, transitioned to Phase 46
+
+### Phase 45 close (2026-07-18)
+- 4 plans executed sequentially on `main`. SDK-01: a `caprun run <intent> <workspace> [--policy <path>]` verb binding the trusted policy at session creation (POLICY-03 enforcement point) + surfacing the blocked effect_id + `caprun review` pointer on an I2 Block (Matt #2). The **M7 anti-laundering TCB fix**: a file-derived `--seed-from-file` literal is minted TAINTED via the EXISTING broker-side `mint_from_read` site in the ProvideIntent arm (operator literals stay trusted via mint_from_intent, DISJOINT; file-derived provenance threaded per-literal through the ProvideIntent proto + worker.rs; NO second mint site — Gate 3 holds; proven non-vacuous). U1: a read-only `caprun audit <session>` viewer rendering events/decisions + verify_chain, using a load-ONLY fail-closed `load_existing_key` (refuses absent key + `:memory:`, F1 containment, opens read-only, mints/appends nothing), neutralizing every displayed literal via the shared `brokerd::display::neutralize_control_chars`.
+- **Plan-checker caught the M7 mechanism as a BLOCKER pre-execution** (the `--seed-from-file` laundering path was verified in shipped code); the fix was folded in + re-verified before executing 45-01.
+- **Linux gate (independent orchestrator re-run):** compose-verify 691/0, exit 0, incl. the genuine end-to-end run→Block→review→audit loop + the U1 negatives; no v1.0–v1.8 regression. check-invariants all gates PASS.
+- **Fresh Fable-5 adversarial trace:** APPROVE — M7 anti-laundering (defended by TWO independent controls: trusted-main-set session Draft status + both sinks CommitIrreversible→Draft-denies) and viewer fail-closed both sound. Surfaced ONE genuine decision-surface MINOR (pre-existing): the shared `neutralize_control_chars` only caught `is_control()` (Cc), missing the Trojan-Source BiDi/zero-width class (CVE-2021-42574, category Cf) — LIVE on the git.push confirm prompt (a tainted refspec with U+202E visually reversed the human's confirm prompt). **FIXED this phase (`e31257a`):** escape the format-spoof set (U+202A..U+202E, U+2066..U+2069, U+200B..U+200F, U+FEFF) alongside control chars + tests; the confirmation.rs anti-drift test confirms the git.push confirm path picks it up automatically; re-verified post-fix compose-verify 691/0. See `45-VERIFICATION.md`.
 
 ### Phase 44 close (2026-07-18)
 - 5 plans executed sequentially on `main`. `git.push` SHIPPED — did NOT defer a 3rd time (the research-pinned Candidate (b) broker-performed smart-HTTP transfer proved sound under the fresh adversarial trace; §1.9 safety-valve not triggered). Broker-performed two-request smart-HTTP (info/refs GET + git-receive-pack POST) over the shipped reqwest-ring resolve-and-pin with the IP FROZEN across both requests (WG-1) + redirect refused; pack-gen child net-denied under the unchanged exec_child_filter (WG-2 `run_launcher_capture_bytes` + `git pack-objects`); force/`--force-with-lease`/`:delete`/`+`refspec HARD-DENIED by construction; broker-env-only credential (Basic x-access-token) scrubbed from value-store/audit/logs; opaque non-minting audit; **ALWAYS confirm-gated — NO auto-dispatch arm** (clean Allowed → synthetic BlockedPendingConfirmation with a MAC'd frozen-new-oid pending row; `invoke_git_push_from_resolved` confirm-release-only, single non-test caller) + WG-7 anti-TOCTOU freeze + WG-8 taint-provenance renderer + P33/P34 precheck-before-burn; HYG-01 zero-new-crate re-asserted.
