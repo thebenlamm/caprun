@@ -849,6 +849,28 @@ async fn evaluate_plan_node_and_record(
         None
     };
 
+    // v1.9 Phase 44 Plan 04 (GIT-02/03, WG-7, DESIGN-v1.9-egress-policy §1.6):
+    // a git.push I2-Block (tainted remote/refspec) freezes the new-oid into the
+    // pending confirmation, so the human authorizes the exact PAYLOAD — the SAME
+    // freeze the clean-Allowed gate arm (below) applies, so both git.push paths
+    // converge on one confirm gate with a frozen oid. The confined rev-parse
+    // freeze is Linux-only (macOS stubs it); a freeze failure fails the block
+    // CLOSED via `?` (never a pending git.push row without a frozen oid). EMPTY
+    // for every non-git.push block (no frozen payload oid).
+    let block_frozen_new_oid: String = match block_snapshot.as_ref() {
+        Some((resolved_args, _, _)) if plan_node.sink.0 == "git.push" => {
+            let refspec = resolved_args
+                .iter()
+                .find(|a| a.name == "refspec")
+                .map(|a| a.literal.as_str())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("git.push block-time freeze: missing `refspec` resolved arg")
+                })?;
+            crate::sinks::git_push::freeze_new_oid(workspace_root, refspec).await?
+        }
+        _ => String::new(),
+    };
+
     // A block persists ALL durable anchors via the broker-owned
     // Event::sink_blocked constructor (sets Event.taint by merging every
     // anchor's taint, anchors = the full collection). The causal parent
@@ -914,6 +936,11 @@ async fn evaluate_plan_node_and_record(
             blocked_arg_names,
             combined_digest,
             workspace_root_path: workspace_root.root_path().to_string_lossy().into_owned(),
+            // git.push's I2-Block path freezes the new-oid into this field
+            // (Plan 44-04 Task 2 populates it via the block-snapshot builder);
+            // EMPTY for every other sink (no frozen payload oid). Covered by the
+            // whole-row MAC (WG-7).
+            frozen_new_oid: block_frozen_new_oid.clone(),
             state: crate::confirmation::PendingConfirmationState::Pending,
             // Placeholder — insert_pending_confirmation (below) computes and
             // stores the REAL whole-row MAC under `key`, ignoring this value

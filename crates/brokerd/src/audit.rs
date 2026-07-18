@@ -163,6 +163,13 @@ CREATE TABLE IF NOT EXISTS blocked_literals (
 -- resume from). A legacy pre-Plan-05 row's DEFAULT `''` MAC fails
 -- `verify_pending_confirmation_mac`'s `hex::decode`/`verify_slice` closed by
 -- construction — no special-casing needed.
+--
+-- `frozen_new_oid` (v1.9 Phase 44 Plan 04, GIT-02/03, WG-7) is the git.push
+-- human-confirmed new-oid, frozen at insert time and covered by the whole-row
+-- `mac` below — the anti-TOCTOU payload freeze (DESIGN-v1.9-egress-policy §1.6).
+-- EMPTY (`''`) for every non-git.push sink (they have no frozen payload oid); a
+-- pre-Phase-44 DB is widened idempotently by `migrate_pending_confirmations_
+-- schema` below.
 CREATE TABLE IF NOT EXISTS pending_confirmations (
     effect_id           TEXT PRIMARY KEY,
     session_id          TEXT NOT NULL,
@@ -173,7 +180,8 @@ CREATE TABLE IF NOT EXISTS pending_confirmations (
     combined_digest     TEXT NOT NULL,
     workspace_root_path TEXT NOT NULL,
     state               TEXT NOT NULL,
-    mac                 TEXT NOT NULL DEFAULT ''
+    mac                 TEXT NOT NULL DEFAULT '',
+    frozen_new_oid      TEXT NOT NULL DEFAULT ''
 ) STRICT;
 
 -- Anchored/monotonic head (v1.6 Phase 28 Plan 04, HARDEN-02 D-04): a single
@@ -320,6 +328,23 @@ fn migrate_pending_confirmations_schema(conn: &rusqlite::Connection) -> Result<(
     if !existing_columns.iter().any(|c| c == "mac") {
         conn.execute(
             "ALTER TABLE pending_confirmations ADD COLUMN mac TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    // v1.9 Phase 44 Plan 04 (GIT-02/03, WG-7): widen a pre-Phase-44 DB with the
+    // git.push frozen-new-oid column. The DEFAULT `''` is correct for every
+    // legacy non-git.push row (they carry no frozen payload oid). A legacy row's
+    // stored whole-row `mac` was computed over the PRE-Phase-44 field frame (no
+    // `frozen_new_oid` element); `build_pending_confirmation_mac` now frames
+    // `frozen_new_oid` as an additional (last) length-framed element, so a
+    // legacy row's MAC no longer verifies and it fails closed
+    // (untrusted-until-re-confirmed) — the SAME accepted migration discipline
+    // the `mac`/`combined_digest` widenings above use (a pending confirmation
+    // in flight across a broker upgrade must be re-issued, never silently
+    // trusted).
+    if !existing_columns.iter().any(|c| c == "frozen_new_oid") {
+        conn.execute(
+            "ALTER TABLE pending_confirmations ADD COLUMN frozen_new_oid TEXT NOT NULL DEFAULT ''",
             [],
         )?;
     }

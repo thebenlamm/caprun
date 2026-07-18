@@ -218,6 +218,15 @@ pub struct PendingConfirmation {
     /// sink. The other plumbing field the design doc's illustrative struct omits
     /// (RESEARCH Open Question 1 / Assumption A2).
     pub workspace_root_path: String,
+    /// The git.push human-confirmed frozen new-oid (v1.9 Phase 44 Plan 04,
+    /// GIT-02/03, WG-7, DESIGN-v1.9-egress-policy §1.6) — the anti-TOCTOU
+    /// PAYLOAD freeze: the specific commit oid the human authorized, snapshotted
+    /// at insert time and covered by the whole-row `mac` below (a tampered oid
+    /// fails verification). The Step-7 dispatch hands it to
+    /// `invoke_git_push_from_resolved`, which refuses if the live rev-parse
+    /// diverges. EMPTY (`String::new()`) for every non-git.push sink — they
+    /// carry no frozen payload oid. Frozen at Block/gate time, never re-derived.
+    pub frozen_new_oid: String,
     /// `Pending | Confirmed | Denied`. MUST start `Pending` at persistence time.
     pub state: PendingConfirmationState,
     /// The row's WHOLE-ROW broker-key MAC (v1.6 Phase 28 Plan 05, HARDEN-02 /
@@ -274,6 +283,13 @@ fn build_pending_confirmation_mac(
             pc.combined_digest.as_bytes(),
             pc.workspace_root_path.as_bytes(),
             state.as_str().as_bytes(),
+            // v1.9 Phase 44 Plan 04 (GIT-02/03, WG-7): the git.push frozen
+            // new-oid rides the SAME whole-row MAC integrity boundary as every
+            // other snapshot field — appended as the LAST length-framed element
+            // so the pre-Phase-44 element ordering is unchanged. A tampered oid
+            // (or a forged git.push pending row) fails `verify_pending_
+            // confirmation_mac`.
+            pc.frozen_new_oid.as_bytes(),
         ],
     );
     Ok(mac)
@@ -344,8 +360,9 @@ pub fn insert_pending_confirmation(
     conn.execute(
         "INSERT INTO pending_confirmations \
          (effect_id, session_id, blocked_event_id, sink, resolved_args, \
-          blocked_arg_names, combined_digest, workspace_root_path, state, mac) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+          blocked_arg_names, combined_digest, workspace_root_path, state, mac, \
+          frozen_new_oid) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             pc.effect_id.to_string(),
             pc.session_id.to_string(),
@@ -357,6 +374,7 @@ pub fn insert_pending_confirmation(
             &pc.workspace_root_path,
             pc.state.as_str(),
             &mac,
+            &pc.frozen_new_oid,
         ],
     )?;
     Ok(())
@@ -376,7 +394,8 @@ pub fn find_pending_confirmation(
 ) -> Result<Option<PendingConfirmation>> {
     let mut stmt = conn.prepare(
         "SELECT effect_id, session_id, blocked_event_id, sink, resolved_args, \
-                blocked_arg_names, combined_digest, workspace_root_path, state, mac \
+                blocked_arg_names, combined_digest, workspace_root_path, state, mac, \
+                frozen_new_oid \
          FROM pending_confirmations WHERE effect_id = ?1",
     )?;
     let mut rows = stmt.query(params![effect_id])?;
@@ -392,6 +411,7 @@ pub fn find_pending_confirmation(
             let workspace_root_path: String = row.get(7)?;
             let state: String = row.get(8)?;
             let mac: String = row.get(9)?;
+            let frozen_new_oid: String = row.get(10)?;
 
             let resolved_args: Vec<ResolvedArg> = serde_json::from_str(&resolved_args_json)?;
             let blocked_arg_names: Vec<String> = serde_json::from_str(&blocked_arg_names_json)?;
@@ -405,6 +425,7 @@ pub fn find_pending_confirmation(
                 blocked_arg_names,
                 combined_digest,
                 workspace_root_path,
+                frozen_new_oid,
                 state: PendingConfirmationState::from_str(&state)?,
                 mac,
             }))
@@ -842,9 +863,13 @@ pub async fn confirm(
     // §2): a confirm-releasable WRITE egress — REQUIRED in this allow-list (a
     // confirm-releasable sink absent from it is denied at the guard), kept in
     // sync with its Step-7 dispatch arm below.
+    // `git.push` (v1.9 Phase 44 Plan 04, GIT-02/03, DESIGN-v1.9-egress-policy
+    // §1.6/§1.7): git.push is ALWAYS confirm-gated (there is NO auto-dispatch
+    // Allowed arm) — a confirm-releasable sink that MUST be on this allow-list,
+    // kept in sync with its Step-4.8d precheck + Step-7 dispatch arm below.
     match pc.sink.0.as_str() {
         "file.create" | "email.send" | "file.write" | "process.exec" | "github.pr"
-        | "http.request.write" => {}
+        | "http.request.write" | "git.push" => {}
         other => {
             return Err(anyhow::anyhow!(
                 "confirm: sink `{other}` has no confirm-release dispatch wired \
@@ -947,6 +972,29 @@ pub async fn confirm(
                  (fail-closed-RECOVERABLE, row remains Pending): {e:#}"
             )
         })?;
+    }
+
+    // Step 4.8d (v1.9 Phase 44 Plan 04, GIT-02/03, DESIGN-v1.9-egress-policy
+    // §1.6/§1.7): `git.push` has a fallible socket-free pre-push validation
+    // (remote present + git.push-allowlisted + url constructible + the
+    // force/deletion refspec value-gate + a non-empty/shape-valid frozen_new_oid,
+    // WG-7). Run it HERE — before Step 5 appends `confirm_granted` and Step 6
+    // burns the one-shot — using the SAME `prepare_git_push` validators the
+    // Step-7 transfer driver's `run_git_push` applies, so precheck and dispatch
+    // cannot drift (P33/P34, no precheck/dispatch drift). A failure returns
+    // fail-closed-RECOVERABLE: the row stays `Pending` (the operator can `deny`
+    // it, or re-`confirm` once corrected), NEVER a burned confirmation with a
+    // dangling `confirm_granted` and no terminal event (the P33/P34
+    // confirm-release audit-gap class).
+    if pc.sink.0.as_str() == "git.push" {
+        crate::sinks::git_push::prepare_git_push(&pc.resolved_args, &pc.frozen_new_oid).map_err(
+            |e| {
+                anyhow::anyhow!(
+                    "git.push: pre-push validation failed before confirm_granted \
+                     (fail-closed-RECOVERABLE, row remains Pending): {e:#}"
+                )
+            },
+        )?;
     }
 
     // Step 5: append confirm_granted, parented on the CURRENT CHAIN HEAD
@@ -1235,13 +1283,49 @@ pub async fn confirm(
                 Err(_) => Ok(ConfirmOutcome::ConfirmedButSinkFailed),
             }
         }
+        // v1.9 Phase 44 Plan 04 (GIT-02/03, DESIGN-v1.9-egress-policy
+        // §1.5/§1.6/§1.7): git.push confirm-release — the ONLY transfer entry
+        // point (there is NO auto-dispatch Allowed arm; even a clean/untainted
+        // git.push is re-gated into a pending confirmation by server.rs). Like
+        // process.exec/github.pr/http.request.write this arm is async and awaits.
+        // The pre-burn Step-4.8d precheck (`prepare_git_push`) already validated
+        // remote/refspec/frozen_new_oid, so a dangling `confirm_granted` can
+        // never arise from a malformed arg. `invoke_git_push_from_resolved`
+        // threads the human-confirmed `frozen_new_oid` into the WG-7 anti-TOCTOU
+        // equality gate (a live rev-parse that diverges is refused BEFORE any
+        // pack/POST) and folds EVERY failure (pre-transfer gate OR transport)
+        // into an OPAQUE `git_push_failed` terminal event FIRST, then propagates
+        // — never a burned confirmation with no terminal event (§1.7/P33/P34).
+        // No CAS/dedup (the new-oid freeze + at-most-once one-shot ARE the
+        // duplicate defense). This arm does NOT mint (Gate 3's mint-site
+        // allow-list stays byte-identical — no mint token in confirmation.rs).
+        "git.push" => {
+            match crate::sinks::git_push::invoke_git_push_from_resolved(
+                conn,
+                key,
+                pc.session_id,
+                pc.effect_id,
+                &pc.resolved_args,
+                workspace_root,
+                &pc.frozen_new_oid,
+                granted_event_id,
+                &granted_hash,
+            )
+            .await
+            {
+                Ok(_) => Ok(ConfirmOutcome::Released),
+                // The sink already appended a durable opaque git_push_failed
+                // terminal event; state stays Confirmed, no retry (DESIGN Step 4a.5).
+                Err(_) => Ok(ConfirmOutcome::ConfirmedButSinkFailed),
+            }
+        }
         // Phase 33 adversarial-review MAJOR-1 fix: this arm IS reachable in
         // principle (the match is exhaustive over `&str`), but the Step 4.75
         // entry guard above already refuses any sink outside
         // {"file.create","email.send","file.write","process.exec","github.pr",
-        //  "http.request.write"} BEFORE reaching here — so hitting this arm means
-        // the guard's allow-list and this match's arms have drifted out of sync
-        // (a broker-internal invariant violation, not a normal runtime path).
+        //  "http.request.write","git.push"} BEFORE reaching here — so hitting this
+        // arm means the guard's allow-list and this match's arms have drifted out
+        // of sync (a broker-internal invariant violation, not a normal runtime path).
         other => Err(anyhow::anyhow!(
             "confirm: unreachable — sink `{other}` passed the Step 4.75 entry \
              guard but has no Step 7 dispatch arm (guard/match drift)"
@@ -1448,6 +1532,7 @@ mod tests {
             blocked_arg_names: vec!["path".to_string()],
             combined_digest,
             workspace_root_path: "/workspace".to_string(),
+            frozen_new_oid: String::new(),
             state: PendingConfirmationState::Pending,
             mac: String::new(),
         }
@@ -1598,6 +1683,7 @@ mod tests {
             blocked_arg_names: vec!["body".to_string(), "to".to_string()],
             combined_digest: digest,
             workspace_root_path: "/unused-for-render".to_string(),
+            frozen_new_oid: String::new(),
             state: PendingConfirmationState::Pending,
             mac: String::new(),
         }
@@ -1695,6 +1781,7 @@ mod tests {
             blocked_arg_names: vec!["body".to_string(), "to".to_string()],
             combined_digest: digest,
             workspace_root_path: "/unused".to_string(),
+            frozen_new_oid: String::new(),
             state: PendingConfirmationState::Pending,
             mac: String::new(),
         };
@@ -1811,6 +1898,7 @@ mod tests {
             blocked_arg_names,
             combined_digest: digest,
             workspace_root_path: workspace_root_path.to_string(),
+            frozen_new_oid: String::new(),
             state: PendingConfirmationState::Pending,
             mac: String::new(),
         };
@@ -1977,6 +2065,7 @@ mod tests {
             blocked_arg_names,
             combined_digest: digest,
             workspace_root_path: workspace_root_path.to_string(),
+            frozen_new_oid: String::new(),
             state: PendingConfirmationState::Pending,
             mac: String::new(),
         };
@@ -2034,6 +2123,270 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(pc.state, PendingConfirmationState::Confirmed);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // ── git.push confirm-release wiring (v1.9 Phase 44 Plan 04, GIT-02/03) ──
+
+    /// Seed a Pending git.push block: a `session_created` root, a `sink_blocked`
+    /// event carrying the combined digest over `{remote, refspec}` + a
+    /// blocked_literals row (so the confirm redaction/digest gates pass), and a
+    /// `PendingConfirmation` carrying `frozen_new_oid` (WG-7). Mirrors
+    /// `seed_pending_file_write_block`. `blocked_arg_names = ["remote"]` models
+    /// the tainted-remote I2-Block path; the clean-Allowed path assembles an
+    /// equivalent row (server.rs, Task 2) — both converge on this shape.
+    fn seed_pending_git_push_block(
+        conn: &rusqlite::Connection,
+        remote: &str,
+        refspec: &str,
+        frozen_new_oid: &str,
+        workspace_root_path: &str,
+    ) -> (Uuid, Uuid, Uuid) {
+        let session_id = Uuid::new_v4();
+        let effect_id = Uuid::new_v4();
+        let read_event_id = Uuid::new_v4();
+
+        let root = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "session_created".into(),
+            chrono::Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(conn, TEST_KEY, &root, None).unwrap();
+
+        let literal_sha256 = {
+            let mut hasher = Sha256::new();
+            hasher.update(remote.as_bytes());
+            hex::encode(hasher.finalize())
+        };
+        let anchor = SinkBlockedAnchor {
+            effect_id,
+            sink: SinkId("git.push".into()),
+            arg: "remote".into(),
+            value_id: ValueId::new(),
+            literal_sha256,
+            taint: vec![TaintLabel::ExternalUntrusted],
+            provenance_chain: vec![read_event_id],
+            read_event_id,
+        };
+
+        let resolved_args = vec![
+            ResolvedArg {
+                name: "remote".to_string(),
+                value_id: ValueId::new(),
+                literal: remote.to_string(),
+                taint: vec![TaintLabel::ExternalUntrusted],
+                provenance_chain: vec![read_event_id],
+            },
+            ResolvedArg {
+                name: "refspec".to_string(),
+                value_id: ValueId::new(),
+                literal: refspec.to_string(),
+                taint: vec![TaintLabel::UserTrusted],
+                provenance_chain: vec![],
+            },
+        ];
+        let digest = combined_digest(
+            &resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let blocked_arg_names = vec!["remote".to_string()];
+
+        let blocked_event = Event::sink_blocked(
+            Uuid::new_v4(),
+            Some(root.id),
+            session_id,
+            chrono::Utc::now(),
+            vec![anchor],
+            Some(digest.clone()),
+            blocked_arg_names.clone(),
+        );
+        let blocked_event_id = blocked_event.id;
+        append_event(conn, TEST_KEY, &blocked_event, Some(&root_hash)).unwrap();
+        insert_blocked_literal(conn, &blocked_event_id.to_string(), "remote", remote).unwrap();
+
+        let pc = PendingConfirmation {
+            effect_id,
+            session_id,
+            blocked_event_id,
+            sink: SinkId("git.push".into()),
+            resolved_args,
+            blocked_arg_names,
+            combined_digest: digest,
+            workspace_root_path: workspace_root_path.to_string(),
+            frozen_new_oid: frozen_new_oid.to_string(),
+            state: PendingConfirmationState::Pending,
+            mac: String::new(),
+        };
+        insert_pending_confirmation(conn, TEST_KEY, &pc).unwrap();
+
+        (effect_id, session_id, blocked_event_id)
+    }
+
+    /// WG-7: the git.push `frozen_new_oid` rides the whole-row MAC — a tampered
+    /// oid (or a forged git.push pending row) fails `verify_pending_confirmation_
+    /// mac`. Host-portable (no git / no socket).
+    #[test]
+    fn git_push_frozen_new_oid_is_mac_covered() {
+        const FROZEN: &str = "abcdef0123456789abcdef0123456789abcdef01";
+        let conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, _session_id, _blocked_event_id) = seed_pending_git_push_block(
+            &conn,
+            "https://github-mock.caprun.test/owner/repo.git",
+            "refs/heads/main:refs/heads/main",
+            FROZEN,
+            "/workspace",
+        );
+
+        // As persisted, the whole-row MAC verifies and the oid round-trips.
+        let pc = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .unwrap();
+        assert_eq!(pc.frozen_new_oid, FROZEN, "the frozen oid round-trips through persistence");
+        assert!(
+            verify_pending_confirmation_mac(TEST_KEY, &pc),
+            "an untampered git.push pending row's whole-row MAC must verify"
+        );
+
+        // Tamper ONLY the frozen oid in the fetched row — the MAC must now fail
+        // (the freeze is inside the integrity boundary, not a bare side field).
+        let mut tampered = pc.clone();
+        tampered.frozen_new_oid = "1111111111111111111111111111111111111111".to_string();
+        assert!(
+            !verify_pending_confirmation_mac(TEST_KEY, &tampered),
+            "a tampered frozen_new_oid MUST fail the whole-row MAC (WG-7)"
+        );
+    }
+
+    /// Step 4.75 guard + Step 4.8d precheck (P33/P34): git.push is ON the
+    /// entry-guard allow-list (it reaches the precheck, never the guard-drift
+    /// error), and a pre-push precheck FAILURE is fail-closed-RECOVERABLE — the
+    /// row stays `Pending`, NO `confirm_granted` is appended, and NO terminal
+    /// `git_push_*` event exists (never a burned one-shot with a dangling
+    /// confirm_granted). Uses a FORCE refspec (leading `+`), which the
+    /// `validate_git_refspec` value-gate refuses in BOTH the default build (where
+    /// the empty push allowlist also fails it first) AND under `mock-egress-ca`
+    /// (where the mock host IS allowlisted but the force refspec still fails) —
+    /// so the precheck failure is deterministic regardless of feature. The
+    /// precheck is socket-free (host-portable, no git / no network).
+    #[tokio::test]
+    async fn git_push_precheck_failure_leaves_row_pending_no_burn() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_confirm_gitpush_precheck_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, _blocked_event_id) = seed_pending_git_push_block(
+            &conn,
+            "https://github-mock.caprun.test/owner/repo.git",
+            // A FORCE refspec (leading '+') is refused by validate_git_refspec in
+            // the precheck — deterministic across default AND mock-egress-ca
+            // builds (never dependent on the allowlist state).
+            "+refs/heads/main:refs/heads/main",
+            "abcdef0123456789abcdef0123456789abcdef01",
+            &root.to_string_lossy(),
+        );
+
+        let result = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await;
+        assert!(
+            result.is_err(),
+            "a git.push precheck failure must return Err (fail-closed-RECOVERABLE), \
+             NOT a guard-drift panic and NOT a burned Released outcome: {result:?}"
+        );
+
+        // The row is untouched — still Pending, re-confirmable once corrected.
+        let pc = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            pc.state,
+            PendingConfirmationState::Pending,
+            "a pre-burn precheck failure MUST leave the row Pending"
+        );
+        // No one-shot was burned and no terminal event was appended.
+        let sid = session_id.to_string();
+        assert!(
+            find_event_by_type(&conn, &sid, "confirm_granted").unwrap().is_none(),
+            "NO confirm_granted may be appended before a passing precheck"
+        );
+        assert!(
+            find_event_by_type(&conn, &sid, "git_push_failed").unwrap().is_none(),
+            "the transfer never ran — no git_push_failed terminal event"
+        );
+        assert!(
+            find_event_by_type(&conn, &sid, "git_push_succeeded").unwrap().is_none(),
+            "the transfer never ran — no git_push_succeeded terminal event"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The clean confirm-release reaches Step-7 dispatch (needs the mock host on
+    /// the push allowlist, so gated behind `mock-egress-ca` — the default build's
+    /// empty allowlist fails the precheck, covered by the test above). The
+    /// precheck PASSES, `confirm_granted` is appended, the state burns to
+    /// `Confirmed` (released exactly once), and `invoke_git_push_from_resolved`
+    /// folds the host-unreachable transfer into a terminal `git_push_failed`
+    /// event FIRST (terminal EVENT before the terminal disposition — §1.7/P33/P34),
+    /// yielding `ConfirmedButSinkFailed`. A second confirm is refused as
+    /// `AlreadyTerminal` (single-shot).
+    #[cfg(feature = "mock-egress-ca")]
+    #[tokio::test]
+    async fn git_push_confirm_releases_once_reaching_step7_dispatch() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_confirm_gitpush_step7_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let (effect_id, session_id, blocked_event_id) = seed_pending_git_push_block(
+            &conn,
+            "https://github-mock.caprun.test/owner/repo.git",
+            "refs/heads/main:refs/heads/main",
+            "abcdef0123456789abcdef0123456789abcdef01",
+            &root.to_string_lossy(),
+        );
+
+        let outcome = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws)
+            .await
+            .expect("confirm must complete (not a transport-level Err)");
+        // The transfer cannot succeed here (no live mock receive-pack), so the
+        // one-shot burns to Confirmed and the sink reports failure — but it is
+        // RELEASED (reached Step-7), never blocked at the precheck.
+        assert_eq!(outcome, ConfirmOutcome::ConfirmedButSinkFailed);
+
+        let sid = session_id.to_string();
+        let granted = find_event_by_type(&conn, &sid, "confirm_granted")
+            .unwrap()
+            .expect("confirm_granted must exist — the precheck passed and Step-7 ran");
+        assert_eq!(granted.parent_id, Some(blocked_event_id));
+        assert!(
+            find_event_by_type(&conn, &sid, "git_push_failed").unwrap().is_some(),
+            "the transfer failure folds into a terminal git_push_failed event FIRST \
+             (never a burned confirmation with no terminal event)"
+        );
+        assert!(
+            crate::audit::verify_chain(&conn, &sid, TEST_KEY),
+            "the chain stays unbroken across a git.push confirm-release"
+        );
+
+        let pc = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .unwrap();
+        assert_eq!(pc.state, PendingConfirmationState::Confirmed);
+
+        // Single-shot: a second confirm is refused (the one-shot was burned).
+        let again = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws)
+            .await
+            .expect("second confirm completes");
+        assert_eq!(again, ConfirmOutcome::AlreadyTerminal);
 
         std::fs::remove_dir_all(&root).ok();
     }
@@ -2122,6 +2475,7 @@ mod tests {
             blocked_arg_names,
             combined_digest: digest,
             workspace_root_path: root.to_string_lossy().to_string(),
+            frozen_new_oid: String::new(),
             state: PendingConfirmationState::Pending,
             mac: String::new(),
         };
@@ -2253,6 +2607,7 @@ mod tests {
             blocked_arg_names,
             combined_digest: digest,
             workspace_root_path: root.to_string_lossy().to_string(),
+            frozen_new_oid: String::new(),
             state: PendingConfirmationState::Pending,
             mac: String::new(),
         };
@@ -2403,6 +2758,7 @@ mod tests {
             blocked_arg_names,
             combined_digest: digest,
             workspace_root_path: root_path.to_string(),
+            frozen_new_oid: String::new(),
             state: PendingConfirmationState::Pending,
             mac: String::new(),
         };
@@ -2798,6 +3154,7 @@ mod tests {
             blocked_arg_names,
             combined_digest: digest,
             workspace_root_path: root_path.to_string(),
+            frozen_new_oid: String::new(),
             state: PendingConfirmationState::Pending,
             mac: String::new(),
         };
@@ -3542,6 +3899,7 @@ mod tests {
             blocked_arg_names,
             combined_digest: digest,
             workspace_root_path: "/unused-for-email-send".to_string(),
+            frozen_new_oid: String::new(),
             state: PendingConfirmationState::Pending,
             mac: String::new(),
         };

@@ -316,6 +316,7 @@ async fn seed_and_confirm_email_send(
         blocked_arg_names,
         combined_digest: digest,
         workspace_root_path: "/unused-for-email-send".to_string(),
+        frozen_new_oid: String::new(),
         state: PendingConfirmationState::Pending,
         mac: String::new(),
     };
