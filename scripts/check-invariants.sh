@@ -251,11 +251,17 @@ fi
 #      re-inline copies the tag -> count >= 2 -> FAIL. An unrelated comparison
 #      carries no tag -> never a false-positive. (Positive exact-count gate, so
 #      the marker legitimately appears once in source.)
-#   6b DELEGATION: each known containment call site must CALL
-#      refuse_if_beneath_workspace and must NOT carry its own canonicalize-
-#      paired-with-prefix-comparison block (catches a divergently-spelled
-#      re-inline that omits the marker). The brokerd binder is checked only
-#      once its file exists (skipped gracefully until Plan 04).
+#   6b ANTI-REINLINE + DELEGATION: the re-inline candidate set is DERIVED
+#      dynamically (any file under crates/ cli/ carrying the canonicalize+prefix
+#      shape, minus the helper) so a THIRD re-inline site cannot evade a
+#      hardcoded list; the canonicalize token is broadened to the bare
+#      `canonicalize(` so the method form `path.canonicalize()` is caught too.
+#      Any such file must delegate to refuse_if_beneath_workspace instead of
+#      re-inlining (catches a divergently-spelled re-inline that omits the
+#      marker). A positive delegation check on the long-lived consumers
+#      (key.rs, brokerd policy.rs) additionally catches a consumer that DROPPED
+#      delegation without re-inlining the full shape; each is checked only once
+#      its file exists (skipped gracefully until Plan 04).
 # ──────────────────────────────────────────────────────────────────────────────
 echo "Gate 6: checking containment-predicate anti-drift (single shared helper + delegation) ..."
 
@@ -275,21 +281,47 @@ elif [ "$marker_hits" != "$CONTAINMENT_HELPER" ]; then
     gate6_fail=1
 fi
 
-# 6b DELEGATION ----------------------------------------------------------------
-# A re-inline is a file that pairs a filesystem canonicalize with a path-prefix
-# comparison of its own. The grep patterns are assembled from fragments so the
-# gate's own source never contains the literal token it scans call sites for.
-canon_token="std::fs::"$'canonicalize'
+# 6b ANTI-REINLINE (dynamically-derived site list) + DELEGATION ----------------
+# The containment predicate's SHAPE is a filesystem canonicalize paired with a
+# path-prefix comparison. That shape must exist in EXACTLY ONE place — the shared
+# helper. Rather than trust a HARDCODED call-site list (which a THIRD re-inline
+# site would silently evade — v1.9 Phase-42 review MINOR), the re-inline set is
+# DERIVED: every file under crates/ cli/ that carries BOTH a canonicalize call
+# AND a starts_with( comparison, minus the sanctioned helper. Any remaining file
+# re-inlines the predicate and MUST instead delegate to
+# refuse_if_beneath_workspace → FAIL.
+#
+# The canonicalize token is broadened to the bare `canonicalize(` so it catches
+# the method form `path.canonicalize()` as well as the free `std::fs::` form —
+# the old `std::fs::`-only token let a method-form re-inline evade the gate.
+# Fragments keep the gate's own source from containing the literal shape it scans
+# for. An inline `planner-discipline-allow` annotation exempts an intentional,
+# non-containment use (mirrors Gate 1 / Gate 3).
+canon_token=$'canonicalize'"("
 prefix_token=$'starts_with'"("
+
+# -F (fixed string): the tokens carry a literal `(`, which under -E/-G would be
+# a regex metacharacter and silently fail to match (e.g. `path.canonicalize()`).
+reinline_hits=$(grep -rlF -- "$canon_token" crates/ cli/ --include="*.rs" 2>/dev/null || true)
+for site in $reinline_hits; do
+    [ "$site" = "$CONTAINMENT_HELPER" ] && continue        # the sanctioned sole home
+    grep -q -- "$prefix_token" "$site" || continue          # no prefix-compare → not the shape
+    if grep -q "planner-discipline-allow" "$site"; then      # intentional non-containment use
+        continue
+    fi
+    echo "  FAIL — $site carries a canonicalize+prefix-compare block (re-inlined containment predicate); must delegate to refuse_if_beneath_workspace"
+    gate6_fail=1
+done
+
+# DELEGATION (positive check on the long-lived consumers): a consumer that
+# silently DROPPED its delegation WITHOUT re-inlining the full shape would slip
+# past the anti-reinline scan above, so assert the known containment consumers
+# still call the shared helper. Each is checked only once its file exists.
 check_delegation_site() {
     local site="$1"
-    [ -f "$site" ] || return 0   # skip gracefully (e.g. policy.rs before Plan 04)
+    [ -f "$site" ] || return 0   # skip gracefully if a consumer file is absent
     if ! grep -q "refuse_if_beneath_workspace" "$site"; then
-        echo "  FAIL — containment call site $site does not delegate to refuse_if_beneath_workspace"
-        gate6_fail=1
-    fi
-    if grep -q -- "$canon_token" "$site" && grep -q -- "$prefix_token" "$site"; then
-        echo "  FAIL — containment call site $site re-inlines a canonicalize+prefix-compare block (must delegate)"
+        echo "  FAIL — containment consumer $site does not delegate to refuse_if_beneath_workspace"
         gate6_fail=1
     fi
 }
@@ -297,7 +329,7 @@ check_delegation_site "cli/caprun/src/key.rs"
 check_delegation_site "crates/brokerd/src/policy.rs"
 
 if [ "$gate6_fail" -eq 0 ]; then
-    echo "  PASS — containment predicate lives only in the shared helper; all call sites delegate"
+    echo "  PASS — containment predicate lives only in the shared helper; all consumers delegate"
 else
     overall=$FAIL
 fi
