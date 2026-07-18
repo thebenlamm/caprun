@@ -16,6 +16,7 @@
 /// - FD_CLOEXEC set immediately after recvmsg via fcntl (Pitfall 6)
 /// - At least one iov byte sent alongside cmsg (some kernels require >=1 byte)
 
+pub mod containment;
 pub mod protocol;
 pub mod workspace;
 
