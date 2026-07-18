@@ -426,7 +426,353 @@ mod composed {
         // Track every negative-leg session so the final sweep asserts the exact set.
         let mut expected_sessions: Vec<Uuid> = Vec::new();
 
-        // Legs 1-5 are added in Tasks 2 and 3.
+        // ── LEG 1 — tainted push `remote` I2-Blocks under a git.push-PERMITTING
+        //    policy → a durable `sink_blocked` event (anchor names the tainted
+        //    arg). Taint is GENUINE (real mint_from_http provenance), not stapled.
+        let leg1_session = {
+            let (repo, ws) = setup_git_push_repo("leg1");
+            let conn = open_audit_db(audit_db_str).expect("open shared db (leg1)");
+            let (session_id, root_id, root_hash) = seed_session(&conn, &key);
+            expected_sessions.push(session_id);
+            let session_id_str = session_id.to_string();
+
+            let mut store = ValueStore::default();
+            // A CLEAN refspec (byte-identical route) + a genuinely-TAINTED remote —
+            // taint is the SOLE reason the Block fires (mirrors the s44 B1 shape).
+            let (refspec_vid, head_id, head_hash) =
+                mint_clean(&conn, &key, &mut store, session_id, REFSPEC, root_id, &root_hash);
+            let (remote_tainted, _hid, _hh) =
+                mint_tainted(&conn, &key, &mut store, session_id, REMOTE, head_id, &head_hash);
+            assert!(
+                store
+                    .resolve(&remote_tainted)
+                    .unwrap()
+                    .taint
+                    .iter()
+                    .any(|t| t.is_untrusted()),
+                "LEG 1 remote must be genuinely untrusted (why it Blocks)"
+            );
+            let node = push_node(&remote_tainted, &refspec_vid);
+
+            // Re-read the chain head AFTER the tainted mint's session_demoted
+            // appends, so the dispatch threads onto the true head.
+            let (head_id, head_hash) = current_chain_head(&conn, &session_id_str)
+                .expect("chain head query")
+                .expect("chain head after mints");
+
+            let conn = Arc::new(Mutex::new(conn));
+            let mut last_event_id = head_id;
+            let mut last_event_hash = head_hash;
+
+            let (decision, ovid, _demoted) =
+                brokerd::server::evaluate_plan_node_and_record_for_test(
+                    &node,
+                    &conn,
+                    &key,
+                    session_id,
+                    &mut store,
+                    &ws,
+                    // Active: isolate the Block as TAINT-driven (I2), not a draft gate.
+                    &SessionStatus::Active,
+                    // broker_default() EXPLICITLY PERMITS git.push — so policy is
+                    // provably NOT what blocks this leg (POLICY-02 distinctness).
+                    &SessionPolicy::broker_default(),
+                    &mut last_event_id,
+                    &mut last_event_hash,
+                )
+                .await
+                .expect("a Blocked decision is a normal Ok outcome");
+
+            match &decision {
+                ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+                    assert_eq!(
+                        anchors.len(),
+                        1,
+                        "only the tainted remote Blocks — the refspec is clean; got {anchors:?}"
+                    );
+                    assert_eq!(anchors[0].anchor.arg, "remote", "anchor names the tainted arg");
+                    assert_eq!(anchors[0].anchor.sink.0, "git.push");
+                    assert!(
+                        !anchors[0].anchor.provenance_chain.is_empty(),
+                        "the Block anchor must carry a genuine (non-empty) provenance chain"
+                    );
+                    assert_eq!(
+                        anchors[0].anchor.read_event_id, anchors[0].anchor.provenance_chain[0],
+                        "anchor.read_event_id must equal provenance_chain[0] (genuine, non-stapled)"
+                    );
+                }
+                other => panic!("LEG 1 tainted remote must Block on `remote` — got {other:?}"),
+            }
+            assert!(ovid.is_none(), "a Blocked git.push mints nothing");
+
+            let locked = conn.lock().unwrap();
+            assert_eq!(
+                count_events(&locked, session_id, "sink_blocked"),
+                1,
+                "LEG 1 records exactly one sink_blocked (I2 Block) under a git.push-PERMITTING policy"
+            );
+            assert_eq!(
+                count_events(&locked, session_id, "git_push_succeeded"),
+                0,
+                "a Blocked push never dispatches — no git_push_succeeded"
+            );
+            assert_eq!(
+                count_events(&locked, session_id, "git_push_failed"),
+                0,
+                "a Blocked push never dispatches — no git_push_failed"
+            );
+            assert!(
+                verify_chain(&locked, &session_id_str, &key),
+                "LEG 1 verify_chain must hold across the mint + block"
+            );
+            drop(locked);
+            std::fs::remove_dir_all(&repo).ok();
+            session_id
+        };
+
+        // ── LEG 2 — tainted POST `body` I2-Blocks under an http.request.write-
+        //    PERMITTING policy → a `sink_blocked` event + NO http_write_* terminal
+        //    (the write is NEVER attempted). Reuses the s43 dispatch-leg shape.
+        let leg2_session = {
+            let conn = open_audit_db(audit_db_str).expect("open shared db (leg2)");
+            let (session_id, root_id, root_hash) = seed_session(&conn, &key);
+            expected_sessions.push(session_id);
+            let session_id_str = session_id.to_string();
+
+            let mut store = ValueStore::default();
+            let (url, head_id, head_hash) =
+                mint_clean(&conn, &key, &mut store, session_id, WRITE_URL, root_id, &root_hash);
+            let (method, head_id, head_hash) =
+                mint_clean(&conn, &key, &mut store, session_id, WRITE_METHOD, head_id, &head_hash);
+            let (body_tainted, _hid, _hh) =
+                mint_tainted(&conn, &key, &mut store, session_id, BODY_LITERAL, head_id, &head_hash);
+            assert!(
+                store
+                    .resolve(&body_tainted)
+                    .unwrap()
+                    .taint
+                    .iter()
+                    .any(|t| t.is_untrusted()),
+                "LEG 2 body must be genuinely untrusted (why it Blocks)"
+            );
+            let node = write_node(&url, &method, &body_tainted);
+
+            let (head_id, head_hash) = current_chain_head(&conn, &session_id_str)
+                .expect("chain head query")
+                .expect("chain head after mints");
+
+            let conn = Arc::new(Mutex::new(conn));
+            let workspace = Arc::new(
+                adapter_fs::workspace::WorkspaceRoot::open(&std::env::temp_dir())
+                    .expect("open temp workspace root"),
+            );
+            let mut last_event_id = head_id;
+            let mut last_event_hash = head_hash;
+
+            let (decision, ovid, _demoted) =
+                brokerd::server::evaluate_plan_node_and_record_for_test(
+                    &node,
+                    &conn,
+                    &key,
+                    session_id,
+                    &mut store,
+                    &workspace,
+                    &SessionStatus::Active,
+                    &SessionPolicy::broker_default(),
+                    &mut last_event_id,
+                    &mut last_event_hash,
+                )
+                .await
+                .expect("a Blocked decision is a normal Ok outcome — the write arm is never entered");
+
+            match &decision {
+                ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+                    assert_eq!(anchors.len(), 1, "only the tainted body Blocks; got {anchors:?}");
+                    assert_eq!(anchors[0].anchor.arg, "body", "anchor names the tainted `body`");
+                    assert_eq!(anchors[0].anchor.sink.0, "http.request.write");
+                    assert!(
+                        !anchors[0].anchor.provenance_chain.is_empty(),
+                        "genuine (non-empty) provenance chain"
+                    );
+                    assert_eq!(
+                        anchors[0].anchor.read_event_id, anchors[0].anchor.provenance_chain[0],
+                        "genuine anchor (read_event_id == provenance_chain[0])"
+                    );
+                }
+                other => panic!("LEG 2 tainted body must Block on `body` — got {other:?}"),
+            }
+            assert!(ovid.is_none(), "a Blocked http.request.write mints nothing");
+
+            let locked = conn.lock().unwrap();
+            assert_eq!(
+                count_events(&locked, session_id, "sink_blocked"),
+                1,
+                "LEG 2 records exactly one sink_blocked (I2 Block) under a write-PERMITTING policy"
+            );
+            assert_eq!(
+                count_events(&locked, session_id, "http_write_failed"),
+                0,
+                "the tainted body NEVER reaches the write — no http_write_failed"
+            );
+            assert_eq!(
+                count_events(&locked, session_id, "http_write_succeeded"),
+                0,
+                "the tainted body NEVER reaches the write — no http_write_succeeded"
+            );
+            assert!(
+                verify_chain(&locked, &session_id_str, &key),
+                "LEG 2 verify_chain must hold across the mint + block"
+            );
+            drop(locked);
+            session_id
+        };
+
+        // ── LEG 3 — policy-deny (NOT an I2 Block). A session policy that EXPLICITLY
+        //    PERMITS the leg-1/2 sinks (git.push + http.request.write) but OMITS
+        //    email.send → submitting email.send yields `Denied{PolicyDeny}` with
+        //    `code()=="policy_deny"`, recorded as the GENERIC `plan_node_evaluated`
+        //    event with NO `sink_blocked`. Decision-level (NO new TCB).
+        let leg3_session = {
+            // A custom policy built via serde (the trusted-JSON binder shape): the
+            // leg-1/2 sinks PERMITTED, email.send OMITTED. Proves the omitted sink
+            // is policy-denied while the I2 legs' sinks are policy-permitted.
+            let policy: SessionPolicy = serde_json::from_str(
+                r#"{"allowed_sinks":["git.push","http.request.write"],"arg_constraints":{}}"#,
+            )
+            .expect("build policy permitting git.push + http.request.write, omitting email.send");
+            assert!(
+                policy.permits_sink(&SinkId("git.push".into())),
+                "the policy must EXPLICITLY PERMIT git.push (the leg-1 sink)"
+            );
+            assert!(
+                policy.permits_sink(&SinkId("http.request.write".into())),
+                "the policy must EXPLICITLY PERMIT http.request.write (the leg-2 sink)"
+            );
+            assert!(
+                !policy.permits_sink(&SinkId("email.send".into())),
+                "the policy must OMIT email.send (the leg-3 policy-deny target)"
+            );
+
+            let conn = open_audit_db(audit_db_str).expect("open shared db (leg3)");
+            let (session_id, root_id, root_hash) = seed_session(&conn, &key);
+            expected_sessions.push(session_id);
+            let session_id_str = session_id.to_string();
+
+            // A schema-valid email.send node (email.send allows `to`, requires
+            // none). The arg is CLEAN — policy-deny fires at the pre-I2 gate BEFORE
+            // any taint check, so the deny is attributable to POLICY, not taint.
+            let mut store = ValueStore::default();
+            let (to_vid, _hid, _hh) =
+                mint_clean(&conn, &key, &mut store, session_id, "ops@example.com", root_id, &root_hash);
+            let node = PlanNode {
+                sink: SinkId("email.send".into()),
+                args: vec![PlanArg { name: "to".into(), value_id: to_vid }],
+            };
+
+            let (head_id, head_hash) = current_chain_head(&conn, &session_id_str)
+                .expect("chain head query")
+                .expect("chain head after mint");
+
+            let conn = Arc::new(Mutex::new(conn));
+            let workspace = Arc::new(
+                adapter_fs::workspace::WorkspaceRoot::open(&std::env::temp_dir())
+                    .expect("open temp workspace root"),
+            );
+            let mut last_event_id = head_id;
+            let mut last_event_hash = head_hash;
+
+            let (decision, ovid, _demoted) =
+                brokerd::server::evaluate_plan_node_and_record_for_test(
+                    &node,
+                    &conn,
+                    &key,
+                    session_id,
+                    &mut store,
+                    &workspace,
+                    &SessionStatus::Active,
+                    &policy,
+                    &mut last_event_id,
+                    &mut last_event_hash,
+                )
+                .await
+                .expect("a policy Denied decision is a normal Ok outcome (recorded, never dispatched)");
+
+            match &decision {
+                ExecutorDecision::Denied {
+                    reason: reason @ DenyReason::PolicyDeny { sink, arg, constraint },
+                } => {
+                    assert_eq!(
+                        reason.code(),
+                        "policy_deny",
+                        "LEG 3 must carry the DISTINCT policy_deny machine-checkable tag"
+                    );
+                    assert_eq!(sink, "email.send", "the deny names the omitted sink");
+                    assert_eq!(*arg, None, "a sink-level deny (email.send absent), arg = None");
+                    assert_eq!(
+                        constraint, "sink-not-allowed",
+                        "the constraint tag names the deny-by-default sink gate"
+                    );
+                }
+                other => panic!(
+                    "LEG 3 (omitted sink) must Deny PolicyDeny (code()==\"policy_deny\"), \
+                     NEVER a BlockedPendingConfirmation — got {other:?}"
+                ),
+            }
+            assert!(ovid.is_none(), "a policy-denied node mints nothing");
+
+            let locked = conn.lock().unwrap();
+            // The policy-deny leg records the GENERIC plan_node_evaluated event and
+            // NO sink_blocked — the two tags are structurally distinct in the DAG.
+            assert_eq!(
+                count_events(&locked, session_id, "sink_blocked"),
+                0,
+                "LEG 3 policy-deny must record NO sink_blocked (distinct from an I2 Block)"
+            );
+            assert_eq!(
+                count_events(&locked, session_id, "plan_node_evaluated"),
+                1,
+                "LEG 3 policy-deny is recorded as exactly one GENERIC plan_node_evaluated event"
+            );
+            assert!(
+                verify_chain(&locked, &session_id_str, &key),
+                "LEG 3 verify_chain must hold across the mint + policy-deny record"
+            );
+            drop(locked);
+            session_id
+        };
+
+        // ── DISTINCT TAGS, ASSERTED SEPARATELY (locked decision #3) ────────────
+        //    Re-open the shared DB and assert the two machine-checkable tags side
+        //    by side, so policy-deny and I2-Block are provably-distinct mechanisms:
+        //      * I2-Block legs (1, 2): each has a `sink_blocked` event.
+        //      * policy-deny leg (3): NO `sink_blocked`, a generic
+        //        `plan_node_evaluated` — the tag is `code()=="policy_deny"` (proven
+        //        at evaluate time above), never a `sink_blocked`.
+        {
+            let conn = open_audit_db(audit_db_str).expect("open shared DB (tag separation)");
+            assert_eq!(
+                count_events(&conn, leg1_session, "sink_blocked"),
+                1,
+                "TAG(I2): leg 1 (tainted remote) carries a sink_blocked event"
+            );
+            assert_eq!(
+                count_events(&conn, leg2_session, "sink_blocked"),
+                1,
+                "TAG(I2): leg 2 (tainted body) carries a sink_blocked event"
+            );
+            assert_eq!(
+                count_events(&conn, leg3_session, "sink_blocked"),
+                0,
+                "TAG(policy_deny): leg 3 carries NO sink_blocked — distinct from an I2 Block"
+            );
+            assert_eq!(
+                count_events(&conn, leg3_session, "plan_node_evaluated"),
+                1,
+                "TAG(policy_deny): leg 3 is a generic plan_node_evaluated (policy narrowed, I2 not run)"
+            );
+        }
+
+        // Legs 4-5 are added in Task 3.
 
         // ── END-OF-RUN SWEEP — open the shared audit_db ONCE; every negative-leg
         //    session must exist with verify_chain INDEPENDENTLY true. ───────────
