@@ -16,6 +16,7 @@ pub mod email_smtp;
 pub mod file_create;
 pub mod file_write;
 pub mod git_commit;
+pub mod git_push;
 pub mod github_pr;
 pub mod http_request;
 pub mod http_write;
