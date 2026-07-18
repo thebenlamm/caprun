@@ -1,0 +1,20 @@
+# Phase 33 — Fresh Non-Self Adversarial Code-Trace (post-execution)
+
+**Reviewer:** independent Fable-5 agent (non-self), traced code at HEAD `d9ba149`, ran `check-invariants.sh` (4/4 PASS), verified diff completeness (12 files, no smuggled `lib.rs`/`proto.rs`/`worker.rs` changes).
+**Standing guardrail honored:** *"fresh Fable-5 trace of the TCB diff after P32/33"* + [[fresh-context-adversarial-review]].
+**Verdict:** CHANGES-REQUIRED — 1 MAJOR + 3 MINOR + 3 NIT. Core I2/I0 Block path, `openat2` confinement, genuine non-stapled taint chain, and two-phase audit all independently verified SOLID.
+
+## Findings (all verified against live source before acting)
+
+| ID | Sev | Location | Defect | Disposition |
+|----|-----|----------|--------|-------------|
+| MAJOR-1 | MAJOR | `crates/brokerd/src/confirmation.rs:853` Step-7 match | Blocked `file.write` yields `BlockedPendingConfirmation` (`executor/src/lib.rs:202`), but Step-7 dispatch has arms only for `file.create`/`email.send`. Human `confirm` runs Step 5 (`confirm_granted` appended) + Step 6 (state→`Confirmed`), THEN `other =>` errors → one-shot confirmation **durably burned**, no write, audit-DAG gap (`confirm_granted` with no `sink_executed`/`sink_execution_failed`). `process.exec` (Phase 32) shares the gap. Fail-CLOSED (no unauthorized write) → MAJOR not BLOCKER. | **FIX now** — add `invoke_file_write_from_resolved` + `"file.write"` Step-7 arm (mirrors `file.create`); add a pre-Step-5 entry-guard so any UN-dispatchable sink (incl. `process.exec`) errors WITHOUT burning the confirmation / creating an audit gap; fix stale "unreachable/v1.2 sink" comment. Full `process.exec` confirm-release deferred (Phase 32 follow-up) — entry-guard makes it fail-closed-recoverable meanwhile. |
+| MINOR-2 | MINOR | `crates/brokerd/src/server.rs:1343` | `*fd_request_count += 1` runs on denied reads too; no `[profile.release] overflow-checks` anywhere → u32 wraps after 2³² denied round-trips, guard fails OPEN (256 fresh reads per wrap). | **FIX now** — `saturating_add(1)`. |
+| MINOR-3 | MINOR | `crates/adapter-fs/src/workspace.rs` `write_within` | `openat2(O_WRONLY\|O_TRUNC, …)` opens any existing non-symlink incl. a FIFO; `O_WRONLY` on a reader-less FIFO **blocks indefinitely** inside `conn.lock()` → broker-wide freeze with the audit mutex held. New surface (`file.create`'s `O_EXCL` is immune). Needs a trusted path landing on a FIFO (hostile workspace ingest). | **FIX now** — add `O_NONBLOCK` (ENXIO fail-closed on reader-less FIFO) + `fstat` `S_ISREG` reject of non-regular targets; add a `cfg(linux)` FIFO-reject test. |
+| MINOR-4 | MINOR | `server.rs:81` const | Limiter is a `handle_connection` local; "per-session" holds only via 3 unstated facts (RequestFd is worker-only, worker slot latches, 2nd worker conn rejected). | **FIX now** — comment at the const naming the dependency. |
+| NIT-5 | NIT | `file_write.rs` module doc | `resolve_arg` failure propagates with no `sink_execution_failed` (pre-effect, zero indeterminacy) while doc says "on error, append … FIRST". | Tighten doc ("on *filesystem* error"). |
+| NIT-6 | NIT | `write_within` | Calls `sync_all()`; `create_exclusive_within` doesn't — asymmetric durability. | Note the asymmetry (leave behavior). |
+| NIT-7 | NIT | `write_within` non-Linux stub | `root_path.join(abs_path)` replaces root — "ENOENT parity" false for absolute paths on macOS (no security claim). | One-line absolute-path reject in stub. |
+
+## Verified SOLID (traced, not trusted)
+`lib.rs` untouched / I2 unbypassable; `contents` role-widening admits only roles that still hit the Step 2/3 taint Block (no escape); no raw `EffectRequest` (Gate 1 green); `write_within` single-syscall `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`, no `O_CREAT`, NOT-inherited neg set present; genuine non-stapled taint (`provenance_chain[0] == read_event_id`, no laundering path); FS-01 limiter increment-before-check, off-by-one correct, deny-and-keep; two-phase audit HMAC-chained; `file.write` `CommitIrreversible` → I0 draft-deny; worker holds opaque `value_id`s only (I1).
