@@ -101,13 +101,13 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 
 ### Live Proof
 
-- [ ] **LIVE-01**: On **real Linux**, a composed acceptance run proves end-to-end:
+- [x] **LIVE-01**: On **real Linux**, a composed acceptance run proves end-to-end:
   an `exec` whose tainted output is routed to a sensitive sink arg is **Blocked**
   (I2, genuine non-stapled taint chain, `verify_chain` true); a clean exec/fs path
   is **Allowed**; a fs write/edit within `WorkspaceRoot` succeeds and is audited —
   via `scripts/mailpit-verify.sh` or an exec-scoped equivalent, true-exit-before-pipe.
 
-- [ ] **LIVE-02**: **Full-workspace regression** re-runs green on real Linux with
+- [x] **LIVE-02**: **Full-workspace regression** re-runs green on real Linux with
   **no regression to v1.0–v1.6**, asserted on counts + named tests (not exit 0
   through a pipe), plus a dedicated negative test per new sink.
 
@@ -164,12 +164,12 @@ maps to exactly one phase (`/gsd-roadmapper`, 2026-07-17).
 | EXEC-02 | Phase 32 | Complete |
 | EXEC-03 | Phase 32 | Complete |
 | EXEC-04 | Phase 32 | Complete |
-| EXEC-05 | Phase 34 | Pending |
+| EXEC-05 | Phase 34 | Complete |
 | FS-01 | Phase 33 | Complete |
 | FS-02 | Phase 33 | Complete |
 | FS-03 | Phase 33 | Complete |
-| LIVE-01 | Phase 34 | Pending |
-| LIVE-02 | Phase 34 | Pending |
+| LIVE-01 | Phase 34 | Complete |
+| LIVE-02 | Phase 34 | Complete |
 
 **Coverage:**
 
