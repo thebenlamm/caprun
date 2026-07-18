@@ -17,3 +17,7 @@ runtime.db
 .planning/config.json
 .planning/research/
 .linux-target/
+
+# Python bytecode cache (e.g. from running the mock-github test harness locally)
+__pycache__/
+*.pyc
