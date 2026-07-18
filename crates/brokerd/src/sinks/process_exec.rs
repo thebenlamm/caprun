@@ -148,6 +148,10 @@ pub async fn invoke_process_exec(
         cwd.as_deref(),
         workspace_root,
         &args,
+        // process.exec adds NO effect-specific env — the child env is
+        // byte-identical to before run_launcher grew the `extra_env` param
+        // (git.commit is the sole caller that passes a non-empty slice).
+        &[],
     )
     .await;
 
@@ -288,6 +292,8 @@ pub async fn invoke_process_exec_from_resolved(
                 prepared.cwd.as_deref(),
                 workspace_root,
                 &prepared.args,
+                // confirm-release process.exec adds NO effect-specific env.
+                &[],
             )
             .await
         }
@@ -376,15 +382,31 @@ pub(crate) fn prepare_process_exec(resolved_args: &[ResolvedArg]) -> Result<Prep
 /// Minimal `PATH` handed to the confined exec child after `env_clear()` — enough
 /// to resolve bare-name commands (`/usr/bin`, `/bin`, `/usr/local/bin`) without
 /// re-introducing any of the broker's own environment. See `run_launcher`.
-const SAFE_EXEC_PATH: &str = "/usr/bin:/bin:/usr/local/bin";
+pub(crate) const SAFE_EXEC_PATH: &str = "/usr/bin:/bin:/usr/local/bin";
 
-async fn run_launcher(
+/// Spawn the confined launcher and capture its combined output.
+///
+/// `pub(crate)` so the `git_commit` sink (Pattern B, GIT-01) reuses the EXACT
+/// same confined-spawn discipline instead of duplicating it — the launcher,
+/// `env_clear()`, `SAFE_EXEC_PATH`, wall-clock timeout, byte cap, and
+/// `kill_on_drop` are all shared verbatim.
+///
+/// `extra_env` layers NON-SECRET, effect-specific vars onto the `env_clear()`ed
+/// child AFTER the `EXEC_*` metadata (e.g. git.commit's
+/// `GIT_CONFIG_NOSYSTEM`/`GIT_CONFIG_GLOBAL`/`GIT_TERMINAL_PROMPT`
+/// neutralization). `process.exec` passes `&[]`, so its child env is
+/// byte-identical to before this parameter existed — never a behavior change,
+/// and no secret can be reintroduced via this path (the caller controls the
+/// slice; the broker only ever passes constant, non-secret git-neutralization
+/// vars here).
+pub(crate) async fn run_launcher(
     launcher_path: &std::path::Path,
     command: &str,
     args_json: &str,
     cwd: Option<&str>,
     workspace_root: &WorkspaceRoot,
     _args: &[String],
+    extra_env: &[(&str, &str)],
 ) -> Result<(std::process::ExitStatus, String)> {
     let mut cmd = TokioCommand::new(launcher_path);
     // SECURITY (todo 2026-07-17-exec-child-env-clear / Phase 34 gap-closure):
@@ -414,6 +436,13 @@ async fn run_launcher(
     // its doc comment's "EXEC_CWD (optional)" contract.
     if let Some(dir) = cwd {
         cmd.env("EXEC_CWD", dir);
+    }
+    // Effect-specific neutralization env, layered onto the env_clear()ed child
+    // AFTER the EXEC_* metadata. Empty for process.exec (child env unchanged);
+    // git.commit passes the non-secret GIT_CONFIG_NOSYSTEM/GLOBAL +
+    // GIT_TERMINAL_PROMPT triple (GIT-01, DESIGN §1.5).
+    for (k, v) in extra_env {
+        cmd.env(k, v);
     }
     cmd.env(
             "EXEC_WORKSPACE_ROOT",
@@ -542,7 +571,7 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
 /// depth 0) and the `cargo test` layout (found at depth 1, `deps/` ->
 /// `debug/`), fails closed (a bounded, explicit search — never an unbounded
 /// walk to the filesystem root) if neither is found.
-fn resolve_launcher_path() -> Result<std::path::PathBuf> {
+pub(crate) fn resolve_launcher_path() -> Result<std::path::PathBuf> {
     let current_exe =
         std::env::current_exe().context("process.exec: could not resolve current_exe()")?;
     let mut dir = current_exe.parent().map(|p| p.to_path_buf());

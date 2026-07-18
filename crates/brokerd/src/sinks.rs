@@ -15,4 +15,5 @@
 pub mod email_smtp;
 pub mod file_create;
 pub mod file_write;
+pub mod git_commit;
 pub mod process_exec;
