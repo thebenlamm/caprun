@@ -78,6 +78,19 @@ const MAX_MSG_SIZE: usize = 64 * 1024;
 /// moderate repo's source tree. A hardcoded const, not a runtime knob —
 /// matches this codebase's "security params are hardcoded constants"
 /// discipline (RESEARCH Pattern 2).
+///
+/// NOTE (Phase 33 adversarial-review MINOR-4): the counter this limits
+/// (`fd_request_count`) is a plain `handle_connection` LOCAL — its name says
+/// "per session" but nothing in its own type or storage enforces that. The
+/// per-session property holds only because of three OTHER facts, none of
+/// which live at this declaration: (1) `RequestFd` is dispatched only on a
+/// `ConnectionRole::Worker` connection (the worker-only capability set);
+/// (2) a session has exactly one worker connection — the occupancy-latch
+/// slot (Phase 19) is claimed once and never released for a second worker
+/// connection on the same session; (3) a second connection attempting to
+/// claim that already-latched worker slot is rejected outright. If any of
+/// (1)-(3) ever changes, this constant's "per session" framing silently
+/// stops being true even though its own code is untouched.
 const MAX_REQUEST_FD_PER_SESSION: u32 = 256;
 
 /// A connection's fixed capability set (Phase 20, PLANNER-02/04).
