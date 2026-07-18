@@ -18,94 +18,15 @@ genuine taint chain must hold.**
 
 ## Current State
 
-**In v1.7 — Effect Breadth I (as of 2026-07-17).** Phase 31 (Effect-Breadth Design
-Gate) and Phase 32 (`process.exec` Sink) COMPLETE.
+**v1.7 — Effect Breadth I shipped 2026-07-18:** `process.exec` broker-spawned confined-child sink with captured+tainted stdout/stderr, filesystem read/write breadth beyond single-file create, and EXEC-05 confirm-release for blocked process.exec human release. Proven on real Linux: LIVE-01 composed 4-leg acceptance + LIVE-02 full-workspace 391/0 regression. A fresh Fable-5 adversarial code-trace caught and fixed a real MAJOR (confirm-release audit gap), and post-close env_clear() closed broker-secret inheritance in exec-child + worker spawns.
 
-**Phase 32 — `process.exec` sink, COMPLETE (EXEC-01..04 all Complete).** caprun now
-runs a command as a **broker-spawned confined child** (new `caprun-exec-launcher`
-sibling binary; the confined worker never `execve`s the target — Option B from the
-design gate), captures its stdout/stderr, and **taint-mints the output as untrusted at
-a single genuine mint site** (`mint_from_exec`: `provenance_chain == [spawn_event_id]`,
-the same id appended to the audit DAG as `process_exited` — not stapled). A tainted
-exec-output value routed to a sensitive sink arg is deterministically **I2-Blocked**
-(and, being `origin_role="exec_output"`, also trips the v1.5 T2 slot-type role gate →
-`Denied SlotTypeMismatch`), verifiable as an unbroken audit-DAG edge with `verify_chain`
-true. The exec child is itself **kernel-confined** — Landlock narrow FS allow-list (no
-`Execute`/write in the workspace beyond what's needed), seccomp net-deny that **persists
-across the target's own `execve`**, rlimits + wall-clock timeout, all applied before the
-target runs. Gate-3 mint-site restriction landed in the same commit as the mint code.
-Proven on real Linux (Colima): 11/11 process.exec/confinement/s9 tests green
-(incl. genuine non-stapled taint→Block and net-deny-across-execve), full-workspace
-regression clean (355 passed / 0 failed across 53 suites, no regression to v1.0–v1.6).
-gsd-verifier PASSED 4/4; an independent fresh Fable-5 adversarial TCB code-trace returned
-APPROVE-WITH-FIXES (no BLOCKER/MAJOR). One MINOR — the launcher spawn does not
-`env_clear()`, so the exec child inherits the broker's env incl. `OPENAI_API_KEY`
-(defense-in-depth debt, not an open exfil path: seccomp blocks net egress and the command
-must be UserTrusted) — captured as a Phase-34 pre-live todo, not a Phase-32 blocker.
+Prior: v1.6 Security Hardening (close the residuals) — 2026-07-17; v1.5 Slot-Type Binding (T2) — 2026-07-12; v1.4 Trust-Boundary Integrity — 2026-07-11.
 
-**Phase 31 — Design Gate, COMPLETE:** `planning-docs/DESIGN-effect-breadth-exec.md` pins
-the broker-spawned confined-child `process.exec` model + the fs read/write-breadth model +
-their fail-closed defaults + I2/slot-type-binding table entries (DESIGN-13/14). It cleared a
-fresh non-self Fable-5 adversarial code-trace (`DESIGN-GATE-RECORD-v1.7.md`, CLEARED) —
-1 BLOCKER (unrealizable stateless-BPF seccomp recursion-deny) + 3 MAJOR (Option-A
-pre_exec evidence flawed → pinned Option B launcher; mint-locus/Gate-3 contradiction;
-under-grounded command/args `expected_role`) all resolved by design-tightening, no
-invariant weakened. **Phases 33-34 (FS-01..03, LIVE-01/02) remain.**
+## Shipped Milestone: v1.7 — Effect Breadth I (process.exec + Filesystem Breadth)
 
-**Shipped v1.6 — Security Hardening (close the residuals) on 2026-07-17.** The five
-standing TCB-local security residuals v1.1–v1.5 documented as accepted caveats are now
-enforced guarantees, proven live on real Linux: (HARDEN-01) fd release to the confined
-worker itself demotes the session to draft-only via fstat inode identity; (HARDEN-02)
-the audit chain is authenticated with a keyed HMAC-SHA256 MAC + MAC'd anchor
-truncation/orphan detection, so an `events`-table writer can no longer forge a chain
-`verify_chain` accepts; (HARDEN-03) a replayed Allowed `email.send` sends at most once
-via a content-derived idempotency-key CAS committed before the SMTP socket opens;
-(HARDEN-04) the forced-Active `CreateSession` mint arm is compiled OUT of the production
-binary (cfg), not merely runtime-flagged; (HARDEN-05) `file.create`'s `contents` arg is
-role-checked + content-sensitive under the same I2/slot-type discipline. Full workspace
-regression re-run green on real Linux (331 passed / 0 failed across 49 suites) plus a
-dedicated proof per residual (HARDEN-06). Independent adversarial code-trace APPROVED;
-milestone audit PASSED (8/8 requirements, 5/5 cross-phase seams wired).
+**✅ SHIPPED 2026-07-18 — all 5 phases (31-35) complete, proven live on real Linux. Full detail archived in `.planning/milestones/v1.7-ROADMAP.md` + `.planning/milestones/v1.7-REQUIREMENTS.md` + `.planning/milestones/v1.7-MILESTONE-AUDIT.md`. Next milestone: run `/gsd-new-milestone` (v1.8 Git/GitHub adapters to follow).**
 
-Prior: v1.5 Slot-Type Binding (T2) — 2026-07-12; v1.4 Trust-Boundary Integrity — 2026-07-11.
-
-## Current Milestone: v1.7 — Effect Breadth I (`process.exec` + Filesystem Breadth)
-
-**Goal:** Give caprun the two effect primitives a coding agent minimally needs —
-running a command in the sandbox with **captured + tainted** output, and
-reading/editing repo files beyond single-file create — each routed through the
-same plan-node → taint → executor(I2) → audit discipline. First milestone toward
-the **Safe Coding Agent** anchor use case (confirmed with Ben 2026-07-17).
-
-**Target features:**
-- **`process.exec` sink** — a **broker-spawned** confined child process (the
-  confined worker cannot `execve` per seccomp deny-execve, so exec is mediated
-  like the v1.4 caprun-planner sidecar / adapter-fs fd-pass); stdout/stderr are
-  captured and **taint-minted** (raw output → untrusted, mirroring
-  `mint_from_read`), so exec output feeding a later sink arg is I2-governed.
-- **Filesystem breadth** — read many repo files + **write/edit existing** files
-  (beyond `file.create`'s `O_EXCL` new-file-only), via the adapter-fs fd-passing
-  seam, staying inside `WorkspaceRoot` / `openat2(RESOLVE_BENEATH)`.
-- **Design gate first (Phase 31):** a DESIGN doc for the confined-child-exec +
-  fs-write model, cleared by a **fresh non-self adversarial code-trace** before
-  ANY TCB code — standing precedent (v1.0 P2, v1.2 P8, v1.3 P12, v1.4 P18,
-  v1.5 P23, v1.6 P26). `process.exec` under Landlock+seccomp is the riskiest
-  primitive to date; the orchestrator (not a gsd-executor) owns that review spawn.
-- **Live proof on real Linux:** an exec whose tainted output routes to a
-  sensitive sink arg is deterministically **Blocked**; a clean path is Allowed;
-  the audit DAG shows a genuine (non-stapled) taint chain.
-
-**Explicitly deferred (NOT v1.7):** `git`/`github.pr` sink → v1.8 · `http.request`
-authorized egress → v1.8 · real LLM planner loop → v1.9 · declarative policy file /
-thin SDK / audit-DAG viewer / packaging → v1.10+. (Candidate sequence in
-`planning-docs/CANDIDATE-v1.7plus-productization-sketch.md`, treated as input, not
-locked scope.)
-
-**Key context:** `process.exec` fundamentally changes the confinement model — this
-is why it opens with a design gate + adversarial review rather than a bare "add a
-sink" plan. Anchor A (Safe Coding Agent) drives the priority: exec (build/test/lint)
-+ fs edit are exactly the primitives an agent needs before git/PR (v1.8) makes the
-irreversible external effect worth gating.
+v1.7 delivered `process.exec` as a broker-spawned confined-child sink (the confined worker never `execve`s the target; exec is mediated via a sibling `caprun-exec-launcher` binary with Landlock narrowing + seccomp net-deny + rlimits + wall-clock timeout applied before spawn), capturing stdout/stderr and **taint-minting the output as untrusted** at a single genuine, non-stapled mint site (`mint_from_exec` rooted on `process_exited` audit event — no minting on the confirm-release path). Filesystem read/write breadth landed: multi-file read + `file.write` sink for existing-file-only editing (O_WRONLY|O_TRUNC, no O_CREAT/O_EXCL), both confined to WorkspaceRoot via `openat2(RESOLVE_BENEATH)`, with a `RequestFd` count limiter (256, deny-and-keep) and I2/slot-role enforcement. EXEC-05 confirm-release (`invoke_process_exec_from_resolved`) wired exactly-once release of blocked process.exec, with Entry Guard (Step 4.75) + Pre-Step-5 verification (no mint on confirm-release path — durable taint lives on the process_exited event only). Proven end-to-end on real Linux: LIVE-01 composed 4-leg acceptance true-exit-0; LIVE-02 full-workspace regression 391/0 across all suites with no v1.0–v1.6 regression. A fresh Fable-5 adversarial code-trace caught and fixed a real MAJOR (confirm-release path burned the one-shot confirmation without a terminal audit event in Step-7 dispatch, leaving an audit gap) — reconciled pre-close. env_clear() gap-closure fixed broker-secret inheritance in both the confined exec-child and worker spawns (planner-sidecar TLS-env variant deferred to v1.8).
 
 ## Shipped Milestone: v1.6 — Security Hardening (close the residuals)
 
@@ -435,6 +356,15 @@ assessment). PLAN.md wins on any conflict.
 
 ### Validated
 
+Shipped in **v1.7 — Effect Breadth I** (2026-07-18). Full traceability archived in
+`.planning/milestones/v1.7-REQUIREMENTS.md`.
+
+- ✓ DESIGN-13/14: effect-breadth DESIGN doc (confined-child exec + fs breadth + fail-closed defaults) cleared a fresh non-self adversarial trace — v1.7
+- ✓ EXEC-01..04: process.exec broker-spawned confined-child sink; captured stdout/stderr mint_from_exec-minted (non-stapled, rooted on process_exited), I2-governed, kernel-confined — v1.7
+- ✓ EXEC-05: blocked process.exec human-released via caprun confirm (invoke_process_exec_from_resolved, exactly-once, verify_chain true; no confirm-release mint — taint on process_exited event) — v1.7
+- ✓ FS-01..03: multi-file read + file.write (O_WRONLY|O_TRUNC, existing-file-only) under WorkspaceRoot, RequestFd count limiter, I2/slot-role governed — v1.7
+- ✓ LIVE-01/02: composed 4-leg acceptance + full-workspace regression green on real Linux (391/0), no v1.0–v1.6 regression — v1.7
+
 Shipped in **v1.6 — Security Hardening** (2026-07-17). Full traceability archived in
 `.planning/milestones/v1.6-REQUIREMENTS.md`.
 
@@ -594,26 +524,15 @@ traceability archived in `.planning/milestones/v1.5-REQUIREMENTS.md`.
 
 ### Active
 
-**v1.7 — Effect Breadth I (`process.exec` + Filesystem Breadth).** The first two
-effect primitives of the Safe Coding Agent anchor, each through the plan-node →
-taint → executor(I2) → audit path:
+**v1.8 — Git/GitHub Adapters (breadth toward real-world coding agent).** Building on v1.7's exec + fs read/write primitives, add the external-effect sinks that make code changes durable and shareable:
 
-- [ ] `process.exec` sink — broker-spawned confined child; captured stdout/stderr
-  taint-minted as untrusted (mirrors `mint_from_read`)
-- [ ] Exec-output taint enforcement — tainted exec output routed to a sensitive
-  sink arg is deterministically Blocked (I2), on a genuine audit-DAG chain
-- [ ] Filesystem read breadth — read many workspace files beyond the current
-  single-fd path, inside `WorkspaceRoot` / `RESOLVE_BENEATH`
-- [ ] Filesystem write/edit — modify existing files (beyond `file.create`'s
-  `O_EXCL` new-file-only), still fail-closed and confined to `WorkspaceRoot`
-- [ ] DESIGN gate — reviewed DESIGN doc (confined-child-exec + fs-write model)
-  clears a fresh non-self adversarial code-trace before any TCB code
-- [ ] Live proof on real Linux — exec-tainted Block + clean Allow + genuine
-  taint chain, via `scripts/mailpit-verify.sh` (or an exec-scoped equivalent)
+- [ ] `git.commit` sink — broker-mediated `git commit` (workspace-confined, exec-like, returns exit code + stdout/stderr tainted)
+- [ ] `git.push` sink — broker-mediated `git push` (confined to the session's intent origin repo, verify remote + branch)
+- [ ] `github.pr` sink — broker-mediated GitHub PR creation (API-mediated via session bearer token, requires explicit auth-grant from human; PR template from planner + tainted body sections blocked)
+- [ ] `http.request` authorized egress — taint-governed outbound HTTP (read-only for now; write egress deferred)
+- [ ] Live proof on real Linux — a composed agent workflow: exec (test), fs (edit), git (commit), github (PR) — all gated, tainted, audit-DAG-chained
 
-Per standing precedent, v1.7 opens with a design-gate phase before any TCB
-change. `git`/`github.pr`, `http.request`, the real LLM planner loop, and
-policy/SDK/packaging are deferred to **v1.8+** (see Out of Scope).
+Per standing precedent, v1.8 opens with a DESIGN doc for git/github/http sinks before any TCB change. Real LLM planner loop, policy/SDK/packaging deferred to **v1.9+**.
 
 ### Out of Scope
 
@@ -904,6 +823,9 @@ Python OK for non-TCB experiments only.
 | **v1.5 `email.send` body expected-role = `["body","doc_fragment"]`, not DESIGN's `["body"]`** (Phase 24) | No `"body"` claim_type exists anywhere in the code — body content arrives as `doc_fragment` (`WorkerClaim::DocFragment`); the DESIGN's literal `["body"]` would fail-closed-Deny every real body flow (incl. the shipped CONTENT-01 hostile-body-Block path). Sound because body stays content-sensitive so I2 remains the real gate, and the exfil-critical recipient slots (to/cc/bcc) were untouched and still reject doc_fragment | — Locked (Phase 24 execution, 2026-07-11; DESIGN §3 amended in-place, commit 92b9d6f). Confirmed by both the phase verifier and the milestone integration checker. |
 | **v1.5 T2-08 live gate run directly by the orchestrator, not delegated to a subagent** | T2-08's whole purpose is a non-laundered independent re-run with the true exit code captured before any pipe; a subagent relaying "it passed" reintroduces the indirection the gate exists to distrust (mirrors the v1.3 coordinator-gate precedent) | — Locked (Phase 25 execution, 2026-07-12). |
 | **v1.5 "Slot-Type Binding Enforcement (T2)" SHIPPED** (2026-07-12) | v1.4's accepted residual #5 closed: a misrouted `UserTrusted` handle now hard-Denies with `SlotTypeMismatch` via a fail-closed Step 1c, proven live on real Linux with a held-out swapped-handle test (genuine audit chain), a 0-bypass regression audit, and an independent bare `mailpit-verify.sh` re-run (309 passed/0 failed) + human sign-off. The independent verifier caught a real close-time bookkeeping gap (sign-off recorded post-rollup + REQUIREMENTS lag) that was reconciled, not papered over | — Shipped. Milestone audit PASSED (11/11 reqs, 5/5 integration hops). No git push yet (Ben's call). |
+| **v1.7: confirm-release path does NOT mint the released exec output** | Dead ceremony — no live ValueStore/consumer in the human-driven confirm process; durable non-stapled taint lives on the process_exited event only, a structural improvement over an audit-gap that a passing verifier + green gates missed until fresh Fable-5 adversarial review caught it | ✓ Good (34-03 reconciliation). |
+| **v1.7: env_clear() the confined exec-child AND worker spawns** | Neither should inherit broker secrets (OPENAI_API_KEY/CAPRUN_SMTP_*); planner-sidecar variant (TLS-env regression risk) deferred to v1.8 | ✓ Good. |
+| **v1.7: fresh non-self Fable-5 adversarial code-trace guardrail caught its 8th real defect** | The confirm-release audit-gap MAJOR (Step-7 dispatch burned the one-shot confirmation, leaving no terminal event in the DAG) that a passing verifier + green Linux gates both missed — reinforces [[fresh-context-adversarial-review]] as a standing architectural necessity | ✓ Good. |
 
 ## Evolution
 
@@ -923,15 +845,8 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-17 after completing Phase 32 (`process.exec` sink — EXEC-01..04) — broker-spawned confined-child exec with genuine non-stapled taint mint + I2 block + kernel confinement, proven on real Linux (355/0, 53 suites), gsd-verifier 4/4, Fable-5 APPROVE-WITH-FIXES (1 MINOR → Phase 34 todo). Phases 33 (FS-01..03) and 34 (LIVE-01/02) remain.*
-(`process.exec` + Filesystem Breadth)" (`/gsd-new-milestone`). Anchor use case
-confirmed with Ben: **A — Safe Coding Agent**. v1.7 scope = the `process.exec`
-sink (broker-spawned confined child, tainted stdout/stderr) + filesystem
-read/write breadth beyond `file.create`, each through the plan-node →
-taint → executor(I2) → audit path, opened by a design-gate phase (Phase 31)
-per standing precedent. git/`github.pr`, `http.request`, the real LLM planner
-loop, and policy/SDK/packaging deferred to v1.8+. Phase numbering continues
-from 30.
+*Last updated: 2026-07-18 after v1.7 (Effect Breadth I) milestone — process.exec confined-child sink + filesystem read/write breadth + EXEC-05 confirm-release, proven on real Linux (LIVE-01 composed 4-leg + LIVE-02 391/0); env_clear gap-closure (exec-child + worker) fixed, planner-sidecar deferred to v1.8.*
+
 Prior: 2026-07-17 after v1.6 "Security Hardening (close the residuals)"
 SHIPPED — all 5 phases (26-30) complete, turning the five standing TCB-local
 residuals v1.1–v1.5 documented as accepted caveats into enforced guarantees

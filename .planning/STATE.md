@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: — Effect Breadth I
-current_phase: 34
-status: executing
+current_phase: 7
+status: Awaiting next milestone
 stopped_at: v1.7 roadmap created (Phases 31-34)
-last_updated: "2026-07-18T03:31:31.386Z"
+last_updated: "2026-07-18T05:19:58.701Z"
 last_activity: 2026-07-18
-last_activity_desc: Phase 34 complete
+last_activity_desc: Milestone v1.7 completed and archived
 progress:
   total_phases: 4
   completed_phases: 4
@@ -21,17 +21,17 @@ current_phase_name: regression-live-proof-v1-7-done
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-17)
+See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended (v1.2) with session-level draft-only demotion (I1/I0) and single-shot human confirmation, (v1.3, SHIPPED) with content-sensitive body blocking, a real broker-mediated SMTP send, and a composed live acceptance, (v1.4, SHIPPED) with coherent cross-connection trust state and a boundary proven indifferent to planner intelligence, (v1.5, SHIPPED) with a structural check that a value's semantic origin matches the semantic role of the slot it's routed into (closing the v1.4 T2 residual), (v1.6, SHIPPED) hardening the standing residuals that made several of those guarantees "true only incidentally" into enforced guarantees, and now (v1.7) extending the set of real sinks — `process.exec` (captured+tainted command output) and filesystem read/write breadth — each through the same plan-node → taint → executor(I2) → audit path, toward the Safe Coding Agent anchor.
-**Current focus:** Phase 34 — regression-live-proof-v1-7-done
+**Current focus:** v1.7 shipped (2026-07-18) — planning next milestone (v1.8 — Git/GitHub Adapters)
 
 ## Current Position
 
-Phase: 34
-Plan: Not started
-Status: Executing Phase 34
-Last activity: 2026-07-18 — Phase 34 complete
+Phase: Milestone v1.7 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-18 — Milestone v1.7 completed and archived
 
 ## Performance Metrics
 
@@ -106,4 +106,16 @@ Resume file: None
 
 ## Operator Next Steps
 
-- Plan Phase 31 (the design gate) with `/gsd-plan-phase 31`.
+- Start the next milestone with /gsd-new-milestone
+
+## Deferred Items
+
+Items acknowledged and deferred at the v1.7 milestone close (2026-07-18). None are v1.7 requirements; all are pre-existing tech debt or a v1.8 follow-up. Closeout: override_closeout (all 31-34 phases verified passed; deferrals below).
+
+| Category | Item | Status |
+|----------|------|--------|
+| todo (security) | planner-sidecar-env-clear — env_clear() the caprun-planner sidecar spawn | pending (v1.8; lower risk — trusted code, TLS-env regression risk) |
+| todo (security) | v1.3-phase16-v2-security-obligations — deferred v2 security obligations (recorded, not dropped) | pending |
+| todo (tooling) | gsd-executors-must-not-write-phase-completion-state | pending (GSD process, not caprun product) |
+| todo (tooling) | gsd-phases-clear-deletes-all-milestones | pending (GSD process, not caprun product) |
+| uat | Phase 03 UAT — passed, 0 pending scenarios (stale audit flag, v1.0-era) | passed |

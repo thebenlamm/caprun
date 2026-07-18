@@ -240,6 +240,37 @@ Turned the five standing TCB-local security residuals v1.1–v1.5 documented as 
 - Sessions: 1 (single autonomous run, phase 29 → phase 30 → milestone close).
 - Notable: the whole milestone (Phase 29 execute → Phase 30 plan+execute → audit → close) ran autonomously in one session; the long poles were the two live-Linux container gates.
 
+## Milestone: v1.7 — Effect Breadth I (`process.exec` + Filesystem Breadth)
+
+**Shipped:** 2026-07-18
+**Phases:** 4 (31-34) | **Plans:** 17
+
+### What Was Built
+Gave caprun the two effect primitives a coding agent minimally needs, each routed through the unchanged plan-node → taint → executor(I2) → audit path. **`process.exec`** (Phase 32): a broker-spawned kernel-confined child (`caprun-exec-launcher` self-confines Landlock+seccomp post-fork and execs the target; the confined worker never `execve`s), stdout/stderr captured and `mint_from_exec`-minted non-stapled (rooted on a `process_exited` Event), I2-governed. **Filesystem breadth** (Phase 33): `WorkspaceRoot::write_within` (O_WRONLY|O_TRUNC existing-file-only) + `file.write` broker sink + per-session `RequestFd` count limiter + `file.write` I2 schema/sensitivity/slot-role tables. **EXEC-05 confirm-release** (Phase 34): `caprun confirm` releases a Blocked `process.exec` exactly-once via `invoke_process_exec_from_resolved` + async `confirm()` (Step-4.75 guard / Step-4.8 precheck / Step-7 dispatch). Closed with a composed 4-leg live proof (`live_acceptance_v1_7_composed.rs`, LIVE-01 true-exit-0) and a full-workspace Linux regression (LIVE-02, 391/0, no v1.0–v1.6 regression).
+
+### What Worked
+- **Design-gate-first held a seventh time** (Phase 31): the effect-breadth DESIGN doc cleared a fresh non-self Fable-5 trace that caught 1 BLOCKER + 3 MAJOR (incl. an unrealizable stateless-BPF seccomp recursion-deny → pinned the launcher Option-B model) before any TCB code.
+- **The fresh non-self adversarial code-trace earned its keep an 8th time** (Phase 34): on the EXEC-05 confirm-release TCB diff it caught a real MAJOR — the pre-spawn `?` legs of `invoke_process_exec_from_resolved` propagated AFTER confirm() burned the one-shot confirmation, leaving a dangling `confirm_granted` with no terminal event (the exact P33 MAJOR-1 audit-gap class) — that the passing verifier + green Linux gates both missed. Fixed (Step-4.8 precheck + folded `process_spawn_failed` append + regression test) and re-traced APPROVED.
+- **Orchestrator-owned release gates** (Phase 34, autonomous:false) genuinely executed rather than rubber-stamped even under AUTO_MODE: the Linux compile-check (D-15, true-exit-0 ×2) and the fresh Fable-5 trace (D-16) both blocked LIVE-01 until green.
+- **The verifier independently re-ran the highest-risk Linux suites** (not just trusting SUMMARY logs) and flagged a real spec-vs-code deviation (the removed confirm-release mint) that was reconciled rather than silently shipped.
+
+### What Was Inefficient
+- Two mtime-ordering `stale`-verification snags again (Phase 33 VERIFICATION older than a SUMMARY) needed a `touch` — the recurring freshness-contract artifact, not real staleness.
+- The confirm-release mint was authored per the plan in 34-02, then removed in 34-03 as dead ceremony — a small round-trip the design could have avoided had the "no live ValueStore at confirm time" fact been surfaced at plan time.
+
+### Patterns Established
+- **Adversarial-review-driven spec reconciliation:** when an independent trace correctly removes planned code (the dead mint), reconcile the requirement text to the shipped, validated mechanism via a recorded VERIFICATION override rather than reverting correct code or shipping a spec/code contradiction.
+- **env-inheritance as a defense-in-depth debt class:** `env_clear()` every broker-spawned child (exec-child, worker) so a prompt-injected or UserTrusted command cannot surface `OPENAI_API_KEY`/`CAPRUN_SMTP_*` into minted/audited/confirmable output; the trace-drives-the-sweep pattern surfaced all three spawn sites (sidecar deferred with reasoning).
+
+### Key Lessons
+- The audit-gap MAJOR class (a terminal state written before the terminal event that justifies it) recurs across sinks (P33 file.write MAJOR-1, P34 process.exec) — the fix pattern is a pre-burn precheck + routing every failure through the terminal-event append; worth a standing checklist item for any new confirm-release sink.
+- cfg(linux) test-blindness remained the sharpest hazard: the D-15 compile-check (`cargo build --tests --workspace --keep-going` on real Linux, true-exit-before-pipe) is what proves the confirm-release + env_clear paths actually compile+run, not the green macOS build.
+
+### Cost Observations
+- Model mix: orchestrator Opus 4.8 (1M); executors + verifier on Sonnet; the independent adversarial reviewers (×4: two confirm-release traces + two env_clear traces) on Fable-5; PROJECT.md evolution on the sidekick.
+- Sessions: 1 (single autonomous run — execute-phase 34 → env_clear gap-closure → milestone close).
+- Notable: the milestone-closing MAJOR + a new-finding env_clear sweep both surfaced from fresh adversarial traces after the phase already verified 10/10; the traces, not the gates, were the long pole on quality.
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Shipped | Notes |
@@ -251,3 +282,4 @@ Turned the five standing TCB-local security residuals v1.1–v1.5 documented as 
 | v1.4 Trust-Boundary Integrity & Adversarial Planner | 5 | 14 | 2026-07-11 | Fixed a live cross-connection trust bypass (one-way occupancy latch); real `Planner` trait + broker capability split; genuine OpenAI-backed adversarial planner in an isolated sidecar; HARD GATE proved the boundary holds regardless of planner intelligence; closing full-recipe re-run caught a real Cargo artifact-placement bug |
 | v1.5 Slot-Type Binding Enforcement (T2) | 3 | 8 | 2026-07-12 | Closed v1.4's T2 residual: fail-closed Step 1c slot-type check in the TCB; held-out swapped-handle deny test with genuine audit chain; 0-bypass regression audit; independent bare `mailpit-verify.sh` green on real Linux (309/0); independent verifier caught a close-time sign-off/traceability record lag before allowing close |
 | v1.6 Security Hardening (close the residuals) | 5 | 14 | 2026-07-17 | Enforced all 5 standing TCB-local residuals (fd-demote, keyed-MAC audit chain, replay CAS, compile-out forced-Active mint, file.create contents slot) + folded X-04; independent adversarial code-trace APPROVED the diff (found 2 stale TCB comments the verifier missed); closed a real false-assurance gap (harden04 self-skip) with a scoped featureless-build gate; full workspace green on real Linux (331/0, 49 suites); milestone audit PASSED 8/8, 5/5 seams; ran end-to-end autonomously in one session |
+| v1.7 Effect Breadth I | 4 | 17 | 2026-07-18 | Added `process.exec` (broker-spawned confined-child sink, non-stapled `mint_from_exec` rooted on `process_exited`) + filesystem read/write breadth (`file.write` + RequestFd limiter) + EXEC-05 confirm-release; a fresh Fable-5 trace caught the guardrail's 8th real defect (confirm-release audit-gap MAJOR the verifier+gates missed), fixed + re-traced APPROVED; verifier independently re-ran Linux suites + flagged a spec deviation (reconciled via override); post-close env_clear gap-closure (exec-child + worker broker-secret inheritance) fixed + APPROVED, sidecar deferred to v1.8; LIVE-01 composed 4-leg + LIVE-02 391/0 on real Linux; human DONE sign-off + push |

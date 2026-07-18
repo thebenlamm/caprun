@@ -1,5 +1,29 @@
 # Milestones
 
+## v1.7 Effect Breadth I (Shipped: 2026-07-18)
+
+**Phases completed:** 4 phases, 17 plans, 38 tasks
+
+**Key accomplishments:**
+
+- Authored `planning-docs/DESIGN-effect-breadth-exec.md` (§0-§10, ~730 lines): pins the broker-spawned `pre_exec`-confined-child model for `process.exec` (Option A default, Option B launcher fallback), the sole `mint_from_exec` taint-mint site rooted at a new `process_exited` Event, the `O_WRONLY|O_TRUNC` fs write/edit sink, and a complete fail-closed defaults table — with `process.exec`'s own command/args pinned routing- AND content-sensitive under the unmodified I2 collect-then-Block loop.
+- A fresh non-self Fable-5 adversarial code-trace found 1 BLOCKER + 3 MAJOR in the effect-breadth DESIGN doc; all resolved by design-tightening amendments, gate CLEARED, authorizing Phases 32-34.
+- `process.exec` is now a fail-closed, CommitIrreversible, I2-governed sink whose `command`/`args` classify BOTH routing- and content-sensitive (so tainted values Block), added entirely via table entries in `sink_schema.rs`/`sink_sensitivity.rs` with zero changes to `submit_plan_node` enforcement logic, plus a new compiler-enforced `TaintLabel::ExecRaw` untrusted variant in runtime-core.
+- New `exec_child_ruleset()` (Landlock narrow-allow: system-path Execute + workspace-only ReadWrite) and `exec_child_filter()` (seccomp net-deny without execve-deny), added beside the unchanged worker constructors for the upcoming `caprun-exec-launcher` (32-03) to self-apply post-fork.
+- New `sinks::process_exec::invoke_process_exec` async function that spawns `caprun-exec-launcher` (never the worker) via `tokio::process::Command`, captures its combined stdout+stderr concurrently under a 30s wall-clock timeout and a 10 MiB shared byte cap, and records a two-phase `process_exited`/`process_spawn_failed` durable audit event chained onto the causal head — returning `(event_id, hash, combined_output)` for 32-05's `mint_from_exec` to root its taint chain on, without minting anything itself (Gate 3).
+- `mint_from_exec` mints captured `process.exec` output as a genuinely-rooted untrusted `ValueNode` — provenance_chain anchored on `invoke_process_exec`'s already-appended `process_exited` event id, never a stapled/fresh root — and the minted handle is now wired back to the worker via a new required `BrokerResponse::PlanNodeDecision.output_value_id` field, closing the producer→consumer path EXEC-03's later Block depends on.
+- Wrote and ran, ON REAL LINUX (Colima+Docker, `rust:1`, `seccomp=unconfined`), the phase's per-requirement acceptance tests for all four EXEC-01..04 success criteria — and in the process found and fixed FOUR genuine bugs (two blocking compile/runtime errors in prior plans' code, two missing Landlock rights) that a Mac-only build could never have caught.
+- Added `WorkspaceRoot::write_within` (O_WRONLY|O_TRUNC via openat2, no O_CREAT) as the existing-file-only sibling to `create_exclusive_within`, with a fresh 5-test negative/edge set proving fail-closed ENOENT-on-missing-target and kernel-level absolute/traversal/symlink rejection, verified green on real Linux via Colima.
+- Registered `file.write` in the executor's I2 schema/sensitivity/role tables as a table-entries-only extension, with `contents` deliberately admitting a wider role set than `file.create` to support the Phase 32 chained exec-output flow.
+- Per-session `RequestFd` call limiter (`MAX_REQUEST_FD_PER_SESSION = 256`) added to `crates/brokerd/src/server.rs`, bound-checked at the top of the existing single-file RequestFd arm, failing closed with an `Error` while keeping the connection alive past the bound.
+- New `invoke_file_write` broker sink module (two-phase durable audit) wired as a fourth Allowed-dispatch arm in `evaluate_plan_node_and_record`, overwriting existing WorkspaceRoot files via `write_within` with no mint and no new EffectRequest.
+- s9_file_write_block.rs proves a genuine (non-stapled) taint-Block on file.write's path/contents slots in-process, cross-platform; the full FS-01/02/03 change set compiles and passes on real Linux with zero cfg-linux blind spots.
+- Added `invoke_process_exec_from_resolved` — the confirm-time release twin of `invoke_process_exec` — reusing the same confined-launcher spawn discipline and chaining its two-phase audit onto the passed `confirm_granted` head, with Linux unit coverage proving both the success and byte-cap spawn-failure paths.
+- `caprun confirm` now releases a Blocked `process.exec` at parity with file.create/file.write/email.send — async `confirm()`, a synchronized Step-4.75 guard + Step-7 dispatch arm, a sanctioned inline-annotated `mint_from_exec` call site, and a real cross-process Linux acceptance test proving exactly-once release with an unbroken `verify_chain`-true audit chain.
+- Authored a shared-audit.db, four-leg composed live-proof test (`live_acceptance_v1_7_composed.rs`) proving the tainted-exec I2 Block, a clean exec Allow, an in-WorkspaceRoot `file.write`, and the EXEC-05 confirm-release path all in one run — LIVE-01 passed true-exit-0 on real Linux, and LIVE-02's full-workspace regression is green (390/0) with no regression to v1.0-v1.6.
+
+---
+
 ## v1.6 Security Hardening (Shipped: 2026-07-17)
 
 **Phases completed:** 5 phases, 14 plans, 27 tasks
