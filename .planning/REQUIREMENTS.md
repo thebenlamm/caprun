@@ -35,12 +35,12 @@ are new families starting at 01).
 
 ### Egress Env Hygiene
 
-- [ ] **ENV-01**: The `caprun-planner` sidecar spawn is `env_clear()`'d and given only the minimal env it needs; all new broker-side TLS egress uses compiled-in `webpki-roots` so `env_clear()` is hermetic (no `SSL_CERT_*` / readable system store required), validated by a **live** HTTPS run (the only place the TLS-env regression is caught). Closes the deferred v1.7 `2026-07-18-planner-sidecar-env-clear` todo.
+- [x] **ENV-01**: The `caprun-planner` sidecar spawn is `env_clear()`'d and given only the minimal env it needs; all new broker-side TLS egress uses compiled-in `webpki-roots` so `env_clear()` is hermetic (no `SSL_CERT_*` / readable system store required), validated by a **live** HTTPS run (the only place the TLS-env regression is caught). Closes the deferred v1.7 `2026-07-18-planner-sidecar-env-clear` todo.
 
 ### Live Proof
 
-- [ ] **LIVE-03**: A composed agent workflow proven on real Linux — `process.exec` (test) → filesystem edit → `git.commit` → `github.pr` (mock GitHub endpoint), plus an `http.request` GET leg — with every step gated, tainted, and audit-DAG-chained, and `verify_chain` true across the run. (Rescoped: the `git.push` step is deferred with GIT-02/03 to v1.9 — see `planning-docs/DECISION-git-push-deferral-v1.8.md`; the mock accepts the PR head so the composed edit→commit→open-PR flow is proven end-to-end without a real push.)
-- [ ] **LIVE-04**: The composed run carries adversarial attack legs, each deterministically Blocked with `verify_chain` true — (a) tainted PR-body/title section, (b) tainted GET url (SSRF/exfil), (c) tainted commit message — plus a post-`env_clear()` **live** HTTPS call that succeeds (ENV-01); the full-workspace regression is green on real Linux with no regression to v1.0–v1.7. (The tainted-push-remote/refspec leg moves to v1.9 with git.push.)
+- [x] **LIVE-03**: A composed agent workflow proven on real Linux — `process.exec` (test) → filesystem edit → `git.commit` → `github.pr` (mock GitHub endpoint), plus an `http.request` GET leg — with every step gated, tainted, and audit-DAG-chained, and `verify_chain` true across the run. (Rescoped: the `git.push` step is deferred with GIT-02/03 to v1.9 — see `planning-docs/DECISION-git-push-deferral-v1.8.md`; the mock accepts the PR head so the composed edit→commit→open-PR flow is proven end-to-end without a real push.)
+- [x] **LIVE-04**: The composed run carries adversarial attack legs, each deterministically Blocked with `verify_chain` true — (a) tainted PR-body/title section, (b) tainted GET url (SSRF/exfil), (c) tainted commit message — plus a post-`env_clear()` **live** HTTPS call that succeeds (ENV-01); the full-workspace regression is green on real Linux with no regression to v1.0–v1.7. (The tainted-push-remote/refspec leg moves to v1.9 with git.push.)
 
 ## Future Requirements
 
@@ -94,9 +94,9 @@ Which phases cover which requirements. Populated during roadmap creation.
 | HTTP-01 | Phase 37 | Complete |
 | HTTP-02 | Phase 37 | Complete |
 | HTTP-03 | Phase 37 | Complete |
-| ENV-01 | Phase 40 | Pending |
-| LIVE-03 | Phase 40 | Pending |
-| LIVE-04 | Phase 40 | Pending |
+| ENV-01 | Phase 40 | Complete |
+| LIVE-03 | Phase 40 | Complete |
+| LIVE-04 | Phase 40 | Complete |
 
 **Coverage:**
 

@@ -250,10 +250,11 @@ git.push egress design-gate). The v1.8 DESIGN doc §2 (model), §2.5 (captured-o
   4. Full-workspace regression is green on real Linux with **no regression to v1.0–v1.7**.
 
 **Plans**: 4 plans
-- [ ] 40-01-PLAN.md — ENV-01: env_clear() the caprun-planner sidecar + minimal allowlist; drop the dead worker-spawn entry (Wave 1)
-- [ ] 40-02-PLAN.md — Non-default `mock-egress-ca` feature: test CA trust anchor + mock host, release trust provably unchanged (Wave 1)
-- [ ] 40-03-PLAN.md — Mock GitHub HTTPS server + cert fixtures + `scripts/compose-verify.sh` (Mailpit + mock, public-range net, true-exit-before-pipe) (Wave 2)
-- [ ] 40-04-PLAN.md — Composed Linux acceptance test: success workflow + 3 adversarial Block/Deny legs + ENV-01 live-HTTPS proof + regression (Wave 3)
+
+- [x] 40-01-PLAN.md — ENV-01: env_clear() the caprun-planner sidecar + minimal allowlist; drop the dead worker-spawn entry (Wave 1)
+- [x] 40-02-PLAN.md — Non-default `mock-egress-ca` feature: test CA trust anchor + mock host, release trust provably unchanged (Wave 1)
+- [x] 40-03-PLAN.md — Mock GitHub HTTPS server + cert fixtures + `scripts/compose-verify.sh` (Mailpit + mock, public-range net, true-exit-before-pipe) (Wave 2)
+- [x] 40-04-PLAN.md — Composed Linux acceptance test: success workflow + 3 adversarial Block/Deny legs + ENV-01 live-HTTPS proof + regression (Wave 3)
 
 ## Progress
 
@@ -298,4 +299,4 @@ git.push egress design-gate). The v1.8 DESIGN doc §2 (model), §2.5 (captured-o
 | 37. `http.request` GET Egress | v1.8 | 4/3 | Complete    | 2026-07-18 |
 | 38. `github.pr` Sink | v1.8 | 6/5 | Complete    | 2026-07-18 |
 | 39. `git.push` Sink | v1.8 | — | ⛔ Deferred → v1.9 | 2026-07-18 |
-| 40. CLI Compose, Sidecar env_clear() & Composed Live Proof (v1.8 DONE) | v1.8 | 0/TBD | Not started | - |
+| 40. CLI Compose, Sidecar env_clear() & Composed Live Proof (v1.8 DONE) | v1.8 | 4/4 | Complete    | 2026-07-18 |
