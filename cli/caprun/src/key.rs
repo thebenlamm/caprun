@@ -92,6 +92,73 @@ pub(crate) fn load_or_create_key(
     Ok(key.to_vec())
 }
 
+/// Load the EXISTING cross-process MAC key for `audit_path` — the load-ONLY
+/// sibling of `load_or_create_key`, for the read-only audit-DAG viewer
+/// (VIEW-01 / U1 M2, Plan 45-03).
+///
+/// This is `load_or_create_key` MINUS the create branch and MINUS the
+/// `:memory:` fresh-key branch — an absent key is FAIL-CLOSED by construction:
+///
+/// - `audit_path == ":memory:"` → hard `Err`. Unlike `load_or_create_key`
+///   (which returns a fresh ephemeral key for `:memory:`), the viewer REFUSES
+///   it: a `:memory:` DB has NO persisted chain, so ANY key — fresh or not —
+///   would produce a green-but-meaningless `verify_chain` verdict (U1 M2,
+///   Pitfall 1). The verdict must be refused, never faked.
+/// - Otherwise the key path is `<audit_path>.key`. The SAME F1
+///   `refuse_if_beneath_workspace` containment check `load_or_create_key` runs
+///   is applied to BOTH the audit path and its `.key` sibling FIRST — an audit
+///   DB at or beneath the workspace root is within the confined worker's reach
+///   (it could `RequestFd` the key and forge the chain), so it is refused.
+/// - If the `.key` file EXISTS, its bytes are read back and returned
+///   (cross-process-stable — the SAME key the original `caprun run` persisted,
+///   so `verify_chain` verifies against the true signing key).
+/// - If the `.key` file is ABSENT → hard `Err`. It NEVER creates a key and
+///   writes NOTHING (fail-closed: refuse to render a verdict rather than
+///   verify against a fresh/meaningless key).
+pub(crate) fn load_existing_key(
+    audit_path: &str,
+    workspace_root: &Path,
+) -> anyhow::Result<Vec<u8>> {
+    // U1 M2 fail-closed: a `:memory:` DB has no persisted chain to verify — a
+    // fresh/ephemeral key would produce a green-but-meaningless verdict
+    // (Pitfall 1). The load-only viewer REFUSES it (load_or_create_key returns
+    // a fresh key here; this sibling deliberately does NOT).
+    if audit_path == ":memory:" {
+        anyhow::bail!(
+            "refusing to verify a :memory: audit DB: it has no persisted chain, so any \
+             key would yield a meaningless verify_chain verdict (U1 M2 fail-closed)"
+        );
+    }
+
+    let audit_path_buf = PathBuf::from(audit_path);
+    let key_path_buf = PathBuf::from(format!("{audit_path}.key"));
+
+    // F1 fail-closed refusal — the SAME shared containment predicate
+    // `load_or_create_key` runs, on BOTH candidate paths (the audit DB and its
+    // `.key` sibling). Either resolving at or beneath the workspace root is a
+    // hard refusal (out of the confined worker's reach); an unresolvable
+    // root/candidate is itself a refusal.
+    for candidate in [&audit_path_buf, &key_path_buf] {
+        adapter_fs::containment::refuse_if_beneath_workspace(candidate, workspace_root)?;
+    }
+
+    // Load-ONLY: read back the existing key, or hard-error if absent. NEVER
+    // generates a key, NEVER writes a file — an absent key is a refusal to
+    // render a verdict (U1 M2 fail-closed), never a fresh/meaningless verdict.
+    if key_path_buf.exists() {
+        let bytes = std::fs::read(&key_path_buf).with_context(|| {
+            format!("failed to read existing key file {}", key_path_buf.display())
+        })?;
+        return Ok(bytes);
+    }
+
+    anyhow::bail!(
+        "MAC key file {} is absent — refusing to render a verify_chain verdict (the \
+         load-only viewer never creates a key; U1 M2 fail-closed)",
+        key_path_buf.display()
+    )
+}
+
 /// Generate a fresh 32-byte key via the vetted `getrandom` CSPRNG. Never a
 /// custom PRNG (DESIGN §b pin, RESEARCH's explicit rejection of `SystemTime`-
 /// seeded alternatives).
@@ -216,6 +283,98 @@ mod tests {
         assert!(
             !Path::new(":memory:.key").exists(),
             ":memory: must never write a key file"
+        );
+
+        std::fs::remove_dir_all(&ws_root).ok();
+    }
+
+    // ── load_existing_key (VIEW-01 / U1 M2 load-ONLY fail-closed) ────────────
+
+    /// The load-only viewer sibling reads back the SAME bytes an existing key
+    /// file holds (F1-checked, cross-process-stable): the viewer's
+    /// `verify_chain` must run against the TRUE signing key the original
+    /// `caprun run` persisted, byte-identical.
+    #[test]
+    fn load_existing_key_reads_back_existing_key() {
+        let tmp = unique_tmp_root("le_reads_back");
+        let ws_root = tmp.join("workspace");
+        std::fs::create_dir_all(&ws_root).expect("create workspace subdir");
+        let audit_path = tmp.join("audit.db"); // sibling of ws_root, NOT beneath it
+
+        // Seed the `.key` file exactly as `caprun run` would.
+        let created = load_or_create_key(audit_path.to_str().unwrap(), &ws_root)
+            .expect("seed key via load_or_create_key");
+        let loaded = load_existing_key(audit_path.to_str().unwrap(), &ws_root)
+            .expect("load_existing_key must read back the existing key");
+
+        assert_eq!(
+            created, loaded,
+            "load_existing_key must return the SAME bytes the existing key file holds"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// FAIL-CLOSED on an absent key: no `.key` file → hard `Err`, and the
+    /// load-only helper writes NOTHING (never creates a key — U1 M2). A viewer
+    /// that hit this must refuse to render a verdict.
+    #[test]
+    fn load_existing_key_absent_key_errors_and_writes_nothing() {
+        let tmp = unique_tmp_root("le_absent");
+        let ws_root = tmp.join("workspace");
+        std::fs::create_dir_all(&ws_root).expect("create workspace subdir");
+        let audit_path = tmp.join("audit.db"); // F1-safe sibling, no `.key` seeded
+        let key_path = PathBuf::from(format!("{}.key", audit_path.display()));
+
+        let result = load_existing_key(audit_path.to_str().unwrap(), &ws_root);
+
+        assert!(
+            result.is_err(),
+            "an absent key must be a hard error (fail-closed), never a fresh key"
+        );
+        assert!(
+            !key_path.exists(),
+            "load_existing_key must NEVER create a key file (writes nothing on absent)"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// `:memory:` is REFUSED (unlike `load_or_create_key`, which returns a
+    /// fresh ephemeral key): a `:memory:` DB has no persisted chain, so any
+    /// verdict would be meaningless (U1 M2, Pitfall 1).
+    #[test]
+    fn load_existing_key_refuses_memory() {
+        let ws_root = unique_tmp_root("le_memory_refused");
+
+        let result = load_existing_key(":memory:", &ws_root);
+
+        assert!(
+            result.is_err(),
+            ":memory: must be refused by the load-only viewer key loader (U1 M2)"
+        );
+
+        std::fs::remove_dir_all(&ws_root).ok();
+    }
+
+    /// F1: an audit DB (and its `.key` sibling) at or beneath the workspace
+    /// root is refused exactly as `load_or_create_key` refuses it — out of the
+    /// confined worker's reach. Refusal writes no key file.
+    #[test]
+    fn load_existing_key_f1_refusal_when_audit_under_workspace_root() {
+        let ws_root = unique_tmp_root("le_f1_vuln");
+        let audit_path = ws_root.join("audit.db");
+        let key_path = PathBuf::from(format!("{}.key", audit_path.display()));
+
+        let result = load_existing_key(audit_path.to_str().unwrap(), &ws_root);
+
+        assert!(
+            result.is_err(),
+            "an audit DB beneath the workspace root must be refused (F1)"
+        );
+        assert!(
+            !key_path.exists(),
+            "F1 refusal must write no key file (fail-closed leaves no artifact)"
         );
 
         std::fs::remove_dir_all(&ws_root).ok();
