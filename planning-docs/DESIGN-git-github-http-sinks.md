@@ -36,8 +36,9 @@ for all four new external-effect sinks, before any TCB code exists:
 
 1. **`git.commit`** — Pattern B (broker-spawned confined child), effect-class
    `MutateReversible` (§1).
-2. **`git.push`** — Pattern B extended to a **net-allowed** confined child
-   (FORK 1), effect-class `CommitIrreversible` (§2).
+2. **`git.push`** — Pattern B local dispatch with the child kept **fully
+   net-denied**; the destination pin is **broker-mediated** (resolve-and-pin, not
+   seccomp — FORK 1 re-decided at the gate, §2.1), effect-class `CommitIrreversible` (§2).
 3. **read-only `http.request` GET** — Pattern A (in-broker/broker-helper
    egress), effect-class `Observe`, plus the one genuinely NEW mechanism this
    milestone introduces: `mint_from_http` + `TaintLabel::HttpRaw` + session
@@ -72,7 +73,8 @@ path:
   Landlock exec-child ruleset → seccomp exec-child filter) in its OWN address
   space THEN self-replaces via `execve` into the target (`process_exec.rs:1-8`,
   Option B, DESIGN-effect-breadth-exec.md §1.3). Owns `git.commit` (§1) and
-  `git.push` via a net-allowed variant (§2, FORK 1).
+  `git.push` (whose child is ALSO fully net-denied — the push destination pin is
+  broker-mediated, NOT a child net relaxation; §2, FORK 1 re-decided at the gate).
 
 **Explicitly DEFERRED to v1.9+ (locked in `35-CONTEXT.md` <specifics>, do NOT
 build this milestone):** `http.request` write egress / POST, PR merge/comment,
@@ -181,7 +183,7 @@ binary floor: **git ≥2.30** (a Phase 36 deployment constant, §11).
 
 ---
 
-## §2. `git.push` — Pattern B net-allowed confined child, `CommitIrreversible` (FORK 1)
+## §2. `git.push` — Pattern B, net-denied child + broker-mediated egress, `CommitIrreversible` (FORK 1 re-decided)
 
 ### 2.1 FORK 1 — RE-DECIDED at the gate: broker-mediated egress, child stays net-denied
 
@@ -715,12 +717,16 @@ the fresh reviewer must confirm the extension exists before clearing.
 
 **Accepted residual risks (mirroring prior DESIGN docs' convention):**
 
-- **The `git.push` net-relaxation is the riskiest surface in the project to
-  date** — explicitly the TOP item for the fresh adversarial review to
-  pressure-test (§2.1). A confined child WITH network is a genuinely new trust
-  posture; the mitigation (single pinned host:port, no arbitrary egress,
-  Landlock still workspace-confined, short-lived credential) is pinned but must
-  be traced against real code by the reviewer.
+- **git.push's broker-mediated egress is the riskiest surface in the project to
+  date** — a git operation that reaches the network at all is a genuinely new trust
+  posture, even with the child fully net-denied and the destination pinned in the broker
+  (BLOCKER-1 correction, §2.1). The mitigation (child has NO direct net; broker
+  application-layer resolve-and-pin to the single trusted-intent remote; Landlock still
+  workspace-confined; short-lived credential; captured-output scrub §2.5) is pinned, but
+  the fully-unprivileged realization is unproven until Phase 39 — and git.push is
+  **deferred entirely rather than shipped with any arbitrary-egress fallback** if no
+  unprivileged destination-pinning mechanism proves feasible (§2.1 HARD CONSTRAINT,
+  §11 Open Item 1).
 - **An Allowed `http.request` GET in a network-scoped context is inert** unless
   the host allowlist permits it — deliberately scoped, mirroring
   DESIGN-effect-breadth-exec.md §1.6's "an Allowed `curl` in a network-denied
