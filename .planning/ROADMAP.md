@@ -181,7 +181,8 @@ Full detail archived in [`milestones/v1.8-ROADMAP.md`](milestones/v1.8-ROADMAP.m
   2. The doc formalizes the `git.push` safety-valve: if no fully-unprivileged destination-pinning mechanism proves sound, `git.push` defers (the other three tracks proceed) — a disclosed decision, never a silent drop.
   3. The DESIGN doc clears a fresh, non-self, **orchestrator-owned** adversarial code-trace (NOT a gsd-executor), with every BLOCKER/MAJOR resolved before the gate clears.
   4. No v1.9 TCB code exists until the gate clears; and the trace re-runs if the git.push trust-posture or transport-dependency choice changes mid-implementation ("the riskiest surface in the project" must not bypass its one gate).
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 41-01-PLAN.md — Author planning-docs/DESIGN-v1.9-egress-policy.md (docs-only): pin git.push egress + http-write egress + policy-vs-I2 boundary incl. POLICY-03 binding; carry forward v1.8 §2/§2.5/§2.7/§9; declare the orchestrator-owned adversarial-trace gate (DESIGN-17/18)
 
 ### Phase 42: Policy Layer — Binding, Enforcement & the I2 Boundary
 **Goal**: A minimal declarative per-session policy narrows WHICH sinks/args are callable, is bound by the broker from a trusted source provably outside the confined worker's reach, is immutable for the session, and can NEVER disable or override I2 — the #1 adversarial-trace risk, made structural. Lands before the sinks it gates.
