@@ -355,14 +355,14 @@ re-demonstrates the shipped I0/I1/I2 + policy boundary live.
 
 ## Open Questions
 
-1. **Whole-chain `caprun run` vs hybrid (G1/A2)** — does the user require the entire
+1. **Whole-chain `caprun run` vs hybrid (G1/A2)** *(RESOLVED — hybrid locked: in-crate composition through the real arms + genuine `caprun audit` + one genuine `caprun run` Block leg; no multi-node planner)* — does the user require the entire
    multi-sink chain literally driven by one `caprun run` invocation? Recommendation:
    accept the hybrid (in-crate composition through real arms + real `caprun audit`
    inspection + one genuine `caprun run` Block leg); if not, add a scoped
    composed-intent + planner recipe as a separate task.
-2. **Policy-deny tag home (G2/A1)** — decision-level assertion (no TCB) vs a new
+2. **Policy-deny tag home (G2/A1)** *(RESOLVED — decision-level assertion locked: `code()=="policy_deny"` vs `sink_blocked`, asserted separately; no new TCB / no DAG-visible denied event)* — decision-level assertion (no TCB) vs a new
    DAG-visible denied event (TCB). Recommendation: decision-level.
-3. **Broker-log credential-absence (G4/A4)** — is capturing+asserting broker log
+3. **Broker-log credential-absence (G4/A4)** *(RESOLVED — in-scope: leg 5b asserts broker-log absence on the ERROR-PATH push where `scrub_secrets`→`eprintln!` fires, via FD-2 capture; the clean-push log check would be vacuous)* — is capturing+asserting broker log
    output in-scope for leg 5, or is the do-not-log discipline sufficient?
 
 ## Suggested Plan Breakdown (3 plans, ~2 waves)
