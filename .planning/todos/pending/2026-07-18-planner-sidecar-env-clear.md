@@ -2,7 +2,7 @@
 created: 2026-07-18T00:00:00.000Z
 title: env_clear() the caprun-planner sidecar spawn (defense-in-depth, v1.8)
 area: security
-resolves_phase: null
+resolves_phase: 40
 files:
   - cli/caprun/src/main.rs:323
 ---
