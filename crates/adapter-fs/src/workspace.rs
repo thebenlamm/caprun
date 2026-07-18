@@ -460,4 +460,127 @@ mod tests {
         std::fs::remove_dir_all(&outside_dir).ok();
         std::fs::remove_dir_all(&root).ok();
     }
+
+    // ── write_within (write side, FS-02) ─────────────────────────────────
+    //
+    // NOT-inherited negative test set for the O_WRONLY|O_TRUNC flag
+    // combination (DESIGN §3.2: equivalent negative tests are NOT assumed
+    // inherited from read_within's O_RDONLY or create_exclusive_within's
+    // O_CREAT|O_EXCL|O_WRONLY coverage).
+
+    /// A legit in-root write overwrites an EXISTING file's bytes exactly
+    /// (truncation semantics — no leftover trailing bytes from the original).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn write_within_overwrites_existing() {
+        let root = unique_tmp_root("write_ok");
+        std::fs::write(root.join("edit.txt"), b"original longer content").unwrap();
+
+        let ws = WorkspaceRoot::open(&root).unwrap();
+        ws.write_within("edit.txt", b"new")
+            .expect("write to an existing in-root file must succeed");
+
+        let on_disk = std::fs::read(root.join("edit.txt")).unwrap();
+        assert_eq!(on_disk, b"new", "O_TRUNC must replace, not append/leave trailing bytes");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// write_within on a rel_path that does NOT exist fails closed with
+    /// ENOENT — proving no O_CREAT path exists (the existing-file-only
+    /// contract). This is the genuinely-new test with no analog.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn write_within_missing_target_enoent() {
+        let root = unique_tmp_root("write_enoent");
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let err = ws
+            .write_within("does_not_exist.txt", b"x")
+            .expect_err("write to a missing target must fail closed");
+        assert_eq!(
+            err.raw_os_error(),
+            Some(nix::libc::ENOENT),
+            "write_within must never silently create a missing target — ENOENT proves no O_CREAT path"
+        );
+        assert!(
+            !root.join("does_not_exist.txt").exists(),
+            "no file must be created as a side effect of the failed write"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// An absolute path arg is rejected by RESOLVE_BENEATH (EXDEV).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn write_within_absolute_path_rejected() {
+        let root = unique_tmp_root("write_abs");
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let err = ws
+            .write_within("/tmp/caprun_should_not_exist", b"x")
+            .expect_err("absolute path must be rejected");
+        assert_eq!(
+            err.raw_os_error(),
+            Some(nix::libc::EXDEV),
+            "RESOLVE_BENEATH must reject absolute paths with EXDEV"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A `../` traversal escaping the root is rejected by RESOLVE_BENEATH,
+    /// even when the target actually exists outside the root.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn write_within_parent_traversal_rejected() {
+        let root = unique_tmp_root("write_dotdot");
+        let parent = root.parent().expect("temp root has a parent");
+        let target_name = format!("caprun_write_escape_{}.txt", std::process::id());
+        let target = parent.join(&target_name);
+        std::fs::write(&target, b"outside the root").unwrap();
+
+        let ws = WorkspaceRoot::open(&root).unwrap();
+        let err = ws
+            .write_within(&format!("../{target_name}"), b"clobber")
+            .expect_err("`..` traversal must be rejected");
+        assert_eq!(
+            err.raw_os_error(),
+            Some(nix::libc::EXDEV),
+            "RESOLVE_BENEATH must reject `..` escape with EXDEV"
+        );
+        // Original bytes untouched.
+        assert_eq!(std::fs::read(&target).unwrap(), b"outside the root");
+
+        std::fs::remove_file(&target).ok();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// An in-root symlink pointing OUTSIDE the root is rejected at resolution
+    /// (RESOLVE_NO_SYMLINKS) — the write must fail, not follow-then-write.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn write_within_symlink_escape_rejected() {
+        let root = unique_tmp_root("write_symlink");
+        let parent = root.parent().expect("temp root has a parent");
+        let target_name = format!("caprun_write_symtarget_{}.txt", std::process::id());
+        let target = parent.join(&target_name);
+        std::fs::write(&target, b"sensitive outside file").unwrap();
+
+        // In-root symlink → outside target.
+        std::os::unix::fs::symlink(&target, root.join("escape")).unwrap();
+
+        let ws = WorkspaceRoot::open(&root).unwrap();
+        let res = ws.write_within("escape", b"clobber");
+        assert!(
+            res.is_err(),
+            "RESOLVE_NO_SYMLINKS must reject symlink traversal at resolution"
+        );
+        // Original bytes untouched.
+        assert_eq!(std::fs::read(&target).unwrap(), b"sensitive outside file");
+
+        std::fs::remove_file(&target).ok();
+        std::fs::remove_dir_all(&root).ok();
+    }
 }
