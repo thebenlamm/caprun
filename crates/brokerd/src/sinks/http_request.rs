@@ -341,16 +341,17 @@ pub async fn invoke_http_get(url: &str) -> Result<String> {
     do_pinned_get(url, &host).await
 }
 
-/// Linux: resolve → vet all resolved IPs → pin to the vetted IP → redirect-free
-/// GET → response body text. The real DNS-resolve + socket-connect leg is
-/// Linux-gated per the project's Linux-only pattern (CLAUDE.md); live-HTTPS
-/// behavior is deferred to Phase 40.
+/// Linux-only: resolve `host` on a blocking thread, vet the WHOLE resolved set
+/// (`vet_resolved` → `ssrf_check`, fail-closed on any denied IP), and build the
+/// redirect-free client pinned to the vetted IP. This is the shared §3.6
+/// resolve-and-pin core reused by BOTH `do_pinned_get` and `do_pinned_post` —
+/// the classifiers (`ssrf_check`, range predicates) are NEVER re-implemented,
+/// only invoked here. The resolved IPs are the EXACT set vetted and pinned (no
+/// re-resolve later — DNS-rebind TOCTOU close).
 #[cfg(target_os = "linux")]
-async fn do_pinned_get(url: &str, host: &str) -> Result<String> {
+async fn resolve_and_pin(host: &str) -> Result<reqwest::Client> {
     use std::net::ToSocketAddrs;
 
-    // Resolve on a blocking thread (std resolver) — the resolved IPs are the
-    // EXACT set that will be vetted and pinned (no re-resolve later).
     let host_owned = host.to_string();
     let addrs: Vec<SocketAddr> = tokio::task::spawn_blocking(move || {
         (host_owned.as_str(), 443u16)
@@ -362,7 +363,16 @@ async fn do_pinned_get(url: &str, host: &str) -> Result<String> {
     .map_err(|e| anyhow::anyhow!("http.request: DNS resolution failed: {e}"))?;
 
     let pinned = vet_resolved(&addrs)?;
-    let client = build_pinned_client(host, pinned)?;
+    build_pinned_client(host, pinned)
+}
+
+/// Linux: resolve → vet all resolved IPs → pin to the vetted IP → redirect-free
+/// GET → response body text. The real DNS-resolve + socket-connect leg is
+/// Linux-gated per the project's Linux-only pattern (CLAUDE.md); live-HTTPS
+/// behavior is deferred to Phase 40.
+#[cfg(target_os = "linux")]
+async fn do_pinned_get(url: &str, host: &str) -> Result<String> {
+    let client = resolve_and_pin(host).await?;
     let mut resp = client
         .get(url)
         .send()
@@ -391,6 +401,95 @@ async fn do_pinned_get(url: &str, host: &str) -> Result<String> {
 #[cfg(not(target_os = "linux"))]
 async fn do_pinned_get(_url: &str, _host: &str) -> Result<String> {
     bail!("http.request live GET is Linux-only (macOS no-op stub); deferred to Phase 40")
+}
+
+/// Broker-side WRITE egress: one authenticated `POST` to a pinned, allowlisted
+/// destination — the sole network leg the `github.pr` sink (GITHUB-01) needs.
+///
+/// Order is IDENTICAL to `invoke_http_get` (DESIGN §3.6): `validate_url` →
+/// allowlist gate (Err BEFORE any resolve) → [Linux] the SAME
+/// resolve→`vet_resolved`→`build_pinned_client` pin path the GET uses
+/// (`resolve_and_pin`, no classifier is re-implemented) → redirect-free POST →
+/// `(status_code, body_text)`. The `bearer` token is set via `.bearer_auth` and
+/// the `json_body` (already serialized by the caller — reqwest's `json` feature
+/// is deliberately NOT enabled) is sent verbatim. redirect(none), the
+/// connect/total timeouts, and the response-body byte cap are the SAME as the
+/// GET path.
+///
+/// SSRF pin note (MAJOR-4): the destination host is whatever `url`'s host is,
+/// and it MUST be on `HOST_ALLOWLIST` — so a `github.pr` caller that builds its
+/// URL from a FIXED `api_base` (never from owner/repo) cannot have an
+/// attacker-influenced arg redirect the POST to a different host.
+///
+/// Like `invoke_http_get`, this performs NO minting, appends NO audit event, and
+/// never touches session status (keeps this module out of Gate 3's mint-site
+/// restriction).
+pub(crate) async fn invoke_pinned_post(
+    url: &str,
+    bearer: &str,
+    json_body: &str,
+) -> Result<(u16, String)> {
+    let host = validate_url(url)?;
+    // Allowlist gate — BEFORE any DNS resolve or socket (DESIGN §8 fail-closed).
+    if !is_host_allowlisted(&host) {
+        bail!("http.request: host {host:?} is not on the allowlist");
+    }
+    do_pinned_post(url, &host, bearer, json_body).await
+}
+
+/// Linux: resolve-and-pin (shared with the GET) → redirect-free authenticated
+/// POST → `(status, capped body text)`. Live-HTTPS behavior is deferred to
+/// Phase 40 (mock endpoint). Redirect following is DISABLED (a 30x cannot bounce
+/// the write to a denied range), and the response body is byte-capped by the
+/// SAME fail-closed streaming read as the GET.
+#[cfg(target_os = "linux")]
+async fn do_pinned_post(
+    url: &str,
+    host: &str,
+    bearer: &str,
+    json_body: &str,
+) -> Result<(u16, String)> {
+    let client = resolve_and_pin(host).await?;
+    let mut resp = client
+        .post(url)
+        .bearer_auth(bearer)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "caprun")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("Content-Type", "application/json")
+        .body(json_body.to_string())
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("http.request: POST failed: {e}"))?;
+
+    let status = resp.status().as_u16();
+
+    // Stream the response body with the SAME fail-closed byte cap as the GET
+    // (FIX 3, DoS) — never resp.text() (unbounded buffer).
+    let mut body: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| anyhow::anyhow!("http.request: reading POST response body failed: {e}"))?
+    {
+        body.extend_from_slice(&chunk);
+        check_body_cap(body.len(), MAX_RESPONSE_BODY_BYTES)?;
+    }
+    Ok((status, String::from_utf8_lossy(&body).into_owned()))
+}
+
+/// Non-Linux (dev macOS) no-op stub — mirrors `do_pinned_get`'s cfg split: the
+/// pure gates (`validate_url`, allowlist, `build_pinned_client` wiring) are
+/// host-portable and tested, but the real socket leg is Linux-only (CLAUDE.md);
+/// live GitHub behavior is deferred to Phase 40 (mock endpoint).
+#[cfg(not(target_os = "linux"))]
+async fn do_pinned_post(
+    _url: &str,
+    _host: &str,
+    _bearer: &str,
+    _json_body: &str,
+) -> Result<(u16, String)> {
+    bail!("github.pr live POST is Linux-only (macOS no-op stub); deferred to Phase 40")
 }
 
 #[cfg(test)]
@@ -680,5 +779,39 @@ mod tests {
     async fn invoke_http_get_rejects_non_https_before_allowlist() {
         // validate_url runs first: a non-https URL Errs even for an allowlisted host.
         assert!(invoke_http_get("http://api.github.com/x").await.is_err());
+    }
+
+    // ---- invoke_pinned_post: the github.pr POST egress (Plan 38-03 Task 1) ----
+    // Reuses the SAME validate_url → allowlist gate → resolve-and-pin path as the
+    // GET; the only additions are method=POST, the bearer + github headers, and a
+    // request body. These host-portable tests exercise the pre-socket gates.
+
+    #[tokio::test]
+    async fn invoke_pinned_post_rejects_non_allowlisted_host_before_resolve() {
+        // A non-allowlisted host must Err at the allowlist gate, BEFORE any DNS
+        // resolve/socket (mirror invoke_http_get's gate test). An unresolvable
+        // TLD makes a bypassed gate observable as a resolve attempt; the fast Err
+        // proves the gate precedes resolve.
+        let r = invoke_pinned_post("https://evil.invalid/x", "tok", "{}").await;
+        assert!(r.is_err());
+    }
+
+    #[tokio::test]
+    async fn invoke_pinned_post_rejects_non_https_base() {
+        // validate_url runs first: a non-https base Errs even for an allowlisted host.
+        assert!(invoke_pinned_post("http://api.github.com/x", "tok", "{}")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn invoke_pinned_post_rejects_userinfo_base() {
+        // A userinfo-bearing base is rejected at validate_url (SSRF/credential
+        // smuggling) before any resolve — same defense as the GET path.
+        assert!(
+            invoke_pinned_post("https://user:pass@api.github.com/x", "tok", "{}")
+                .await
+                .is_err()
+        );
     }
 }
