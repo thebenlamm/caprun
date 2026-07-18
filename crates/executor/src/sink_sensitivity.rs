@@ -273,6 +273,10 @@ mod tests {
         SinkId("process.exec".to_string())
     }
 
+    fn file_write() -> SinkId {
+        SinkId("file.write".to_string())
+    }
+
     #[test]
     fn file_create_path_is_routing_sensitive() {
         assert!(
@@ -504,5 +508,76 @@ mod tests {
             expected_role(&process_exec(), "cwd"),
             Some(&["path", "relative_path"][..])
         );
+    }
+
+    // -----------------------------------------------------------------
+    // file.write (FS-03, DESIGN-effect-breadth-exec.md §4.1/§4.3)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn file_write_path_is_routing_sensitive() {
+        assert!(
+            is_routing_sensitive(&file_write(), "path"),
+            "file.write `path` routes the write — must be routing-sensitive"
+        );
+    }
+
+    #[test]
+    fn file_write_contents_not_routing_sensitive() {
+        assert!(
+            !is_routing_sensitive(&file_write(), "contents"),
+            "file.write `contents` is WHAT is written, not WHERE — not routing-sensitive"
+        );
+    }
+
+    #[test]
+    fn file_write_contents_is_content_sensitive() {
+        assert!(
+            is_content_sensitive(&file_write(), "contents"),
+            "file.write `contents` must be content-sensitive"
+        );
+    }
+
+    #[test]
+    fn file_write_path_not_content_sensitive() {
+        assert!(
+            !is_content_sensitive(&file_write(), "path"),
+            "file.write `path` must NOT become content-sensitive (no over-widening)"
+        );
+    }
+
+    #[test]
+    fn file_write_is_commit_irreversible() {
+        assert_eq!(
+            sink_effect_class(&file_write()),
+            EffectClass::CommitIrreversible
+        );
+    }
+
+    #[test]
+    fn file_write_path_expects_path_or_relative_path() {
+        assert_eq!(
+            expected_role(&file_write(), "path"),
+            Some(&["path", "relative_path"][..])
+        );
+    }
+
+    #[test]
+    fn file_write_contents_expects_path_exec_output_or_doc_fragment() {
+        // WIDER than file.create's contents role list (Some(&["path"])) —
+        // admits Phase 32's exec_output origin_role (chained
+        // process.exec -> file.write) and the doc_fragment vocabulary, so a
+        // tainted value here reaches I2's content-sensitivity Block rather
+        // than a structural Step-1c Deny (DESIGN §4.3, RESEARCH A4).
+        assert_eq!(
+            expected_role(&file_write(), "contents"),
+            Some(&["path", "exec_output", "doc_fragment"][..]),
+            "file.write `contents` must expect [path, exec_output, doc_fragment]"
+        );
+    }
+
+    #[test]
+    fn file_write_unknown_arg_is_unconstrained() {
+        assert_eq!(expected_role(&file_write(), "mode"), None);
     }
 }
