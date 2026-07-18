@@ -1,20 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.7
-milestone_name: — Effect Breadth I
-current_phase: 7
-status: Awaiting next milestone
-stopped_at: v1.7 roadmap created (Phases 31-34)
-last_updated: "2026-07-18T05:19:58.701Z"
+milestone: v1.8
+milestone_name: Git/GitHub Adapters (Effect Breadth II)
+status: planning
+last_updated: "2026-07-18T05:46:22.959Z"
 last_activity: 2026-07-18
-last_activity_desc: Milestone v1.7 completed and archived
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 17
-  completed_plans: 17
-  percent: 100
-current_phase_name: regression-live-proof-v1-7-done
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -28,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 ## Current Position
 
-Phase: Milestone v1.7 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-07-18 — Milestone v1.7 completed and archived
+Status: Defining requirements
+Last activity: 2026-07-18 — Milestone v1.8 started
 
 ## Performance Metrics
 

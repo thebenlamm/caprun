@@ -16,6 +16,41 @@ Event → ValueNode → sensitive sink argument) deterministically blocks
 value-injection at the sink. If everything else fails, **I2 enforcement on a
 genuine taint chain must hold.**
 
+## Current Milestone: v1.8 — Git/GitHub Adapters (Effect Breadth II)
+
+**Goal:** Add the external-effect sinks that make a coding agent's work durable
+and shareable — `git.commit`, `git.push`, `github.pr`, and `http.request`
+authorized egress — each through the locked plan-node → taint → executor(I2) →
+audit-DAG path, proving the Safe Coding Agent anchor end-to-end.
+
+**Anchor use case (confirmed 2026-07-18):** Anchor A — the Safe Coding Agent. An
+agent edits a repo, runs its test suite via `process.exec` (v1.7), commits,
+opens a GitHub PR, and (optionally) makes an allowlisted HTTP call — where every
+irreversible/external effect is I2-gated and value-injection into a sink arg
+(e.g. a tainted PR body, a tainted push target) is deterministically blocked.
+
+**Target features:**
+- `git.commit` sink — broker-mediated `git commit`, workspace-confined,
+  exec-like (returns exit code + stdout/stderr, output tainted).
+- `git.push` sink — broker-mediated `git push`, confined to the session's
+  intent-origin repo/remote (irreversible external effect → I2/confirmation).
+- `github.pr` sink — API-mediated GitHub PR creation via a session bearer token,
+  explicit human auth-grant required; tainted PR-body/title sections blocked.
+- `http.request` authorized egress — taint-governed outbound HTTP to an
+  allowlisted host, read-only first (write egress deferred). Absorbs the
+  deferred `caprun-planner` sidecar `env_clear()` todo at this TLS/egress
+  boundary.
+- Live proof on real Linux — a composed agent workflow (exec → fs → git →
+  github, plus an http leg) with every step gated, tainted, and audit-DAG-chained.
+
+**Key context:** Per this project's unbroken design-gate-first precedent (v1.0
+P2, v1.2 P8, v1.3 P12, v1.4 P18, v1.5 P23, v1.6 P26, v1.7 P31), v1.8 opens with a
+DESIGN doc for the git/github/http sinks that must clear a fresh **non-self**
+adversarial code-trace (orchestrator-owned, not a gsd-executor) before any
+`crates/{executor,brokerd,sandbox,runtime-core}` TCB code. Nothing weakens
+I0/I1/I2 or adds a raw `EffectRequest` path. Real LLM planner loop, declarative
+policy, SDK/packaging remain deferred to v1.9+.
+
 ## Current State
 
 **v1.7 — Effect Breadth I shipped 2026-07-18:** `process.exec` broker-spawned confined-child sink with captured+tainted stdout/stderr, filesystem read/write breadth beyond single-file create, and EXEC-05 confirm-release for blocked process.exec human release. Proven on real Linux: LIVE-01 composed 4-leg acceptance + LIVE-02 full-workspace 391/0 regression. A fresh Fable-5 adversarial code-trace caught and fixed a real MAJOR (confirm-release audit gap), and post-close env_clear() closed broker-secret inheritance in exec-child + worker spawns.
@@ -845,7 +880,7 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-18 after v1.7 (Effect Breadth I) milestone — process.exec confined-child sink + filesystem read/write breadth + EXEC-05 confirm-release, proven on real Linux (LIVE-01 composed 4-leg + LIVE-02 391/0); env_clear gap-closure (exec-child + worker) fixed, planner-sidecar deferred to v1.8.*
+*Last updated: 2026-07-18 starting v1.8 (Git/GitHub Adapters — Effect Breadth II) milestone via `/gsd-new-milestone`. Anchor A (Safe Coding Agent) confirmed. Scope: `git.commit` + `git.push` + `github.pr` + `http.request` authorized egress (read-only first), all through the plan-node → taint → executor(I2) → audit path; live proof = a composed exec→fs→git→github(+http) workflow on real Linux. Opens with a DESIGN-gate phase (fresh non-self adversarial code-trace before any TCB code) per standing precedent; folds in the deferred `caprun-planner` sidecar `env_clear()` todo at the http egress boundary. Prior: 2026-07-18 after v1.7 (Effect Breadth I) SHIPPED — process.exec confined-child sink + filesystem read/write breadth + EXEC-05 confirm-release, proven on real Linux (LIVE-01 composed 4-leg + LIVE-02 391/0); env_clear gap-closure (exec-child + worker) fixed, planner-sidecar deferred to v1.8.*
 
 Prior: 2026-07-17 after v1.6 "Security Hardening (close the residuals)"
 SHIPPED — all 5 phases (26-30) complete, turning the five standing TCB-local
