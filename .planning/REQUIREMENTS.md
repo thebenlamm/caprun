@@ -56,7 +56,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   seccomp + default-deny net + resource/time limits), the sink is **fail-closed
   on arg-schema**, and a durable audit Event records the spawn and exit.
 
-- [ ] **EXEC-05** *(Phase 34 — closes the P33 adversarial-trace open item)*: A
+- [x] **EXEC-05** *(Phase 34 — closes the P33 adversarial-trace open item)*: A
   **blocked `process.exec` can be human-released**. A `process.exec` blocked by
   I2 yields `BlockedPendingConfirmation`; `caprun confirm` releases it via
   `invoke_process_exec_from_resolved` (re-invoking the sink from the frozen
@@ -64,15 +64,25 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   / `invoke_file_create_from_resolved`) plus a `"process.exec"` arm in
   `confirmation.rs` Step-7 dispatch. The released run re-applies the **exact
   Allowed-path discipline** — broker-spawned confined child (Landlock + seccomp +
-  net-deny + rlimits + wall-clock timeout + byte cap), stdout/stderr captured and
-  taint-minted via the **sanctioned** `mint_from_exec` (untrusted, non-stapled,
-  provenance anchored at the exec Event), `output_value_id` populated, and the
-  two-phase `process_exited` / `process_spawn_failed` audit chained onto the
+  net-deny + rlimits + wall-clock timeout + byte cap) — and the two-phase
+  `process_exited` / `process_spawn_failed` audit chained onto the
   `confirm_granted` head — the command runs **exactly once**, `verify_chain` true.
+  **The released output is NOT minted at confirm-release** (reconciled to the
+  34-03 adversarial-review decision, superseding the original "taint-minted via
+  `mint_from_exec`, `output_value_id` populated" wording): unlike the Allowed
+  path (`server.rs`), which mints into the *live* session `ValueStore` and returns
+  `output_value_id` for a downstream plan node to consume, `caprun confirm` is a
+  separate human-driven process with no live `ValueStore` and no downstream node —
+  a mint there targets only a throwaway store (dead ceremony) and was removed. The
+  genuine, non-stapled durable taint anchor is instead the `process_exited` Event's
+  own labels (`{ExternalUntrusted, ExecRaw}`, provenance rooted at the exec Event).
   No new `ExecutorDecision`, no `submit_plan_node` change, no new raw
-  `EffectRequest` (Gate 1 green), no new Gate-3 mint site (reuses `mint_from_exec`).
-  The Phase-33 pre-Step-5 entry-guard's **fail-closed-recoverable** behavior is
-  preserved for any still-un-dispatchable sink.
+  `EffectRequest` (Gate 1 green); Gate 3's mint-site allow-list stays byte-identical
+  (mint sites remain `server.rs` + `quarantine.rs` only). The Phase-33 pre-Step-5
+  entry-guard's **fail-closed-recoverable** behavior is preserved for any
+  still-un-dispatchable sink (extended by a Step-4.8 pre-spawn precheck so a
+  malformed frozen `args` / missing launcher can never burn the one-shot
+  confirmation without a terminal audit event — 34-03 MAJOR fix).
 
 ### Filesystem Breadth
 
