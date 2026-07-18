@@ -308,16 +308,45 @@ fn build_pinned_client(host: &str, pinned: SocketAddr) -> Result<reqwest::Client
         .map_err(|e| anyhow::anyhow!("http.request: failed to build client: {e}"))
 }
 
+/// Build the broker egress TLS trust anchor set.
+///
+/// The DEFAULT / RELEASE build trusts EXACTLY the compiled-in `webpki-roots`
+/// anchors (DESIGN §5.2) — nothing else, byte-for-byte the Phase-38 trust set.
+///
+/// Under the NON-DEFAULT `mock-egress-ca` feature (Plan 40-03 compose-verify
+/// harness ONLY, `--features mock-egress-ca`) a SINGLE checked-in self-signed
+/// test CA (`tests/fixtures/mock-egress-ca.der`, `github-mock.caprun.test`) is
+/// ALSO added, so the composed live-proof can reach a local TLS mock over REAL
+/// TLS while riding the SAME `validate_url` → allowlist → `resolve_and_pin`
+/// path. The feature adds ONLY this one trust anchor; it NEVER relaxes
+/// https-only (`validate_url`), the SSRF classifier (`ssrf_check`), the IP pin
+/// (`resolve_and_pin`/`vet_resolved`), or redirect-none. The mock anchor is
+/// ABSENT from every production/default build.
+///
+/// SECURITY (T-40-03): the closing fresh adversarial code-trace MUST confirm
+/// the release (no-feature) trust set is webpki-roots ONLY — see
+/// `egress_root_store_default_build_is_webpki_roots_only`.
+// Consumed transitively via `ring_webpki_tls_config` → `build_pinned_client`,
+// plus the host-portable unit tests; same platform-gated
+// unreferenced-on-macOS-non-test situation.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn egress_root_store() -> rustls::RootCertStore {
+    // `mut` is used ONLY under the mock-egress-ca feature (the `roots.add`
+    // below); it is genuinely unused in the default build.
+    let roots = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    roots
+}
+
 /// Preconfigured rustls `ClientConfig`: pure-Rust `ring` provider (DESIGN §5.1)
-/// + compiled-in `webpki-roots` trust anchors (DESIGN §5.2 — `env_clear()`
+/// + the `egress_root_store` trust anchors (DESIGN §5.2 — `env_clear()`
 /// hermetic, no system cert store / SSL_CERT_* / platform verifier).
 // Consumed transitively via `build_pinned_client`; same platform-gated
 // unreferenced-on-macOS-non-test situation.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn ring_webpki_tls_config() -> rustls::ClientConfig {
-    let roots = rustls::RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    };
+    let roots = egress_root_store();
     rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .with_safe_default_protocol_versions()
         .expect("ring provider supports rustls default protocol versions")
@@ -700,6 +729,55 @@ mod tests {
     fn allowlist_rejects_non_allowlisted_host() {
         assert!(!is_host_allowlisted("evil.example.com"));
         assert!(!is_host_allowlisted("api.github.com.evil.com"));
+    }
+
+    // ---- mock-egress-ca: the release trust set + allowlist are PROVABLY
+    // unchanged with the feature OFF; the feature adds EXACTLY one anchor + one
+    // host when ON (T-40-03). These are the LIVE-03 security-invariant tests. ----
+
+    /// RELEASE / default build: the egress host allowlist is EXACTLY
+    /// [api.github.com] — the mock host is NOT reachable without the feature.
+    /// Gated `not(mock-egress-ca)`: it asserts the feature-OFF invariant, which
+    /// by definition does not hold once the feature is compiled in.
+    #[cfg(not(feature = "mock-egress-ca"))]
+    #[test]
+    fn allowlist_default_build_is_api_github_only() {
+        assert_eq!(HOST_ALLOWLIST, &["api.github.com"]);
+        // The Plan 40-03 mock host is NOT allowlisted in a default build.
+        assert!(!is_host_allowlisted("github-mock.caprun.test"));
+    }
+
+    /// RELEASE / default build: the egress trust set is EXACTLY the
+    /// `webpki-roots` anchors — no extra test CA. This is the core T-40-03
+    /// assertion the closing adversarial review relies on. Gated
+    /// `not(mock-egress-ca)`: it asserts the feature-OFF invariant.
+    #[cfg(not(feature = "mock-egress-ca"))]
+    #[test]
+    fn egress_root_store_default_build_is_webpki_roots_only() {
+        assert_eq!(
+            egress_root_store().roots.len(),
+            webpki_roots::TLS_SERVER_ROOTS.len(),
+            "default build must trust webpki-roots ONLY — no extra anchor"
+        );
+    }
+
+    /// FEATURE ON (`--features mock-egress-ca`): the mock host is allowlisted
+    /// AND api.github.com is still allowlisted; the trust set is webpki-roots
+    /// + EXACTLY ONE (the test CA).
+    #[cfg(feature = "mock-egress-ca")]
+    #[test]
+    fn mock_egress_ca_feature_adds_exactly_one_host_and_one_anchor() {
+        // The extra host is reachable...
+        assert!(is_host_allowlisted("github-mock.caprun.test"));
+        assert!(is_host_allowlisted("GITHUB-MOCK.CAPRUN.TEST")); // case-insensitive
+        // ...and the shipped host still is.
+        assert!(is_host_allowlisted("api.github.com"));
+        // Trust set is webpki-roots + exactly one (the checked-in test CA).
+        assert_eq!(
+            egress_root_store().roots.len(),
+            webpki_roots::TLS_SERVER_ROOTS.len() + 1,
+            "feature ON must add EXACTLY one trust anchor"
+        );
     }
 
     // ---- vet_resolved: fail-closed SSRF vetting over the resolved set ----
