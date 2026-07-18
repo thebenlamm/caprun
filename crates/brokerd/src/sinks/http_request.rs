@@ -43,6 +43,34 @@
 use anyhow::{bail, Result};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Connect timeout bounding the TCP+TLS handshake (FIX 3, DoS — a hung/black-holed
+/// endpoint must not pin a broker task forever).
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Total-request timeout bounding the whole GET incl. body read (FIX 3, DoS —
+/// a slow-drip response body must not stall the broker indefinitely).
+const HTTP_TOTAL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Hard cap on the response body we will buffer (FIX 3, DoS). Mirrors
+/// `process_exec::MAX_COMBINED_OUTPUT_BYTES`'s fail-closed discipline: exceeding
+/// this stops the read and errors — NEVER a silent truncate-and-keep-going.
+const MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
+
+/// Fail-closed body-cap check over a running byte total (FIX 3). Pure,
+/// host-portable — the same predicate the Linux streaming read applies after
+/// each chunk. Mirrors `process_exec::read_capped`: over the cap is an `Err`,
+/// never a truncation.
+// Consumed by the Linux `do_pinned_get` streaming loop and by a host-portable
+// unit test; on a non-test macOS build (stub `do_pinned_get`) it is unreferenced.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn check_body_cap(total: usize, cap: usize) -> Result<()> {
+    if total > cap {
+        bail!("http.request: response body exceeded the {cap}-byte cap (fail-closed)");
+    }
+    Ok(())
+}
 
 /// The fetch-target host allowlist (DESIGN §3.6 + §11 — an operator-surfaced
 /// deployment CONSTANT, never runtime-configurable from a plan node /
@@ -184,6 +212,10 @@ fn build_pinned_client(host: &str, pinned: SocketAddr) -> Result<reqwest::Client
         .redirect(reqwest::redirect::Policy::none())
         .use_preconfigured_tls(ring_webpki_tls_config())
         .resolve(host, pinned)
+        // FIX 3 (DoS): bound the handshake and the whole request. The response
+        // body is additionally byte-capped by the streaming read in do_pinned_get.
+        .connect_timeout(HTTP_CONNECT_TIMEOUT)
+        .timeout(HTTP_TOTAL_TIMEOUT)
         .build()
         .map_err(|e| anyhow::anyhow!("http.request: failed to build client: {e}"))
 }
@@ -243,14 +275,26 @@ async fn do_pinned_get(url: &str, host: &str) -> Result<String> {
 
     let pinned = vet_resolved(&addrs)?;
     let client = build_pinned_client(host, pinned)?;
-    let resp = client
+    let mut resp = client
         .get(url)
         .send()
         .await
         .map_err(|e| anyhow::anyhow!("http.request: GET failed: {e}"))?;
-    resp.text()
+
+    // Stream the body chunk-by-chunk with a fail-closed byte cap (FIX 3, DoS) —
+    // NOT resp.text(), which would buffer an unbounded body into memory first.
+    // Exceeding MAX_RESPONSE_BODY_BYTES stops the read and errors; the client's
+    // total timeout (build_pinned_client) is the separate slow-drip backstop.
+    let mut body: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
         .await
-        .map_err(|e| anyhow::anyhow!("http.request: reading response body failed: {e}"))
+        .map_err(|e| anyhow::anyhow!("http.request: reading response body failed: {e}"))?
+    {
+        body.extend_from_slice(&chunk);
+        check_body_cap(body.len(), MAX_RESPONSE_BODY_BYTES)?;
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
 /// Non-Linux (dev macOS) no-op stub: the pure classifiers + client-build wiring
@@ -422,6 +466,34 @@ mod tests {
         let a: SocketAddr = "140.82.112.3:443".parse().unwrap();
         let b: SocketAddr = "140.82.113.4:443".parse().unwrap();
         assert_eq!(vet_resolved(&[a, b]).unwrap(), a);
+    }
+
+    // ---- response body cap (FIX 3, host-portable) ----
+
+    #[test]
+    fn body_cap_is_fail_closed_at_the_boundary() {
+        // Exactly at the cap is OK; one byte over is an Err — never a truncate.
+        assert!(check_body_cap(MAX_RESPONSE_BODY_BYTES, MAX_RESPONSE_BODY_BYTES).is_ok());
+        assert!(check_body_cap(MAX_RESPONSE_BODY_BYTES + 1, MAX_RESPONSE_BODY_BYTES).is_err());
+    }
+
+    #[test]
+    fn body_cap_trips_while_accumulating_synthetic_chunks() {
+        // Simulate the do_pinned_get streaming loop over a synthetic body that
+        // exceeds a small cap: the running total must trip the cap mid-stream.
+        let cap = 16usize;
+        let chunks = [vec![0u8; 8], vec![0u8; 8], vec![0u8; 8]]; // 24 bytes total
+        let mut total = 0usize;
+        let mut tripped = false;
+        for c in &chunks {
+            total += c.len();
+            if check_body_cap(total, cap).is_err() {
+                tripped = true;
+                break;
+            }
+        }
+        assert!(tripped, "24 bytes past a 16-byte cap must fail-closed mid-stream");
+        assert_eq!(total, 24, "cap should trip after the third chunk pushed total over 16");
     }
 
     // ---- reqwest client wiring (host-portable, no network) ----
