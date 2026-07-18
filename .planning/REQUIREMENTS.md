@@ -58,7 +58,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 
 ### Filesystem Breadth
 
-- [ ] **FS-01**: The worker can **read multiple workspace files** beyond the
+- [x] **FS-01**: The worker can **read multiple workspace files** beyond the
   single current read path, each resolved beneath `WorkspaceRoot` via
   `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)`, taint-minted as untrusted like
   the existing read path.
@@ -67,7 +67,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   within `WorkspaceRoot` (beyond `file.create`'s `O_EXCL` new-file-only),
   fail-closed on path schema, kernel-confined, and durably audited.
 
-- [ ] **FS-03**: The fs write/edit sink args are governed by the executor under
+- [x] **FS-03**: The fs write/edit sink args are governed by the executor under
   the **same I2 / slot-type-binding discipline** — a tainted path or contents in a
   sensitive slot Blocks; there is no I2 bypass and no new raw `EffectRequest` path.
 
@@ -136,9 +136,9 @@ maps to exactly one phase (`/gsd-roadmapper`, 2026-07-17).
 | EXEC-02 | Phase 32 | Complete |
 | EXEC-03 | Phase 32 | Complete |
 | EXEC-04 | Phase 32 | Complete |
-| FS-01 | Phase 33 | Pending |
+| FS-01 | Phase 33 | Complete |
 | FS-02 | Phase 33 | Complete |
-| FS-03 | Phase 33 | Pending |
+| FS-03 | Phase 33 | Complete |
 | LIVE-01 | Phase 34 | Pending |
 | LIVE-02 | Phase 34 | Pending |
 
