@@ -52,7 +52,7 @@ fn effect_is_three_variant_enum() {
     // CommitIrreversible variant
     let irr = Effect::CommitIrreversible(IrreversibleEffect::GitPush {
         remote: "origin".to_string(),
-        branch: "main".to_string(),
+        refspec: "main".to_string(),
     });
     // All three must exist
     let _ = (obs, rev, irr);

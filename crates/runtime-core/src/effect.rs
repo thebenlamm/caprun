@@ -24,7 +24,14 @@ pub enum ReversibleEffect {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum IrreversibleEffect {
     SendEmail { draft_hash: String, to: Vec<String> },
-    GitPush { remote: String, branch: String },
+    // WG-4 (Phase 44, DESIGN-v1.9-egress-policy §1.3): the second field is
+    // `refspec`, NOT `branch`. The `git.push` sink's args are `{remote, refspec}`
+    // (crates/executor/src/sink_schema.rs) and DESIGN §1.3 captures a `refspec`
+    // from TRUSTED intent — naming this field `branch` would leave the effect
+    // ontology keyed on a divergent name a refactor could desync from the sink
+    // schema + sensitivity tables (T-44-04). One identical `refspec` name across
+    // all three surfaces.
+    GitPush { remote: String, refspec: String },
     DeployService { service: String, environment: String },
 }
 

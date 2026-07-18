@@ -139,6 +139,25 @@ pub const KNOWN_SINKS: &[SinkSchema] = &[
         allowed: &["url", "body", "method"],
         required: &["url", "body", "method"],
     },
+    SinkSchema {
+        // GIT-02/03 (Phase 44 Plan 01), DESIGN-v1.9-egress-policy §1.1/§1.3:
+        // exact-match, all-two-required schema for the destination-pinned push
+        // egress sink. `allowed` and `required` are BOTH exactly {remote,refspec}
+        // — mirroring file.write / git.commit's exact-match shape, NOT
+        // process.exec's optional-arg asymmetry (RESEARCH A15). Both args are I2
+        // ROUTING-sensitive (sink_sensitivity.rs) — a tainted `remote`/`refspec`
+        // value BLOCKS downstream under the collect-then-Block loop, it does NOT
+        // Deny here; this Step-0 gate enforces only the arg NAME set, not taint.
+        // Both come from TRUSTED intent captured at session creation (DESIGN §1.3),
+        // never from the untrusted repo `.git/config`. The structural
+        // `--force`/`--force-with-lease`/`:refspec` deletion/`+`-force-refspec
+        // REFUSAL is enforced by the broker at the transfer layer (Plan 44-02's
+        // `validate_git_refspec` value-gate, mirroring `validate_write_method`),
+        // NOT by this name-set gate — a force refspec is a VALUE, invisible here.
+        sink: "git.push",
+        allowed: &["remote", "refspec"],
+        required: &["remote", "refspec"],
+    },
 ];
 
 /// Test-fixture-only sink registry (RESEARCH.md Pitfall 3 / DESIGN §9 Pitfall
@@ -664,6 +683,64 @@ mod tests {
         );
         // And the GET id still validates with exactly {url}.
         assert_eq!(validate_schema(&node("http.request", vec![arg("url")])), Ok(()));
+    }
+
+    // -----------------------------------------------------------------
+    // git.push (GIT-02/03, DESIGN-v1.9-egress-policy §1.1/§1.3)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn git_push_is_registered_sink() {
+        // Registered => schema_for returns Some => never UnknownSink at Step 0.
+        assert!(
+            schema_for("git.push").is_some(),
+            "git.push must be a registered sink (never UnknownSink)"
+        );
+    }
+
+    #[test]
+    fn git_push_exact_args_ok() {
+        let n = node("git.push", vec![arg("remote"), arg("refspec")]);
+        assert_eq!(validate_schema(&n), Ok(()));
+    }
+
+    #[test]
+    fn git_push_missing_remote_denied() {
+        let n = node("git.push", vec![arg("refspec")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::MissingArg("remote".to_string()))
+        );
+    }
+
+    #[test]
+    fn git_push_missing_refspec_denied() {
+        let n = node("git.push", vec![arg("remote")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::MissingArg("refspec".to_string()))
+        );
+    }
+
+    #[test]
+    fn git_push_unknown_arg_denied() {
+        // No `force`/`branch`/headers arg is modeled — any extra fails closed at
+        // Step 0. (`--force` is refused as a refspec VALUE at the broker transfer
+        // layer, not as an arg name here.)
+        let n = node("git.push", vec![arg("remote"), arg("refspec"), arg("force")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::UnknownArg("force".to_string()))
+        );
+    }
+
+    #[test]
+    fn git_push_duplicate_arg_denied() {
+        let n = node("git.push", vec![arg("remote"), arg("remote"), arg("refspec")]);
+        assert_eq!(
+            validate_schema(&n),
+            Err(DenyReason::DuplicateArg("remote".to_string()))
+        );
     }
 
     #[test]
