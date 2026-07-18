@@ -166,7 +166,7 @@ Full detail archived in [`milestones/v1.8-ROADMAP.md`](milestones/v1.8-ROADMAP.m
 **Structure (both reviewers' agreed sequencing):** design-gate-first (Phase 41, standing precedent) → the policy foundation before the sinks it gates (Phase 42) → the two write-egress sinks, split by blast radius so a `git.push` deferral leaves http-write untouched (Phase 43 http-write, Phase 44 git.push) → the CLI/SDK + audit-DAG viewer trust surface, on the acceptance critical path (Phase 45) → composed live proof (Phase 46). `git.push` is gate-deferrable: research assesses a fully-unprivileged broker-performed smart-HTTP egress FEASIBLE and the roadmap plans it to SHIP, but if the Phase-41 gate cannot pin a sound fully-unprivileged destination-pinning mechanism, GIT-02/03 defer a 3rd time (disclosed + sign-off-gated, never silent) and the other three tracks still ship.
 
 - [x] **Phase 41: v1.9 DESIGN Gate + Fresh Adversarial Code-Trace** — one DESIGN doc pins git.push egress + http-write egress + the policy-vs-I2 boundary (incl. POLICY-03 binding/provenance); clears a fresh non-self orchestrator-owned adversarial code-trace before any TCB code (completed 2026-07-18)
-- [ ] **Phase 42: Policy Layer — Binding, Enforcement & the I2 Boundary** — a minimal per-session policy narrows which sinks/args are callable, is bound from a trusted source outside the worker's reach, and can never override I2
+- [x] **Phase 42: Policy Layer — Binding, Enforcement & the I2 Boundary** — a minimal per-session policy narrows which sinks/args are callable, is bound from a trusted source outside the worker's reach, and can never override I2 (completed 2026-07-18)
 - [ ] **Phase 43: `http.request` WRITE (POST/PUT) Egress** — POST/PUT to an allowlisted host with the request body taint-governed under I2, on a distinct write-allowlist, proven differentially
 - [ ] **Phase 44: `git.push` — Broker-Performed Destination-Pinned Egress** — a fully-unprivileged, broker-mediated, destination-pinned push with the child net-denied (or a disclosed deferral); + the supply-chain absence gate & hygiene items
 - [ ] **Phase 45: Thin CLI/SDK + Read-Only Audit-DAG Viewer** — define→point→run + inspect-the-proof; the design-partner-runnable trust surface (binds the trusted policy; escapes tainted display bytes)
@@ -201,10 +201,11 @@ Full detail archived in [`milestones/v1.8-ROADMAP.md`](milestones/v1.8-ROADMAP.m
   4. I2 executes **unconditionally on every policy-permitted call** and can never be short-circuited by any policy outcome (policy is a pre-I2 narrowing gate, never a post-I2 override) — proven by a live leg where a permissive policy does NOT weaken an I2 taint Block on an existing sink; the I2 decision stays HARDCODED in the Rust TCB executor.
 
 **Plans**: 4 plans (waves: 01+02 → 03 → 04)
-- [ ] 42-01-PLAN.md — SessionPolicy hardcoded-schema type (runtime-core) + distinct DenyReason::PolicyDeny [POLICY-01]
-- [ ] 42-02-PLAN.md — Extract shared F1 containment helper (adapter-fs) + rewire key.rs + anti-drift gate [POLICY-03 foundation]
-- [ ] 42-03-PLAN.md — Executor deny-only pre-I2 policy gate + threading + POLICY-01/POLICY-02 enforcement-order proof [POLICY-01, POLICY-02]
-- [ ] 42-04-PLAN.md — POLICY-03 binding at session creation: trusted source, F1 refusal, immutability, hash-chained audit event [POLICY-03]
+
+- [x] 42-01-PLAN.md — SessionPolicy hardcoded-schema type (runtime-core) + distinct DenyReason::PolicyDeny [POLICY-01]
+- [x] 42-02-PLAN.md — Extract shared F1 containment helper (adapter-fs) + rewire key.rs + anti-drift gate [POLICY-03 foundation]
+- [x] 42-03-PLAN.md — Executor deny-only pre-I2 policy gate + threading + POLICY-01/POLICY-02 enforcement-order proof [POLICY-01, POLICY-02]
+- [x] 42-04-PLAN.md — POLICY-03 binding at session creation: trusted source, F1 refusal, immutability, hash-chained audit event [POLICY-03]
 
 ### Phase 43: `http.request` WRITE (POST/PUT) Egress
 
@@ -218,7 +219,12 @@ Full detail archived in [`milestones/v1.8-ROADMAP.md`](milestones/v1.8-ROADMAP.m
   3. Any write credential lives in broker-local env only (never a ValueNode/plan-arg/audit-literal/worker/planner); the captured response is scrubbed of credential material (or not minted) before it reaches the value store or audit chain.
   4. Acceptance is **differential** on real Linux: the tainted-body-Blocks leg and the clean-body-Allowed leg are identical in host/url/method/policy (taint is the sole variable), and the clean leg's body is confirmed to have actually delivered to the mock endpoint (mock records receipt) — not merely "not blocked," so a block-everything I2 regression cannot pass.
 
-**Plans**: TBD
+**Plans**: 4 plans (waves: 01 → 02 → 03 → 04)
+
+- [ ] 43-01-PLAN.md — Executor TCB: register `http.request.write` (distinct id) as CommitIrreversible, schema {url,body,method}, taint/sensitivity tables, method-enum {POST,PUT} gate, production-policy allowlist [HTTP-W-01]
+- [ ] 43-02-PLAN.md — Broker WRITE egress: distinct `WRITE_HOST_ALLOWLIST` + generic SSRF-pinned `invoke_http_write` + `http_write` orchestration module (broker-env credential, opaque non-minting two-phase audit, shared `prepare_http_write` precheck) [HTTP-W-01]
+- [ ] 43-03-PLAN.md — Wiring: server.rs Allowed-decision dispatch arm + confirmation.rs confirm-release (guard + P33/P34 precheck + dispatch) [HTTP-W-01]
+- [ ] 43-04-PLAN.md — HTTP-W-01 differential acceptance test: I0 draft-deny + tainted-body Block vs clean-body Allow (identical url/method/policy) + method-enum Deny; clean leg reaches egress (full live mock delivery → Phase 46) [HTTP-W-01]
 
 ### Phase 44: `git.push` — Broker-Performed Destination-Pinned Egress
 
@@ -308,7 +314,7 @@ Full detail archived in [`milestones/v1.8-ROADMAP.md`](milestones/v1.8-ROADMAP.m
 | 39. `git.push` Sink | v1.8 | — | ⛔ Deferred → v1.9 | 2026-07-18 |
 | 40. CLI Compose, Sidecar env_clear() & Composed Live Proof (v1.8 DONE) | v1.8 | 4/4 | Complete    | 2026-07-18 |
 | 41. v1.9 DESIGN Gate + Fresh Adversarial Code-Trace | v1.9 | 1/1 | Complete    | 2026-07-18 |
-| 42. Policy Layer — Binding, Enforcement & the I2 Boundary | v1.9 | 0/? | Not started | - |
+| 42. Policy Layer — Binding, Enforcement & the I2 Boundary | v1.9 | 4/4 | Complete    | 2026-07-18 |
 | 43. `http.request` WRITE (POST/PUT) Egress | v1.9 | 0/? | Not started | - |
 | 44. `git.push` — Broker-Performed Destination-Pinned Egress | v1.9 | 0/? | Not started | - |
 | 45. Thin CLI/SDK + Read-Only Audit-DAG Viewer | v1.9 | 0/? | Not started | - |
