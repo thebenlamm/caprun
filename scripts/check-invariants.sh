@@ -233,6 +233,76 @@ else
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Gate 6: containment-predicate anti-drift (v1.9 Phase 42, DESIGN-v1.9 §5.3 /
+#         gate-record MAJOR-2).
+#
+# The at-or-beneath-workspace-root refusal predicate must live in EXACTLY ONE
+# place — the shared adapter-fs helper `refuse_if_beneath_workspace` — so that
+# BOTH the MAC-key custody path (cli/caprun/src/key.rs, F1) AND the broker
+# policy binder (crates/brokerd/src/policy.rs, POLICY-03, lands in Plan 04)
+# DELEGATE to it rather than re-inlining a copy that can silently drift to
+# weaker semantics at one call site. Realized as TWO complementary checks
+# (never a bare comparison-token count, which false-positives on any unrelated
+# path comparison and false-negatives on a re-inline spelled differently):
+#
+#   6a MARKER-UNIQUENESS: the distinctive `containment-predicate` tag (stamped
+#      on the canonical refusal line) must appear EXACTLY once across crates/
+#      and cli/, and that single hit must be in the shared helper. A verbatim
+#      re-inline copies the tag -> count >= 2 -> FAIL. An unrelated comparison
+#      carries no tag -> never a false-positive. (Positive exact-count gate, so
+#      the marker legitimately appears once in source.)
+#   6b DELEGATION: each known containment call site must CALL
+#      refuse_if_beneath_workspace and must NOT carry its own canonicalize-
+#      paired-with-prefix-comparison block (catches a divergently-spelled
+#      re-inline that omits the marker). The brokerd binder is checked only
+#      once its file exists (skipped gracefully until Plan 04).
+# ──────────────────────────────────────────────────────────────────────────────
+echo "Gate 6: checking containment-predicate anti-drift (single shared helper + delegation) ..."
+
+gate6_fail=0
+CONTAINMENT_MARKER="containment-predicate"
+CONTAINMENT_HELPER="crates/adapter-fs/src/containment.rs"
+
+# 6a MARKER-UNIQUENESS ---------------------------------------------------------
+marker_hits=$(grep -rln -- "$CONTAINMENT_MARKER" crates/ cli/ 2>/dev/null || true)
+marker_count=$(printf '%s' "$marker_hits" | grep -c . || true)
+if [ "$marker_count" -ne 1 ]; then
+    echo "  FAIL — containment-predicate marker must appear in EXACTLY 1 file, found $marker_count:"
+    printf '%s\n' "$marker_hits" | sed 's/^/    /'
+    gate6_fail=1
+elif [ "$marker_hits" != "$CONTAINMENT_HELPER" ]; then
+    echo "  FAIL — the sole containment-predicate marker must live in $CONTAINMENT_HELPER, found in: $marker_hits"
+    gate6_fail=1
+fi
+
+# 6b DELEGATION ----------------------------------------------------------------
+# A re-inline is a file that pairs a filesystem canonicalize with a path-prefix
+# comparison of its own. The grep patterns are assembled from fragments so the
+# gate's own source never contains the literal token it scans call sites for.
+canon_token="std::fs::"$'canonicalize'
+prefix_token=$'starts_with'"("
+check_delegation_site() {
+    local site="$1"
+    [ -f "$site" ] || return 0   # skip gracefully (e.g. policy.rs before Plan 04)
+    if ! grep -q "refuse_if_beneath_workspace" "$site"; then
+        echo "  FAIL — containment call site $site does not delegate to refuse_if_beneath_workspace"
+        gate6_fail=1
+    fi
+    if grep -q -- "$canon_token" "$site" && grep -q -- "$prefix_token" "$site"; then
+        echo "  FAIL — containment call site $site re-inlines a canonicalize+prefix-compare block (must delegate)"
+        gate6_fail=1
+    fi
+}
+check_delegation_site "cli/caprun/src/key.rs"
+check_delegation_site "crates/brokerd/src/policy.rs"
+
+if [ "$gate6_fail" -eq 0 ]; then
+    echo "  PASS — containment predicate lives only in the shared helper; all call sites delegate"
+else
+    overall=$FAIL
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Summary
 # ──────────────────────────────────────────────────────────────────────────────
 echo ""
