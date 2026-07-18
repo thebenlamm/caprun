@@ -721,13 +721,17 @@ fn append_digest_mismatch_event(
 /// `ValueStore`, or reads/writes any allowlist/standing-policy structure
 /// (CONFIRM-02, T-10-05, "Confirm MUST NOT Re-Invoke submit_plan_node").
 ///
-/// NOTE (Plan 34-02): a throwaway `executor::value_store::ValueStore` IS
-/// constructed inside the `"process.exec"` Step-7 arm below, solely to call
-/// the sanctioned `quarantine::mint_from_exec` helper — there is no live
-/// worker at confirm time to hand `output_value_id` to (the Allowed-path
-/// worker already discards it too). This is NOT the "re-invoke the executor
-/// / re-decide" `ValueStore` this doc comment warns against; `confirm()`
-/// still never calls `submit_plan_node`.
+/// NOTE (Plan 34-02 / 34-03): the `"process.exec"` Step-7 arm below does NOT
+/// mint the released output. Unlike the Allowed path (server.rs), which mints
+/// into the live session `ValueStore` and returns the `ValueId` for downstream
+/// plan nodes to consume, `confirm()` runs in a separate human-driven process
+/// with no live `ValueStore` and no subsequent plan node in the same
+/// invocation — a mint could only target a throwaway store, discarded
+/// immediately (dead ceremony, removed in 34-03 adversarial review). The
+/// genuine, non-stapled durable taint anchor is the `process_exited` Event
+/// (`{ExternalUntrusted, ExecRaw}`) the sink appends, chained on
+/// `confirm_granted`. `confirm()` still never constructs a re-decide
+/// `ValueStore` and never calls `submit_plan_node`.
 pub async fn confirm(
     conn: &mut rusqlite::Connection,
     key: &[u8],
@@ -838,6 +842,26 @@ pub async fn confirm(
                  row remains Pending)"
             ));
         }
+    }
+
+    // Step 4.8 (34-03 adversarial-review MAJOR fix): `process.exec` has fallible
+    // PRE-SPAWN steps (frozen `command` lookup, `args` JSON parse, launcher-path
+    // resolution). Run them HERE — before Step 5 appends `confirm_granted` and
+    // Step 6 CAS→Confirmed burn the one-shot confirmation. A failure returns
+    // fail-closed-RECOVERABLE: the row stays `Pending` (the operator can `deny`
+    // it, or re-`confirm` once a missing launcher is deployed), NEVER a burned
+    // confirmation with a dangling `confirm_granted` and no terminal event (the
+    // exact P33 MAJOR-1 audit-gap class, previously re-entered through the
+    // sink's own `?` legs that propagated AFTER the burn). Uses the SAME
+    // `prepare_process_exec` the sink calls in Step 7, so precheck and dispatch
+    // can never validate differently.
+    if pc.sink.0.as_str() == "process.exec" {
+        crate::sinks::process_exec::prepare_process_exec(&pc.resolved_args).map_err(|e| {
+            anyhow::anyhow!(
+                "process.exec: pre-spawn validation failed before confirm_granted \
+                 (fail-closed, row remains Pending): {e:#}"
+            )
+        })?;
     }
 
     // Step 5: append confirm_granted, parented on the CURRENT CHAIN HEAD
@@ -965,17 +989,23 @@ pub async fn confirm(
                 Err(_) => Ok(ConfirmOutcome::EmailSendFailed),
             }
         }
-        // Plan 34-02 (EXEC-05): process.exec confirm-release. The sink is
-        // async (unlike the other three arms, which are sync internally), so
-        // this arm — and only this arm — awaits. On success, the released
-        // command's captured output is minted via the sanctioned
-        // `quarantine::mint_from_exec` helper, rooted on the REAL
-        // `process_exited` Event id `invoke_process_exec_from_resolved` just
-        // appended (non-stapled, D-03). The mint site lives HERE (never in
-        // sinks/process_exec.rs, which never mints, and never in server.rs,
-        // which is not on this path) — authorized by the inline exemption
-        // marker below since confirmation.rs is not in Gate 3's two-file
-        // allow-list array (that array MUST stay byte-identical, D-03).
+        // Plan 34-02 (EXEC-05) + 34-03: process.exec confirm-release. The sink
+        // is async (unlike the other three arms, which are sync internally), so
+        // this arm — and only this arm — awaits. It does NOT mint the released
+        // output: unlike the Allowed path (server.rs), which mints into the live
+        // session `ValueStore` and RETURNS the `ValueId` for downstream plan
+        // nodes to consume, `caprun confirm` is a separate human-driven process
+        // with no live `ValueStore` and no subsequent plan node in the same
+        // invocation — a mint here could only target a throwaway store,
+        // discarded immediately (dead ceremony, removed in 34-03 adversarial
+        // review). The genuine, non-stapled durable taint anchor already exists:
+        // `invoke_process_exec_from_resolved` appends a `process_exited` Event
+        // carrying `{ExternalUntrusted, ExecRaw}`, chained on `confirm_granted`
+        // (D-03/D-04) — that is what a later read/consume derives provenance
+        // from. Removing the mint also keeps Gate 3's mint-site allow-list
+        // byte-identical (no confirmation.rs mint site) — the invariant that
+        // mint sites live ONLY in quarantine.rs + server.rs is preserved, not
+        // exempted with an inline marker.
         "process.exec" => {
             match crate::sinks::process_exec::invoke_process_exec_from_resolved(
                 conn,
@@ -989,23 +1019,13 @@ pub async fn confirm(
             )
             .await
             {
-                Ok((sink_event_id, _hash, combined_output)) => {
-                    let mut throwaway_store = executor::value_store::ValueStore::default();
-                    match crate::quarantine::mint_from_exec( // planner-discipline-allow: mint_from_exec
-                        &mut throwaway_store,
-                        pc.session_id,
-                        combined_output,
-                        sink_event_id,
-                    ) {
-                        Ok(_) => Ok(ConfirmOutcome::Released),
-                        Err(_) => Ok(ConfirmOutcome::ConfirmedButSinkFailed),
-                    }
-                }
-                // Spawn failed (D-06/Pitfall 5): the sink adapter already
-                // appended a durable `process_spawn_failed` event chained on
-                // `granted_event_id` — the process may have genuinely run
-                // (byte-cap trip, etc.) and is durably audited either way, no
-                // retry (DESIGN Step 4a.5).
+                Ok((_sink_event_id, _hash, _combined_output)) => Ok(ConfirmOutcome::Released),
+                // Pre-spawn OR spawn failed: the sink appended a durable
+                // `process_spawn_failed` event chained on `granted_event_id`
+                // FIRST (34-03 MAJOR fix — a burned confirmation is NEVER left
+                // without a terminal audit event). The process may have
+                // genuinely run (byte-cap trip, etc.) and is durably audited
+                // either way; no retry (DESIGN Step 4a.5).
                 Err(_) => Ok(ConfirmOutcome::ConfirmedButSinkFailed),
             }
         }
@@ -1925,6 +1945,139 @@ mod tests {
                 .is_none(),
             "the entry guard must refuse BEFORE Step 5 appends confirm_granted — \
              no audit-DAG gap (confirm_granted with no terminal sink event) may exist"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 34-03 adversarial-review MAJOR regression: a `process.exec` confirmation
+    /// whose FROZEN `args` literal is not valid JSON must fail closed at the
+    /// Step-4.8 precheck — BEFORE Step 5 appends `confirm_granted` or Step 6
+    /// burns the one-shot. Before the fix, the malformed `args` `?`-propagated
+    /// out of `invoke_process_exec_from_resolved` AFTER the burn, leaving a
+    /// dangling `confirm_granted` with no terminal event (the P33 MAJOR-1
+    /// audit-gap class, worker-reachable because `validate_schema` checks arg
+    /// NAMES only, never the literal's JSON shape). Runs on any platform: the
+    /// precheck fails at the JSON parse, before any launcher resolution or
+    /// spawn. Asserts fail-closed-RECOVERABLE: Err, row still Pending, no
+    /// confirm_granted event.
+    #[tokio::test]
+    async fn confirm_on_process_exec_malformed_args_does_not_burn_confirmation() {
+        let mut root = std::env::temp_dir();
+        root.push(format!("caprun_confirm_exec_badargs_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let ws = WorkspaceRoot::open(&root).unwrap();
+
+        let mut conn = open_audit_db(":memory:").unwrap();
+        let session_id = Uuid::new_v4();
+        let effect_id = Uuid::new_v4();
+        let read_event_id = Uuid::new_v4();
+
+        let root_evt = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "session_created".into(),
+            chrono::Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(&conn, TEST_KEY, &root_evt, None).unwrap();
+
+        let literal_sha256 = {
+            let mut hasher = Sha256::new();
+            hasher.update(b"echo");
+            hex::encode(hasher.finalize())
+        };
+        let anchor = SinkBlockedAnchor {
+            effect_id,
+            sink: SinkId("process.exec".into()),
+            arg: "command".into(),
+            value_id: ValueId::new(),
+            literal_sha256,
+            taint: vec![TaintLabel::ExecRaw],
+            provenance_chain: vec![read_event_id],
+            read_event_id,
+        };
+        // Valid `command`, but `args` is NOT a JSON Vec<String> — the exact
+        // worker-frozen malformed literal that the MAJOR made fatal post-burn.
+        let resolved_args = vec![
+            ResolvedArg {
+                name: "command".to_string(),
+                value_id: ValueId::new(),
+                literal: "echo".to_string(),
+                taint: vec![TaintLabel::ExecRaw],
+                provenance_chain: vec![read_event_id],
+            },
+            ResolvedArg {
+                name: "args".to_string(),
+                value_id: ValueId::new(),
+                literal: "not-json".to_string(),
+                taint: vec![TaintLabel::ExecRaw],
+                provenance_chain: vec![read_event_id],
+            },
+        ];
+        let digest = combined_digest(
+            &resolved_args
+                .iter()
+                .map(|a| (a.name.as_str(), a.literal.as_str()))
+                .collect::<Vec<_>>(),
+        );
+        let blocked_arg_names = vec!["command".to_string()];
+
+        let blocked_event = Event::sink_blocked(
+            Uuid::new_v4(),
+            Some(root_evt.id),
+            session_id,
+            chrono::Utc::now(),
+            vec![anchor],
+            Some(digest.clone()),
+            blocked_arg_names.clone(),
+        );
+        let blocked_event_id = blocked_event.id;
+        append_event(&conn, TEST_KEY, &blocked_event, Some(&root_hash)).unwrap();
+        insert_blocked_literal(&conn, &blocked_event_id.to_string(), "command", "echo").unwrap();
+
+        let pc = PendingConfirmation {
+            effect_id,
+            session_id,
+            blocked_event_id,
+            sink: SinkId("process.exec".into()),
+            resolved_args,
+            blocked_arg_names,
+            combined_digest: digest,
+            workspace_root_path: root.to_string_lossy().to_string(),
+            state: PendingConfirmationState::Pending,
+            mac: String::new(),
+        };
+        insert_pending_confirmation(&conn, TEST_KEY, &pc).unwrap();
+
+        let result = confirm(&mut conn, TEST_KEY, &effect_id.to_string(), &ws).await;
+        assert!(
+            result.is_err(),
+            "confirm on a process.exec block with malformed frozen `args` must \
+             fail closed at the Step-4.8 precheck, not silently succeed"
+        );
+
+        // The confirmation must NOT be burned: still Pending (recoverable).
+        let found = find_pending_confirmation(&conn, &effect_id.to_string())
+            .unwrap()
+            .expect("row must still exist");
+        assert_eq!(
+            found.state,
+            PendingConfirmationState::Pending,
+            "the Step-4.8 precheck must refuse BEFORE Step 6's state transition — \
+             a pre-spawn failure must leave the row Pending, not Confirmed"
+        );
+
+        // No confirm_granted event may have been appended (Step 5 never ran) —
+        // this is the audit-DAG gap the MAJOR fix closes.
+        assert!(
+            find_event_by_type(&conn, &session_id.to_string(), "confirm_granted")
+                .unwrap()
+                .is_none(),
+            "the precheck must refuse BEFORE Step 5 appends confirm_granted — no \
+             dangling confirm_granted with no terminal process.exec event may exist"
         );
 
         std::fs::remove_dir_all(&root).ok();

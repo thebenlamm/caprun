@@ -256,21 +256,37 @@ pub async fn invoke_process_exec_from_resolved(
     parent_id: Uuid,
     parent_hash: &str,
 ) -> Result<(Uuid, String, String)> {
-    // Look up the frozen literals directly — never re-resolve, never re-decide.
-    let command = resolved_literal(resolved_args, "command")?;
-    let args_json = resolved_literal_optional(resolved_args, "args").unwrap_or("[]");
-    let args: Vec<String> = serde_json::from_str(args_json).with_context(|| {
-        format!("process.exec: `args` literal `{args_json}` was not a valid JSON Vec<String>")
-    })?;
-    let cwd = resolved_literal_optional(resolved_args, "cwd");
-
-    // The launcher is a sibling binary of the running process image.
-    let launcher_path = resolve_launcher_path()?;
-
-    // Spawn + confine-handoff + capture + timeout — same conn-free helper as
-    // the Allowed path, reused unmodified.
-    let spawn_result =
-        run_launcher(&launcher_path, command, args_json, cwd, workspace_root, &args).await;
+    // Prepare all fallible PRE-SPAWN inputs (frozen `command`/`args`/`cwd`
+    // literals + launcher-path resolution) up front, folding their errors into
+    // the SAME `Result` as the spawn itself. A pre-spawn failure (malformed
+    // frozen `args`, missing launcher) is normally caught by confirm()'s
+    // Step-4.8 precheck BEFORE the one-shot confirmation is burned
+    // (fail-closed-RECOVERABLE) — and that precheck calls this SAME
+    // `prepare_process_exec`, so precheck and dispatch can never drift. Folding
+    // it in here is defense-in-depth for the residual TOCTOU window (launcher
+    // removed between precheck and here): EVERY failure — pre-spawn OR spawn —
+    // now flows through the single `Err` branch below that appends a durable
+    // `process_spawn_failed` FIRST, so a burned confirmation can NEVER be left
+    // with a dangling `confirm_granted` and no terminal event (34-03
+    // adversarial-review MAJOR fix; the exact P33 MAJOR-1 audit-gap class,
+    // previously re-entered via the `?` legs here that propagated before any
+    // event was appended).
+    let spawn_result = match prepare_process_exec(resolved_args) {
+        // Spawn + confine-handoff + capture + timeout — same conn-free helper as
+        // the Allowed path, reused unmodified.
+        Ok(prepared) => {
+            run_launcher(
+                &prepared.launcher_path,
+                &prepared.command,
+                &prepared.args_json,
+                prepared.cwd.as_deref(),
+                workspace_root,
+                &prepared.args,
+            )
+            .await
+        }
+        Err(e) => Err(e),
+    };
 
     match spawn_result {
         Ok((_exit_status, combined_output)) => {
@@ -308,6 +324,42 @@ pub async fn invoke_process_exec_from_resolved(
             Err(e.context("process.exec invoke_process_exec_from_resolved failed"))
         }
     }
+}
+
+/// The frozen, validated PRE-SPAWN inputs for a confirm-release `process.exec`
+/// re-invocation. Owned (not borrowed from `resolved_args`) so a caller can
+/// validate independently of the borrow — see [`prepare_process_exec`].
+pub(crate) struct PreparedExec {
+    command: String,
+    args_json: String,
+    args: Vec<String>,
+    cwd: Option<String>,
+    launcher_path: std::path::PathBuf,
+}
+
+/// The fallible PRE-SPAWN preparation shared by the confirm-release sink
+/// ([`invoke_process_exec_from_resolved`], Step 7) and confirm()'s Step-4.8
+/// precheck: look up the frozen `command`/`args`/`cwd` literals, parse the
+/// `args` JSON, and resolve the launcher sibling binary (`.is_file()`-checked,
+/// so a missing launcher fails HERE, not mid-spawn). Every step that can fail
+/// BEFORE a subprocess is spawned lives here. Pure/read-only — no events, no DB:
+/// the caller decides the failure disposition (precheck → fail-closed-
+/// RECOVERABLE, row stays Pending; sink → append a terminal
+/// `process_spawn_failed` first). One function = precheck and dispatch validate
+/// IDENTICALLY, so they cannot drift (34-03 adversarial-review MAJOR fix).
+pub(crate) fn prepare_process_exec(resolved_args: &[ResolvedArg]) -> Result<PreparedExec> {
+    // Look up the frozen literals directly — never re-resolve, never re-decide.
+    let command = resolved_literal(resolved_args, "command")?.to_string();
+    let args_json = resolved_literal_optional(resolved_args, "args")
+        .unwrap_or("[]")
+        .to_string();
+    let args: Vec<String> = serde_json::from_str(&args_json).with_context(|| {
+        format!("process.exec: `args` literal `{args_json}` was not a valid JSON Vec<String>")
+    })?;
+    let cwd = resolved_literal_optional(resolved_args, "cwd").map(str::to_string);
+    // The launcher is a sibling binary of the running process image.
+    let launcher_path = resolve_launcher_path()?;
+    Ok(PreparedExec { command, args_json, args, cwd, launcher_path })
 }
 
 /// Spawn `caprun-exec-launcher`, capture its combined stdout+stderr within
