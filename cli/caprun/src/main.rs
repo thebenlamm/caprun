@@ -148,6 +148,57 @@ async fn main() -> anyhow::Result<()> {
             };
             std::process::exit(code);
         }
+
+        // ── audit dispatch (v1.9 Phase 45, VIEW-01 / U1) ───────────────────
+        // `caprun audit <session_id> <audit-db-path>` is the READ-ONLY window
+        // into the audit DAG — the "INSPECT the proof" half of the trust
+        // surface (models `review`'s read-only posture: no workspace root, no
+        // sink, no event, no state transition). It opens the audit DB BY PATH
+        // READ-ONLY, renders the session's events/decisions with EVERY literal
+        // control-char-neutralized (U1 M3), and prints a `verify_chain`
+        // verdict — loading the MAC key via the LOAD-ONLY `load_existing_key`
+        // so an absent key / `:memory:` DB fails closed (U1 M2), never a
+        // fresh/meaningless verdict. Handled here, before the intent-kind
+        // parse, and exits explicitly.
+        if verb == "audit" {
+            let usage = "usage: caprun audit <session_id> <audit-db-path>";
+            let session_id = match raw_args.get(1) {
+                Some(s) => s.as_str(),
+                None => {
+                    eprintln!("{usage}");
+                    std::process::exit(1);
+                }
+            };
+            // Fail-closed: a malformed session id is a usage error (exit 1),
+            // consistent with confirm/deny/grant's UUID parse.
+            if uuid::Uuid::parse_str(session_id).is_err() {
+                eprintln!("error: <session_id> is not a valid UUID: {session_id}");
+                std::process::exit(1);
+            }
+            // The audit-db-path is REQUIRED — there is NO `:memory:` default
+            // (unlike confirm/deny/grant): a `:memory:` DB has no persisted
+            // chain, so a `verify_chain` verdict against it would be
+            // meaningless (U1 M2). A missing arg is a usage error (exit 1).
+            let audit_path = match raw_args.get(2) {
+                Some(p) => p.as_str(),
+                None => {
+                    eprintln!("{usage}");
+                    eprintln!(
+                        "error: <audit-db-path> is REQUIRED (a :memory: DB has no persisted \
+                         chain to verify; U1 M2)"
+                    );
+                    std::process::exit(1);
+                }
+            };
+            let code = match run_audit_viewer(session_id, audit_path) {
+                Ok(code) => code,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
+            };
+            std::process::exit(code);
+        }
     }
 
     let mut idx = 0usize;
@@ -823,6 +874,198 @@ fn print_audit_dag(conn: &rusqlite::Connection, session_id: &str) -> anyhow::Res
             "{indent}[{depth}] {event_type} (actor={actor})\n\
              {indent}    hash={} parent={parent_str}",
             &hash[..8]
+        );
+    }
+    Ok(())
+}
+
+/// The READ-ONLY audit-DAG viewer (VIEW-01 / U1, Plan 45-03) — the "INSPECT
+/// the proof" half of the trust surface.
+///
+/// # Contract (security-load-bearing)
+///
+/// - **READ-ONLY (WG-3, T-45-09):** opens the audit SQLite DB BY PATH with
+///   `SQLITE_OPEN_READ_ONLY` — NEVER `open_audit_db` (which opens read-write
+///   and may run migrations). It mints nothing, appends no event, opens no
+///   workspace root, invokes no sink, transitions no state — modeling the
+///   `review` read-only posture (confirmation.rs).
+/// - **FAIL-CLOSED KEY CUSTODY (WG-4 / U1 M2, T-45-07):** loads the MAC key via
+///   the LOAD-ONLY `key::load_existing_key` — an absent key hard-errors (no
+///   verdict rendered), and `:memory:` is refused. It NEVER falls back to
+///   `load_or_create_key` (which would create/return a fresh, meaningless key).
+/// - **UNIVERSAL NEUTRALIZATION (WG-2 / U1 M3, T-45-08):** EVERY displayed
+///   literal is passed through the shared `brokerd::display::
+///   neutralize_control_chars` — unconditionally, for ALL sinks (NOT the
+///   git.push-only guard confirmation uses) — so a tainted audit-DB byte can
+///   never spoof/hide a line via terminal ANSI/CR.
+/// - **F1 CONTAINMENT (T-45-10):** the key load runs the SAME
+///   `refuse_if_beneath_workspace` check key custody uses — an audit DB at or
+///   beneath a workspace root is out of the confined worker's reach; refused.
+///
+/// Exit codes: `0` = chain verified PASSED; `9` = chain FAILED (fail-closed —
+/// a broken/forged chain is a non-zero exit, not a silent render); any load /
+/// open error surfaces as the caller's exit `1`.
+fn run_audit_viewer(session_id: &str, audit_path: &str) -> anyhow::Result<i32> {
+    use brokerd::display::neutralize_control_chars;
+
+    // U1 M2: refuse `:memory:` outright — no persisted chain to verify (also
+    // refused inside `load_existing_key`, but refused here BEFORE opening so a
+    // read-only `:memory:` open never fabricates a fresh empty DB).
+    if audit_path == ":memory:" {
+        anyhow::bail!(
+            "refusing to view a :memory: audit DB: it has no persisted chain to verify \
+             (U1 M2 fail-closed)"
+        );
+    }
+
+    // Load the MAC key FIRST via the LOAD-ONLY sibling — fail closed if absent
+    // (U1 M2). If this errors, we return BEFORE printing any verify_chain
+    // verdict (never a verdict against a fresh/meaningless key).
+    let key = load_viewer_key(audit_path)?;
+
+    // WG-3 READ-ONLY: open BY PATH read-only. Never `open_audit_db` (RW +
+    // migrations) — the viewer is a pure read of a possibly-attacker-influenced
+    // DB and must not write, migrate, or create.
+    let conn = rusqlite::Connection::open_with_flags(
+        audit_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .with_context(|| format!("open audit DB read-only {audit_path}"))?;
+
+    // Header — session_id is UUID-validated at the dispatch, but routed through
+    // the neutralizer anyway (universal, all literals — U1 M3).
+    let events = brokerd::audit::query_events_by_session(&conn, session_id)
+        .context("query_events_by_session")?;
+    println!(
+        "=== caprun audit (read-only) — session {} ===",
+        neutralize_control_chars(session_id)
+    );
+    println!("events: {}", events.len());
+
+    // The causal DAG walk (read-only, over this open-by-path connection) with
+    // EVERY field neutralized (U1 M3).
+    render_audit_dag_readonly(&conn, session_id)?;
+
+    // Per-effect decision lines — the still-pending human decisions for this
+    // session (a pure read; `list_pending_confirmations_for_session` mints
+    // nothing, appends nothing).
+    let pending = brokerd::audit::list_pending_confirmations_for_session(&conn, session_id)
+        .context("list_pending_confirmations_for_session")?;
+    if pending.is_empty() {
+        println!("\n=== Pending decisions === (none)");
+    } else {
+        println!("\n=== Pending decisions ===");
+        for (effect_id, sink) in &pending {
+            println!(
+                "  effect={} sink={} — caprun review/confirm/deny {} {}",
+                neutralize_control_chars(&effect_id.to_string()),
+                neutralize_control_chars(sink),
+                neutralize_control_chars(&effect_id.to_string()),
+                neutralize_control_chars(audit_path),
+            );
+        }
+    }
+
+    // Final verdict from the SAME keyed `verify_chain` the runtime uses. A
+    // FAILED verdict is a non-zero exit (fail-closed — never a silent render).
+    let verified = brokerd::audit::verify_chain(&conn, session_id, &key);
+    println!(
+        "\nChain verification: {}",
+        if verified { "PASSED" } else { "FAILED" }
+    );
+    Ok(if verified { 0 } else { 9 })
+}
+
+/// Load the cross-process broker MAC key for the read-only `caprun audit`
+/// viewer, via the LOAD-ONLY `key::load_existing_key` (never
+/// `load_or_create_key`) — so an absent key / `:memory:` DB fails closed
+/// (U1 M2) rather than verifying against a fresh, meaningless key.
+///
+/// The viewer has no workspace file of its own, so — exactly like
+/// `load_grant_key` — it hands F1 a dedicated throwaway workspace root that is
+/// a SIBLING of the audit DB (`<audit_path>.audit-ws`, never an ANCESTOR of
+/// it), created only for the `canonicalize()`-based containment check and
+/// removed immediately after, so `load_existing_key` runs its REAL F1 refusal
+/// (an audit DB beneath a real workspace root is still refused; this sibling
+/// root is F1-safe by construction). `:memory:` is refused upstream, so this is
+/// only ever called with a persistent path.
+fn load_viewer_key(audit_path: &str) -> anyhow::Result<Vec<u8>> {
+    let audit_ws = std::path::PathBuf::from(format!("{audit_path}.audit-ws"));
+    std::fs::create_dir_all(&audit_ws)
+        .with_context(|| format!("create viewer workspace dir {}", audit_ws.display()))?;
+    let key = key::load_existing_key(audit_path, &audit_ws)
+        .context("load_existing_key (F1 fail-closed load-only MAC-key custody, audit viewer)");
+    std::fs::remove_dir_all(&audit_ws).ok();
+    key
+}
+
+/// Render the audit DAG for `session_id` in causal order (depth-first CTE walk)
+/// over a READ-ONLY open-by-path connection, with EVERY displayed literal
+/// control-char-neutralized (U1 M3, WG-2) via the shared `brokerd::display::
+/// neutralize_control_chars` — unconditionally, for ALL fields.
+///
+/// Distinct from `print_audit_dag` (the `caprun run` path's DAG print, which
+/// prints the runtime's OWN just-appended fields un-neutralized): the viewer
+/// reads a possibly-attacker-influenced audit DB, so a tainted `actor` /
+/// `event_type` / hash byte must never reach the terminal as raw ANSI/CR.
+fn render_audit_dag_readonly(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> anyhow::Result<()> {
+    use brokerd::display::neutralize_control_chars;
+
+    let mut stmt = conn.prepare(
+        "WITH RECURSIVE chain(id, event_type, actor, hash, parent_hash, depth) AS (
+             SELECT id, event_type, actor, hash, parent_hash, 0
+             FROM events
+             WHERE session_id = ?1 AND parent_id IS NULL
+           UNION ALL
+             SELECT e.id, e.event_type, e.actor, e.hash, e.parent_hash, c.depth + 1
+             FROM events e
+             JOIN chain c ON e.parent_id = c.id
+             WHERE e.session_id = ?1
+         )
+         SELECT depth, event_type, actor, hash, parent_hash
+         FROM chain
+         ORDER BY depth",
+    )?;
+
+    let rows = stmt.query_map([session_id], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<String>>(4)?,
+        ))
+    })?;
+
+    println!(
+        "\n=== Audit DAG (session {}) ===",
+        neutralize_control_chars(session_id)
+    );
+    for row in rows {
+        let (depth, event_type, actor, hash, parent_hash): (
+            i64,
+            String,
+            String,
+            String,
+            Option<String>,
+        ) = row?;
+        let indent = "  ".repeat(depth.max(0) as usize);
+        // Neutralize EVERY displayed literal (U1 M3, all fields — including the
+        // hex hash fields, routed through unconditionally). `.chars().take(8)`
+        // (not `&hash[..8]`) avoids a byte-slice panic on a short/odd literal.
+        let event_type = neutralize_control_chars(&event_type);
+        let actor = neutralize_control_chars(&actor);
+        let short_hash = neutralize_control_chars(&hash.chars().take(8).collect::<String>());
+        let parent_str = match parent_hash.as_deref() {
+            Some(h) => neutralize_control_chars(&h.chars().take(8).collect::<String>()),
+            None => "(root)".to_string(),
+        };
+        println!(
+            "{indent}[{depth}] {event_type} (actor={actor})\n\
+             {indent}    hash={short_hash} parent={parent_str}"
         );
     }
     Ok(())
