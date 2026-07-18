@@ -58,6 +58,7 @@ use uuid::Uuid;
 use adapter_fs::workspace::WorkspaceRoot;
 
 use crate::audit::append_event;
+use crate::confirmation::ResolvedArg;
 
 /// Combined stdout+stderr byte cap (DESIGN §1.4 Open Q5: "a sane default, on
 /// the order of 10 MiB"). Exceeding this is fail-closed (T-32-13) — reading
@@ -195,6 +196,116 @@ pub async fn invoke_process_exec(
                     .context("append process_spawn_failed")?;
             }
             Err(e.context("process.exec invoke_process_exec failed"))
+        }
+    }
+}
+
+/// Re-invoke the live `process.exec` sink from a FROZEN `ResolvedArg` snapshot
+/// (confirm-time re-invocation; EXEC-05, mirrors
+/// `invoke_file_write_from_resolved`/`invoke_file_create_from_resolved`).
+///
+/// A `ValueStore`-free sibling of `invoke_process_exec`: this is called by a
+/// later, separate `caprun confirm` process after a human has released
+/// exactly one (sink, arg, literal-digest) triple. The literals are already
+/// adjudicated and frozen at Block time
+/// (`crate::confirmation::PendingConfirmation.resolved_args`) — this function
+/// never constructs a `ValueStore`, never calls `store.resolve`, never calls
+/// `store.mint`, and never calls `executor::submit_plan_node` (I2 is neither
+/// re-run nor bypassable here). It re-applies the EXACT Allowed-path spawn
+/// discipline of `invoke_process_exec` via the SAME conn-free `run_launcher`
+/// helper — broker-spawned confined child (Landlock + seccomp + default-deny
+/// net + rlimits), wall-clock timeout, byte cap on captured stdout/stderr.
+///
+/// This module still NEVER mints the captured output — the sole mint call
+/// site for exec output stays in `confirmation.rs`'s Step-7 arm (D-10); this
+/// function only spawns + audits and returns the raw `combined_output` for
+/// the caller to mint.
+///
+/// # Arguments
+/// * `conn`            — plain, unlocked rusqlite connection (broker-owned).
+///   Confirm-time re-invocation is single-shot with no concurrent broker
+///   tasks sharing this connection, unlike the Allowed-path's
+///   `Arc<Mutex<rusqlite::Connection>>` (Pitfall 2).
+/// * `key`             — the broker-owned audit-chain MAC key.
+/// * `session_id`      — the Session the blocked plan node belonged to.
+/// * `effect_id`       — the SAME `effect_id` as the original block's anchor.
+/// * `resolved_args`   — the frozen `ResolvedArg` snapshot from
+///   `PendingConfirmation` (`command` required, `args`/`cwd` optional).
+/// * `workspace_root`  — the workspace root reopened at confirm time (same
+///   root the broker opened at Block time).
+/// * `parent_id`       — causal predecessor event id (the `confirm_granted`
+///   head — NOT a fresh root; D-04).
+/// * `parent_hash`     — hash of that predecessor row (chain anchor).
+///
+/// # Returns
+/// `(event_id, hash, combined_output)` of the appended `process_exited` event
+/// on success.
+///
+/// # Errors
+/// On any spawn/exec/timeout/cap failure a `process_spawn_failed` event is
+/// durably appended FIRST, chained onto `parent_id`/`parent_hash`, then the
+/// original error is propagated (no retry — D-06).
+#[allow(clippy::too_many_arguments)]
+pub async fn invoke_process_exec_from_resolved(
+    conn: &rusqlite::Connection,
+    key: &[u8],
+    session_id: Uuid,
+    effect_id: Uuid,
+    resolved_args: &[ResolvedArg],
+    workspace_root: &WorkspaceRoot,
+    parent_id: Uuid,
+    parent_hash: &str,
+) -> Result<(Uuid, String, String)> {
+    // Look up the frozen literals directly — never re-resolve, never re-decide.
+    let command = resolved_literal(resolved_args, "command")?;
+    let args_json = resolved_literal_optional(resolved_args, "args").unwrap_or("[]");
+    let args: Vec<String> = serde_json::from_str(args_json).with_context(|| {
+        format!("process.exec: `args` literal `{args_json}` was not a valid JSON Vec<String>")
+    })?;
+    let cwd = resolved_literal_optional(resolved_args, "cwd");
+
+    // The launcher is a sibling binary of the running process image.
+    let launcher_path = resolve_launcher_path()?;
+
+    // Spawn + confine-handoff + capture + timeout — same conn-free helper as
+    // the Allowed path, reused unmodified.
+    let spawn_result =
+        run_launcher(&launcher_path, command, args_json, cwd, workspace_root, &args).await;
+
+    match spawn_result {
+        Ok((_exit_status, combined_output)) => {
+            // Success: append `process_exited` chained onto the passed
+            // parent (the real `confirm_granted` head, per D-04 — never a
+            // fabricated root).
+            let event = Event::new(
+                Uuid::new_v4(),
+                Some(parent_id),
+                session_id,
+                format!("sink:process.exec:{effect_id}"),
+                "process_exited".into(),
+                Utc::now(),
+                vec![TaintLabel::ExternalUntrusted, TaintLabel::ExecRaw],
+            );
+            let hash = append_event(conn, key, &event, Some(parent_hash))
+                .context("append process_exited")?;
+            Ok((event.id, hash, combined_output))
+        }
+        Err(e) => {
+            // Two-phase durable audit: record an explicit failure outcome
+            // FIRST, chained onto the same parent, then propagate. NO
+            // automatic retry (D-06 — exactly-once contract's failure leg).
+            let event = Event::new(
+                Uuid::new_v4(),
+                Some(parent_id),
+                session_id,
+                format!("sink:process.exec:{effect_id}"),
+                "process_spawn_failed".into(),
+                Utc::now(),
+                vec![],
+            );
+            append_event(conn, key, &event, Some(parent_hash))
+                .context("append process_spawn_failed")?;
+            Err(e.context("process.exec invoke_process_exec_from_resolved failed"))
         }
     }
 }
@@ -408,4 +519,25 @@ fn resolve_arg_optional(
         .resolve(&arg.value_id)
         .ok_or_else(|| anyhow::anyhow!("process.exec `{name}` handle did not resolve"))?;
     Ok(Some(record.literal.clone()))
+}
+
+/// Look up a required named literal directly from a frozen `ResolvedArg`
+/// snapshot (mirrors `file_write.rs`'s private `resolved_literal` — not a
+/// shared abstraction, each `_from_resolved` sibling keeps its own copy).
+fn resolved_literal<'a>(resolved_args: &'a [ResolvedArg], name: &str) -> Result<&'a str> {
+    resolved_args
+        .iter()
+        .find(|a| a.name == name)
+        .map(|a| a.literal.as_str())
+        .ok_or_else(|| anyhow::anyhow!("frozen resolved_args missing `{name}` arg"))
+}
+
+/// Look up an optional named literal directly from a frozen `ResolvedArg`
+/// snapshot. Returns `None` if the arg is simply absent (schema-allowed for
+/// `args`/`cwd`).
+fn resolved_literal_optional<'a>(resolved_args: &'a [ResolvedArg], name: &str) -> Option<&'a str> {
+    resolved_args
+        .iter()
+        .find(|a| a.name == name)
+        .map(|a| a.literal.as_str())
 }
