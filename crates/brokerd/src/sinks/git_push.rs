@@ -44,10 +44,16 @@
 //! opaque `git_push_succeeded`/`_failed` audit surface.
 #![allow(dead_code)]
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use chrono::Utc;
+use runtime_core::Event;
+use rusqlite::Connection;
 use std::collections::BTreeMap;
+use uuid::Uuid;
 
 use adapter_fs::workspace::WorkspaceRoot;
+
+use crate::audit::append_event;
 
 // The confined-launcher machinery (Pattern B) is consumed only by the Linux-gated
 // pack-gen + rev-parse children; the macOS stubs take the same signatures but do
@@ -562,6 +568,199 @@ async fn resolve_new_oid(_workspace_root: &WorkspaceRoot, _src_ref: &str) -> Res
     bail!("git.push rev-parse is Linux-only (macOS no-op stub); exercised on the Linux gate")
 }
 
+// ---- broker-env credential custody (RESEARCH A9, DESIGN §1.4) ----
+
+/// The broker-local env var carrying the OPTIONAL push credential (DESIGN §1.4).
+/// Read ONLY here, ONLY from the broker's own process env — NEVER a plan arg /
+/// `ValueNode` / audit literal / `PendingConfirmation` / child env / planner.
+const GIT_PUSH_TOKEN_ENV: &str = "CAPRUN_GIT_PUSH_TOKEN";
+
+/// Serializes any test that mutates the process-global `CAPRUN_GIT_PUSH_TOKEN`
+/// env var (mirrors `http_write::HTTP_WRITE_ENV_LOCK` / `github_pr::GITHUB_ENV_LOCK`).
+#[cfg(test)]
+pub(crate) static GIT_PUSH_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Read the OPTIONAL push credential from the broker's LOCAL process env ONLY
+/// (mirror `http_write::write_bearer`, RESEARCH A9). Returns `None` when unset —
+/// a push may legitimately need no credential, so this does NOT fail closed.
+/// NEVER read from a `ValueNode`, a plan-node arg, the audit DB, or
+/// `PendingConfirmation`; NEVER handed to the confined pack-gen child (which is
+/// `env_clear()`ed); set ONLY on the receive-pack POST and NEVER followed across
+/// a redirect (the driver refuses a 3xx).
+fn git_push_token() -> Option<String> {
+    std::env::var(GIT_PUSH_TOKEN_ENV).ok()
+}
+
+// ---- distinct git.push host allowlist (WG-9, DESIGN §1.5) ----
+
+/// The DISTINCT `git.push` receive-pack host allowlist (WG-9) — SEPARATE from
+/// both the GET `HOST_ALLOWLIST` and the `WRITE_HOST_ALLOWLIST` in
+/// `http_request.rs`: a GET-readable or POST-writable host is NOT implicitly
+/// push-target-able. Like those it is a broker-local trusted-config SECURITY
+/// PROPERTY (an operator-surfaced deployment constant), never runtime-configurable
+/// from a plan node / `ValueNode` / audit DB.
+///
+/// It ships EMPTY (fail-closed): the release build can push to NOTHING until an
+/// operator surfaces a receive-pack target here — the maximally fail-closed
+/// default. Under the NON-DEFAULT `mock-egress-ca` feature the Phase-46 mock
+/// receive-pack host is ADDITIONALLY admitted so the composed live-proof can push
+/// over the local TLS mock; that host is ABSENT from every production/default
+/// build (see the `not(mock-egress-ca)` invariant test below).
+const GIT_PUSH_HOST_ALLOWLIST: &[&str] = &[];
+
+/// NON-DEFAULT `mock-egress-ca` feature ONLY: the single extra test host the
+/// Phase-46 composed live-proof pushes to over the local TLS mock (the SAME host
+/// `http_request.rs`'s `MOCK_EGRESS_HOST` names). Compiled OUT of — and thus
+/// absent from — every production/default build.
+#[cfg(feature = "mock-egress-ca")]
+const MOCK_GIT_PUSH_HOST: &str = "github-mock.caprun.test";
+
+/// True iff `host` is on the DISTINCT `GIT_PUSH_HOST_ALLOWLIST` (case-insensitive).
+/// A non-push-allowlisted host is rejected by the transfer driver BEFORE any DNS
+/// resolve (fail-closed, WG-9). Pure, host-portable. Mirrors
+/// `http_request::is_write_host_allowlisted` but over the SEPARATE push list.
+/// The default/release push allowlist is empty ONLY; under the NON-DEFAULT
+/// `mock-egress-ca` feature the SINGLE `MOCK_GIT_PUSH_HOST` is additionally
+/// accepted (the only push-egress relaxation the feature makes).
+// Consumed by the Linux transfer driver + the host-portable cred tests; on a
+// non-test macOS build it is unreferenced (the driver's gate call sits in the
+// host-portable wrapper, but no non-test caller exists until Plan 44-04 wires it).
+fn is_git_push_host_allowlisted(host: &str) -> bool {
+    if GIT_PUSH_HOST_ALLOWLIST
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(host))
+    {
+        return true;
+    }
+    #[cfg(feature = "mock-egress-ca")]
+    if MOCK_GIT_PUSH_HOST.eq_ignore_ascii_case(host) {
+        return true;
+    }
+    false
+}
+
+// ---- credential/URL log scrub (DESIGN §1.4 MINOR-4, Phase-43 NIT-1) ----
+
+/// Redact any `<scheme>://<userinfo>@…` substring in `msg` — the generic
+/// credential-in-URL leak vector (a `https://x-access-token:TOKEN@host/…` string
+/// in a transport error). Replaces the `userinfo@` run (between `://` and the
+/// next `@` that precedes the path/query/end) with `[redacted-userinfo]@`. Pure,
+/// host-portable.
+fn strip_userinfo_urls(msg: &str) -> String {
+    let mut out = String::with_capacity(msg.len());
+    let bytes = msg.as_bytes();
+    let mut i = 0usize;
+    while i < msg.len() {
+        if msg[i..].starts_with("://") {
+            out.push_str("://");
+            i += 3;
+            // Scan the authority up to the first path/query/fragment/space
+            // delimiter; if it contains an `@`, the part before the LAST `@` is
+            // userinfo — redact it.
+            let start = i;
+            let mut j = i;
+            while j < msg.len() {
+                let c = bytes[j];
+                if c == b'/' || c == b'?' || c == b'#' || c == b' ' || c == b'"' {
+                    break;
+                }
+                j += 1;
+            }
+            let authority = &msg[start..j];
+            if let Some(at) = authority.rfind('@') {
+                out.push_str("[redacted-userinfo]@");
+                out.push_str(&authority[at + 1..]);
+            } else {
+                out.push_str(authority);
+            }
+            i = j;
+        } else {
+            let ch = msg[i..].chars().next().unwrap();
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out
+}
+
+/// Scrub every credential/remote-URL leak vector from a status/error string
+/// BEFORE it reaches the `eprintln!` logger (DESIGN §1.4 MINOR-4 — the broker-log
+/// leak vector; folds Phase-43 NIT-1). Strips: the exact push token, the exact
+/// remote URL substring, and any generic `<scheme>://<userinfo>@` credential-in-URL
+/// material. Pure, host-portable.
+fn scrub_secrets(msg: &str, token: Option<&str>, remote: &str) -> String {
+    let mut out = strip_userinfo_urls(msg);
+    if let Some(t) = token {
+        if !t.is_empty() {
+            out = out.replace(t, "[redacted-credential]");
+        }
+    }
+    if !remote.is_empty() {
+        out = out.replace(remote, "[redacted-remote]");
+    }
+    out
+}
+
+// ---- opaque two-phase audit (RESEARCH A9, DESIGN §1.4, P33/P34) ----
+
+/// Fold a git.push transfer outcome into the OPAQUE two-phase audit (clone of
+/// `http_write::append_write_outcome`, RESEARCH A9). On `Ok(())`: append
+/// `git_push_succeeded`. On `Err`: route the SCRUBBED error to `eprintln!` (the
+/// ONLY place it may appear — never the token/remote-URL/refspec/pack, MINOR-4),
+/// append an OPAQUE `git_push_failed` event FIRST (terminal EVENT before any
+/// terminal disposition — P33/P34), then propagate a non-swallowed `Err`. NO
+/// retry. Both events carry NO remote URL, token, refspec literal, or pack bytes
+/// in the hashed payload — only `effect_id` (in the `actor`) + a static
+/// `event_type` marker (T-44-10). This module mints NOTHING (Gate 3 byte-identical).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn append_push_outcome(
+    conn: &Connection,
+    key: &[u8],
+    session_id: Uuid,
+    effect_id: Uuid,
+    parent_id: Uuid,
+    parent_hash: &str,
+    push_result: Result<()>,
+    token: Option<&str>,
+    remote: &str,
+) -> Result<(Uuid, String)> {
+    match push_result {
+        Ok(()) => {
+            let event = Event::new(
+                Uuid::new_v4(),
+                Some(parent_id),
+                session_id,
+                format!("sink:git.push:{effect_id}"),
+                "git_push_succeeded".into(),
+                Utc::now(),
+                vec![],
+            );
+            let hash = append_event(conn, key, &event, Some(parent_hash))
+                .context("append git_push_succeeded")?;
+            Ok((event.id, hash))
+        }
+        Err(e) => {
+            // The raw error may embed the remote URL and/or a credential-in-URL
+            // (reqwest errors carry the URL); SCRUB before the logger sees it.
+            let scrubbed = scrub_secrets(&format!("{e:#}"), token, remote);
+            eprintln!("[brokerd] git.push failed (effect_id={effect_id}): {scrubbed}");
+            let event = Event::new(
+                Uuid::new_v4(),
+                Some(parent_id),
+                session_id,
+                format!("sink:git.push:{effect_id}"),
+                "git_push_failed".into(),
+                Utc::now(),
+                vec![],
+            );
+            append_event(conn, key, &event, Some(parent_hash))
+                .context("append git_push_failed")?;
+            // Propagate a NON-swallowed, already-scrubbed error (no token/URL).
+            Err(anyhow!("git.push transfer failed (effect_id={effect_id}): {scrubbed}"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod pack {
     use super::*;
@@ -611,6 +810,218 @@ mod pack {
 
         assert!(result.is_err(), "pack-objects in a non-repo dir must fail closed");
         std::fs::remove_dir_all(&root).ok();
+    }
+}
+
+#[cfg(test)]
+mod cred {
+    use super::*;
+
+    // ---- git_push_token: OPTIONAL broker-env-only sourcing (DESIGN §1.4) ----
+
+    #[test]
+    fn git_push_token_is_none_when_unset() {
+        let _guard = GIT_PUSH_ENV_LOCK.lock().unwrap();
+        std::env::remove_var(GIT_PUSH_TOKEN_ENV);
+        assert!(
+            git_push_token().is_none(),
+            "an absent push token is None (OPTIONAL), NOT a fail-closed Err"
+        );
+    }
+
+    #[test]
+    fn git_push_token_reads_broker_env_when_set() {
+        let _guard = GIT_PUSH_ENV_LOCK.lock().unwrap();
+        std::env::set_var(GIT_PUSH_TOKEN_ENV, "gp-tok-123");
+        let got = git_push_token();
+        std::env::remove_var(GIT_PUSH_TOKEN_ENV);
+        assert_eq!(got.as_deref(), Some("gp-tok-123"));
+    }
+
+    // ---- GIT_PUSH_HOST_ALLOWLIST is DISTINCT from the GET/WRITE lists (WG-9) ----
+
+    #[test]
+    fn push_allowlist_is_distinct_from_read_and_write_hosts() {
+        // A host that is GET-readable (`api.github.com`, the GET HOST_ALLOWLIST)
+        // is NOT thereby push-target-able — the push list is separate and empty
+        // in release. Proves a GET/POST-reachable host is not implicitly a push
+        // target (T-43-05 / WG-9).
+        assert!(
+            !is_git_push_host_allowlisted("api.github.com"),
+            "the GET-readable host must NOT be push-allowlisted (distinct lists)"
+        );
+        assert!(!is_git_push_host_allowlisted("evil.example.com"));
+    }
+
+    /// RELEASE / default build: the git.push host allowlist is EXACTLY empty — the
+    /// mock receive-pack host is NOT push-target-able without the feature. Gated
+    /// `not(mock-egress-ca)`: it asserts the feature-OFF invariant (a provable
+    /// base set), which by definition does not hold once the feature is compiled in.
+    #[cfg(not(feature = "mock-egress-ca"))]
+    #[test]
+    fn push_allowlist_default_build_is_empty_base_set() {
+        assert!(
+            GIT_PUSH_HOST_ALLOWLIST.is_empty(),
+            "the release git.push allowlist must be the empty base set (fail-closed)"
+        );
+        assert!(
+            !is_git_push_host_allowlisted("github-mock.caprun.test"),
+            "the Phase-46 mock host is NOT push-allowlisted in a default build"
+        );
+    }
+
+    /// FEATURE ON (`--features mock-egress-ca`): the mock receive-pack host is
+    /// push-allowlisted; the release base set stays empty otherwise.
+    #[cfg(feature = "mock-egress-ca")]
+    #[test]
+    fn push_allowlist_feature_admits_only_the_mock_host() {
+        assert!(is_git_push_host_allowlisted("github-mock.caprun.test"));
+        assert!(is_git_push_host_allowlisted("GITHUB-MOCK.CAPRUN.TEST")); // case-insensitive
+        // The GET-readable host is still NOT push-allowlisted even with the feature.
+        assert!(!is_git_push_host_allowlisted("api.github.com"));
+    }
+}
+
+#[cfg(test)]
+mod audit {
+    use super::*;
+    use crate::audit::{find_event_by_type, open_audit_db};
+
+    const TEST_KEY: &[u8] = b"git-push-rs-unit-test-key-not-secret";
+
+    fn seed_root() -> (rusqlite::Connection, Uuid, Uuid, String) {
+        let conn = open_audit_db(":memory:").unwrap();
+        let session_id = Uuid::new_v4();
+        let root = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "confirm_granted".into(),
+            Utc::now(),
+            vec![],
+        );
+        let root_hash = append_event(&conn, TEST_KEY, &root, None).unwrap();
+        (conn, session_id, root.id, root_hash)
+    }
+
+    // ---- scrub_secrets: the broker-log leak vector (DESIGN §1.4 MINOR-4) ----
+
+    #[test]
+    fn scrub_strips_token_remote_and_userinfo_url() {
+        const TOKEN: &str = "gp_SUPERSECRETTOKEN1234567890";
+        const REMOTE: &str = "https://github-mock.caprun.test/owner/repo.git";
+        // A realistic transport error embedding the remote, a credential-in-URL,
+        // and the bare token.
+        let raw = format!(
+            "POST failed for {REMOTE}: tried https://x-access-token:{TOKEN}@github-mock.caprun.test/owner/repo.git (auth {TOKEN})"
+        );
+        let scrubbed = scrub_secrets(&raw, Some(TOKEN), REMOTE);
+        assert!(!scrubbed.contains(TOKEN), "the token must be scrubbed: {scrubbed}");
+        assert!(!scrubbed.contains("gp_"), "no token prefix may survive: {scrubbed}");
+        assert!(!scrubbed.contains(REMOTE), "the remote URL must be scrubbed: {scrubbed}");
+        // The generic userinfo-in-URL run is redacted even independent of the
+        // exact token/remote replacements.
+        assert!(
+            !scrubbed.contains("x-access-token:"),
+            "the userinfo credential material must be redacted: {scrubbed}"
+        );
+    }
+
+    #[test]
+    fn scrub_userinfo_url_redacts_generic_credential_in_url() {
+        // No exact token/remote handed in — the GENERIC scheme://userinfo@ scan
+        // still redacts (defense-in-depth against an unexpected credential shape).
+        let raw = "connect error to ftp://user:pass@internal.host/path then done";
+        let scrubbed = scrub_secrets(raw, None, "");
+        assert!(!scrubbed.contains("user:pass"), "userinfo must be redacted: {scrubbed}");
+        assert!(scrubbed.contains("[redacted-userinfo]@internal.host/path"));
+    }
+
+    // ---- opaque two-phase audit: failed-event-FIRST, no sensitive payload ----
+
+    #[test]
+    fn append_push_outcome_failure_appends_opaque_git_push_failed_first() {
+        const TOKEN: &str = "gp_PAYLOADSECRET_9x";
+        const REMOTE: &str = "https://github-mock.caprun.test/secret-owner/secret-repo.git";
+        const REFSPEC: &str = "refs/heads/secret-branch:refs/heads/secret-branch";
+        let (conn, session_id, parent_id, parent_hash) = seed_root();
+        let effect_id = Uuid::new_v4();
+
+        // An error string carrying every sensitive substring — proves the audit
+        // payload stays OPAQUE regardless of what the transfer error embedded.
+        let err = anyhow!("push to {REMOTE} refspec {REFSPEC} with {TOKEN} rejected");
+        let result = append_push_outcome(
+            &conn,
+            TEST_KEY,
+            session_id,
+            effect_id,
+            parent_id,
+            &parent_hash,
+            Err(err),
+            Some(TOKEN),
+            REMOTE,
+        );
+
+        assert!(result.is_err(), "a transfer failure must propagate a non-swallowed Err");
+        // The propagated error is itself scrubbed (no token/remote).
+        let err_str = format!("{:#}", result.unwrap_err());
+        assert!(!err_str.contains(TOKEN), "propagated Err must be scrubbed of the token");
+        assert!(!err_str.contains(REMOTE), "propagated Err must be scrubbed of the remote");
+
+        let failed = find_event_by_type(&conn, &session_id.to_string(), "git_push_failed")
+            .unwrap()
+            .expect("git_push_failed event must be durably appended FIRST");
+        assert_eq!(failed.actor, format!("sink:git.push:{effect_id}"));
+        assert_eq!(failed.parent_id, Some(parent_id));
+        assert!(
+            find_event_by_type(&conn, &session_id.to_string(), "git_push_succeeded")
+                .unwrap()
+                .is_none(),
+            "no git_push_succeeded on the failure path"
+        );
+        assert!(failed.taint.is_empty(), "the opaque failure event carries empty taint");
+
+        // Grep the RAW persisted payload for every sensitive literal — ALL absent.
+        let payload: String = conn
+            .query_row(
+                "SELECT payload FROM events WHERE event_type = 'git_push_failed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!payload.contains(TOKEN), "token must NEVER appear in the hashed payload");
+        assert!(!payload.contains("gp_"), "no token prefix may leak into the payload");
+        assert!(!payload.contains("secret-owner"), "the remote URL must NEVER be in the payload");
+        assert!(!payload.contains(REFSPEC), "the refspec literal must NEVER be in the payload");
+        assert!(!payload.contains("secret-branch"), "no refspec ref material in the payload");
+    }
+
+    #[test]
+    fn append_push_outcome_success_appends_git_push_succeeded() {
+        let (conn, session_id, parent_id, parent_hash) = seed_root();
+        let effect_id = Uuid::new_v4();
+        let (evt_id, hash) = append_push_outcome(
+            &conn,
+            TEST_KEY,
+            session_id,
+            effect_id,
+            parent_id,
+            &parent_hash,
+            Ok(()),
+            Some("gp_tok"),
+            "https://github-mock.caprun.test/o/r.git",
+        )
+        .expect("a clean report-status must append git_push_succeeded");
+        assert!(!hash.is_empty());
+
+        let ok = find_event_by_type(&conn, &session_id.to_string(), "git_push_succeeded")
+            .unwrap()
+            .expect("git_push_succeeded event must exist");
+        assert_eq!(ok.id, evt_id);
+        assert_eq!(ok.actor, format!("sink:git.push:{effect_id}"));
+        assert_eq!(ok.parent_id, Some(parent_id));
+        assert!(ok.taint.is_empty(), "the opaque success event carries empty taint");
     }
 }
 
