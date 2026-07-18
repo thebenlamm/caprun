@@ -204,6 +204,7 @@ async fn block_appends_durable_causal_sink_blocked() {
     // drives ProvideIntent/RequestFd, so fresh `false` locals are correct.
     let mut intent_provided = false;
     let mut fd_requested = false;
+    let mut fd_request_count: u32 = 0;
     dispatch_request(
         BrokerRequest::SubmitPlanNode {
             plan_node: email_plan(value_id),
@@ -220,6 +221,7 @@ async fn block_appends_durable_causal_sink_blocked() {
         trusted_inode,
         &mut intent_provided,
         &mut fd_requested,
+        &mut fd_request_count,
     )
     .await
     .expect("dispatch_request must succeed once the append is durable");
@@ -300,6 +302,7 @@ async fn append_failure_is_fail_closed() {
     // drives ProvideIntent/RequestFd, so fresh `false` locals are correct.
     let mut intent_provided = false;
     let mut fd_requested = false;
+    let mut fd_request_count: u32 = 0;
     let result = dispatch_request(
         BrokerRequest::SubmitPlanNode {
             plan_node: email_plan(value_id),
@@ -316,6 +319,7 @@ async fn append_failure_is_fail_closed() {
         trusted_inode,
         &mut intent_provided,
         &mut fd_requested,
+        &mut fd_request_count,
     )
     .await;
 

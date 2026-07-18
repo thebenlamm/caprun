@@ -134,6 +134,7 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
     // single ProvideIntent and never RequestFd, so fresh `false` locals are correct.
     let mut intent_provided = false;
     let mut fd_requested = false;
+    let mut fd_request_count: u32 = 0;
 
     // Send ProvideIntent through the real dispatch arm.
     dispatch_request(
@@ -156,6 +157,7 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
         trusted_inode,
         &mut intent_provided,
         &mut fd_requested,
+        &mut fd_request_count,
     )
     .await
     .expect("dispatch ProvideIntent must succeed");
@@ -328,6 +330,9 @@ struct DispatchHarness {
     // persist across them, mirroring a real connection's per-connection state.
     intent_provided: bool,
     fd_requested: bool,
+    // Phase 33 (FS-01, T-33-06/T-33-07): threaded across every `.dispatch()`
+    // call on this harness instance, exactly like `fd_requested` above.
+    fd_request_count: u32,
     ws_root: std::sync::Arc<adapter_fs::workspace::WorkspaceRoot>,
     server_end: tokio::net::UnixStream,
     client_end: tokio::net::UnixStream,
@@ -364,6 +369,7 @@ impl DispatchHarness {
             trusted_inode,
             intent_provided: false,
             fd_requested: false,
+            fd_request_count: 0,
             ws_root,
             server_end,
             client_end,
@@ -393,6 +399,7 @@ impl DispatchHarness {
             self.trusted_inode,
             &mut self.intent_provided,
             &mut self.fd_requested,
+            &mut self.fd_request_count,
         )
         .await?;
 

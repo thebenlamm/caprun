@@ -150,6 +150,7 @@ async fn request_fd_via_dispatch(
 ) -> BrokerResponse {
     let mut intent_provided = false;
     let mut fd_requested = false;
+    let mut fd_request_count: u32 = 0;
     let (mut server_end, mut client_end) =
         tokio::net::UnixStream::pair().expect("UnixStream::pair");
 
@@ -167,6 +168,7 @@ async fn request_fd_via_dispatch(
         trusted_inode,
         &mut intent_provided,
         &mut fd_requested,
+        &mut fd_request_count,
     )
     .await
     .expect("dispatch_request(RequestFd) must complete");
@@ -336,6 +338,7 @@ async fn second_dispatch_call_after_demotion_observes_draft_not_stale_active() {
     let mut conn2_last_event_hash = "genesis-hash-conn2".to_string();
     let mut conn2_intent_provided = false;
     let mut conn2_fd_requested = false;
+    let mut conn2_fd_request_count: u32 = 0;
     let (mut conn2_server_end, mut conn2_client_end) =
         tokio::net::UnixStream::pair().expect("UnixStream::pair");
 
@@ -355,6 +358,7 @@ async fn second_dispatch_call_after_demotion_observes_draft_not_stale_active() {
         trusted_inode,
         &mut conn2_intent_provided,
         &mut conn2_fd_requested,
+        &mut conn2_fd_request_count,
     )
     .await
     .expect("dispatch_request(SubmitPlanNode) must complete");

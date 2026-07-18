@@ -68,6 +68,18 @@ use uuid::Uuid;
 /// (T-03-08 DoS mitigate: guard before vec allocation, not after).
 const MAX_MSG_SIZE: usize = 64 * 1024;
 
+/// Maximum number of `RequestFd` calls a single connection may make over its
+/// lifetime (Phase 33, FS-01, T-33-06/T-33-07).
+///
+/// FS-01's multi-file read is the EXISTING single-file
+/// `RequestFd -> read_within -> mint_from_read` path invoked repeatedly — no
+/// new read mechanism. This is a resource-exhaustion guard (fd churn,
+/// audit-DAG growth), NOT a functional gate: 256 is generous enough for a
+/// moderate repo's source tree. A hardcoded const, not a runtime knob —
+/// matches this codebase's "security params are hardcoded constants"
+/// discipline (RESEARCH Pattern 2).
+const MAX_REQUEST_FD_PER_SESSION: u32 = 256;
+
 /// A connection's fixed capability set (Phase 20, PLANNER-02/04).
 ///
 /// Decided ONCE at connection establishment — the accept loop's
@@ -495,6 +507,10 @@ async fn handle_connection(
     // re-derived from IPC).
     let mut intent_provided = false;
     let mut fd_requested = false;
+    // Phase 33 (FS-01, T-33-06/T-33-07): per-connection RequestFd count —
+    // a fail-closed resource-exhaustion guard, incremented at the TOP of the
+    // RequestFd arm (before any read work) so it cannot be dodged.
+    let mut fd_request_count: u32 = 0;
 
     loop {
         // Read 4-byte LE length prefix; clean EOF ends the connection loop.
@@ -627,6 +643,7 @@ async fn handle_connection(
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
+            &mut fd_request_count,
         )
         .await?;
     }
@@ -1239,6 +1256,13 @@ async fn create_session_arm(
 /// accepted EXACTLY ONCE and ONLY BEFORE any `RequestFd` on this connection.
 /// Both start `false` and are set at the RequestFd/ProvideIntent arms below
 /// — never reset, never re-derived from IPC.
+///
+/// `fd_request_count` (Phase 33, FS-01, T-33-06/T-33-07) is the
+/// broker-enforced, per-connection `RequestFd` call counter — incremented
+/// and bound-checked against `MAX_REQUEST_FD_PER_SESSION` at the TOP of the
+/// `RequestFd` arm, before any read work, so a worker cannot dodge it by
+/// triggering read failures. Starts `0`, never reset, never re-derived from
+/// IPC.
 #[allow(clippy::too_many_arguments)]
 pub async fn dispatch_request(
     request: BrokerRequest,
@@ -1254,6 +1278,7 @@ pub async fn dispatch_request(
     trusted_inode: Option<(u64, u64)>,
     intent_provided: &mut bool,
     fd_requested: &mut bool,
+    fd_request_count: &mut u32,
 ) -> anyhow::Result<()> {
     // v1.6 Phase 27 (X-04/F3): re-read the shared, monotonic cell HERE, at
     // the top of every dispatch_request call — never trust a value cached
@@ -1277,6 +1302,30 @@ pub async fn dispatch_request(
             // rejected fail-closed, regardless of whether this RequestFd itself
             // ultimately succeeds or errors below.
             *fd_requested = true;
+
+            // Phase 33 (FS-01, T-33-06/T-33-07): increment-then-bound-check
+            // BEFORE any read/fstat/pass_fd work, mirroring `*fd_requested =
+            // true;` immediately above — a worker cannot dodge the counter
+            // by triggering read failures, since every attempt (successful
+            // or not) counts. Fail-closed: past the bound, deny THIS
+            // request only — `return Ok(())`, NEVER `break` — the
+            // connection stays open (mirrors the ProvideIntent-reject
+            // error-then-continue shape above, not a connection kill).
+            *fd_request_count += 1;
+            if *fd_request_count > MAX_REQUEST_FD_PER_SESSION {
+                send_response(
+                    stream,
+                    &BrokerResponse::Error {
+                        message: format!(
+                            "RequestFd count {} exceeded the per-session limit ({}) \
+                             — fail-closed resource-exhaustion guard",
+                            *fd_request_count, MAX_REQUEST_FD_PER_SESSION
+                        ),
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
 
             // HARD-04: resolve the worker-supplied path BENEATH the workspace
             // dirfd anchor via a single openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)
@@ -1947,6 +1996,7 @@ mod tests {
             harness();
         let mut intent_provided = false;
         let mut fd_requested = false;
+        let mut fd_request_count: u32 = 0;
         let (mut server_end, mut client_end) =
             tokio::net::UnixStream::pair().expect("UnixStream::pair");
 
@@ -1964,6 +2014,7 @@ mod tests {
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
+            &mut fd_request_count,
         )
         .await
         .expect("ProvideIntent before any RequestFd must succeed");
@@ -1986,6 +2037,7 @@ mod tests {
             harness();
         let mut intent_provided = false;
         let mut fd_requested = false;
+        let mut fd_request_count: u32 = 0;
         let (mut server_end, mut client_end) =
             tokio::net::UnixStream::pair().expect("UnixStream::pair");
 
@@ -2003,6 +2055,7 @@ mod tests {
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
+            &mut fd_request_count,
         )
         .await
         .expect("first ProvideIntent must succeed");
@@ -2025,6 +2078,7 @@ mod tests {
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
+            &mut fd_request_count,
         )
         .await
         .expect("dispatch must complete (Error response, not a transport failure)");
@@ -2069,6 +2123,7 @@ mod tests {
 
         let mut intent_provided = false;
         let mut fd_requested = false;
+        let mut fd_request_count: u32 = 0;
         let (mut server_end, mut client_end) =
             tokio::net::UnixStream::pair().expect("UnixStream::pair");
 
@@ -2086,6 +2141,7 @@ mod tests {
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
+            &mut fd_request_count,
         )
         .await
         .expect("RequestFd must succeed");
@@ -2117,6 +2173,7 @@ mod tests {
             trusted_inode,
             &mut intent_provided,
             &mut fd_requested,
+            &mut fd_request_count,
         )
         .await
         .expect("dispatch must complete (Error response, not a transport failure)");
@@ -2132,6 +2189,147 @@ mod tests {
             "no chain-head advance on the rejected post-RequestFd ProvideIntent"
         );
         assert_eq!(last_event_hash, last_event_hash_before_intent);
+
+        std::fs::remove_dir_all(&ws_dir).ok();
+    }
+
+    /// Phase 33 (FS-01, T-33-06/T-33-07): the (MAX+1)th `RequestFd` on a
+    /// connection is denied with a fail-closed `BrokerResponse::Error`
+    /// while the connection itself stays alive (`dispatch_request` still
+    /// returns `Ok(())`). Presets `fd_request_count` to
+    /// `MAX_REQUEST_FD_PER_SESSION` rather than driving 256 real reads
+    /// first — the increment-then-bound-check runs at the TOP of the arm,
+    /// BEFORE any read/openat2 work, so a preset counter exercises the
+    /// exact same branch a genuine 257th call would hit (and keeps this
+    /// test fast + macOS-runnable, no Linux-gated read path required —
+    /// the short-circuit never reaches `workspace_root.read_within`).
+    #[tokio::test]
+    async fn request_fd_count_limit() {
+        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, session_status, ws_root, trusted_inode) =
+            harness();
+        let mut intent_provided = false;
+        let mut fd_requested = false;
+        let mut fd_request_count: u32 = MAX_REQUEST_FD_PER_SESSION;
+        let (mut server_end, mut client_end) =
+            tokio::net::UnixStream::pair().expect("UnixStream::pair");
+
+        let last_event_id_before = last_event_id;
+        let last_event_hash_before = last_event_hash.clone();
+
+        let result = dispatch_request(
+            BrokerRequest::RequestFd { path: "workspace.txt".to_string() },
+            &mut server_end,
+            &conn,
+            TEST_KEY,
+            session_id,
+            &mut last_event_id,
+            &mut last_event_hash,
+            &mut store,
+            &ws_root,
+            &session_status,
+            trusted_inode,
+            &mut intent_provided,
+            &mut fd_requested,
+            &mut fd_request_count,
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "the over-limit path must return Ok(()) — the connection stays \
+             open (deny-this-request only, never `break`/terminate)"
+        );
+
+        let resp = read_framed(&mut client_end).await;
+        assert!(
+            matches!(resp, BrokerResponse::Error { .. }),
+            "the (MAX+1)th RequestFd must be denied with an Error, got {resp:?}"
+        );
+        assert_eq!(
+            fd_request_count,
+            MAX_REQUEST_FD_PER_SESSION + 1,
+            "the counter still increments even on the denied request \
+             (increment precedes the bound check)"
+        );
+        assert_eq!(
+            last_event_id, last_event_id_before,
+            "no chain-head advance on the over-limit denial (mints/appends nothing)"
+        );
+        assert_eq!(last_event_hash, last_event_hash_before);
+    }
+
+    /// Phase 33 (FS-01): repeated `RequestFd` calls STRICTLY under
+    /// `MAX_REQUEST_FD_PER_SESSION` are never spuriously denied by the
+    /// counter — each proceeds to the normal read path / normal
+    /// `FdGranted` response, not the limit-exceeded `Error`. This is the
+    /// positive complement to `request_fd_count_limit`: FS-01's multi-file
+    /// read (the existing single-file path invoked N times) must keep
+    /// working under the bound.
+    #[tokio::test]
+    async fn request_fd_repeated_reads_under_bound_succeed() {
+        let (conn, session_id, mut store, mut last_event_id, mut last_event_hash, session_status, _ws_root, _trusted_inode) =
+            harness();
+        let mut ws_dir = std::env::temp_dir();
+        ws_dir.push(format!("caprun_fs01_repeat_rfd_{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&ws_dir).expect("create ws dir");
+        std::fs::write(ws_dir.join("workspace.txt"), b"hello").expect("write ws file");
+        let ws_root = Arc::new(
+            adapter_fs::workspace::WorkspaceRoot::open(&ws_dir).expect("open ws root"),
+        );
+        let trusted_path = ws_dir.join("workspace.txt");
+        let trusted_inode: Option<(u64, u64)> = std::fs::metadata(&trusted_path)
+            .ok()
+            .map(|m| (m.dev(), m.ino()));
+
+        let mut intent_provided = false;
+        let mut fd_requested = false;
+        let mut fd_request_count: u32 = 0;
+        let (mut server_end, mut client_end) =
+            tokio::net::UnixStream::pair().expect("UnixStream::pair");
+
+        // A handful of repeated calls, strictly under the bound — each
+        // must succeed (FdGranted), never hit the limit-exceeded Error.
+        const REPEAT_COUNT: u32 = 3;
+        for i in 1..=REPEAT_COUNT {
+            dispatch_request(
+                BrokerRequest::RequestFd { path: "workspace.txt".to_string() },
+                &mut server_end,
+                &conn,
+                TEST_KEY,
+                session_id,
+                &mut last_event_id,
+                &mut last_event_hash,
+                &mut store,
+                &ws_root,
+                &session_status,
+                trusted_inode,
+                &mut intent_provided,
+                &mut fd_requested,
+                &mut fd_request_count,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("RequestFd call {i} must succeed: {e}"));
+
+            let received_fd = adapter_fs::recv_fd(client_end.as_raw_fd())
+                .expect("recv_fd must consume the RequestFd arm's SCM_RIGHTS payload");
+            drop(unsafe { std::fs::File::from_raw_fd(received_fd) });
+
+            let resp = read_framed(&mut client_end).await;
+            assert!(
+                matches!(resp, BrokerResponse::FdGranted),
+                "RequestFd call {i} (strictly under MAX_REQUEST_FD_PER_SESSION) \
+                 must succeed, got {resp:?}"
+            );
+        }
+
+        assert_eq!(
+            fd_request_count, REPEAT_COUNT,
+            "the counter tracks exactly the number of RequestFd calls made"
+        );
+        assert!(
+            fd_request_count < MAX_REQUEST_FD_PER_SESSION,
+            "sanity: this test's repeat count is strictly under the bound"
+        );
 
         std::fs::remove_dir_all(&ws_dir).ok();
     }
