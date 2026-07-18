@@ -585,6 +585,20 @@ mod tests {
 
     /// parse_planner_response: Err(UnknownSink) when the sink is not in
     /// known_sinks.
+    ///
+    /// WG-5 (Phase 44, RESEARCH A26): registering `git.push` as a callable sink in
+    /// the EXECUTOR TCB (sink_schema / sink_sensitivity / PRODUCTION_SINKS) does
+    /// NOT make the deterministic STUB PLANNER emit it. The two surfaces are
+    /// decoupled by design: `known_sinks` here is the per-request
+    /// `available_sinks` the planner is OFFERED (`sample_request()` offers only
+    /// `email.send`), NOT the executor's `KNOWN_SINKS`. A real LLM-planner loop
+    /// that learns `git.push` is explicitly Out-of-Scope for v1.9 (deferred to
+    /// v2), so this assertion is UNCHANGED by Phase 44 — a plan node naming a sink
+    /// absent from the offered set is still rejected UnknownSink, never
+    /// substituted or fabricated. This test is enumerated in the WG-5 coupling so
+    /// a FUTURE planner-learns-git.push change flips it DELIBERATELY, not by
+    /// surprise. `git.push` remains a valid "not-offered" example precisely
+    /// because it is not in `sample_request().available_sinks`.
     #[test]
     fn parse_planner_response_err_for_unknown_sink() {
         let req = sample_request();
@@ -594,6 +608,12 @@ mod tests {
             .map(|h| h.value_id.clone())
             .collect();
         let known_sinks = req.available_sinks.clone();
+        // Guard the WG-5 premise: the offered set must NOT contain git.push, else
+        // this test would no longer exercise the UnknownSink rejection path.
+        assert!(
+            !known_sinks.contains(&"git.push".to_string()),
+            "WG-5: the stub planner must not be offered git.push in v1.9"
+        );
 
         let resp = PlannerResponse {
             sink: "git.push".to_string(),

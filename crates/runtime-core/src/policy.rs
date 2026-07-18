@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::plan_node::SinkId;
 
-/// The eight currently-callable production sinks (the `KNOWN_SINKS` surface in
+/// The nine currently-callable production sinks (the `KNOWN_SINKS` surface in
 /// `crates/executor/src/sink_schema.rs`). `broker_default()` allowlists exactly
 /// these — an EXPLICIT allowlist, never allow-everything: a future/unknown sink
 /// is NOT in this list and is therefore NOT callable under `broker_default()`.
@@ -46,6 +46,12 @@ const PRODUCTION_SINKS: &[&str] = &[
     // under the default policy, T-43-04), while a future/unknown sink stays
     // deny-by-default.
     "http.request.write",
+    // GIT-02/03 (Phase 44), DESIGN-v1.9-egress-policy §1.1/§1.3 / RESEARCH A17
+    // (WG-5): the destination-pinned push egress sink. Adding it here keeps
+    // `broker_default()` permitting the intended I2 path for a policy-permitted
+    // push (never a PolicyDeny for the new sink under the default policy,
+    // T-44-03), while a future/unknown sink stays deny-by-default.
+    "git.push",
 ];
 
 /// A coarse allowlist constraint on a single sink argument (POLICY-01).
@@ -206,7 +212,7 @@ impl SessionPolicy {
         // gate on `test.observe` in `crates/executor/src/{sink_sensitivity,
         // sink_schema}.rs`. NEVER present in a production build — `test-fixtures`
         // is never a default feature — so production `allow_all()` still lists
-        // ONLY the seven real production sinks. `broker_default()` deliberately
+        // ONLY the nine real production sinks. `broker_default()` deliberately
         // does NOT get this gate (it is the production allowlist).
         #[cfg(any(test, feature = "test-fixtures"))]
         allowed_sinks.insert("test.observe".to_string());
@@ -216,7 +222,7 @@ impl SessionPolicy {
         }
     }
 
-    /// An EXPLICIT deny-by-default allowlist of the seven currently-callable
+    /// An EXPLICIT deny-by-default allowlist of the nine currently-callable
     /// production sinks, with no arg constraints (DESIGN §5.1). This is NOT
     /// allow-everything: a future/unknown sink is NOT callable, preserving
     /// fail-closed while keeping existing end-to-end flows green. Plan 04's
@@ -536,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn broker_default_permits_the_eight_production_sinks_and_denies_unlisted() {
+    fn broker_default_permits_the_nine_production_sinks_and_denies_unlisted() {
         // broker_default() is an EXPLICIT allowlist, never allow-everything.
         let policy = SessionPolicy::broker_default();
         for s in [
@@ -548,14 +554,32 @@ mod tests {
             "http.request",
             "github.pr",
             "http.request.write",
+            "git.push",
         ] {
             assert!(policy.permits_sink(&sink(s)), "broker_default should permit {s}");
         }
-        // A future/unknown sink is NOT callable.
-        assert!(!policy.permits_sink(&sink("git.push")));
+        // A future/unknown sink is NOT callable (deny-by-default preserved). Uses a
+        // genuinely-unregistered id — `git.push` is now an ALLOWLISTED production
+        // sink (Phase 44), so it can no longer serve as the unlisted example.
+        assert!(!policy.permits_sink(&sink("deploy.service")));
+        assert_eq!(
+            policy.evaluate(&sink("deploy.service"), "service", "prod"),
+            Err(PolicyDenyKind::SinkNotAllowed)
+        );
+    }
+
+    #[test]
+    fn broker_default_permits_git_push() {
+        // GIT-02/03 (§1.1/§1.3, WG-5): the destination-pinned push sink id is on
+        // the default production allowlist, so a policy-permitted push reaches the
+        // unmodified I2 loop (never a PolicyDeny for the new sink under the default
+        // policy, T-44-03). This is the flip of the pre-Phase-44 negative assertion
+        // that git.push was NOT permitted.
+        let policy = SessionPolicy::broker_default();
+        assert!(policy.permits_sink(&sink("git.push")));
         assert_eq!(
             policy.evaluate(&sink("git.push"), "remote", "origin"),
-            Err(PolicyDenyKind::SinkNotAllowed)
+            Ok(())
         );
     }
 
