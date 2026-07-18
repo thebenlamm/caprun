@@ -310,6 +310,103 @@ fn parse_report_status(body: &[u8]) -> Result<()> {
     Ok(())
 }
 
+// ---- refspec value-gate (structural-denial layer 1, RESEARCH §5) ----
+
+/// Value-gate on a push refspec, mirroring `http_request.rs::validate_write_method`
+/// (the executor Step-0 name-set schema gate cannot see a refspec VALUE, so the
+/// force/deletion refusal lives here). Fail-closed rejects:
+///   - a leading `+` (a force / non-fast-forward update),
+///   - any `--force` / `--force-with-lease`-shaped or other `--flag` token (a
+///     refspec must never look like a CLI flag),
+///   - an empty `<src>` in `<src>:<dst>` (`:dst`), i.e. a ref DELETION, and a
+///     `<dst>` that is empty or carries a further `:`.
+/// Returns `Ok(())` for a plain `<src>:<dst>` or a bare `<ref>` non-force refspec.
+///
+/// Called by BOTH the confirm-precheck (Plan 44-03 Step 4.8d) and the transfer
+/// path so the two cannot drift (the P34 lesson).
+pub(crate) fn validate_git_refspec(refspec: &str) -> Result<()> {
+    if refspec.is_empty() {
+        bail!("git.push: empty refspec is refused");
+    }
+    // Force-push prefix.
+    if refspec.starts_with('+') {
+        bail!("git.push: force-push refspec (leading '+') is refused");
+    }
+    // Any CLI-flag / --force-shaped token. A legitimate refspec never begins
+    // with '--', and a `--force`/`--force-with-lease` substring is never valid
+    // inside one — reject both, case-insensitively.
+    let lower = refspec.to_ascii_lowercase();
+    if refspec.starts_with("--") || lower.contains("--force") {
+        bail!("git.push: --force/--force-with-lease/flag-shaped refspec token is refused");
+    }
+    // Deletion + malformed <src>:<dst>.
+    if let Some((src, dst)) = refspec.split_once(':') {
+        if src.is_empty() {
+            bail!("git.push: deletion refspec (empty <src> / bare ':dst') is refused");
+        }
+        if dst.is_empty() {
+            bail!("git.push: refspec has an empty <dst>");
+        }
+        if dst.contains(':') {
+            bail!("git.push: malformed refspec (more than one ':')");
+        }
+    }
+    Ok(())
+}
+
+// ---- receive-pack command-list (structural-denial layer 2, RESEARCH §5) ----
+
+/// The fixed capability set on the FIRST (here, only) receive-pack command line.
+/// Deliberately carries `report-status` + `agent` ONLY: NO `side-band-64k` (the
+/// simplest correct subset, RESEARCH §3 — report-status then arrives on the main
+/// band) and NO force capability — so a force update is not expressible by any
+/// code path.
+const RECEIVE_PACK_CAPS: &str = "report-status agent=caprun";
+
+/// Fail-closed refname check for a command line: non-empty, no force `+`, no
+/// space / NUL / LF (which would break the pkt-line framing).
+fn validate_refname(refname: &str) -> Result<()> {
+    if refname.is_empty() {
+        bail!("git.push: empty refname");
+    }
+    if refname.starts_with('+') {
+        bail!("git.push: refname must not carry a force '+'");
+    }
+    if refname.bytes().any(|b| b == b' ' || b == 0 || b == b'\n') {
+        bail!("git.push: refname contains an illegal byte (space/NUL/LF)");
+    }
+    Ok(())
+}
+
+/// Build the receive-pack command-list body (the pkt-line command line + a
+/// terminating flush) from a caller-supplied `{old_oid, new_oid, refname}`.
+///
+/// STRUCTURAL DENIAL (DESIGN §1.3, RESEARCH §5 layer 2): refuses — for ANY input
+/// — to construct a line whose `new_oid` is the zero-oid (a DELETE). This is
+/// unreachable even via a human confirm. A CREATE is DISTINGUISHED and ALLOWED
+/// (WG-6): `old_oid` MAY be the zero-oid (ref not advertised) as long as
+/// `new_oid` is non-zero — the refusal keys on `new_oid == zero-oid` ONLY.
+///
+/// `old_oid` is a CALLER-supplied parameter sourced from the frozen info/refs
+/// advertisement (Plan 44-03), NEVER read from the untrusted local repo
+/// (WG-6/T-44-07). The capability set (`RECEIVE_PACK_CAPS`) carries no force
+/// capability, so a force update is not expressible.
+pub(crate) fn build_command_list(old_oid: &str, new_oid: &str, refname: &str) -> Result<Vec<u8>> {
+    // Layer 2 structural denial: a delete is a command whose new-oid is zero.
+    if is_zero_oid(new_oid) {
+        bail!("git.push: refusing to build a deletion command (new-oid is the zero-oid)");
+    }
+    validate_oid(new_oid)?;
+    // old_oid may legitimately be the zero-oid (a create) — validate_oid accepts it.
+    validate_oid(old_oid)?;
+    validate_refname(refname)?;
+
+    let payload = format!("{old_oid} {new_oid} {refname}\0{RECEIVE_PACK_CAPS}");
+    let mut out = pkt_line(payload.as_bytes());
+    out.extend_from_slice(flush_pkt());
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,5 +611,107 @@ mod tests {
         body.extend_from_slice(&pkt_line(b"weird status line\n"));
         body.extend_from_slice(flush_pkt());
         assert!(parse_report_status(&body).is_err());
+    }
+
+    // ---- validate_git_refspec (structural denial layer 1) ----
+
+    const OID_A: &str = "1111111111111111111111111111111111111111";
+    const OID_B: &str = "2222222222222222222222222222222222222222";
+
+    #[test]
+    fn refspec_accepts_plain_src_dst_and_bare_ref() {
+        assert!(validate_git_refspec("refs/heads/main:refs/heads/main").is_ok());
+        assert!(validate_git_refspec("main:main").is_ok());
+        assert!(validate_git_refspec("refs/heads/main").is_ok());
+        assert!(validate_git_refspec("HEAD:refs/heads/main").is_ok());
+    }
+
+    #[test]
+    fn refspec_rejects_leading_plus_force() {
+        assert!(validate_git_refspec("+refs/heads/main:refs/heads/main").is_err());
+        assert!(validate_git_refspec("+main").is_err());
+    }
+
+    #[test]
+    fn refspec_rejects_force_flag_shaped_tokens() {
+        assert!(validate_git_refspec("--force").is_err());
+        assert!(validate_git_refspec("--force-with-lease").is_err());
+        assert!(validate_git_refspec("--FORCE").is_err()); // case-insensitive
+        assert!(validate_git_refspec("--delete").is_err()); // any --flag shape
+    }
+
+    #[test]
+    fn refspec_rejects_deletion_empty_src() {
+        // A bare ":dst" (empty <src>) deletes the remote ref — refused.
+        assert!(validate_git_refspec(":refs/heads/main").is_err());
+        assert!(validate_git_refspec(":main").is_err());
+    }
+
+    #[test]
+    fn refspec_rejects_empty_or_malformed() {
+        assert!(validate_git_refspec("").is_err());
+        assert!(validate_git_refspec("main:").is_err()); // empty <dst>
+        assert!(validate_git_refspec("a:b:c").is_err()); // multiple ':'
+    }
+
+    // ---- build_command_list (structural denial layer 2) ----
+
+    #[test]
+    fn command_list_builds_a_valid_update_line() {
+        let body = build_command_list(OID_A, OID_B, "refs/heads/main").unwrap();
+        // First pkt is the command line; caps ride after a NUL, terminated by flush.
+        let mut buf: &[u8] = &body;
+        let pkt = read_pkt(&mut buf).unwrap().unwrap();
+        let line = match pkt {
+            Pkt::Data(d) => d,
+            Pkt::Flush => panic!("expected a data command line, got flush"),
+        };
+        let (refpart, caps) = split_ref_and_caps(&line);
+        assert_eq!(
+            std::str::from_utf8(refpart).unwrap(),
+            format!("{OID_A} {OID_B} refs/heads/main")
+        );
+        // Fixed caps: report-status + agent, and crucially NO force/side-band cap.
+        assert!(caps.contains(&"report-status".to_string()));
+        assert!(caps.iter().all(|c| c != "side-band-64k"));
+        assert!(caps.iter().all(|c| !c.contains("force")));
+        // Terminated by a flush.
+        assert_eq!(read_pkt(&mut buf).unwrap(), Some(Pkt::Flush));
+    }
+
+    #[test]
+    fn command_list_refuses_zero_new_oid_delete() {
+        // A zero new-oid is a delete — refused by construction (SHA-1 and SHA-256
+        // widths), for any old-oid.
+        assert!(build_command_list(OID_A, ZERO_OID_SHA1, "refs/heads/main").is_err());
+        assert!(build_command_list(OID_A, ZERO_OID_SHA256, "refs/heads/main").is_err());
+        assert!(build_command_list(ZERO_OID_SHA1, ZERO_OID_SHA1, "refs/heads/main").is_err());
+    }
+
+    #[test]
+    fn command_list_allows_create_with_zero_old_oid() {
+        // WG-6: a create is old-oid == zero-oid with a NON-zero new-oid — ALLOWED
+        // (the refusal keys on new-oid only, distinguishing create from delete).
+        let body = build_command_list(ZERO_OID_SHA1, OID_B, "refs/heads/brand-new").unwrap();
+        let mut buf: &[u8] = &body;
+        let pkt = read_pkt(&mut buf).unwrap().unwrap();
+        let line = match pkt {
+            Pkt::Data(d) => d,
+            Pkt::Flush => panic!("expected a data command line"),
+        };
+        let (refpart, _caps) = split_ref_and_caps(&line);
+        assert_eq!(
+            std::str::from_utf8(refpart).unwrap(),
+            format!("{ZERO_OID_SHA1} {OID_B} refs/heads/brand-new")
+        );
+    }
+
+    #[test]
+    fn command_list_rejects_malformed_oids_and_refnames() {
+        assert!(build_command_list("NOTHEX", OID_B, "refs/heads/main").is_err());
+        assert!(build_command_list(OID_A, "shortoid", "refs/heads/main").is_err());
+        assert!(build_command_list(OID_A, OID_B, "").is_err());
+        assert!(build_command_list(OID_A, OID_B, "+refs/heads/main").is_err());
+        assert!(build_command_list(OID_A, OID_B, "refs/heads/ma in").is_err()); // space
     }
 }
