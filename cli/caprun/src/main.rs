@@ -664,3 +664,137 @@ fn print_audit_dag(conn: &rusqlite::Connection, session_id: &str) -> anyhow::Res
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::planner_sidecar_allowlist_env;
+
+    /// Serializes the tests in this module that mutate the process-global
+    /// environment — the multi-threaded test runner would otherwise race two
+    /// tests on the same process-wide env (mirror `github_pr.rs`'s
+    /// `GITHUB_ENV_LOCK` / `email_smtp.rs`'s `SMTP_ENV_LOCK`).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Snapshots the env keys a test touches, clears them to a known baseline,
+    /// and restores the originals on drop — so a test never leaks state into a
+    /// sibling and a pre-existing shell env (e.g. a real HTTPS_PROXY) can't skew
+    /// the "absent" assertions.
+    struct EnvGuard {
+        saved: Vec<(&'static str, Option<String>)>,
+    }
+    impl EnvGuard {
+        fn new(keys: &[&'static str]) -> Self {
+            let saved = keys.iter().map(|k| (*k, std::env::var(k).ok())).collect();
+            for k in keys {
+                std::env::remove_var(k);
+            }
+            EnvGuard { saved }
+        }
+    }
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (k, v) in &self.saved {
+                match v {
+                    Some(val) => std::env::set_var(k, val),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
+    /// All keys any test in this module reads or writes — the guard baselines
+    /// every one so each test sees a clean slate regardless of the ambient env.
+    const TOUCHED: &[&str] = &[
+        "CAPRUN_PLANNER_MODEL",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "CAPRUN_SMTP_HOST",
+        "CAPRUN_SMTP_PORT",
+        "OPENAI_API_KEY",
+    ];
+
+    fn get<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
+        env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn planner_sidecar_allowlist_returns_planner_sock() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = EnvGuard::new(TOUCHED);
+        let out = planner_sidecar_allowlist_env("/agentos/planner/abc-123");
+        assert_eq!(get(&out, "PLANNER_SOCK"), Some("/agentos/planner/abc-123"));
+    }
+
+    #[test]
+    fn planner_sidecar_allowlist_always_sets_minimal_path() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = EnvGuard::new(TOUCHED);
+        let out = planner_sidecar_allowlist_env("/sock");
+        assert_eq!(get(&out, "PATH"), Some("/usr/bin:/bin:/usr/local/bin"));
+    }
+
+    #[test]
+    fn planner_sidecar_allowlist_forwards_model_when_present_omits_when_absent() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = EnvGuard::new(TOUCHED);
+
+        // Absent → omitted.
+        let out = planner_sidecar_allowlist_env("/sock");
+        assert_eq!(get(&out, "CAPRUN_PLANNER_MODEL"), None);
+
+        // Present → forwarded verbatim.
+        std::env::set_var("CAPRUN_PLANNER_MODEL", "gpt-4o-mini");
+        let out = planner_sidecar_allowlist_env("/sock");
+        assert_eq!(get(&out, "CAPRUN_PLANNER_MODEL"), Some("gpt-4o-mini"));
+
+        // Present-but-empty → omitted (never forwarded as an empty string;
+        // mirrors the mailpit-verify.sh empty-model bug note).
+        std::env::set_var("CAPRUN_PLANNER_MODEL", "");
+        let out = planner_sidecar_allowlist_env("/sock");
+        assert_eq!(get(&out, "CAPRUN_PLANNER_MODEL"), None);
+    }
+
+    #[test]
+    fn planner_sidecar_allowlist_forwards_proxy_when_present_omits_when_absent() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = EnvGuard::new(TOUCHED);
+
+        // Absent → both omitted.
+        let out = planner_sidecar_allowlist_env("/sock");
+        assert_eq!(get(&out, "HTTPS_PROXY"), None);
+        assert_eq!(get(&out, "NO_PROXY"), None);
+
+        // Present → forwarded.
+        std::env::set_var("HTTPS_PROXY", "http://proxy.example:8080");
+        std::env::set_var("NO_PROXY", "localhost,127.0.0.1");
+        let out = planner_sidecar_allowlist_env("/sock");
+        assert_eq!(get(&out, "HTTPS_PROXY"), Some("http://proxy.example:8080"));
+        assert_eq!(get(&out, "NO_PROXY"), Some("localhost,127.0.0.1"));
+    }
+
+    #[test]
+    fn planner_sidecar_allowlist_never_leaks_smtp_or_secret() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = EnvGuard::new(TOUCHED);
+
+        // Ambient broker secrets present in the PARENT env...
+        std::env::set_var("CAPRUN_SMTP_HOST", "10.0.0.5");
+        std::env::set_var("CAPRUN_SMTP_PORT", "1025");
+        std::env::set_var("OPENAI_API_KEY", "sk-super-secret");
+
+        let out = planner_sidecar_allowlist_env("/sock");
+
+        // ...must NEVER appear in the non-secret allowlist builder.
+        assert_eq!(get(&out, "CAPRUN_SMTP_HOST"), None);
+        assert_eq!(get(&out, "CAPRUN_SMTP_PORT"), None);
+        // OPENAI_API_KEY is the ONLY secret and is set on the Command separately,
+        // never enumerated by this non-secret builder.
+        assert_eq!(get(&out, "OPENAI_API_KEY"), None);
+
+        // The surviving keys are EXACTLY the documented allowlist (no ambient var
+        // outside it survives).
+        let mut keys: Vec<&str> = out.iter().map(|(k, _)| k.as_str()).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, vec!["PATH", "PLANNER_SOCK"]);
+    }
+}
