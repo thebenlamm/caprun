@@ -559,9 +559,9 @@ extended.
 | A2 | The `mint_from_exec` call site for confirm-release should live in `confirmation.rs` (inline-annotated), not be added to `check-invariants.sh`'s two-file allow-list array | Pattern 2 / Standard Stack "Alternatives Considered" | If the planner instead edits the allow-list array, Gate 3 still passes — CONTEXT.md D-03's exact wording ("no new entry") is satisfied either loosely (gate stays green) or strictly (array is byte-identical); worth a 1-line confirmation with the operator if the planner picks the array-edit path, since D-03 phrases it as a locked constraint. |
 | A3 | Mint failure after a successful spawn should map to `ConfirmedButSinkFailed` | Pitfall 5 | Low risk — this is an edge case with no realistic trigger given `mint_from_exec`'s hardcoded non-empty taint/provenance args; any reasonable mapping (including a new dedicated `ConfirmOutcome` variant) satisfies D-06/D-07's actual security requirements. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Exact test file for D-11 (new file vs. extending `s9_process_exec_block.rs`)**
+1. **RESOLVED — Exact test file for D-11 (new file vs. extending `s9_process_exec_block.rs`)** — resolved in favor of *extending* `s9_process_exec_block.rs`; adopted by plan 34-02 Task 3.
    - What we know: `s9_process_exec_block.rs` already has the exact
      `#[cfg(target_os = "linux")] mod linux` scaffolding, `TEST_KEY`, and
      `mint_trusted`/`fresh_workspace` helpers the confirm-release leg needs.
@@ -575,7 +575,7 @@ extended.
      mint_trusted, fresh_workspace), avoiding duplication. Explicitly
      Claude's Discretion per CONTEXT.md.
 
-2. **Whether LIVE-01 needs a dedicated exec-scoped verify script or can reuse `mailpit-verify.sh` via `MAILPIT_VERIFY_CMD`**
+2. **RESOLVED — Whether LIVE-01 needs a dedicated exec-scoped verify script or can reuse `mailpit-verify.sh` via `MAILPIT_VERIFY_CMD`** — resolved in favor of reusing `mailpit-verify.sh` with `MAILPIT_VERIFY_CMD`; adopted by plan 34-04 Task 2.
    - What we know: `mailpit-verify.sh` already supports scoping via
      `MAILPIT_VERIFY_CMD` (used by `verify-harden04-featureless.sh` and
      documented in the script's own header); process.exec's live proof needs
