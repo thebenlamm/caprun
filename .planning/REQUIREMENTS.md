@@ -17,7 +17,7 @@ are new families starting at 01).
 
 ### Git Sinks
 
-- [ ] **GIT-01**: A `git.commit` sink commits staged workspace changes via the broker-spawned confined-child launcher (reusing the v1.7 `caprun-exec-launcher` + `mint_from_exec` pattern), classified **MutateReversible** (survives an I1-demoted session); the commit message's taint genuinely propagates downstream (not re-minted clean); git system config and hooks are neutralized in the child (`GIT_CONFIG_NOSYSTEM`, `core.hooksPath=/dev/null`, no aliases, `env_clear()`'d).
+- [x] **GIT-01**: A `git.commit` sink commits staged workspace changes via the broker-spawned confined-child launcher (reusing the v1.7 `caprun-exec-launcher` + `mint_from_exec` pattern), classified **MutateReversible** (survives an I1-demoted session); the commit message's taint genuinely propagates downstream (not re-minted clean); git system config and hooks are neutralized in the child (`GIT_CONFIG_NOSYSTEM`, `core.hooksPath=/dev/null`, no aliases, `env_clear()`'d).
 - [ ] **GIT-02**: A `git.push` sink pushes to a remote, classified **CommitIrreversible**; the remote + branch are pinned to the session's trusted intent-origin and passed explicitly (never resolved from the untrusted repo's `.git/config`); `--force` and ref-deletion are hard-denied; remote + refspec are I2-gated sink args.
 - [ ] **GIT-03**: A tainted `git.push` remote/refspec is deterministically Blocked at the sink (I2) and releasable only by single-shot human confirmation; the confirm-release path writes the terminal audit event **before** the terminal state (the recurring P33/P34 audit-gap discipline).
 
@@ -80,7 +80,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 |-------------|-------|--------|
 | DESIGN-15 | Phase 35 | Complete |
 | DESIGN-16 | Phase 35 | Complete |
-| GIT-01 | Phase 36 | Pending |
+| GIT-01 | Phase 36 | Complete |
 | GIT-02 | Phase 39 | Pending |
 | GIT-03 | Phase 39 | Pending |
 | GITHUB-01 | Phase 38 | Pending |

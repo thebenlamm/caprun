@@ -174,8 +174,9 @@ Full detail archived in [`milestones/v1.7-ROADMAP.md`](milestones/v1.7-ROADMAP.m
   3. git system config and hooks are neutralized in the child (`GIT_CONFIG_NOSYSTEM`, `core.hooksPath=/dev/null`, no aliases, `env_clear()`'d) — a planted malicious hook/alias in the workspace repo does not execute.
 
 **Plans**: 2 plans
-- [ ] 36-01-PLAN.md — executor TCB rows: KNOWN_SINKS git.commit schema + MutateReversible effect-class + message content-sensitivity (wave 1)
-- [ ] 36-02-PLAN.md — brokerd git.commit sink dispatch (Pattern B launcher reuse + git config/hook neutralization) + mint_from_exec wiring + Linux-gated spawn tests (wave 2)
+
+- [x] 36-01-PLAN.md — executor TCB rows: KNOWN_SINKS git.commit schema + MutateReversible effect-class + message content-sensitivity (wave 1)
+- [x] 36-02-PLAN.md — brokerd git.commit sink dispatch (Pattern B launcher reuse + git config/hook neutralization) + mint_from_exec wiring + Linux-gated spawn tests (wave 2)
 
 #### Phase 37: `http.request` GET Egress
 
@@ -271,7 +272,7 @@ Full detail archived in [`milestones/v1.7-ROADMAP.md`](milestones/v1.7-ROADMAP.m
 | 33. Filesystem Read/Write Breadth | v1.7 | 5/5 | Complete    | 2026-07-18 |
 | 34. Regression & Live Proof (v1.7 DONE) | v1.7 | 4/4 | Complete    | 2026-07-18 |
 | 35. DESIGN Gate + Fresh Adversarial Code-Trace | v1.8 | 2/2 | Complete    | 2026-07-18 |
-| 36. `git.commit` Sink | v1.8 | 0/TBD | Not started | - |
+| 36. `git.commit` Sink | v1.8 | 2/2 | Complete    | 2026-07-18 |
 | 37. `http.request` GET Egress | v1.8 | 0/TBD | Not started | - |
 | 38. `github.pr` Sink | v1.8 | 0/TBD | Not started | - |
 | 39. `git.push` Sink | v1.8 | 0/TBD | Not started | - |
