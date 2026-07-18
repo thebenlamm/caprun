@@ -249,7 +249,11 @@ git.push egress design-gate). The v1.8 DESIGN doc §2 (model), §2.5 (captured-o
   3. Each adversarial attack leg — (a) tainted PR-body/title section, (b) tainted GET url (SSRF/exfil), (c) tainted commit message — is deterministically **Blocked** with `verify_chain` true, plus a post-`env_clear()` **live** HTTPS call succeeds. (The tainted-push-remote/refspec leg moves to v1.9 with git.push.)
   4. Full-workspace regression is green on real Linux with **no regression to v1.0–v1.7**.
 
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 40-01-PLAN.md — ENV-01: env_clear() the caprun-planner sidecar + minimal allowlist; drop the dead worker-spawn entry (Wave 1)
+- [ ] 40-02-PLAN.md — Non-default `mock-egress-ca` feature: test CA trust anchor + mock host, release trust provably unchanged (Wave 1)
+- [ ] 40-03-PLAN.md — Mock GitHub HTTPS server + cert fixtures + `scripts/compose-verify.sh` (Mailpit + mock, public-range net, true-exit-before-pipe) (Wave 2)
+- [ ] 40-04-PLAN.md — Composed Linux acceptance test: success workflow + 3 adversarial Block/Deny legs + ENV-01 live-HTTPS proof + regression (Wave 3)
 
 ## Progress
 
