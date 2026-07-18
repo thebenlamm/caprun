@@ -165,6 +165,67 @@ impl WorkspaceRoot {
         file.write_all(contents)?;
         Ok(())
     }
+
+    /// Write/edit an EXISTING file resolved BENEATH the workspace-root anchor
+    /// (Linux; write side of FS-02 — the `file.write` sink's existing-file-only
+    /// sibling to `create_exclusive_within`'s new-file-only authority).
+    ///
+    /// Resolves and opens `rel_path` in a single `openat2` syscall with
+    /// `O_WRONLY | O_TRUNC` and `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`:
+    /// - `O_WRONLY | O_TRUNC`, deliberately **no `O_CREAT`, no `O_EXCL`** — a
+    ///   missing target path fails closed with `ENOENT` rather than silently
+    ///   creating the file. This is the semantic split from
+    ///   `create_exclusive_within`: that method is new-file-only (`EEXIST` on
+    ///   an existing path); this method is existing-file-only (`ENOENT` on a
+    ///   missing path). The two authorities are deliberately non-overlapping
+    ///   (DESIGN §3.2) — `write_within` MUST NOT gain create authority.
+    /// - `RESOLVE_BENEATH` — rejects absolute paths and `..` escape (`EXDEV`).
+    /// - `RESOLVE_NO_SYMLINKS` — rejects ALL symlink traversal (`RESOLVE_BENEATH`
+    ///   alone does not; RESEARCH Pitfall 2).
+    ///
+    /// Resolution + open happen in ONE syscall — there is no
+    /// validate-then-open window (TOCTOU-safe, CWE-367). After the fd is
+    /// obtained the bytes are written and `fsync`'d before close.
+    ///
+    /// # Errors
+    /// Returns an `std::io::Error`: `ENOENT` if the target does not exist,
+    /// `EXDEV` (or other raw OS error) for a `RESOLVE_*` violation, or a
+    /// write error.
+    #[cfg(target_os = "linux")]
+    pub fn write_within(&self, rel_path: &str, contents: &[u8]) -> std::io::Result<()> {
+        use nix::fcntl::{openat2, OFlag, OpenHow, ResolveFlag};
+        use std::io::Write;
+        use std::os::fd::AsFd;
+
+        let how = OpenHow::new()
+            .flags(OFlag::O_WRONLY | OFlag::O_TRUNC)
+            .resolve(ResolveFlag::RESOLVE_BENEATH | ResolveFlag::RESOLVE_NO_SYMLINKS);
+
+        let fd = openat2(self.dirfd.as_fd(), rel_path, how)
+            .map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
+
+        let mut file = std::fs::File::from(fd);
+        file.write_all(contents)?;
+        file.sync_all()?;
+        Ok(())
+    }
+
+    /// Non-Linux stub — NO security claim (dev-machine compilation only).
+    ///
+    /// Mirrors `create_exclusive_within`'s stub shape, but deliberately omits
+    /// `.create(true)`/`.create_new(true)` so a missing target still errors on
+    /// macOS too (ENOENT-contract parity with the Linux impl; this stub
+    /// carries no security claim — Linux is the only enforced path).
+    #[cfg(not(target_os = "linux"))]
+    pub fn write_within(&self, rel_path: &str, contents: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(self.root_path.join(rel_path))?;
+        file.write_all(contents)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
