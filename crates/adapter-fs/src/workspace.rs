@@ -187,22 +187,63 @@ impl WorkspaceRoot {
     /// validate-then-open window (TOCTOU-safe, CWE-367). After the fd is
     /// obtained the bytes are written and `fsync`'d before close.
     ///
+    /// (NIT-6, re-verified against live source at fix time: this method and
+    /// `create_exclusive_within` both call `file.sync_all()` before close —
+    /// durability is SYMMETRIC between the two on the Linux path today. A
+    /// prior review pass flagged an asymmetry here; that claim does not hold
+    /// against current source, so it is corrected rather than propagated.
+    /// The two non-Linux dev stubs are likewise symmetric — NEITHER calls
+    /// `sync_all` — since neither carries a durability claim.)
+    ///
     /// # Errors
     /// Returns an `std::io::Error`: `ENOENT` if the target does not exist,
-    /// `EXDEV` (or other raw OS error) for a `RESOLVE_*` violation, or a
-    /// write error.
+    /// `EXDEV` (or other raw OS error) for a `RESOLVE_*` violation, `ENXIO`
+    /// if the target is a reader-less FIFO, a non-regular-file error if the
+    /// target is a FIFO/socket/device/directory, or a write error.
+    ///
+    /// # FIFO / non-regular-file hardening (Phase 33 adversarial-review
+    /// MINOR-3)
+    /// `O_WRONLY` alone opens any existing non-symlink target, including a
+    /// FIFO — opening a reader-less FIFO for writing blocks the calling
+    /// thread INDEFINITELY, which here would freeze the broker while it
+    /// holds `conn.lock()` (a broker-wide DoS reachable via a hostile
+    /// workspace path landing on a FIFO). Two independent fail-closed guards
+    /// close this:
+    ///   1. `O_NONBLOCK` on the open — a reader-less FIFO then fails
+    ///      immediately with `ENXIO` instead of blocking (regular-file opens
+    ///      are unaffected by this flag; `O_NONBLOCK` is dropped again below
+    ///      once the target is confirmed regular, so it does not change the
+    ///      write's blocking semantics for legitimate regular-file writes).
+    ///   2. An `fstat` check AFTER open, rejecting any non-regular target
+    ///      (`!S_ISREG`) before any bytes are written — belt-and-suspenders
+    ///      against `O_NONBLOCK`'s FIFO-only guarantee (it does not, by
+    ///      itself, reject e.g. a character device or socket opened without
+    ///      blocking).
     #[cfg(target_os = "linux")]
     pub fn write_within(&self, rel_path: &str, contents: &[u8]) -> std::io::Result<()> {
         use nix::fcntl::{openat2, OFlag, OpenHow, ResolveFlag};
+        use nix::sys::stat::{fstat, SFlag};
         use std::io::Write;
         use std::os::fd::AsFd;
 
         let how = OpenHow::new()
-            .flags(OFlag::O_WRONLY | OFlag::O_TRUNC)
+            .flags(OFlag::O_WRONLY | OFlag::O_TRUNC | OFlag::O_NONBLOCK)
             .resolve(ResolveFlag::RESOLVE_BENEATH | ResolveFlag::RESOLVE_NO_SYMLINKS);
 
         let fd = openat2(self.dirfd.as_fd(), rel_path, how)
             .map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
+
+        // fstat BEFORE any write — reject any non-regular target fail-closed
+        // (a FIFO that happened to have a reader attached, a character
+        // device, a socket, etc. — none of these are legitimate `file.write`
+        // targets under a workspace root).
+        let st = fstat(fd.as_fd()).map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
+        if (st.st_mode & SFlag::S_IFMT.bits()) != SFlag::S_IFREG.bits() {
+            return Err(std::io::Error::other(format!(
+                "write_within: `{rel_path}` is not a regular file (mode {:o}) — refusing",
+                st.st_mode
+            )));
+        }
 
         let mut file = std::fs::File::from(fd);
         file.write_all(contents)?;
@@ -216,9 +257,27 @@ impl WorkspaceRoot {
     /// `.create(true)`/`.create_new(true)` so a missing target still errors on
     /// macOS too (ENOENT-contract parity with the Linux impl; this stub
     /// carries no security claim — Linux is the only enforced path).
+    ///
+    /// (NIT-7) `PathBuf::join` REPLACES the base with an absolute `rel_path`
+    /// argument rather than erroring — so, without the explicit reject
+    /// below, an absolute `rel_path` here would silently escape
+    /// `self.root_path` entirely, making the "ENOENT-contract parity with
+    /// the Linux impl" claim above false for that one input shape (the
+    /// Linux `RESOLVE_BENEATH` path rejects absolute paths with `EXDEV`;
+    /// this stub, unguarded, would instead just open the absolute path).
+    /// This stub still carries NO security claim on macOS — the reject
+    /// below exists only so the "requires an existing target" ENOENT
+    /// behavior stays honest for in-root-shaped inputs, not to enforce
+    /// containment.
     #[cfg(not(target_os = "linux"))]
     pub fn write_within(&self, rel_path: &str, contents: &[u8]) -> std::io::Result<()> {
         use std::io::Write;
+        if std::path::Path::new(rel_path).is_absolute() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("write_within: absolute rel_path `{rel_path}` rejected (non-Linux stub)"),
+            ));
+        }
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .truncate(true)
@@ -581,6 +640,39 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"sensitive outside file");
 
         std::fs::remove_file(&target).ok();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A FIFO beneath the workspace root is REJECTED, not hung (Phase 33
+    /// adversarial-review MINOR-3). Without `O_NONBLOCK` + the `S_ISREG`
+    /// guard, opening a reader-less FIFO for `O_WRONLY` would block the
+    /// calling thread indefinitely — here it must instead return promptly
+    /// with an error (either the `O_NONBLOCK`-driven `ENXIO`, or the
+    /// `fstat`/`S_ISREG` rejection, depending on kernel/FIFO-state timing;
+    /// both are acceptable fail-closed outcomes — the test's real assertion
+    /// is that the call returns at all, which a hang would violate by
+    /// timing out the whole test binary).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn write_within_fifo_rejected_not_hung() {
+        use nix::sys::stat::Mode;
+        use nix::unistd::mkfifo;
+
+        let root = unique_tmp_root("write_fifo");
+        let fifo_path = root.join("a_fifo");
+        mkfifo(&fifo_path, Mode::S_IRUSR | Mode::S_IWUSR).expect("mkfifo");
+
+        let ws = WorkspaceRoot::open(&root).unwrap();
+        // If this call ever blocks, the test times out rather than hanging
+        // forever silently — that is itself proof the O_NONBLOCK guard is
+        // load-bearing (a pre-fix version of this code would hang here with
+        // no reader ever attached to the FIFO).
+        let res = ws.write_within("a_fifo", b"should never land in a FIFO");
+        assert!(
+            res.is_err(),
+            "a FIFO target must be rejected fail-closed, not silently written to"
+        );
+
         std::fs::remove_dir_all(&root).ok();
     }
 }
