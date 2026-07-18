@@ -183,21 +183,53 @@ binary floor: **git ≥2.30** (a Phase 36 deployment constant, §11).
 
 ## §2. `git.push` — Pattern B net-allowed confined child, `CommitIrreversible` (FORK 1)
 
-### 2.1 FORK 1 — DECIDED: net-allowed confined child (Pattern B extended)
+### 2.1 FORK 1 — RE-DECIDED at the gate: broker-mediated egress, child stays net-denied
 
-**FORK 1 is DECIDED = net-allowed confined child** (`35-CONTEXT.md` FORK 1).
-Rationale, verbatim-in-substance: keep the broker small — a push credential +
-network egress live inside a **short-lived, kernel-confined child**, not the
-long-lived reference monitor, honoring "keep the broker small; broker bugs =
-full compromise" (CLAUDE.md residual-risks + DEC-layer-roles). The in-broker
-`git push` alternative is **REJECTED**: it puts an unconfined git subprocess as
-a child of the broker and widens the reference monitor. **The net-relaxation is
-the riskiest new surface in the project to date and is explicitly the TOP item
-for the fresh adversarial review to pressure-test (§11).**
+> **⚠ FORK-1 CORRECTION (design-gate-driven, orchestrator, 2026-07-18 — FLAG FOR BEN).**
+> `35-CONTEXT.md` FORK 1 originally decided "net-allowed confined child." The fresh
+> non-self adversarial code-trace (BLOCKER-1, recorded in `DESIGN-GATE-RECORD-v1.8.md`)
+> proved that decision **unsound as a seccomp relaxation**: seccomp-bpf gates syscall
+> *numbers + scalar registers* only — `connect()`'s destination is a `struct sockaddr *`
+> **behind a pointer seccomp cannot dereference**, and `socket()` exposes only the address
+> *family*. So the only relaxation seccomp can make is all-or-nothing "stop denying
+> `AF_INET`," which grants **arbitrary egress** to a child holding a live push credential —
+> exactly the exfiltration primitive the taint model exists to defeat. Landlock cannot
+> help either: `LANDLOCK_ACCESS_NET_CONNECT_TCP` needs ABI V4 / kernel **6.7** (above the
+> project's 5.13 floor) and filters by **port only, never destination IP**
+> (`crates/sandbox/src/landlock.rs:20` pins ABI V3). **A per-destination pin is provably
+> not expressible in seccomp or Landlock at the kernel floor.** FORK 1 is therefore
+> re-decided below.
 
-`git.push` reuses `git.commit`'s Pattern-B dispatch (§1.1) with exactly ONE
-relaxation: a minimal seccomp net-allow (§2.3). Effect-class = pinned
-`CommitIrreversible` (`sink_sensitivity.rs`, matching the existing
+**FORK 1 is RE-DECIDED = broker-mediated egress with the git.push child kept FULLY
+net-denied (NO seccomp relaxation).** The destination pin lives in the **broker's
+application-layer resolve-and-pin egress path** — the SAME model §3.6 uses and which the
+reviewer confirmed IS sound (application-mediated, not kernel-syscall-filtered) — never in
+seccomp. The exec-child seccomp net-deny (`sandbox/src/seccomp.rs` `exec_child_filter`,
+`socket(AF_INET/AF_INET6)` → `EPERM`) is **UNCHANGED** for `git.push`, identical to
+`git.commit` (§1.5). Rationale still honored: the push credential + network leg are
+broker-mediated (keep the child incapable of arbitrary egress), honoring "keep the broker
+small; broker bugs = full compromise" (CLAUDE.md residual-risks + DEC-layer-roles) — the
+broker mediates the *destination policy* (a tiny, auditable resolve-and-pin check) while
+the child does only local git plumbing.
+
+**Mechanism CLASS pinned here (the security control):** git.push's network leg reaches
+ONLY the single pinned, trusted-intent-sourced remote endpoint, enforced by the
+BROKER (application-layer resolve-and-pin, §3.6 model), never by the child directly. The
+child cannot open an arbitrary `AF_INET` socket. The precise fully-unprivileged realization
+is a Phase-39 decision among: (a) a broker-side egress proxy the child must route through,
+with the child placed in a per-push network namespace whose only exit is that proxy and an
+nftables/route egress filter pinning the resolved remote IP:port (netfilter DOES see the
+destination; seccomp does not); or (b) the broker performs the network transfer itself
+(resolve-and-pin, Pattern A) and the child does only local pack generation. **HARD
+CONSTRAINT on Phase 39:** the destination pin MUST be enforced by a broker/netfilter layer
+that can actually see the destination — it may NEVER be claimed of seccomp — and **if no
+fully-unprivileged destination-pinning mechanism proves feasible, `git.push` is DEFERRED to
+a later milestone rather than shipped with arbitrary child egress.** This is the riskiest
+surface in the project to date; the gate now pins a SOUND control locus (BLOCKER-1 resolved).
+
+`git.push` reuses `git.commit`'s Pattern-B *local* dispatch (§1.1) — the child is
+net-denied exactly like `git.commit`; only the broker-mediated egress layer differs.
+Effect-class = pinned `CommitIrreversible` (`sink_sensitivity.rs`, matching the existing
 `IrreversibleEffect::GitPush { remote, branch }` already in the locked ontology,
 `effect.rs:27`).
 
@@ -213,18 +245,25 @@ from writable state would let a tamperer redirect a confirmed send to an
 uncovered destination." Same principle: `remote` + `refspec` are the routing
 identity, sourced from trusted intent, and are **I2-gated sink args** (§8).
 
-### 2.3 Net relaxation (closes P12 — net-deny widening)
+### 2.3 Broker-mediated egress, child net-denied (closes P12 — net-deny widening)
 
-The confined **WORKER never gains net** — this is unchanged and non-negotiable.
-Only the `git.push` child gets a MINIMAL seccomp relaxation permitting ONLY the
-socket syscalls needed to reach the ONE pinned remote host:port — **NO arbitrary
-egress**. Landlock stays confined to the workspace repo. This is a NEW
-`exec_child_filter` variant (a push-specific relaxation beside the existing
-net-deny exec-child filter) — the METHOD is pinned here (narrowest relaxation to
-reach the one resolved remote endpoint); the exact syscall set + the pinned
-host:port resolution are a Phase 39 deployment constant (§11). Contrast §1.5:
-`git.commit`'s child keeps the full net-deny; only `git.push`'s child relaxes,
-and only to the single pinned destination.
+The confined **WORKER never gains net** — unchanged and non-negotiable — AND the
+**`git.push` child ALSO stays fully net-denied** (BLOCKER-1 correction, §2.1): there is
+NO seccomp relaxation, because seccomp provably cannot pin a destination (it filters
+syscall families/scalars, not the `connect()` sockaddr behind a pointer), so a relaxation
+would grant arbitrary egress to a credential-bearing child. The exec-child filter's
+`socket(AF_INET/AF_INET6)` → `EPERM` deny is reused **verbatim** from `git.commit`
+(`sandbox/src/seccomp.rs` `exec_child_filter`); Landlock stays workspace-confined.
+
+The single-pinned-destination guarantee is enforced by the **broker's application-layer
+resolve-and-pin egress layer** (§2.1, §3.6 model) — a locus that can actually see the
+destination IP:port — not by the child. The exact fully-unprivileged realization
+(broker egress proxy + per-push netns/nftables egress filter, or broker-performed
+transfer) is Phase 39 (§11), under the HARD CONSTRAINT in §2.1: the pin lives in a
+broker/netfilter layer, never seccomp; git.push is deferred rather than shipped with
+arbitrary child egress if no unprivileged mechanism proves feasible. Contrast §1.5:
+`git.commit` needs no egress at all; `git.push`'s egress is broker-mediated to the one
+pinned remote.
 
 ### 2.4 `--force` / destructive-refspec hard-denial (closes P4)
 
@@ -248,6 +287,22 @@ NONE of the broker's secrets (the `run_launcher_env_clear_prevents_broker_secret
 test, `process_exec.rs:820-871`). The credential is the ONE explicitly-injected
 non-`SAFE_EXEC_PATH` env var, scoped to the push child alone.
 
+**Captured-output scrub discipline (closes MAJOR-3 — credential-in-output leak).**
+Unlike `git.commit`, `git.push`'s child performs a network exchange whose stderr routinely
+echoes endpoint/credential-adjacent material a local commit never does — proxy-auth
+failures (`Received HTTP code 407 from proxy after CONNECT`), redirect/URL echoes on auth
+failure, and `GIT_ASKPASS` does not guarantee the token never appears in a diagnostic
+line. Pattern B's default (`process_exec.rs:381-461` capture → `mint_from_exec` mint,
+`quarantine.rs:838-853`) would place that text in a taint-tracked `ValueRecord` holding
+the literal. Therefore `git.push` MUST follow `github.pr`'s opaque-payload discipline
+(§4.2), NOT `process.exec`'s mint-the-output default: the push child's captured
+stdout/stderr is **either not minted at all** (only a broker-side `git_push_succeeded`/
+`_failed` opaque event with `effect_id`, mirroring `email_smtp.rs:256-301`) **or scrubbed
+of any `https://…@…` userinfo / proxy-auth / token material before minting** — Phase 39
+pins which, and a regression test asserts no credential/URL substring survives into the
+value store or the audit chain. `git.push` does NOT silently inherit `process.exec`'s
+mint-the-output behavior.
+
 ### 2.6 Confirm-release (P33/P34 class — see §9)
 
 A tainted push `remote`/`refspec` Blocks at the sink under I2 and is releasable
@@ -259,6 +314,27 @@ which folds every fallible pre-spawn leg through the single terminal-event
 branch so a burned one-shot confirmation can never dangle without a
 `process_spawn_failed`/terminal event (`process_exec.rs:265-333`). Full mandate
 in §9.
+
+### 2.7 Pushed-payload visibility at confirm (closes MAJOR-2 — invisible-payload exfil)
+
+I2 mediates values ROUTED INTO sink args. `git.push`'s args are `remote` + `refspec`
+only — **the commit contents being pushed are not a plan-node arg**, so absent the
+mechanism below, the human confirming a push would see only the destination, not what
+leaves the boundary. That breaks the "human sees exactly what would leave the boundary"
+property this design relies on for every other exfil sink (§4.4 shows verbatim PR
+title/body; email.send shows the body). Committed-tree content can enter the workspace via
+`file.write` (I2 content-sensitive on `contents`) and be staged by `git.commit` — but a
+worker holding a workspace fd could write file bytes that were never themselves an
+I2-gated sink arg, then commit + push them. **So the git.push confirm MUST surface the
+PAYLOAD, not just the destination:** at the `git.push` confirm prompt the human is shown
+(a) the pushed commit range / branch, and (b) a **provenance summary of the pushed diff
+flagging any file whose content derives from untrusted taint** (via the same value-store
+provenance the executor already tracks). The payload — not just `remote`/`refspec` — is
+what the human authorizes. Phase 39 pins the exact rendering (commit-range + tainted-file
+provenance list); the §7/§4.4 "human sees what leaves the boundary" claim is thereby made
+literally true for push, not merely implied. (Accepted residual, §11: this surfaces
+provenance/diff for human judgment; it does not by itself Block untainted-but-sensitive
+content — that remains the human's call at confirm, consistent with the confirmation model.)
 
 ---
 
@@ -360,6 +436,19 @@ The `url` arg is I2-gated (routing-sensitive, §8). The fetch model:
 egress infra: one REST `POST /repos/{owner}/{repo}/pulls` via `reqwest`, with a
 broker-held bearer token. Effect-class = pinned `CommitIrreversible`
 (`sink_sensitivity.rs:40-58`).
+
+**API base-URL pinning (closes MAJOR-4 — github.pr POST destination SSRF gap).**
+§3.6's SSRF resolve-and-pin is written for the GET path; `github.pr` is a POST and MUST
+NOT be an unguarded destination. The GitHub API base (`https://api.github.com`) is a
+**fixed, broker-owned trusted-config constant**, sourced from trusted broker-local env
+exactly like the SMTP endpoint (`email_smtp.rs:87-112`, D-04) — **never** derived from a
+resolved/tainted arg, and never from `owner`/`repo`. The POST destination rides the SAME
+§3.6 resolve-and-pin + single-entry host allowlist as the GET path (host must resolve to a
+public GitHub IP; loopback/RFC1918/link-local/metadata ranges denied; no redirect
+following; `userinfo@`/non-`https` rejected). `owner`/`repo`/`base`/`head` being
+routing-sensitive (tainted → Block, §4.4) bounds the URL *path*; the base *host* is pinned
+here so a UserTrusted-but-attacker-influenced `owner`/`repo` can never redirect the POST to
+a non-GitHub host. See the §8 fail-closed row for the github.pr POST destination.
 
 ### 4.2 Credential hygiene (closes P5/P8)
 
@@ -481,7 +570,7 @@ against `.planning/research/PITFALLS.md`):
 | 6 | Token over-scoping | Minimal fine-grained PAT scopes (`Pull requests: write` + `Contents: read`), operator responsibility surfaced at grant time | §4.4 |
 | 7 | http SSRF | Resolve-and-pin the IP; deny loopback/RFC1918/link-local/CGNAT/metadata(`169.254.169.254`)/ULA/IPv6-mapped; no redirects; reject `userinfo@`/non-`https`/IP-encoding; host allowlist | §3.6 |
 | 8 | http response not minted / stapled taint | `mint_from_http` at arrival rooted on a real `http_response_received` Event + session demotion (I1); anti-staple test proving the downstream Block | §3.3, §3.5 |
-| 9 | net-deny widening | Confined WORKER never gains net; egress is broker/confined-net-child only; the git.push child gets a single-pinned-host:port minimal relaxation | §2.3, §3.1 |
+| 9 | net-deny widening | Confined WORKER never gains net; the git.push CHILD also stays fully net-denied (NO seccomp relaxation — seccomp cannot pin a destination, BLOCKER-1); egress is broker-mediated resolve-and-pin to the single pinned remote (§2.1/§2.3 model, §3.6-sound) | §2.1, §2.3, §3.1 |
 | 10 | push/PR effect-class | Pinned per §1.2/§2.1/§4.1; `git.commit`'s `MutateReversible` exception explicitly justified | §1.2 |
 | 11 | Replay / duplicate-PR CAS | Content-derived idempotency key committed to a CAS table BEFORE the GitHub API call (mirrors HARDEN-03, `DESIGN-security-hardening.md` §c) → at-most-one PR | §4.5 |
 
@@ -529,7 +618,8 @@ Each item is checked with a one-line justification (mirroring
 | `git.commit` `message` | content-sensitive | taint carrier, never re-minted clean; `MutateReversible` survives I1 | tainted → Block (collect-then-Block); unknown/missing → Deny at Step 0 schema gate |
 | `git.push` `remote` | routing-sensitive | from TRUSTED intent only, never repo `.git/config` | tainted → Block; not-from-trusted-intent → Deny |
 | `git.push` `refspec` | routing-sensitive | `--force`/deletion/`+`-force hard-denied regardless of confirm | tainted → Block; force/delete shape → hard Deny |
-| `http.request` `url` | routing-sensitive | I2-gated; host allowlist; resolve-and-pin | non-allowlisted host or SSRF range → Deny; tainted → Block |
+| `http.request` `url` | routing-sensitive **+ content-sensitive** (NIT-6 defense-in-depth) | I2-gated; host allowlist; resolve-and-pin | non-allowlisted host or SSRF range → Deny; tainted (incl. secret assembled into query) → Block |
+| `github.pr` POST destination (API base host) | routing (pinned) | fixed broker-owned trusted-config `https://api.github.com`, never from a resolved/tainted arg; rides §3.6 resolve-and-pin | non-GitHub/SSRF-range resolution or redirect → Deny |
 | `http.request` response `ValueNode` | untrusted origin | `HttpRaw`+`ExternalUntrusted`, `origin_role="http_response"`; demotes session | unknown/unrecognized shape → fail-closed mint error (mirrors T-07-47), never default-tagged |
 | `github.pr` `title`/`body` | content-sensitive (CONTENT-01) | verbatim + provenance shown at confirm | tainted → Block; unknown/missing → Deny at Step 0 |
 | `github.pr` `owner`/`repo`/`base`/`head` | routing-sensitive | I2-gated | tainted → Block |
@@ -563,6 +653,13 @@ MUST implement `prepare_github_pr`/`prepare_git_push` with a regression test
 asserting NO dangling `confirm_granted`-without-terminal-event (mirroring
 `confirm_on_process_exec_malformed_args_does_not_burn_confirmation`,
 `confirmation.rs:1965`).
+
+**Entry-guard extension (required, from the gate citation audit).** `confirm()`'s
+Step-4.75 entry guard carries an explicit per-sink allow-list of confirm-releasable sinks
+(`confirmation.rs:824-845`, the `:836-845` match). Phases 38/39 MUST extend that allow-list
+to admit `github.pr` and `git.push` — a new confirm-releasable sink that is NOT added there
+is denied at the guard (fail-closed), so the extension is a required, not optional, step and
+its omission would silently make the new sinks non-releasable.
 
 ---
 
@@ -598,10 +695,16 @@ the fresh reviewer must confirm the extension exists before clearing.
 
 **OPEN (model pinned, deployment constants deferred — NOT model gaps):**
 
-1. **The exact single-pinned-host:port seccomp net-relaxation syscall set for
-   the `git.push` child.** §2.3 pins the METHOD (narrowest relaxation to reach
-   the ONE resolved remote endpoint, worker never gains net); the exact syscall
-   list + host:port resolution are a Phase 39 constant.
+1. **The exact fully-unprivileged git.push destination-enforcement realization.**
+   §2.1/§2.3 pin the CONTROL and its locus: the destination pin is **broker-mediated**
+   (application-layer resolve-and-pin, §3.6 model), the child stays fully net-denied, and
+   the pin is NEVER claimed of seccomp (BLOCKER-1 correction — seccomp cannot see a
+   `connect()` destination). This is the **core security control of the riskiest surface**,
+   NOT a deployment constant. Phase 39 picks the realization (broker egress proxy + per-push
+   netns/nftables egress filter that CAN see the destination, or broker-performed transfer)
+   under the HARD CONSTRAINT that the pin live in a broker/netfilter layer, and **defers
+   `git.push` entirely rather than shipping arbitrary child egress if no unprivileged
+   destination-pinning mechanism proves feasible.**
 2. **The exact `caprun grant` lifetime/verb surface.** §4.3 pins session-scoped
    as the model; the precise CLI surface is finalized at Phase 38.
 3. **The `webpki-roots` surviving-env allowlist confirmation via a live HTTPS
@@ -625,6 +728,18 @@ the fresh reviewer must confirm the extension exists before clearing.
 - **Duplicate-PR CAS is at-most-once PER PLAN NODE, not a per-session budget**
   (D-08, inherited from HARDEN-03) — a statically-compromised worker submitting
   N distinct plan nodes gets N distinct keys.
+- **Duplicate-PR CAS crash window (MAJOR-5 → accepted residual):** because the CAS key +
+  attempt append commit atomically BEFORE the API call, a crash/failure in the
+  CAS-commit → PR-confirmed window orphans the key: a legitimate retry under the SAME key
+  hits the PRIMARY-KEY violation and is suppressed (PR **lost, not duplicated**). This is
+  the intended at-most-once fail-closed tradeoff, identical to email.send's accepted
+  at-most-once (HARDEN-03). Implementers MUST NOT add a "clear the key on failure" path —
+  that reintroduces the duplicate-send hole the CAS exists to close.
+- **git.push confirm surfaces payload provenance for human judgment, not automated
+  content-Blocking (MAJOR-2 → accepted residual):** §2.7 makes the pushed diff +
+  tainted-file provenance visible at confirm so the human authorizes the payload, not just
+  the destination; it does not by itself Block untainted-but-sensitive committed content —
+  that is the human's call at confirm, consistent with the confirmation model.
 
 ---
 
