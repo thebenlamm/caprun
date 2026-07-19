@@ -772,7 +772,168 @@ mod composed {
             );
         }
 
-        // Legs 4-5 are added in Task 3.
+        // ── LEG 4 (destination-pin negative) + LEG 5b (broker-log credential
+        //    absence on the ERROR path). ONE redirect-refused push proves BOTH:
+        //    the pin holds (the `/redirect/*` 302 is REFUSED, never followed) AND
+        //    the scrubbed `eprintln!` (git_push.rs:784 — which fires ONLY on the
+        //    Err arm of append_push_outcome) leaks NEITHER the token NOR the raw
+        //    remote in the broker log. A broker-log check on a clean 200 push
+        //    would be VACUOUS (the Ok arm emits no log), so 5b MUST ride this
+        //    error path (MEMORY [[false-assurance-regression-test]]).
+        {
+            // Capture the broker's scrubbed error-path stderr via the libc
+            // dup/dup2 → temp file → read mechanism — run inside a SUBPROCESS.
+            //
+            // WHY a subprocess (documented deviation from an in-process dup2):
+            // Rust's libtest harness intercepts `eprintln!` via a per-test
+            // output-capture that PROPAGATES to spawned threads and bypasses FD 2
+            // entirely (proven empirically — under the default `cargo test`
+            // capture, only a direct `libc::write(2,..)` reaches a dup2'd FD; the
+            // broker logs via `eprintln!`). An in-process dup2 would therefore
+            // capture NOTHING — a VACUOUS assertion, the exact false-assurance trap
+            // this leg must avoid (MEMORY [[false-assurance-regression-test]]). A
+            // fresh process re-exec'd with `--nocapture` has NO output-capture, so
+            // the worker's `eprintln!` reaches its real FD 2, which the worker
+            // dup2's onto the temp log file (`S46_LOG`); the parent then READS that
+            // file. The worker runs the SAME `evaluate_and_confirm` against the
+            // SAME shared audit.db (its session persists → counted in the sweep).
+            let log_path = tmp.join("leg5b_broker_stderr.log");
+            let worker_exe = std::env::current_exe().expect("resolve the test binary for re-exec");
+            let worker_out = std::process::Command::new(&worker_exe)
+                .args([
+                    "--exact",
+                    "--nocapture",
+                    "--test-threads",
+                    "1",
+                    "composed::leg5b_error_path_push_worker",
+                ])
+                .env("S46_LEG5B_WORKER", "1")
+                .env("S46_DB", audit_db_str)
+                .env("S46_LOG", &log_path)
+                .output()
+                .expect("spawn the leg-5b error-path worker subprocess");
+            assert!(
+                worker_out.status.success(),
+                "the leg-5b worker subprocess must succeed; stdout=<{}> stderr=<{}>",
+                String::from_utf8_lossy(&worker_out.stdout),
+                String::from_utf8_lossy(&worker_out.stderr)
+            );
+            let worker_stdout = String::from_utf8_lossy(&worker_out.stdout);
+            // Parse the worker's machine-readable markers (printed to FD 1).
+            let session_id: Uuid = worker_stdout
+                .lines()
+                .find_map(|l| l.strip_prefix("S46_WORKER_SESSION="))
+                .and_then(|s| Uuid::parse_str(s.trim()).ok())
+                .unwrap_or_else(|| {
+                    panic!("worker must emit S46_WORKER_SESSION=<uuid>; stdout=<{worker_stdout}>")
+                });
+            let worker_outcome: &str = worker_stdout
+                .lines()
+                .find_map(|l| l.strip_prefix("S46_WORKER_OUTCOME="))
+                .map(str::trim)
+                .unwrap_or_else(|| {
+                    panic!("worker must emit S46_WORKER_OUTCOME=<debug>; stdout=<{worker_stdout}>")
+                });
+            expected_sessions.push(session_id);
+
+            // LEG 4: the pin holds — the 302 is refused, never followed to success.
+            assert_eq!(
+                worker_outcome, "ConfirmedButSinkFailed",
+                "a refused redirect is a transport failure — the confirm releases to \
+                 Step-7 but the sink fails (ConfirmedButSinkFailed), never a happy push"
+            );
+            {
+                let conn = open_audit_db(audit_db_str).expect("open shared db (leg4 assert)");
+                assert_eq!(
+                    count_events(&conn, session_id, "git_push_succeeded"),
+                    0,
+                    "LEG 4: a refused redirect must NEVER be followed to a success — the pin holds"
+                );
+                assert_eq!(
+                    count_events(&conn, session_id, "git_push_failed"),
+                    1,
+                    "LEG 4: the refused redirect folds into exactly one terminal git_push_failed"
+                );
+                assert_eq!(
+                    count_events(&conn, session_id, "confirm_granted"),
+                    1,
+                    "LEG 4: the confirm released to Step-7 BEFORE the transport-level refusal \
+                     (the refusal is downstream of the confirm gate, not a pre-dispatch block)"
+                );
+            }
+
+            // LEG 5b: the FD-2-captured broker stderr proves the scrubbed error-path
+            // log leaked NEITHER the token NOR the raw remote host/URL.
+            let captured =
+                std::fs::read_to_string(&log_path).expect("read the captured broker stderr");
+            assert!(
+                captured.contains("git.push failed"),
+                "LEG 5b NON-VACUOUS: the error-path eprintln! (git_push.rs:784) MUST have fired \
+                 — a clean 200 push takes the Ok arm and emits NO log, so this leg proves absence \
+                 on a log that ACTUALLY ran; captured=<{captured}>"
+            );
+            assert!(
+                !captured.contains(TOKEN_SENTINEL),
+                "LEG 5b: the push credential must NEVER appear in the broker log \
+                 (scrub_secrets → [redacted-credential]); captured=<{captured}>"
+            );
+            assert!(
+                !captured.contains(REDIRECT_REMOTE),
+                "LEG 5b: the raw remote URL must NEVER appear in the broker log \
+                 (scrub_secrets → [redacted-remote]); captured=<{captured}>"
+            );
+            assert!(
+                !captured.contains(MOCK_HOST),
+                "LEG 5b: the raw remote host must NEVER appear in the broker log; captured=<{captured}>"
+            );
+            // The worker owns + cleans its own temp repo; the parent only reads the
+            // shared audit.db + the captured broker-log file (removed with `tmp`).
+        }
+
+        // ── LEG 5a — credential + remote-URL absence on the VALUE STORE + AUDIT
+        //    CHAIN after a REAL clean confirmed 200 push (a genuine mock
+        //    git-receive-pack delivery). A DISTINCT push from 5b's error path.
+        {
+            std::env::set_var("CAPRUN_GIT_PUSH_TOKEN", TOKEN_SENTINEL);
+            let (session_id, outcome, repo) =
+                evaluate_and_confirm(audit_db_str, &key, REMOTE).await;
+            std::env::remove_var("CAPRUN_GIT_PUSH_TOKEN");
+            expected_sessions.push(session_id);
+
+            assert_eq!(
+                outcome,
+                brokerd::confirmation::ConfirmOutcome::Released,
+                "the clean confirmed push must be RELEASED — delivered to the mock \
+                 git-receive-pack with a clean report-status"
+            );
+            let conn = open_audit_db(audit_db_str).expect("open shared db (leg5a assert)");
+            assert_eq!(
+                count_events(&conn, session_id, "git_push_succeeded"),
+                1,
+                "the delivered push appends exactly one opaque git_push_succeeded terminal (receipt)"
+            );
+            assert_eq!(
+                count_events(&conn, session_id, "git_push_failed"),
+                0,
+                "a delivered push records no failure terminal"
+            );
+            // Credential + remote-URL absence across every hashed payload AND the
+            // actor columns (opaque audit) for THIS session.
+            assert_absent_from_all_payloads(&conn, session_id, TOKEN_SENTINEL);
+            assert_absent_from_all_payloads(&conn, session_id, REMOTE);
+            let token_hits: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM events WHERE session_id = ?2 AND (payload LIKE ?1 OR actor LIKE ?1)",
+                    rusqlite::params![format!("%{TOKEN_SENTINEL}%"), session_id.to_string()],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                token_hits, 0,
+                "LEG 5a: the push credential must never touch the audit db (payload OR actor)"
+            );
+            std::fs::remove_dir_all(&repo).ok();
+        }
 
         // ── END-OF-RUN SWEEP — open the shared audit_db ONCE; every negative-leg
         //    session must exist with verify_chain INDEPENDENTLY true. ───────────
@@ -799,5 +960,63 @@ mod composed {
         }
 
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// LEG 5b worker (subprocess entry point). A NO-OP in the normal suite — it
+    /// runs the error-path push ONLY when the composed test re-execs this binary
+    /// with `S46_LEG5B_WORKER=1`, `--exact composed::leg5b_error_path_push_worker
+    /// --nocapture`. Under `--nocapture` there is NO libtest output-capture, so the
+    /// broker's scrubbed `eprintln!` (git_push.rs:784) reaches this process's real
+    /// FD 2 — which this worker dup2's onto the `S46_LOG` temp file (the libc
+    /// dup/dup2 → temp file → read mechanism, made non-vacuous by the fresh
+    /// process). It runs the SAME `evaluate_and_confirm` against the SAME shared
+    /// audit.db (`S46_DB`), so its redirect-refused session persists into the
+    /// composed run's shared DB and final sweep. Machine-readable markers
+    /// (`S46_WORKER_SESSION`, `S46_WORKER_OUTCOME`) go to FD 1 for the parent.
+    #[test]
+    fn leg5b_error_path_push_worker() {
+        if std::env::var("S46_LEG5B_WORKER").as_deref() != Ok("1") {
+            // Normal-suite invocation: a deliberate no-op (the real work runs only
+            // in the re-exec'd subprocess the composed test drives).
+            return;
+        }
+        let db = std::env::var("S46_DB").expect("worker: S46_DB must be set");
+        let log = std::env::var("S46_LOG").expect("worker: S46_LOG must be set");
+        // Read the SAME shared MAC key the parent seeded (sibling <db>.key file).
+        let key = seed_test_key(Path::new(&db));
+
+        // The push token is broker-env-only — set here so 5b proves it is scrubbed
+        // from the broker log even when the error-path logger actually runs.
+        std::env::set_var("CAPRUN_GIT_PUSH_TOKEN", TOKEN_SENTINEL);
+
+        // Redirect THIS process's FD 2 to the temp log file across the push (libc
+        // dup/dup2 → temp file). Effective here because a fresh `--nocapture`
+        // process has no libtest output-capture, so `eprintln!` hits FD 2.
+        let log_file = std::fs::File::create(&log).expect("worker: create broker-log file");
+        std::io::Write::flush(&mut std::io::stderr()).ok();
+        let saved_fd2 = unsafe { libc::dup(2) };
+        assert!(saved_fd2 >= 0, "worker: dup(2) must succeed");
+        let redirected = unsafe { libc::dup2(log_file.as_raw_fd(), 2) };
+        assert!(redirected >= 0, "worker: dup2(logfile, 2) must redirect stderr");
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("worker: build current-thread runtime");
+        let (session_id, outcome, repo) =
+            rt.block_on(evaluate_and_confirm(&db, &key, REDIRECT_REMOTE));
+
+        // Restore FD 2 BEFORE emitting the stdout markers.
+        std::io::Write::flush(&mut std::io::stderr()).ok();
+        let restored = unsafe { libc::dup2(saved_fd2, 2) };
+        assert!(restored >= 0, "worker: dup2 must restore the original stderr");
+        unsafe { libc::close(saved_fd2) };
+        drop(log_file);
+        std::env::remove_var("CAPRUN_GIT_PUSH_TOKEN");
+
+        // Markers for the parent (FD 1 — never redirected).
+        println!("S46_WORKER_SESSION={session_id}");
+        println!("S46_WORKER_OUTCOME={outcome:?}");
+        std::fs::remove_dir_all(&repo).ok();
     }
 }

@@ -124,3 +124,11 @@ uuid         = { workspace = true }
 chrono       = { workspace = true }
 tokio        = { workspace = true }
 serde_json   = { workspace = true }
+# Phase 46 (LIVE-06 leg 5b): the FD-redirect (`dup`/`dup2`/`close`) mechanism the
+# broker-log credential-absence leg uses to capture the scrubbed error-path
+# `eprintln!` stderr. ALREADY resolved in the workspace via `crates/sandbox`
+# (a pre-existing dev/prod dep), so this adds NO new crate to the build graph —
+# and libc is NOT aws-lc-rs/openssl-sys, so the HYG-01 workspace-absence
+# assertion (check-invariants Gate 5) is unaffected. Dev-only — never linked
+# into a production build.
+libc         = "0.2"

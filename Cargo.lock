@@ -87,6 +87,7 @@ dependencies = [
  "hex",
  "hmac",
  "lettre",
+ "libc",
  "reqwest",
  "runtime-core",
  "rusqlite",
