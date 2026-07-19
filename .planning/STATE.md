@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: — Authorized Egress + Policy & Audit Surface
-current_phase: 46
-current_phase_name: Composed Live Proof (v1.9 DONE) — COMPLETE, milestone DONE-gate met
-status: verified
-stopped_at: Phase 46 complete & verified (compose-verify 696/0, Fable-5 APPROVE) — v1.9 DONE-gate MET; awaiting /gsd-complete-milestone (archive/tag + human sign-off)
-last_updated: "2026-07-18T22:45:00.000Z"
-last_activity: 2026-07-18
-last_activity_desc: Phase 46 SHIPPED — v1.9 DONE-gate met (compose-verify 696/0, LIVE-05 success chain + all 5 LIVE-06 legs ran & passed on real Linux, Fable-5 APPROVE proof-genuine)
+current_phase: 9
+status: Awaiting next milestone
+stopped_at: v1.9 roadmap created (Phases 41-46, 13/13 requirements mapped)
+last_updated: "2026-07-19T01:02:29.761Z"
+last_activity: 2026-07-19
+last_activity_desc: Milestone v1.9 completed and archived
 progress:
   total_phases: 6
   completed_phases: 6
   total_plans: 22
   completed_plans: 22
   percent: 100
+current_phase_name: Composed Live Proof (v1.9 DONE) — COMPLETE, milestone DONE-gate met
 ---
 
 # Project State
@@ -28,30 +28,34 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 ## Current Position
 
-Phase: 46 — Composed Live Proof (v1.9 DONE) — COMPLETE & VERIFIED
-Plan: 4/4 complete
-Status: v1.9 DONE-gate MET (all 6 phases + 13/13 requirements Complete). Awaiting `/gsd-complete-milestone` (archive to milestones/, collapse ROADMAP, RETROSPECTIVE, tag/push decision = Ben's per "push only when asked") + the human milestone-close sign-off (46-MILESTONE-RECORD.md §8).
-Last activity: 2026-07-18 — Phase 46 SHIPPED, v1.9 DONE-gate met (compose-verify 696/0, Fable-5 APPROVE)
+Phase: Milestone v1.9 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-19 — Milestone v1.9 completed and archived
 
 ### Phase 46 close (2026-07-18) — v1.9 DONE gate
+
 - 4 plans sequential on `main`. The composed authorized-write loop (process.exec → fs edit → git.commit → git.push[confirm-release] → github.pr → http.request.write POST) composed over ONE shared persisted audit.db through the REAL broker arms (`evaluate_plan_node_and_record_for_test` = verbatim live-arm delegate + `confirmation::confirm`), genuine non-stapled taint (provenance roots on real events), verify_chain true per-session, INSPECTED via a genuine `caprun audit` subprocess + a genuine `caprun run` I2-Block leg. 5 independently-attributable LIVE-06 negative legs (tainted push refspec Blocks, tainted POST body Blocks, distinct policy-deny `code()=="policy_deny"` while I2 legs run a policy-PERMITTED sink, destination-pin negative [redirect refused], non-vacuous credential-absence split — value-store/audit on the clean push + broker-LOG on the ERROR path via FD-2 subprocess capture). New mock `POST /ingest`→201. Framing honesty machine-checked. git.push safety-valve NOT triggered (SHIPPED P44).
 - **Linux gate (independent orchestrator re-run, DEFAULT recipe):** compose-verify 696/0, exit 0; the LIVE-05 success chain GENUINELY RAN + PASSED (`live_acceptance_v1_9_composed_success_chain ... ok` — closing the Fable-5 condition) + all 5 LIVE-06 legs; no v1.0–v1.8 regression. check-invariants all gates PASS.
 - **Fresh Fable-5 adversarial trace: APPROVE — the acceptance proof is GENUINE** (real broker arms, non-stapled taint, non-vacuous leg-5b, distinct policy-vs-I2 attribution, honest framing). 1 non-blocking MINOR (optional leg-5b scrub-branch hardening → Deferred Items) + 2 NITs.
 - See `46-VERIFICATION.md` + `46-MILESTONE-RECORD.md`.
 
 ### Phase 45 close (2026-07-18)
+
 - 4 plans executed sequentially on `main`. SDK-01: a `caprun run <intent> <workspace> [--policy <path>]` verb binding the trusted policy at session creation (POLICY-03 enforcement point) + surfacing the blocked effect_id + `caprun review` pointer on an I2 Block (Matt #2). The **M7 anti-laundering TCB fix**: a file-derived `--seed-from-file` literal is minted TAINTED via the EXISTING broker-side `mint_from_read` site in the ProvideIntent arm (operator literals stay trusted via mint_from_intent, DISJOINT; file-derived provenance threaded per-literal through the ProvideIntent proto + worker.rs; NO second mint site — Gate 3 holds; proven non-vacuous). U1: a read-only `caprun audit <session>` viewer rendering events/decisions + verify_chain, using a load-ONLY fail-closed `load_existing_key` (refuses absent key + `:memory:`, F1 containment, opens read-only, mints/appends nothing), neutralizing every displayed literal via the shared `brokerd::display::neutralize_control_chars`.
 - **Plan-checker caught the M7 mechanism as a BLOCKER pre-execution** (the `--seed-from-file` laundering path was verified in shipped code); the fix was folded in + re-verified before executing 45-01.
 - **Linux gate (independent orchestrator re-run):** compose-verify 691/0, exit 0, incl. the genuine end-to-end run→Block→review→audit loop + the U1 negatives; no v1.0–v1.8 regression. check-invariants all gates PASS.
 - **Fresh Fable-5 adversarial trace:** APPROVE — M7 anti-laundering (defended by TWO independent controls: trusted-main-set session Draft status + both sinks CommitIrreversible→Draft-denies) and viewer fail-closed both sound. Surfaced ONE genuine decision-surface MINOR (pre-existing): the shared `neutralize_control_chars` only caught `is_control()` (Cc), missing the Trojan-Source BiDi/zero-width class (CVE-2021-42574, category Cf) — LIVE on the git.push confirm prompt (a tainted refspec with U+202E visually reversed the human's confirm prompt). **FIXED this phase (`e31257a`):** escape the format-spoof set (U+202A..U+202E, U+2066..U+2069, U+200B..U+200F, U+FEFF) alongside control chars + tests; the confirmation.rs anti-drift test confirms the git.push confirm path picks it up automatically; re-verified post-fix compose-verify 691/0. See `45-VERIFICATION.md`.
 
 ### Phase 44 close (2026-07-18)
+
 - 5 plans executed sequentially on `main`. `git.push` SHIPPED — did NOT defer a 3rd time (the research-pinned Candidate (b) broker-performed smart-HTTP transfer proved sound under the fresh adversarial trace; §1.9 safety-valve not triggered). Broker-performed two-request smart-HTTP (info/refs GET + git-receive-pack POST) over the shipped reqwest-ring resolve-and-pin with the IP FROZEN across both requests (WG-1) + redirect refused; pack-gen child net-denied under the unchanged exec_child_filter (WG-2 `run_launcher_capture_bytes` + `git pack-objects`); force/`--force-with-lease`/`:delete`/`+`refspec HARD-DENIED by construction; broker-env-only credential (Basic x-access-token) scrubbed from value-store/audit/logs; opaque non-minting audit; **ALWAYS confirm-gated — NO auto-dispatch arm** (clean Allowed → synthetic BlockedPendingConfirmation with a MAC'd frozen-new-oid pending row; `invoke_git_push_from_resolved` confirm-release-only, single non-test caller) + WG-7 anti-TOCTOU freeze + WG-8 taint-provenance renderer + P33/P34 precheck-before-burn; HYG-01 zero-new-crate re-asserted.
 - **Linux gate (independent orchestrator re-run):** compose-verify 668/0, exit 0, all 5 s44 legs green incl. leg_c real delivery to mock git-receive-pack + leg_d force/delete refused + leg_e redirect refused; no v1.0–v1.8 regression. check-invariants all gates PASS.
 - **Fresh Fable-5 adversarial trace:** APPROVE, 0 security defects across 8 surfaces. ONE non-security functional note (recorded as a Deferred Item): `generate_pack` uses the shared 10 MB `MAX_COMBINED_OUTPUT_BYTES` cap → a >10MB pack fails CLOSED (safe, no partial push) but would block large-repo pushes; revisit before/at LIVE-05/06 (Phase 46 pushes a small mock repo, so not blocking for 46).
 - Process: [[cfg-linux-test-blindness]] re-hit TWICE (two latent Linux-only defects from 44-03/44-04 caught only by the FULL compose-verify, not scoped runs — fixed in 44-05); a real 44-03 bug (`resolve_new_oid` reading the merged stream) caught+fixed by 44-04; a 44-01 brokerd-test gap (ran only runtime-core) caught+fixed by 44-02. See `44-VERIFICATION.md`.
 
 ### Phase 43 close (2026-07-18)
+
 - 4 plans executed sequentially on `main`, zero deviations. A distinct `http.request.write` CommitIrreversible sink (the MAJOR-1 I0-escape fix) + taint-governed body/url under I2 + exact {POST,PUT} method-enum gate + distinct fail-closed `WRITE_HOST_ALLOWLIST` reusing the shipped SSRF resolve-and-pin + broker-env-only optional credential + opaque non-minting two-phase audit + Allowed-dispatch & single-shot confirm-release (P33/P34 precheck-before-burn) + a differential acceptance test (taint the sole variable).
 - **Linux gate:** `compose-verify.sh` 584 passed / 0 failed, no v1.0–v1.8 regression (all prior composed live proofs green), no cfg-linux-blindness. check-invariants all gates PASS (Gate 3 mint-site byte-identical, Gate 5 no new crate).
 - **Fresh non-self Fable-5 adversarial code-trace:** APPROVE, 0 defects (2 non-actionable NITs; NIT-1 log-scrub tracked for Phase 44).
@@ -172,7 +176,7 @@ Resume file: None
 
 ## Operator Next Steps
 
-- Plan Phase 41 (the v1.9 DESIGN gate) with `/gsd-plan-phase 41`
+- Start the next milestone with /gsd-new-milestone
 
 ## Deferred Items
 

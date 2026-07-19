@@ -1,5 +1,26 @@
 # Milestones
 
+## v1.9 Authorized Egress + Policy & Audit Surface (Shipped: 2026-07-19)
+
+**Phases completed:** 6 phases, 22 plans, 22 tasks
+
+**Key accomplishments:**
+
+- Task 1 — `SessionPolicy` (`crates/runtime-core/src/policy.rs`, `lib.rs`)
+- Deny-only pre-I2 policy gate wired into the executor TCB (policy_gate.rs, Step 0.25) with the breaking `policy: &SessionPolicy` signature threaded through every workspace caller; POLICY-02 proven by construction and by an enforcement-order test — a permissive policy provably cannot weaken an I2 taint Block.
+- The broker binds the session policy at session creation from a trusted source outside the confined worker's reach — refusing any at-or-beneath-workspace path via the SAME shared containment helper as MAC-key custody, capturing it immutably by value, and recording its SHA-256 identity as a genuine hash-chained policy_bound audit-DAG event.
+- Task 1 — KNOWN_SINKS row + GitPush ontology reconcile (WG-4)
+- Task 1 — pkt-line + advertisement + report-status parsers
+- Task 1 — WG-2 binary launcher + confined pack generation
+- A differential git.push acceptance test where taint is the sole Block variable — proven on real Linux by delivering a clean confirmed push to a pinned mock git-receive-pack (git_push_succeeded, credential/URL absent) while a tainted remote/refspec Blocks on the named arg and force/delete are refused by construction — plus a git-receive-pack mock (WG-9) and completed HYG-01 hygiene gates.
+- `caprun run` verb with a `--policy` flag over the single bind_policy call, a post-I2-Block review/confirm/deny operator pointer, and the M7 disjointness guarantee — file-derived intent literals minted TAINTED via mint_from_read instead of laundered through the trusted intent mint.
+- Extracted the private `neutralize_control_chars` into a single cross-crate `brokerd::display::neutralize_control_chars` pub fn, rewired confirmation.rs's git.push confirm-prompt call sites to it with byte-identical behavior, and added an anti-drift test binding both callers to the ONE implementation (WG-2 / U1 M3).
+- A Linux-gated composed live proof that drives the full authorized-write chain (process.exec → filesystem edit → git.commit → git.push confirm-release → github.pr → http.request.write POST) through the REAL broker arms over ONE shared persisted audit.db, inspects every session via a genuine `caprun audit` subprocess, and includes a genuine `caprun run` I2-Block leg — half of the v1.9 DONE gate (LIVE-05).
+- Five independently-attributable negative legs — two I2 Blocks under a policy that PERMITS the sink, a distinct policy-deny (`code()=="policy_deny"`, no `sink_blocked`), a destination-pin redirect refusal, and credential-absence across value store / audit chain / broker log — proven in ONE composed run over a shared persisted `audit.db` on real Linux.
+- Assembled `46-MILESTONE-RECORD.md` — the framing-honest v1.9 DONE-gate evidence record: hybrid-composition disclosure (composed-in-crate through the real broker arms vs `caprun audit`-inspected vs one genuine `caprun run` Block leg), the 5 independently-attributable negative legs with correctly-attributed credential-absence clauses, the ratified decision-level policy-deny reading (W3), the git.push SHIPPED / safety-valve-NOT-triggered disposition, and the 10MB pack-cap non-blocking deferral — with the full-workspace no-regression run honestly delegated to the orchestrator and human sign-off left as an AWAITING placeholder.
+
+---
+
 ## v1.8 Git/GitHub Adapters (Effect Breadth II) (Shipped: 2026-07-18)
 
 **Phases completed:** 5 phases, 16 plans, 23 tasks
