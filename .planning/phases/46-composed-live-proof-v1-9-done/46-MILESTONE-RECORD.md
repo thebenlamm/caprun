@@ -239,20 +239,22 @@ milestone to Complete, so the sign-off (§8) must be recorded FIRST.
 
 ## 8. HUMAN SIGN-OFF
 
-**AWAITING ORCHESTRATOR / HUMAN SIGN-OFF AT MILESTONE CLOSE.**
-
-This autonomous 46-04 executor does **NOT** fabricate approval. The v1.9 milestone-close
-human sign-off is the orchestrator's, gathered at `/gsd-complete-milestone` after the
-orchestrator's authoritative full-workspace compose-verify run confirms §6. On approval,
-the orchestrator: (a) records the verdict here, (b) fills the §6 authoritative pass count,
-then (c) reconciles LIVE-05/LIVE-06 via `phase.complete`.
+**SIGNED OFF — APPROVED (Ben, 2026-07-18).** At the milestone-close checkpoint the orchestrator
+presented the DONE-gate evidence (§6 authoritative run: compose-verify **696/0**, the LIVE-05
+success chain + all 5 LIVE-06 legs RAN & PASSED, Fable-5 APPROVE proof-genuine) AND explicitly
+surfaced the LIVE-05 hybrid-framing decision (composed in-crate through the real broker arms +
+a genuine `caprun run` leg + genuine `caprun audit` inspection — not a single `caprun run`
+driving the whole chain) for ratification. Ben selected **"Close + tag + push"** — ratifying the
+DONE gate and the hybrid framing, and authorizing the tag + push (an explicit request, per the
+standing "push only when asked" rule).
 
 | Field | Value |
 |-------|-------|
-| Verdict | _AWAITING_ |
-| Approver | _(orchestrator/human at milestone close)_ |
-| Date | _pending_ |
-| Authoritative compose-verify count | _pending_ |
+| Verdict | **APPROVED** |
+| Approver | Ben (human), via the orchestrator's milestone-close checkpoint |
+| Date | 2026-07-18 |
+| Authoritative compose-verify count | **696 passed / 0 failed** (independent orchestrator run, default recipe, real Linux) |
+| Release decision | Close + tag `v1.9` + push main + tag to origin |
 
 ---
 
