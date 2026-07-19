@@ -40,8 +40,8 @@ Requirements for the v1.9 milestone. Each maps to exactly one roadmap phase (see
 
 ### Live Proof (v1.9 DONE gate)
 
-- [ ] **LIVE-05**: A composed workflow — `process.exec` (test) → filesystem edit → `git.commit` → `git.push` → `github.pr` PLUS an `http.request` POST leg — runs on real Linux (mock git remote + mock endpoint), DRIVEN and INSPECTED via the new CLI + audit-DAG viewer (SDK-01/U1 are on the acceptance critical path, not trailing tooling), with every step gated/tainted/audit-DAG-chained and `verify_chain` true across the run. `[rev: M6/n1]` If GIT-02 defers, the `git.push` leg auto-descopes AND the deferral is recorded as a disclosed milestone gap requiring explicit user sign-off — never an orchestrator-autonomous silent drop.
-- [ ] **LIVE-06**: In the same proof, adversarial/negative legs each deterministically Block/refuse, **each independently attributable**: (1) a tainted push remote/refspec (I2 Blocks); (2) a tainted POST body (I2 Blocks); (3) `[rev: M5]` a policy-deny leg (an off-allowlist sink refused via the distinct policy-deny outcome) — where the I2-Block legs run a sink+arg the policy explicitly PERMITS, so policy is provably not what's blocking, and the two mechanisms emit distinct machine-checkable terminal-event tags asserted separately; (4) `[rev: M8]` a destination-pin negative — a push/POST whose destination is redirected/off-pin is refused at the broker/application layer (proves the pin holds, not just that a happy push reaches a listener); (5) `[rev: Matt #4]` a credential-absence assertion — after a real push, no credential or remote-URL material appears in the value store or audit chain. Full-workspace regression green on real Linux, no v1.0–v1.8 regression.
+- [x] **LIVE-05**: A composed workflow — `process.exec` (test) → filesystem edit → `git.commit` → `git.push` → `github.pr` PLUS an `http.request` POST leg — runs on real Linux (mock git remote + mock endpoint), DRIVEN and INSPECTED via the new CLI + audit-DAG viewer (SDK-01/U1 are on the acceptance critical path, not trailing tooling), with every step gated/tainted/audit-DAG-chained and `verify_chain` true across the run. `[rev: M6/n1]` If GIT-02 defers, the `git.push` leg auto-descopes AND the deferral is recorded as a disclosed milestone gap requiring explicit user sign-off — never an orchestrator-autonomous silent drop.
+- [x] **LIVE-06**: In the same proof, adversarial/negative legs each deterministically Block/refuse, **each independently attributable**: (1) a tainted push remote/refspec (I2 Blocks); (2) a tainted POST body (I2 Blocks); (3) `[rev: M5]` a policy-deny leg (an off-allowlist sink refused via the distinct policy-deny outcome) — where the I2-Block legs run a sink+arg the policy explicitly PERMITS, so policy is provably not what's blocking, and the two mechanisms emit distinct machine-checkable terminal-event tags asserted separately; (4) `[rev: M8]` a destination-pin negative — a push/POST whose destination is redirected/off-pin is refused at the broker/application layer (proves the pin holds, not just that a happy push reaches a listener); (5) `[rev: Matt #4]` a credential-absence assertion — after a real push, no credential or remote-URL material appears in the value store or audit chain. Full-workspace regression green on real Linux, no v1.0–v1.8 regression.
 
 ## v2 Requirements
 
@@ -89,8 +89,8 @@ Which phases cover which requirements. Populated during roadmap creation (`/gsd-
 | HYG-01 | Phase 44 | Complete |
 | SDK-01 | Phase 45 | Complete |
 | U1 | Phase 45 | Complete |
-| LIVE-05 | Phase 46 | Pending |
-| LIVE-06 | Phase 46 | Pending |
+| LIVE-05 | Phase 46 | Complete |
+| LIVE-06 | Phase 46 | Complete |
 
 **Coverage:**
 

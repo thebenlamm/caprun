@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: — Authorized Egress + Policy & Audit Surface
 current_phase: 46
-current_phase_name: Composed Live Proof (v1.9 DONE)
-status: planning
-stopped_at: Phase 45 (CLI/SDK + audit-DAG viewer, SDK-01 + U1) complete & verified — transitioned to Phase 46 (the v1.9 DONE gate)
-last_updated: "2026-07-18T21:30:00.000Z"
+current_phase_name: Composed Live Proof (v1.9 DONE) — COMPLETE, milestone DONE-gate met
+status: verified
+stopped_at: Phase 46 complete & verified (compose-verify 696/0, Fable-5 APPROVE) — v1.9 DONE-gate MET; awaiting /gsd-complete-milestone (archive/tag + human sign-off)
+last_updated: "2026-07-18T22:45:00.000Z"
 last_activity: 2026-07-18
-last_activity_desc: Phase 45 SHIPPED (compose-verify 691/0, Fable-5 APPROVE; M7 + viewer fail-closed sound; BiDi neutralizer hardened), transitioned to Phase 46
+last_activity_desc: Phase 46 SHIPPED — v1.9 DONE-gate met (compose-verify 696/0, LIVE-05 success chain + all 5 LIVE-06 legs ran & passed on real Linux, Fable-5 APPROVE proof-genuine)
 progress:
   total_phases: 6
-  completed_phases: 5
-  total_plans: 18
-  completed_plans: 18
-  percent: 83
+  completed_phases: 6
+  total_plans: 22
+  completed_plans: 22
+  percent: 100
 ---
 
 # Project State
@@ -28,10 +28,16 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 ## Current Position
 
-Phase: 46 — Composed Live Proof (v1.9 DONE)
-Plan: Not started
-Status: Roadmapped; Phases 41-45 complete
-Last activity: 2026-07-18 — Phase 45 (CLI/SDK + audit-DAG viewer, SDK-01 + U1) SHIPPED & verified, transitioned to Phase 46
+Phase: 46 — Composed Live Proof (v1.9 DONE) — COMPLETE & VERIFIED
+Plan: 4/4 complete
+Status: v1.9 DONE-gate MET (all 6 phases + 13/13 requirements Complete). Awaiting `/gsd-complete-milestone` (archive to milestones/, collapse ROADMAP, RETROSPECTIVE, tag/push decision = Ben's per "push only when asked") + the human milestone-close sign-off (46-MILESTONE-RECORD.md §8).
+Last activity: 2026-07-18 — Phase 46 SHIPPED, v1.9 DONE-gate met (compose-verify 696/0, Fable-5 APPROVE)
+
+### Phase 46 close (2026-07-18) — v1.9 DONE gate
+- 4 plans sequential on `main`. The composed authorized-write loop (process.exec → fs edit → git.commit → git.push[confirm-release] → github.pr → http.request.write POST) composed over ONE shared persisted audit.db through the REAL broker arms (`evaluate_plan_node_and_record_for_test` = verbatim live-arm delegate + `confirmation::confirm`), genuine non-stapled taint (provenance roots on real events), verify_chain true per-session, INSPECTED via a genuine `caprun audit` subprocess + a genuine `caprun run` I2-Block leg. 5 independently-attributable LIVE-06 negative legs (tainted push refspec Blocks, tainted POST body Blocks, distinct policy-deny `code()=="policy_deny"` while I2 legs run a policy-PERMITTED sink, destination-pin negative [redirect refused], non-vacuous credential-absence split — value-store/audit on the clean push + broker-LOG on the ERROR path via FD-2 subprocess capture). New mock `POST /ingest`→201. Framing honesty machine-checked. git.push safety-valve NOT triggered (SHIPPED P44).
+- **Linux gate (independent orchestrator re-run, DEFAULT recipe):** compose-verify 696/0, exit 0; the LIVE-05 success chain GENUINELY RAN + PASSED (`live_acceptance_v1_9_composed_success_chain ... ok` — closing the Fable-5 condition) + all 5 LIVE-06 legs; no v1.0–v1.8 regression. check-invariants all gates PASS.
+- **Fresh Fable-5 adversarial trace: APPROVE — the acceptance proof is GENUINE** (real broker arms, non-stapled taint, non-vacuous leg-5b, distinct policy-vs-I2 attribution, honest framing). 1 non-blocking MINOR (optional leg-5b scrub-branch hardening → Deferred Items) + 2 NITs.
+- See `46-VERIFICATION.md` + `46-MILESTONE-RECORD.md`.
 
 ### Phase 45 close (2026-07-18)
 - 4 plans executed sequentially on `main`. SDK-01: a `caprun run <intent> <workspace> [--policy <path>]` verb binding the trusted policy at session creation (POLICY-03 enforcement point) + surfacing the blocked effect_id + `caprun review` pointer on an I2 Block (Matt #2). The **M7 anti-laundering TCB fix**: a file-derived `--seed-from-file` literal is minted TAINTED via the EXISTING broker-side `mint_from_read` site in the ProvideIntent arm (operator literals stay trusted via mint_from_intent, DISJOINT; file-derived provenance threaded per-literal through the ProvideIntent proto + worker.rs; NO second mint site — Gate 3 holds; proven non-vacuous). U1: a read-only `caprun audit <session>` viewer rendering events/decisions + verify_chain, using a load-ONLY fail-closed `load_existing_key` (refuses absent key + `:memory:`, F1 containment, opens read-only, mints/appends nothing), neutralizing every displayed literal via the shared `brokerd::display::neutralize_control_chars`.
@@ -178,4 +184,5 @@ Items acknowledged and deferred at prior milestone closes, re-reviewed at v1.9 r
 | todo (security) | v1.3-phase16-v2-security-obligations — deferred v2 security obligations (recorded, not dropped) | pending |
 | todo (tooling) | gsd-executors-must-not-write-phase-completion-state | pending (GSD process, not caprun product) |
 | todo (tooling) | gsd-phases-clear-deletes-all-milestones | pending (GSD process, not caprun product) |
-| functional (caprun) | git.push `generate_pack` uses the shared 10 MB `MAX_COMBINED_OUTPUT_BYTES` cap → a >10MB pack fails CLOSED (safe, no partial push) but blocks large-repo pushes (Fable-5 Phase-44 non-security note) | pending — revisit before/at LIVE-05/06 (Phase 46 pushes a small mock repo, non-blocking for 46) |
+| functional (caprun) | git.push `generate_pack` uses the shared 10 MB `MAX_COMBINED_OUTPUT_BYTES` cap → a >10MB pack fails CLOSED (safe, no partial push) but blocks large-repo pushes (Fable-5 Phase-44 non-security note) | pending — revisit for large-repo pushes (v1.9 composed proof used a small mock repo, non-blocking) |
+| test-hardening (caprun) | LIVE-06 leg-5b broker-log credential-absence exercises the log-absence assertion against the real leak vector (all broker stderr in the window) but its 302-refusal error string carries no secret material, so it doesn't drive `scrub_secrets`' replacement branch end-to-end (Fable-5 Phase-46 MINOR; assertion is falsifiable + `scrub_secrets` is unit-covered) | pending — optional: add a 2nd error-path push failing at the receive-pack POST transport level (embeds URL) |

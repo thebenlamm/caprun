@@ -206,8 +206,16 @@ failures. The script captures `rc` BEFORE any pipe (`compose-verify.sh:199`;
 exit 0 alone. **This record must be updated with the authoritative pass count at phase
 close.**
 
-> **PENDING at record-write time:** `compose-verify` full-workspace pass count = _(to be
-> filled by the orchestrator's authoritative phase-close run)_.
+> **AUTHORITATIVE ORCHESTRATOR RUN (2026-07-18, phase close):** independent
+> `bash scripts/compose-verify.sh` (default `COMPOSE_VERIFY_CMD`, full workspace +
+> `brokerd/mock-egress-ca` + mock GitHub/git-receive-pack/`/ingest` + Mailpit) —
+> **COMPOSE_VERIFY_EXIT=0, 696 passed / 0 failed**, script self-reports "Composed Linux
+> verification suite PASSED". The LIVE-05 success chain GENUINELY RAN + PASSED
+> (`linux::live_acceptance_v1_9_composed_success_chain ... ok` — NOT compile-only, closing
+> the Fable-5 trace's one load-bearing condition), all 5 LIVE-06 negative legs passed
+> (`s46_negative_legs_composed_all_legs ... ok` + `leg5b_error_path_push_worker ... ok`),
+> feature-OFF guard passed, and every prior composed live proof (v1.3/v1.4/v1.7/v1.8) stayed
+> green — **zero v1.0–v1.8 regression** (Success Criterion 3 met).
 
 **`check-invariants.sh`:** all gates PASS at HEAD `204f615` (Gate 1 no new
 `EffectRequest`, Gate 4/4b `test-fixtures`/`mock-egress-ca` never default, Gate 5
