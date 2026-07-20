@@ -73,6 +73,11 @@
 
 set -euo pipefail
 
+# Docker cache retention guard (2026-07-20 incident: two ad hoc named
+# volumes silently grew to ~16GB — see scripts/docker-cache.sh / README.md
+# "Docker Cache Policy"). Warn-only, never blocks this run.
+"$(dirname "${BASH_SOURCE[0]}")/docker-cache.sh" check
+
 MAILPIT_NET="${MAILPIT_NET:-caprun-mailpit-net}"
 MAILPIT_NAME="${MAILPIT_NAME:-caprun-mailpit}"
 # Phase 16 (16-04, BLOCKER-3 3.1): allow a caller to scope the verification

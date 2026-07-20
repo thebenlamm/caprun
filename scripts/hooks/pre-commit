@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# pre-commit — repo git hook. Currently just the Docker cache retention
+# check (2026-07-20 incident — see README.md "Docker cache policy" and
+# scripts/docker-cache.sh). Warn-only: never blocks a commit, and no-ops
+# silently if Docker/Colima isn't running.
+#
+# NOT auto-installed by cloning — git never runs hooks from a tracked
+# directory on its own. Activate once per clone:
+#   git config core.hooksPath scripts/hooks
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+"${repo_root}/scripts/docker-cache.sh" check
+
+exit 0

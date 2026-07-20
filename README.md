@@ -89,6 +89,30 @@ docker run --rm \
 
 No `--privileged` needed. Landlock requires kernel ≥ 5.13.
 
+### Docker cache policy
+
+**Incident (2026-07-20):** two ad hoc named volumes, `caprun-lt` and `caprun-lt-cache`, were manually bound as `CARGO_TARGET_DIR` mounts (e.g. `-v caprun-lt:/tmp/lt`) during a single long verification session to speed up repeated `rust:1` compiles, then never cleaned up. They silently grew to ~16GB combined — two near-duplicate `target/debug` trees — with zero containers referencing them by the time anyone looked. Deleted.
+
+Neither `scripts/mailpit-verify.sh` nor `scripts/compose-verify.sh` creates a named volume today — both always use an **ephemeral** `CARGO_TARGET_DIR` inside a `--rm` container, so nothing in this repo currently causes this growth. This is scoped strictly to this repo's own Docker volumes — it does **not** touch Colima/Lima VM-level state (VM disk size, VM recreation, `colima start`/`stop` flags). The Colima VM itself is shared infrastructure used by other projects on this machine; VM-level disk management is handled separately, at the machine level.
+
+**Policy, if you ever add a persistent build-cache volume for speed:**
+- Name it `caprun-<something>` — exactly **one** such volume, never several (duplication, not size, caused the incident).
+- It will show up in `scripts/docker-cache.sh status` / `check` automatically (anything matching `caprun-*`).
+- Prune it with `scripts/docker-cache.sh clean` when you're done, or before it crosses the cap.
+
+**Tooling:**
+```bash
+scripts/docker-cache.sh status        # show current caprun-* volumes + sizes
+scripts/docker-cache.sh clean         # prune them (prompts first; --yes to skip)
+```
+`scripts/docker-cache.sh check` runs automatically at the top of both `mailpit-verify.sh` and `compose-verify.sh` — it's a **warn-only** gate (never blocks the run) that fires if any `caprun-*` volume set exceeds `DOCKER_CACHE_WARN_GB` (default 8GB) or if more than one such volume exists, so growth surfaces on the next verification run instead of silently reaching double digits of GB again.
+
+**Pre-commit hook (one-time setup per clone):** git never auto-installs hooks from a tracked directory, so run this once:
+```bash
+git config core.hooksPath scripts/hooks
+```
+That activates `scripts/hooks/pre-commit`, which runs `docker-cache.sh check` on every commit — same warn-only behavior, so the check surfaces even if you never manually run a verification script. There is no CI in this repo to wire it into instead (no `.github/workflows`), and the check is inherently about local Docker/Colima state, which a CI runner would never see anyway.
+
 ---
 
 ## Repository layout
@@ -98,6 +122,7 @@ caprun/
   Cargo.toml              # workspace root (resolver = "3", edition 2021)
   scripts/
     check-invariants.sh   # Gate 1 (EffectRequest absent) + Gate 2 (runtime-core purity)
+    docker-cache.sh       # caprun-* Docker volume retention policy (status/check/clean)
   crates/
     runtime-core/         # pure types — no I/O
     sandbox/              # security boundary

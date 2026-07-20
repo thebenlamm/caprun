@@ -54,6 +54,19 @@ Override the verification command with `MAILPIT_VERIFY_CMD` (default `cargo
 test --workspace --no-fail-fast`) to scope a run to a single test, e.g.
 `MAILPIT_VERIFY_CMD='cargo test -p caprun --test s9_live_block s9_control_ab_taint_driven' bash scripts/mailpit-verify.sh`.
 
+**Never bind a named Docker volume for `CARGO_TARGET_DIR` (e.g.
+`-v caprun-lt:/tmp/lt`) as a manual speed hack.** A 2026-07-18 autonomous
+session did exactly this to cache compiles across many phases and never
+cleaned up — it silently grew to ~16GB across two duplicate volumes,
+discovered and deleted 2026-07-20. Always use the ephemeral
+`CARGO_TARGET_DIR` inside a `--rm` container (what `mailpit-verify.sh` /
+`compose-verify.sh` already do) unless you also wire the volume into
+`scripts/docker-cache.sh`'s policy (name it `caprun-*`, keep it to one
+volume, `scripts/docker-cache.sh clean` when done) — see README.md "Docker
+cache policy". This is scoped to this repo's own volumes only; never touch
+Colima/Lima VM-level settings (disk size, VM recreation) — that VM is
+shared with other projects and is managed outside this repo.
+
 ## Architecture
 
 Layers, by security role (see PLAN.md "Layer roles"):

@@ -61,6 +61,11 @@
 
 set -euo pipefail
 
+# Docker cache retention guard (2026-07-20 incident: two ad hoc named
+# volumes silently grew to ~16GB — see scripts/docker-cache.sh / README.md
+# "Docker Cache Policy"). Warn-only, never blocks this run.
+"$(dirname "${BASH_SOURCE[0]}")/docker-cache.sh" check
+
 COMPOSE_NET="${COMPOSE_NET:-caprun-compose-net}"
 COMPOSE_SUBNET="${COMPOSE_SUBNET:-203.0.113.0/24}"
 MOCK_GITHUB_IP="${MOCK_GITHUB_IP:-203.0.113.2}"
