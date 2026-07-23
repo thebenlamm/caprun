@@ -1,20 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.9
-milestone_name: — Authorized Egress + Policy & Audit Surface
-current_phase: 9
-status: Awaiting next milestone
-stopped_at: v1.9 roadmap created (Phases 41-46, 13/13 requirements mapped)
-last_updated: "2026-07-19T01:02:29.761Z"
-last_activity: 2026-07-19
-last_activity_desc: Milestone v1.9 completed and archived
+milestone: v1.10
+milestone_name: Multi-step Safe Coding Agent Loop
+status: planning
+last_updated: "2026-07-23T03:54:59.244Z"
+last_activity: 2026-07-23
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 22
-  completed_plans: 22
-  percent: 100
-current_phase_name: Composed Live Proof (v1.9 DONE) — COMPLETE, milestone DONE-gate met
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -28,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 ## Current Position
 
-Phase: Milestone v1.9 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-07-19 — Milestone v1.9 completed and archived
+Status: Defining requirements
+Last activity: 2026-07-23 — Milestone v1.10 started
 
 ### Phase 46 close (2026-07-18) — v1.9 DONE gate
 
