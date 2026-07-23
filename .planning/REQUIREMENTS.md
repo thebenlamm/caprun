@@ -89,25 +89,25 @@ Which phases cover which requirements. Filled by the roadmapper.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DESIGN-19 | — | Pending |
-| DESIGN-20 | — | Pending |
-| STREAM-01 | — | Pending |
-| STREAM-02 | — | Pending |
-| CODE-01 | — | Pending |
-| CODE-02 | — | Pending |
-| CLI-01 | — | Pending |
-| CLI-02 | — | Pending |
-| CONFIRM-01 | — | Pending |
-| LIVE-07 | — | Pending |
-| LIVE-08 | — | Pending |
-| PKG-01 | — | Pending |
-| HYG-02 | — | Pending |
+| DESIGN-19 | Phase 47 | Pending |
+| DESIGN-20 | Phase 47 | Pending |
+| STREAM-01 | Phase 48 | Pending |
+| STREAM-02 | Phase 48 | Pending |
+| CODE-01 | Phase 49 | Pending |
+| CODE-02 | Phase 49 | Pending |
+| CLI-01 | Phase 50 | Pending |
+| CLI-02 | Phase 50 | Pending |
+| CONFIRM-01 | Phase 50 | Pending |
+| LIVE-07 | Phase 51 | Pending |
+| LIVE-08 | Phase 51 | Pending |
+| PKG-01 | Phase 52 | Pending |
+| HYG-02 | Phase 47 | Pending |
 
 **Coverage:**
 - v1 requirements: 13 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 13
+- Mapped to phases: 13/13 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-23*
-*Last updated: 2026-07-23 after `/gsd-new-milestone` v1.10 scoping + research*
+*Last updated: 2026-07-23 after `/gsd-new-milestone` v1.10 roadmap (phases 47-52, 13/13 mapped)*
