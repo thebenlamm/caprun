@@ -201,7 +201,11 @@ Full detail archived in [`milestones/v1.9-ROADMAP.md`](milestones/v1.9-ROADMAP.m
   2. A fresh, non-self, orchestrator-owned adversarial code-trace (NOT a gsd-executor) clears the DESIGN with APPROVE before any multi-step TCB change in `crates/{executor,brokerd,sandbox,runtime-core}` or the worker submit/confirm-hold path in `cli/caprun`
   3. The DESIGN re-asserts HYG-02 / Gate discipline: zero new crates unless design-gate-justified (default: **zero**); no `EffectRequest` token under `crates/`; Gate 3 mint-site list unchanged or explicitly amended; `check-invariants.sh` remains the architectural gate; compose-verify remains the authoritative Linux gate
   4. Carry-forward invariants are locked in writing: ProvideIntent-once, P33/P34 precheck-before-burn, POLICY-02 non-bypass of I2; the adversarial trace re-runs if stream shape, confirm-hold, or trusted-arg mint path changes mid-implementation
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 47-01-PLAN.md — Author DESIGN-multi-step-plan-stream.md (DESIGN-19 + HYG-02 pins; docs only)
+- [ ] 47-02-PLAN.md — Fresh non-self adversarial code-trace + fold + DESIGN-GATE-RECORD-v1.10.md CLEARED (DESIGN-20)
 
 ### Phase 48: Plan-Stream Substrate
 **Goal**: In one Session on one worker connection, the runtime can evaluate and submit N sequential plan nodes with genuine handle-bag continuity and an unbroken audit chain
