@@ -209,7 +209,7 @@ Full detail archived in [`milestones/v1.9-ROADMAP.md`](milestones/v1.9-ROADMAP.m
 Plans:
 **Wave 1**
 
-- [ ] 47-01-PLAN.md — Author DESIGN-multi-step-plan-stream.md (DESIGN-19 + HYG-02 pins; docs only)
+- [x] 47-01-PLAN.md — Author DESIGN-multi-step-plan-stream.md (DESIGN-19 + HYG-02 pins; docs only)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -338,7 +338,7 @@ Plans:
 | 44. `git.push` — Broker-Performed Destination-Pinned Egress | v1.9 | 5/5 | Complete    | 2026-07-18 |
 | 45. Thin CLI/SDK + Read-Only Audit-DAG Viewer | v1.9 | 4/4 | Complete    | 2026-07-18 |
 | 46. Composed Live Proof (v1.9 DONE) | v1.9 | 4/4 | Complete    | 2026-07-18 |
-| 47. Multi-step Plan Stream Design Gate | v1.10 | 0/? | Not started | - |
+| 47. Multi-step Plan Stream Design Gate | v1.10 | 1/2 | In Progress|  |
 | 48. Plan-Stream Substrate | v1.10 | 0/? | Not started | - |
 | 49. Deterministic Multi-step Coding Planner | v1.10 | 0/? | Not started | - |
 | 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 0/? | Not started | - |

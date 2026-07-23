@@ -11,7 +11,7 @@ Requirements for the v1.10 milestone. Each maps to exactly one roadmap phase (se
 
 ### Design Gate (blocks all multi-step TCB code)
 
-- [ ] **DESIGN-19**: A single DESIGN doc (`planning-docs/DESIGN-multi-step-plan-stream.md`) pins the TCB mechanisms for multi-step orchestration: (a) **plan-stream shape** on the existing `Planner` seam (additive multi-node API — static sequence and/or `plan_next` — **not** batch DAG authorize and **not** `EffectRequest`); (b) **worker sequential submit loop** + handle bag for `output_value_id` (opaque ValueIds only; planner never mints); (c) **mid-loop Block-and-Hold confirm continuity** — same Session, same policy bind, same audit chain; no reconnect-and-remint resume; no session-wide confirm waiver; (d) **I1×coding-loop bounds** — success path is trusted-intent-driven (operator-typed args via ProvideIntent once at session start); multi-file RequestFd demotion must not be "fixed" by weakening CommitIrreversible Draft denies; (e) **instruction vs value channels** remain disjoint under multi-node (PLAN-03 handles-only); (f) **deny/abort semantics** mid-stream (recommended: abort remaining nodes, durable terminal events). Carries forward ProvideIntent-once, Gate 3 mint-site discipline, P33/P34 precheck-before-burn, POLICY-02 non-bypass of I2.
+- [x] **DESIGN-19**: A single DESIGN doc (`planning-docs/DESIGN-multi-step-plan-stream.md`) pins the TCB mechanisms for multi-step orchestration: (a) **plan-stream shape** on the existing `Planner` seam (additive multi-node API — static sequence and/or `plan_next` — **not** batch DAG authorize and **not** `EffectRequest`); (b) **worker sequential submit loop** + handle bag for `output_value_id` (opaque ValueIds only; planner never mints); (c) **mid-loop Block-and-Hold confirm continuity** — same Session, same policy bind, same audit chain; no reconnect-and-remint resume; no session-wide confirm waiver; (d) **I1×coding-loop bounds** — success path is trusted-intent-driven (operator-typed args via ProvideIntent once at session start); multi-file RequestFd demotion must not be "fixed" by weakening CommitIrreversible Draft denies; (e) **instruction vs value channels** remain disjoint under multi-node (PLAN-03 handles-only); (f) **deny/abort semantics** mid-stream (recommended: abort remaining nodes, durable terminal events). Carries forward ProvideIntent-once, Gate 3 mint-site discipline, P33/P34 precheck-before-burn, POLICY-02 non-bypass of I2.
 
 - [ ] **DESIGN-20**: The DESIGN doc clears a fresh, non-self, orchestrator-owned adversarial code-trace (NOT a gsd-executor) before any multi-step TCB change in `crates/{executor,brokerd,sandbox,runtime-core}` or the worker submit/confirm-hold path in `cli/caprun`. Unbroken precedent through v1.9 P41. The trace **re-runs if stream shape, confirm-hold, or trusted-arg mint path changes mid-implementation**.
 
@@ -49,7 +49,7 @@ Requirements for the v1.10 milestone. Each maps to exactly one roadmap phase (se
 
 ### Supply-Chain & Invariant Hygiene
 
-- [ ] **HYG-02**: Multi-step work re-asserts HYG-01 / Gate discipline: zero new crates unless design-gate-justified (default: **zero**); no `EffectRequest` token under `crates/`; Gate 3 mint-site list unchanged or explicitly amended; `check-invariants.sh` green; compose-verify remains the authoritative Linux gate.
+- [x] **HYG-02**: Multi-step work re-asserts HYG-01 / Gate discipline: zero new crates unless design-gate-justified (default: **zero**); no `EffectRequest` token under `crates/`; Gate 3 mint-site list unchanged or explicitly amended; `check-invariants.sh` green; compose-verify remains the authoritative Linux gate.
 
 ## Future Requirements
 
@@ -89,7 +89,7 @@ Which phases cover which requirements. Filled by the roadmapper.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DESIGN-19 | Phase 47 | Pending |
+| DESIGN-19 | Phase 47 | Complete |
 | DESIGN-20 | Phase 47 | Pending |
 | STREAM-01 | Phase 48 | Pending |
 | STREAM-02 | Phase 48 | Pending |
@@ -101,9 +101,10 @@ Which phases cover which requirements. Filled by the roadmapper.
 | LIVE-07 | Phase 51 | Pending |
 | LIVE-08 | Phase 51 | Pending |
 | PKG-01 | Phase 52 | Pending |
-| HYG-02 | Phase 47 | Pending |
+| HYG-02 | Phase 47 | Complete |
 
 **Coverage:**
+
 - v1 requirements: 13 total
 - Mapped to phases: 13/13 ✓
 - Unmapped: 0

@@ -2,15 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.10
 milestone_name: Multi-step Safe Coding Agent Loop
+current_phase: 47
+current_phase_name: Multi-step Plan Stream Design Gate
 status: ready_to_execute
-last_updated: "2026-07-23T13:50:00.000Z"
+stopped_at: Completed 47-01-PLAN.md
+last_updated: "2026-07-23T13:54:58.620Z"
 last_activity: 2026-07-23
+last_activity_desc: "Phase 47 planned (2 plans: DESIGN author + adversarial clear)"
 progress:
-  total_phases: 6
+  total_phases: 1
   completed_phases: 0
   total_plans: 2
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
 ---
 
 # Project State
@@ -25,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-07-23)
 ## Current Position
 
 Phase: 47 of 52 (Multi-step Plan Stream Design Gate) — first of 6 v1.10 phases
-Plan: 1 of 2
+Plan: 2 of 2
 Status: Ready to execute
 Last activity: 2026-07-23 — Phase 47 planned (2 plans: DESIGN author + adversarial clear)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -39,6 +42,11 @@ Progress: [░░░░░░░░░░] 0%
 - Average duration: — min
 
 *Updated after each plan completion. v1.9 (phases 41-46) shipped 2026-07-18. v1.10 (phases 47-52) roadmap created 2026-07-23.*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 47 P01 | 4min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -89,6 +97,13 @@ separate as a distinct design-partner deliverable.
   bins + env/credential checklist; thin install script OK; not cargo-dist/deb/snap.
   Ships after LIVE so install path matches proven binary layout.
 
+- [Phase ?]: Stream shape = sequential multi-node on existing Planner seam; reject batch DAG
+- [Phase ?]: Handle bag opaque ValueIds only; ProvideIntent exactly once; planner never mints
+- [Phase ?]: Block-and-Hold same Session; reject reconnect-remint and dual-Session stitch
+- [Phase ?]: Trusted-intent success path; no CommitIrreversible Draft weaken
+- [Phase ?]: DESIGN-20 orchestrator-owned non-self; re-runs on stream/confirm/mint pivots
+- [Phase ?]: HYG-02 default zero new crates and zero new mint sites
+
 ### Blockers/Concerns
 
 - Phases 48-52 are hard-blocked on Phase 47's DESIGN doc clearing a fresh
@@ -126,8 +141,8 @@ separate as a distinct design-partner deliverable.
 
 ## Session Continuity
 
-Last session: 2026-07-23
-Stopped at: v1.10 roadmap created (Phases 47-52, 13/13 requirements mapped)
+Last session: 2026-07-23T13:54:58.599Z
+Stopped at: Completed 47-01-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
