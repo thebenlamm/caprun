@@ -193,78 +193,100 @@ Full detail archived in [`milestones/v1.9-ROADMAP.md`](milestones/v1.9-ROADMAP.m
 ## Phase Details
 
 ### Phase 47: Multi-step Plan Stream Design Gate
+
 **Goal**: Multi-step orchestration mechanisms are pinned in a reviewed DESIGN doc and cleared by a fresh non-self adversarial code-trace before any multi-step TCB code lands
 **Depends on**: Nothing (first v1.10 phase; builds on shipped v1.9 substrate)
 **Requirements**: DESIGN-19, DESIGN-20, HYG-02
 **Success Criteria** (what must be TRUE):
+
   1. `planning-docs/DESIGN-multi-step-plan-stream.md` exists and pins plan-stream shape (additive multi-node API on the existing Planner seam — not batch DAG authorize, not `EffectRequest`), worker sequential submit + handle bag (opaque ValueIds only), mid-loop Block-and-Hold confirm continuity (same Session, same policy bind, same audit chain), I1×coding-loop bounds (trusted-intent success path; no weakening CommitIrreversible Draft denies), instruction vs value channel disjointness, and mid-stream deny/abort semantics
   2. A fresh, non-self, orchestrator-owned adversarial code-trace (NOT a gsd-executor) clears the DESIGN with APPROVE before any multi-step TCB change in `crates/{executor,brokerd,sandbox,runtime-core}` or the worker submit/confirm-hold path in `cli/caprun`
   3. The DESIGN re-asserts HYG-02 / Gate discipline: zero new crates unless design-gate-justified (default: **zero**); no `EffectRequest` token under `crates/`; Gate 3 mint-site list unchanged or explicitly amended; `check-invariants.sh` remains the architectural gate; compose-verify remains the authoritative Linux gate
   4. Carry-forward invariants are locked in writing: ProvideIntent-once, P33/P34 precheck-before-burn, POLICY-02 non-bypass of I2; the adversarial trace re-runs if stream shape, confirm-hold, or trusted-arg mint path changes mid-implementation
+
 **Plans:** 2 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 47-01-PLAN.md — Author DESIGN-multi-step-plan-stream.md (DESIGN-19 + HYG-02 pins; docs only)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 47-02-PLAN.md — Fresh non-self adversarial code-trace + fold + DESIGN-GATE-RECORD-v1.10.md CLEARED (DESIGN-20)
 
 ### Phase 48: Plan-Stream Substrate
+
 **Goal**: In one Session on one worker connection, the runtime can evaluate and submit N sequential plan nodes with genuine handle-bag continuity and an unbroken audit chain
 **Depends on**: Phase 47
 **Requirements**: STREAM-01, STREAM-02
 **Success Criteria** (what must be TRUE):
+
   1. A worker can submit N sequential `SubmitPlanNode` calls in one Session on one connection; each node is independently I2-evaluated; policy remains the pre-I2 narrowing gate; no batch-authorize shortcut
   2. Every decision/event for the multi-node run lands on the same audit DAG with `verify_chain` true for the Session (chain-head continuity across nodes)
   3. Intermediate sink outputs exposed as `output_value_id` (e.g. `mint_from_exec`) are carried only as opaque ValueIds in a worker-side handle bag, retaining genuine taint/provenance
   4. The planner may only place handles into later nodes — never literals, never re-mint via mid-stream ProvideIntent; ProvideIntent remains exactly once before RequestFd for the Session (M7 anti-laundering preserved)
   5. No new mint sites are introduced (Gate 3 unchanged or explicitly amended in the DESIGN); `check-invariants.sh` green
+
 **Plans**: TBD
 
 ### Phase 49: Deterministic Multi-step Coding Planner
+
 **Goal**: A deterministic multi-step coding planner produces a multi-node plan over shipped sinks for the Safe Coding Agent workflow without an LLM tool-use loop
 **Depends on**: Phase 48
 **Requirements**: CODE-01, CODE-02
 **Success Criteria** (what must be TRUE):
+
   1. A deterministic multi-step coding planner (new `CaprunIntent` coding variant or equivalent) produces a multi-node plan covering at least: filesystem edit → `process.exec` (tests) → `git.commit` → `git.push` → `github.pr`
   2. Success-path plan nodes use trusted-intent operator args only (paths, commands, messages, remotes/refspecs from CLI/intent at session start) — no multi-file untrusted RequestFd before irreversible sinks on the happy path
   3. Email/file single-node planners remain green (no regression to existing intents)
   4. The recipe does not launder untrusted observations into trusted args; mid-loop I2 proof routing (tainted handle into a sensitive sink arg) is expressible for LIVE-08 without weakening success-path discipline
+
 **Plans**: TBD
 
 ### Phase 50: CLI Multi-node Driver & Mid-loop Confirm Continuity
+
 **Goal**: A design partner can drive the full multi-node coding chain from the real CLI with honest stop semantics, and mid-stream Block-and-Hold keeps the same Session across confirm/deny
 **Depends on**: Phase 49
 **Requirements**: CLI-01, CLI-02, CONFIRM-01
 **Success Criteria** (what must be TRUE):
+
   1. `caprun run` (or an explicitly documented sibling verb) accepts a coding multi-step intent + workspace + trusted `--policy`, binds policy at session creation (POLICY-03), and drives the full multi-node coding chain end-to-end
   2. Existing Block → `review`/`confirm`/`deny`/`grant` surfaces are preserved and pointed at from the driver; silent continue-past-Block is forbidden
   3. Stream stop semantics are honest and machine-checkable: on I2 Block → stop (or Block-and-Hold), surface `effect_id` + review pointer; on `policy_deny` → distinct outcome; on Deny → abort remaining nodes; on full success → clear success exit; exit codes distinguish success vs blocked vs denied/aborted
   4. When a mid-stream node returns `BlockedPendingConfirmation` (e.g. always-confirm `git.push`, or I2 Block released by confirm), the multi-node run holds the same Session (Block-and-Hold): worker stays connected or has a designed same-Session resume that does not re-open ProvideIntent, re-bind policy, or mint new trusted values
   5. Human confirm/deny acts on the durable pending row; remaining nodes continue only after Allowed release (or abort on deny); no dual-Session "stitch the chain later" as the product path; no session-wide confirm waiver
+
 **Plans**: TBD
 
 ### Phase 51: Non-hybrid LIVE Proof (v1.10 DONE)
+
 **Goal**: On real Linux, the multi-step coding path is proven end-to-end as a CLI-driven one-Session run (success + mid-loop I2 Block), closing the v1.9 hybrid honesty gap
 **Depends on**: Phase 50
 **Requirements**: LIVE-07, LIVE-08
 **Success Criteria** (what must be TRUE):
+
   1. On real Linux, a design partner can run the multi-step coding intent via the real CLI (`caprun run` or documented equivalent) under a bound policy: edit → test → commit → push (confirm-release) → open PR (mock GitHub allowed for CI) — **one Session**, inspected via real `caprun audit`, with `verify_chain` true
   2. The SUCCESS claim is **not** a hybrid in-crate composition — the multi-node chain is CLI-driven (closes v1.9 LIVE-05 honesty gap); framing machine-checked against hybrid overclaim
   3. In the same proof family, a mid-loop I2 Block is independently attributable: a genuinely tainted handle (non-stapled provenance root on a real read/exec event) occupies a sensitive sink arg (e.g. PR body and/or push refspec) under a policy-permitted sink; executor Blocks; `policy_deny` is not what fired; no effect of that node; chain remains `verify_chain` true
   4. Full-workspace regression green on real Linux via the authoritative compose-verify gate; no v1.0–v1.9 regression; `check-invariants.sh` green
+
 **Plans**: TBD
 
 ### Phase 52: Minimal Linux Packaging
+
 **Goal**: A design partner has a documented minimal Linux install path that co-locates the three sibling binaries and lists required env/credentials
 **Depends on**: Phase 51 (may draft docs earlier; ships after LIVE so install path matches proven binary layout)
 **Requirements**: PKG-01
 **Success Criteria** (what must be TRUE):
+
   1. A documented release build path co-locates `caprun`, `caprun-worker`, and `caprun-exec-launcher` (sibling `current_exe()` layout) — `cargo install --path cli/caprun` alone is documented as **not** sufficient
   2. An env/credential checklist covers `CAPRUN_*`, policy file, and GitHub grant token as applicable
   3. A thin install script (e.g. `scripts/install-linux.sh`) is acceptable; not cargo-dist/deb/snap productization
+
 **Plans**: TBD
 
 </details>
-
 
 ## Progress
 
