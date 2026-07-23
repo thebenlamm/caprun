@@ -417,4 +417,284 @@ composition as the product multi-step path.
 
 ---
 
-<!-- gsd:design-tail-pending -->
+## §7. Carry-forward invariants
+
+These are **locked in writing** for the entire multi-step milestone — not
+re-opened by stream convenience:
+
+### 7.1 ProvideIntent exactly once before RequestFd
+
+Restated from §2.3 with full carry-forward force: ProvideIntent is accepted
+**exactly once**, **only before** any RequestFd, broker-enforced
+(`server.rs:561-566`, `:2370-2391`). Multi-step streams **must not** introduce
+a mid-stream re-intent IPC, a second trusted-declare verb, or a worker path
+that remints `UserTrusted` from observations.
+
+### 7.2 P33/P34 precheck-before-burn + terminal-event-before-terminal-state
+
+Carried from `DESIGN-confirmation-release.md` / v1.8–v1.9 confirm-release
+discipline (P33/P34):
+
+1. **Precheck before burn** — confirm-release paths validate release preconditions
+   before irreversible external work.
+2. **Terminal audit event before terminal state** — every confirm-releasable
+   multi-node release appends the durable terminal event **before** marking
+   terminal confirmation state.
+
+**Multi-confirm Session must not amplify the audit-gap class.** A Session that
+releases multiple blocked effects (e.g. always-confirm `git.push` then a later
+confirm-releasable node) still obeys precheck-before-burn and
+terminal-event-before-state **per release**. Multi-node LIVE asserts events for
+every released effect.
+
+### 7.3 POLICY-02 / POLICY-03
+
+- **POLICY-02:** Policy is a **pre-I2 narrowing gate** only (which sinks/args are
+  callable). It **never** overrides or disables I2. I2 stays **hardcoded** in
+  the Rust TCB executor, **unconditional** on every policy-permitted call.
+  `policy_deny` is a distinct Denied outcome (`executor_decision.rs:82-94`,
+  `:133`), never a Block waiver.
+- **POLICY-03:** Policy is bound **once** at session creation from a trusted
+  source **outside** the confined worker, and is **immutable** for the Session.
+  Multi-step must not rebind policy mid-stream from workspace content.
+
+### 7.4 Gate 3 mint-site discipline (adjacency)
+
+Multi-step **default introduces ZERO new mint sites**. Gate 3 in
+`scripts/check-invariants.sh` (`:50-141`) restricts `mint_from_read(`,
+`mint_from_derivation(`, `mint_from_exec(`, `mint_from_http(`, and `.mint()` to
+sanctioned loci (`crates/brokerd/src/quarantine.rs`,
+`crates/brokerd/src/server.rs`).
+
+**Adjacency pin:** no silent merge of mint loci. If a later phase needs a new
+mint site, the DESIGN (or an explicit amendment) must **name the site and amend
+Gate 3** — never land a new call site first and retrofit the allowlist.
+
+---
+
+## §8. HYG-02 / Gate discipline
+
+### 8.1 DECISION — default ZERO new crates
+
+**HYG-02:** Multi-step work re-asserts Gate hygiene:
+
+| Rule | Pin |
+|------|-----|
+| New crates | Default **zero** for the entire multi-step milestone unless a later phase design-justifies an exception (**none expected** for plan-stream substrate) |
+| Free-form effect-request token under `crates/` | **Forbidden** — Gate 1 (`scripts/check-invariants.sh:7-31`) |
+| Gate 3 mint-site list | **Unchanged** or **explicitly amended** (§7.4) — default unchanged |
+| `check-invariants.sh` | Remains the **architectural** gate (Gates 1–6) |
+| compose-verify | Remains the **authoritative Linux** gate; `mailpit-verify.sh` when SMTP may fire (CLAUDE.md Phase 16+) |
+
+### 8.2 Empty multi-node stream
+
+**DECISION:** An empty multi-node stream (zero plan nodes after intent) is
+**rejected or N/A** as fail-closed — not a success exit pretending a coding
+chain ran. Implementation detail (CLI reject vs planner empty-sequence error)
+is Phase 48/50; the default is **not** silent success.
+
+### 8.3 CaprunIntent coding variant (Phase 49) — closed enum only
+
+`CaprunIntent` is a closed enum (`crates/runtime-core/src/intent.rs:22-46`).
+Phase 49 may add a coding variant.
+
+**DECISION (Open Question 6 default):**
+
+- **Closed enum only** — no free-form string intent kind.
+- **All success-path literals** for irreversible sinks come from operator intent
+  at ProvideIntent (trusted-intent success path, §4).
+- Exact field names / variant name may defer to Phase 49 **if** this pin holds;
+  naming alone is not a security decision.
+
+### 8.4 No package installs this design gate
+
+Phase 47 installs **zero** external packages. Package Legitimacy N/A.
+
+---
+
+## §9. Threat model
+
+One row per RESEARCH pitfall → named structural mechanism (STRIDE-aligned).
+
+| # | Threat | STRIDE | Structural mechanism that closes it | Pin § |
+|---|--------|--------|-------------------------------------|-------|
+| 1 | Cross-node taint laundering via `output_value_id` (intermediate exec/http/read treated as trusted for PR body / push refspec) | Tampering / Elevation | Opaque ValueIds only; planner never mints / never strips taint; no mid-stream ProvideIntent; LIVE-08 genuine provenance | §2, §4.5, §7.1 |
+| 2 | ProvideIntent remint mid-stream as trust valve after observations | Elevation | ProvideIntent exactly once before RequestFd; broker rejects second / post-RequestFd ProvideIntent | §2.3, §7.1 |
+| 3 | Draft demotion "fixed" by weakening CommitIrreversible Step 0.5 | Elevation / I0-I1 | Trusted-intent success path; effect-class table locked; explicit reject of class weaken | §4 |
+| 4 | Batch authorize / free-form tool-map / raw effect-request path | Tampering / Spoofing | Sequential N× SubmitPlanNode only; no batch product path; Gate 1 | §1.4, §8.1 |
+| 5 | Mid-loop confirm Session split / reconnect-remint / session-wide waiver | Tampering | Block-and-Hold same Session, same policy, same audit chain; no re-submit blocked node; dual-Session rejected | §3 |
+| 6 | Instruction channel collapsed into bindable ValueId | Tampering | `task_instruction` is String never ValueId; PLAN-03 handles-only under multi-node | §5 |
+| 7 | Policy mid-stream rebind or I2 override ("workflow allow") | Elevation | POLICY-02 unconditional I2; POLICY-03 bind once immutable; policy_deny ≠ Block | §7.3 |
+| 8 | Hybrid in-crate composition framed as CLI multi-step DONE | Integrity of claims | LIVE DONE requires real multi-node `caprun run` one Session (LIVE-07/08); hybrid only unit harness | §0, §14 |
+| 9 | New mint site outside Gate 3 / silent allowlist merge | Tampering | Default zero new mints; Gate 3 unchanged or explicit amend | §7.4, §8.1, §12 |
+| 10 | P33/P34 audit gap amplified by multi-confirm Session | Repudiation | Precheck-before-burn + terminal-event-before-state per release | §7.2 |
+| 11 | Design-gate process failure (self-review / early TCB code) | Elevation (latent) | DESIGN-20 orchestrator-owned non-self trace; empty crates/cli porcelain this phase | §13, §14 |
+
+---
+
+## §10. Invariant preservation checklist
+
+This design **weakens NONE** of I0/I1/I2 and adds **no** raw plan-node-bypass
+effect path:
+
+| Invariant | Preserved? | How multi-step upholds it |
+|-----------|------------|---------------------------|
+| **I0** — external/untrusted seed starts draft-only; cannot auto-authorize Tier 3+ | YES | Draft × CommitIrreversible Step 0.5 stays; trusted-intent success path avoids demotion-before-irreversible; no class weaken (§4) |
+| **I1** — no context holds untrusted content *and* authority for irreversible effects | YES | Instruction channel non-bindable (§5); intermediate outputs retain taint in broker ValueStore; no mid-stream UserTrusted remint (§2.3) |
+| **I2** — no attacker-tainted value in sensitive sink arg without literal-value human confirmation; **hardcoded in Rust TCB** | YES | Per-node I2 via existing `submit_plan_node` / `evaluate_plan_node_and_record`; policy pre-I2 only (POLICY-02); no stream-wide I2 waiver; confirm is single-shot per effect, not class waiver (§3, §7.3) |
+| **No raw plan-node-bypass effect path** | YES | PlanNode path only; Gate 1; no batch authorize (§1.4, §8.1) |
+| **No batch authorize** | YES | Sequential N× SubmitPlanNode; each node independent (§1, §6.3) |
+| **Handle model intact** | YES | Opaque ValueIds; planner never mints (§2, §5) |
+| **Kernel confinement unchanged** | YES | Worker self-confine after connect order unchanged; multi-step does not re-open ambient net/exec (§0, §1.1) |
+| **ProvideIntent-once** | YES | Broker guards remain; multi-step must not reopen (§2.3, §7.1) |
+| **Policy immutable for Session** | YES | POLICY-03; no mid-stream rebind (§7.3) |
+
+---
+
+## §11. Fail-closed defaults table
+
+| Mechanism / edge | Fail-closed default |
+|------------------|---------------------|
+| Empty / missing multi-node stream | Reject or N/A — not success (§8.2) |
+| Deny / `policy_deny` mid-stream | **Abort remaining** nodes; durable terminal events for denied node (§6) |
+| `BlockedPendingConfirmation` | **Hold** same Session — not silent continue; not auto-confirm (§3) |
+| Absent handle for a required PlanArg | Cannot bind arg — schema / resolve fail-closed (existing sink schema + ValueStore resolve) |
+| Mid-stream ProvideIntent | **Deny** — mint nothing, no chain-head advance (`server.rs:2370-2391`) |
+| Unknown sink | Existing schema / `sink_effect_class` `_ => CommitIrreversible` fail-closed (`sink_sensitivity.rs:110`) |
+| Dual-Session resume after Block | **Rejected** as product path (§3.3) |
+| Reconnect-remint after worker exit | **Rejected** (§3.3) |
+| Session-wide confirm waiver | **Rejected** (§3.3) |
+| Parallel dual-occupancy same Session stream | **Rejected** — sequential only (§6.3) |
+| New mint outside Gate 3 | **Rejected** unless explicit DESIGN amend (§7.4) |
+| Batch DAG authorize | **Rejected** (§1.4) |
+
+---
+
+## §12. New-symbol summary
+
+**Default: none.** Multi-step substrate introduces:
+
+| Category | Expectation this phase / substrate default |
+|----------|--------------------------------------------|
+| New `TaintLabel` variants | **None** |
+| New `mint_from_*` helpers | **None** (A4: no new mint site required for multi-step substrate) |
+| New workspace crates | **None** (HYG-02) |
+| New IPC effect-path verbs | **None** — reuse `SubmitPlanNode` / `PlanNodeDecision` / existing confirm path |
+| New public-API terminology | **None** — locked Intent/Session/Planner/Worker/Broker/… vocabulary |
+
+**Planning-only names** (may appear in DESIGN prose and later phase plans; **not**
+landed as TCB symbols this phase):
+
+| Planning-only name | Role | Phase that may materialize |
+|--------------------|------|----------------------------|
+| `plan_next` / static sequence index | Additive multi-node Planner surface | 48–49 |
+| handle bag (worker-side map type name TBD) | Opaque `ValueId` storage | 48 |
+| CaprunIntent coding variant name / fields | Closed-enum coding recipe | 49 |
+
+These names are **not** commitments to public API shape beyond the decisions in
+§1–§6; implementors may rename as long as PLAN-03 / handle-only / sequential
+semantics hold.
+
+---
+
+## §13. Adversarial-trace gate (DESIGN-20)
+
+### 13.1 DECISION — orchestrator-owned, non-self, fresh code-trace
+
+A fresh, **NON-SELF**, **ORCHESTRATOR-OWNED** adversarial code-trace must clear
+this doc with every BLOCKER/MAJOR resolved **before ANY multi-step TCB change**
+in:
+
+- `crates/{executor,brokerd,sandbox,runtime-core}`, or
+- the worker submit / confirm-hold path in `cli/caprun`.
+
+**This plan (47-01) does not run the trace.** A `gsd-executor` must not
+self-review: gsd-executors have no Agent tool, and self-read fails fresh-context
+discipline. Plan 47-02 / the orchestrator owns spawn, fold, and the gate record.
+
+**Unbroken precedent:** v1.0 P2 → v1.2 P8 → v1.3 P12 → v1.4 P18 → v1.5 P23 →
+v1.6 P26 → v1.7 P31 → v1.8 P35 → v1.9 P41 → **v1.10 P47**.
+
+### 13.2 Re-run triggers
+
+The adversarial code-trace **re-runs** if any of the following pivots mid-
+implementation (Phases 48–52):
+
+1. **Stream shape** — e.g. batch authorize, new multi-node IPC verb, non-sequential
+   product path, or abandonment of additive Planner seam.
+2. **Confirm-hold** — e.g. dual-Session stitch, reconnect-remint resume,
+   session-wide confirm waiver, or re-submit of blocked node as product path.
+3. **Trusted-arg mint path** — e.g. mid-stream ProvideIntent, new mint outside
+   Gate 3, or success-path reliance on untrusted intermediate outputs without
+   I2.
+
+### 13.3 Gate record
+
+Outcome is recorded in `planning-docs/DESIGN-GATE-RECORD-v1.10.md` (or
+orchestrator-equivalent path following v1.8/v1.9 naming), with:
+
+- Reviewer identity & independence (author ≠ reviewer)
+- Files opened (code-trace, not prose skim)
+- Findings table (severity / claim / re-verified code fact / resolution → DESIGN §)
+- No-TCB-code reconfirmation until CLEARED
+- Verdict authorizing Phases 48–52
+
+Attack surfaces the reviewer brief must pressure-test: §9 rows 1–11 (and
+RESEARCH "What the adversarial reviewer must pressure-test" table).
+
+### 13.4 Proven value of the discipline
+
+v1.9's gate caught BLOCKER-level I0 escape (`http.request` WRITE would inherit
+Observe) that plan-checker + green docs-only invariants both missed
+(`[VERIFIED: planning-docs/DESIGN-GATE-RECORD-v1.9.md]`). Multi-step composition
+is the same class of risk: correct single-node controls composed unsoundly.
+
+---
+
+## §14. Acceptance predicate — Done when
+
+Phase 47's design gate is cleared when **ALL** are true:
+
+1. This doc pins, as **DECISIONS** (not options), every DESIGN-19 mechanism:
+   (a) sequential plan-stream on existing Planner seam — not batch DAG, not
+   free-form effect path (§1); (b) worker sequential submit + opaque ValueId
+   handle bag, planner never mints, ProvideIntent exactly once (§2); (c)
+   Block-and-Hold same Session for I2 Block and always-confirm `git.push`, no
+   re-submit blocked node, dual-Session/reconnect-remint/session-wide waiver
+   rejected (§3); (d) trusted-intent success path + effect-class table + no
+   CommitIrreversible Draft weaken (§4); (e) instruction vs value channel
+   disjointness PLAN-03 (§5); (f) Deny/policy_deny abort remaining, Block holds,
+   sequential order (§6).
+2. Carry-forwards locked: ProvideIntent-once, P33/P34, POLICY-02/03, Gate 3
+   adjacency (§7). HYG-02 re-asserted: zero new crates default, Gate 1/3,
+   check-invariants + compose-verify authority, closed CaprunIntent coding
+   constraint (§8).
+3. Threat model maps listed multi-step pitfalls to named mechanisms (§9);
+   invariant checklist shows I0/I1/I2 unweakened and no plan-node bypass / no
+   batch authorize (§10); fail-closed defaults table present (§11); new-symbol
+   summary defaults to none / no new mint sites (§12).
+4. This doc declares the fresh adversarial code-trace **ORCHESTRATOR-owned
+   (NOT a gsd-executor)** with **re-run triggers** on stream shape / confirm-hold
+   / trusted-arg mint path pivots (§13, DESIGN-20).
+5. DESIGN-20 clear is recorded **CLEARED** in
+   `planning-docs/DESIGN-GATE-RECORD-v1.10.md` (Plan 47-02 / orchestrator) —
+   **not** claimed by Plan 47-01 alone.
+6. Until DESIGN-20 CLEARED: **no multi-step TCB code** under
+   `crates/{executor,brokerd,sandbox,runtime-core}` or worker submit/confirm-hold
+   in `cli/caprun`. For this authoring plan:
+   `git status --porcelain -- crates cli` is empty and
+   `scripts/check-invariants.sh` exits 0.
+
+**LIVE DONE (Phase 51, not this phase):** requires real multi-node `caprun run`
+one Session (LIVE-07) + mid-loop I2 Block with genuine taint (LIVE-08). Hybrid
+in-crate composition is **not** the DONE claim.
+
+---
+
+## Amendments (post-review)
+
+*Placeholder for Plan 47-02 Round-1 fold.* After the fresh non-self adversarial
+code-trace, every BLOCKER/MAJOR (and accepted MINOR) is folded here as DESIGN
+decisions (prose/pin), with no multi-step TCB code until CLEARED.
+
+*(empty — awaiting DESIGN-20 review)*
