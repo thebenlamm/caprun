@@ -4,14 +4,14 @@ milestone: v1.10
 milestone_name: Multi-step Safe Coding Agent Loop
 current_phase: 47
 current_phase_name: Multi-step Plan Stream Design Gate
-status: ready_to_verify
+status: phase_complete
 stopped_at: Completed 47-01-PLAN.md
-last_updated: "2026-07-27T14:12:45.000Z"
+last_updated: "2026-07-27T14:15:23.000Z"
 last_activity: 2026-07-27
 last_activity_desc: "Phase 47 planned (2 plans: DESIGN author + adversarial clear)"
 progress:
   total_phases: 1
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
   completed_plans: 1
 ---
@@ -23,7 +23,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-23)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended through v1.9 with authorized write egress (git.push + http-write), minimal per-session policy (never overrides I2), and thin CLI/audit surfaces — without weakening I0/I1/I2 or adding any raw `EffectRequest` path. v1.10 makes the Safe Coding Agent path a single Session, CLI-driven multi-node stream.
-**Current focus:** Phase 47 — Multi-step Plan Stream Design Gate (executed; DESIGN-20 CLEARED; ready for verify).
+**Current focus:** Phase 48 — Plan-Stream Substrate (Phase 47 CLEARED).
 
 ## Current Position
 
