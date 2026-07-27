@@ -4,11 +4,13 @@
 **Phase:** 47 (Design Gate) — blocks all multi-step TCB code under
 `crates/{executor,brokerd,sandbox,runtime-core}` and the worker submit /
 confirm-hold path in `cli/caprun`
-**Status:** Draft → pending a fresh, **non-self, orchestrator-owned** adversarial
-code-trace (DESIGN-20) to be recorded in `planning-docs/DESIGN-GATE-RECORD-v1.10.md`.
-This doc is authored by a `gsd-executor`; the executor does **not** run or
-self-perform that trace (gsd-executors have no Agent tool — §13).
+**Status:** ✅ **CLEARED** (Round-1 amendments) after a fresh, **non-self,
+orchestrator-owned** adversarial code-trace (DESIGN-20). Record:
+`planning-docs/DESIGN-GATE-RECORD-v1.10.md`. This doc was authored by a
+`gsd-executor`; the executor did **not** run or self-perform that trace
+(gsd-executors have no Agent tool — §13).
 **Author date:** 2026-07-23
+**Clear date:** 2026-07-27
 **Grounding:** `.planning/research/{SUMMARY,ARCHITECTURE,PITFALLS}.md` (v1.10
 milestone research), `.planning/REQUIREMENTS.md` (DESIGN-19/20, HYG-02,
 STREAM/CODE/CLI/CONFIRM/LIVE), `.planning/phases/47-multi-step-plan-stream-design-gate/47-RESEARCH.md`
@@ -206,9 +208,29 @@ effect-path verb.
 `ValueRecord`s. Source of handles:
 
 - Session-start mints returned by ProvideIntent / derivation (existing).
-- Intermediate `PlanNodeDecision.output_value_id` on Allowed sinks that mint
-  outputs (e.g. `mint_from_exec` wiring already documented at `worker.rs:376-381`
-  and `proto.rs:242-253`).
+- Intermediate `PlanNodeDecision.output_value_id` on **any** Allowed sink that
+  mints an output into the live session `ValueStore` and returns `Some(id)`.
+  Live broker mint arms today (all untrusted provenance; not a trust upgrade):
+  - `process.exec` → `mint_from_exec` (`server.rs:1274-1299`)
+  - `git.commit` → `mint_from_exec` (`server.rs:1308-1332`)
+  - `http.request` → `mint_from_http` (`server.rs:1343-1401`)
+  **DECISION (Round-1 F-01):** Phase 48 bag logic stores **any**
+  `Some(output_value_id)` regardless of sink id. Stale comments that say
+  "process.exec only" (`worker.rs:376-381`, `proto.rs:242-253`,
+  `server.rs:2257-2259`) are **documentation drift, not authority** — do not
+  under-bag `git.commit` / `http.request` outputs or invent trust from those
+  comments. A docs-only comment fix may land with Phase 48; behavior is
+  already multi-sink.
+
+**DECISION (Round-1 F-02):** Post-confirm intermediate outputs are **out of
+bag**. `confirm()` intentionally does **not** mint released sink output into a
+live worker `ValueStore` and **never** re-invokes `submit_plan_node`
+(`confirmation.rs:819-833`, `:1204-1217`). Success-path coding that needs
+intermediate outputs must rely on **Allowed** (trusted-arg) mints while the
+worker connection holds the `ValueStore`. "Fixing" missing post-confirm outputs
+by re-submitting the blocked node, reminting UserTrusted, or inventing a
+session-wide output channel is **forbidden** without a fresh design gate
+(re-opens surface (5) / ProvideIntent remint).
 
 `PlanArg` remains name + `value_id` only (`plan_node.rs:122-125`). `PlanNode`
 remains sink + args (`plan_node.rs:136-139`). The planner **never mints** and
@@ -481,7 +503,7 @@ Gate 3** — never land a new call site first and retrofit the allowlist.
 | Rule | Pin |
 |------|-----|
 | New crates | Default **zero** for the entire multi-step milestone unless a later phase design-justifies an exception (**none expected** for plan-stream substrate) |
-| Free-form effect-request token under `crates/` | **Forbidden** — Gate 1 (`scripts/check-invariants.sh:7-31`) |
+| Free-form effect-request token under `crates/` | **Forbidden** — Gate 1 body at `scripts/check-invariants.sh:29-36` (header comments precede it; Round-1 F-03 citation fix) |
 | Gate 3 mint-site list | **Unchanged** or **explicitly amended** (§7.4) — default unchanged |
 | `check-invariants.sh` | Remains the **architectural** gate (Gates 1–6) |
 | compose-verify | Remains the **authoritative Linux** gate; `mailpit-verify.sh` when SMTP may fire (CLAUDE.md Phase 16+) |
@@ -693,8 +715,15 @@ in-crate composition is **not** the DONE claim.
 
 ## Amendments (post-review)
 
-*Placeholder for Plan 47-02 Round-1 fold.* After the fresh non-self adversarial
-code-trace, every BLOCKER/MAJOR (and accepted MINOR) is folded here as DESIGN
-decisions (prose/pin), with no multi-step TCB code until CLEARED.
+Round-1 fold (2026-07-27) after orchestrator-owned non-self adversarial
+code-trace (DESIGN-20). **0 BLOCKER, 0 MAJOR.** All accepted MINOR/NIT
+findings resolved by **tightening** pins — no invariant weakened, no TCB code.
 
-*(empty — awaiting DESIGN-20 review)*
+| # | Sev | Claim | Re-verify | Resolution |
+|---|-----|-------|-----------|------------|
+| F-01 | MINOR | `output_value_id` is "process.exec only" | **CONFIRMED** — Allowed-path mints also set `Some` for `git.commit` (`server.rs:1308-1332`) and `http.request` (`server.rs:1343-1401`); stale comments at `worker.rs:376-381`, `proto.rs:242-253`, `server.rs:2257-2259` | **§2.2 tightened:** bag stores **any** `Some(output_value_id)`; comments are drift not authority |
+| F-02 | MINOR | Confirm-released intermediate mint does not enter worker bag | **CONFIRMED** — `confirmation.rs:819-833`, `:1204-1217` explicitly no mint / no `ValueStore` / no re-submit | **§2.2 tightened:** post-confirm outputs out-of-bag; re-submit/remint forbidden without new design gate |
+| F-03 | NIT | Gate 1 cited as `:7-31` | **CONFIRMED** — body is `check-invariants.sh:29-36` | **§8.1 citation fixed** |
+
+Full independence proof, files-opened list, and Verified-as-sound ledger:
+`planning-docs/DESIGN-GATE-RECORD-v1.10.md`.
