@@ -213,7 +213,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 47-02-PLAN.md — Fresh non-self adversarial code-trace + fold + DESIGN-GATE-RECORD-v1.10.md CLEARED (DESIGN-20)
+- [x] 47-02-PLAN.md — Fresh non-self adversarial code-trace + fold + DESIGN-GATE-RECORD-v1.10.md CLEARED (DESIGN-20)
 
 ### Phase 48: Plan-Stream Substrate
 
