@@ -17,9 +17,9 @@ Requirements for the v1.10 milestone. Each maps to exactly one roadmap phase (se
 
 ### Plan-Stream Substrate
 
-- [ ] **STREAM-01**: In one Session, on one worker connection, the runtime can evaluate and submit **N sequential plan nodes** (`SubmitPlanNode` × N). Each node is independently I2-evaluated; policy remains the pre-I2 narrowing gate; no batch-authorize shortcut. Broker multi-submit is already legal — this requirement is the **worker loop + chain-head continuity** so every decision/event lands on the same audit DAG with `verify_chain` true for the Session.
+- [x] **STREAM-01**: In one Session, on one worker connection, the runtime can evaluate and submit **N sequential plan nodes** (`SubmitPlanNode` × N). Each node is independently I2-evaluated; policy remains the pre-I2 narrowing gate; no batch-authorize shortcut. Broker multi-submit is already legal — this requirement is the **worker loop + chain-head continuity** so every decision/event lands on the same audit DAG with `verify_chain` true for the Session.
 
-- [ ] **STREAM-02**: Intermediate sink outputs exposed as `output_value_id` (e.g. `mint_from_exec`) are carried only as **opaque ValueIds** in a worker-side handle bag. They retain genuine taint/provenance. The planner may only place handles into later nodes — never literals, never re-mint via mid-stream ProvideIntent (M7 anti-laundering preserved). ProvideIntent remains **exactly once** before RequestFd for the Session.
+- [x] **STREAM-02**: Intermediate sink outputs exposed as `output_value_id` (e.g. `mint_from_exec`) are carried only as **opaque ValueIds** in a worker-side handle bag. They retain genuine taint/provenance. The planner may only place handles into later nodes — never literals, never re-mint via mid-stream ProvideIntent (M7 anti-laundering preserved). ProvideIntent remains **exactly once** before RequestFd for the Session.
 
 ### Deterministic Multi-step Coding Planner
 
@@ -91,8 +91,8 @@ Which phases cover which requirements. Filled by the roadmapper.
 |-------------|-------|--------|
 | DESIGN-19 | Phase 47 | Complete |
 | DESIGN-20 | Phase 47 | Complete |
-| STREAM-01 | Phase 48 | Pending |
-| STREAM-02 | Phase 48 | Pending |
+| STREAM-01 | Phase 48 | Complete |
+| STREAM-02 | Phase 48 | Complete |
 | CODE-01 | Phase 49 | Pending |
 | CODE-02 | Phase 49 | Pending |
 | CLI-01 | Phase 50 | Pending |

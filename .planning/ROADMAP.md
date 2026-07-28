@@ -237,7 +237,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 48-02-PLAN.md — Expansion: deny-abort + Block no re-submit + Linux taint-via-bag + F-01 docs + COVERAGE
+- [x] 48-02-PLAN.md — Expansion: deny-abort + Block no re-submit + Linux taint-via-bag + F-01 docs + COVERAGE
 
 ### Phase 49: Deterministic Multi-step Coding Planner
 
@@ -348,7 +348,7 @@ Plans:
 | 45. Thin CLI/SDK + Read-Only Audit-DAG Viewer | v1.9 | 4/4 | Complete    | 2026-07-18 |
 | 46. Composed Live Proof (v1.9 DONE) | v1.9 | 4/4 | Complete    | 2026-07-18 |
 | 47. Multi-step Plan Stream Design Gate | v1.10 | 1/2 | In Progress|  |
-| 48. Plan-Stream Substrate | v1.10 | 0/2 | Not started | - |
+| 48. Plan-Stream Substrate | v1.10 | 2/2 | In Progress|  |
 | 49. Deterministic Multi-step Coding Planner | v1.10 | 0/? | Not started | - |
 | 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 0/? | Not started | - |
 | 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 0/? | Not started | - |
