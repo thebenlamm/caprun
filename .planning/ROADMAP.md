@@ -233,7 +233,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 48-01-PLAN.md — Tracer: plan_next + worker sequential loop + opaque bag + broker multi-submit verify_chain
+- [x] 48-01-PLAN.md — Tracer: plan_next + worker sequential loop + opaque bag + broker multi-submit verify_chain
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
