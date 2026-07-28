@@ -4,16 +4,16 @@ milestone: v1.10
 milestone_name: Multi-step Safe Coding Agent Loop
 current_phase: 48
 current_phase_name: Multi-step Plan Stream Design Gate
-status: ready_to_execute
+status: phase_complete
 stopped_at: Completed 48-02-PLAN.md
-last_updated: "2026-07-28T01:13:50.450Z"
+last_updated: "2026-07-28T01:14:28.000Z"
 last_activity: 2026-07-28
 last_activity_desc: "Phase 48 planned (2 plans: tracer loop+bag; expansion deny/taint/docs)"
 progress:
   total_phases: 2
   completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 2
+  completed_plans: 2
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-23)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended through v1.9 with authorized write egress (git.push + http-write), minimal per-session policy (never overrides I2), and thin CLI/audit surfaces — without weakening I0/I1/I2 or adding any raw `EffectRequest` path. v1.10 makes the Safe Coding Agent path a single Session, CLI-driven multi-node stream.
-**Current focus:** Phase 48 — Plan-Stream Substrate (planned; ready to execute).
+**Current focus:** Phase 49 — Deterministic Multi-step Coding Planner (Phase 48 STREAM substrate complete).
 
 ## Current Position
 
-Phase: 48 of 52 (Plan-Stream Substrate)
-Plan: 2 of 2
-Status: Ready to execute
-Last activity: 2026-07-28 — Phase 48 planned (2 plans: tracer loop+bag; expansion deny/taint/docs)
+Phase: 49 of 52 (Deterministic Multi-step Coding Planner)
+Plan: —
+Status: Ready to plan
+Last activity: 2026-07-28 — Phase 48 complete (STREAM-01/02: sequential loop + opaque bag + verify_chain)
 
-Progress: [██████████] 100%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
