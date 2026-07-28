@@ -239,15 +239,18 @@ pub enum BrokerResponse {
     /// a `ConnectionRole::Planner` connection, which receives
     /// `PlanNodeDecisionReduced` instead.
     ///
-    /// `output_value_id` (32-05, EXEC-02/EXEC-03 wiring): the opaque `ValueId`
-    /// handle to a minted `process.exec` output, `Some(..)` ONLY when
-    /// `plan_node.sink.0 == "process.exec"` AND `decision` is `Allowed` —
-    /// `None` for every other sink/decision (zero behavior change for
-    /// `file.create`/`email.send`). A plain required field, deliberately NOT
-    /// `#[serde(default)]` (Pitfall 8): every construction/destructure site
-    /// must explicitly acknowledge it, so a future new sink cannot silently
-    /// forget to populate/consume the handle. The worker learns only this
-    /// opaque handle, never the raw captured bytes (I1).
+    /// `output_value_id` (32-05 + F-01 multi-sink mint): the opaque `ValueId`
+    /// handle to a minted intermediate sink output, `Some(..)` when `decision`
+    /// is `Allowed` **and** the sink mints intermediate output —
+    /// currently `process.exec`, `git.commit`, and `http.request` (not
+    /// process.exec-only; stale "process.exec only" comments were docs drift).
+    /// `None` for sinks that mint nothing (`file.create`/`email.send`/…) and
+    /// for every non-`Allowed` decision. A plain required field, deliberately
+    /// NOT `#[serde(default)]` (Pitfall 8): every construction/destructure
+    /// site must explicitly acknowledge it, so a future new sink cannot
+    /// silently forget to populate/consume the handle. The worker learns only
+    /// this opaque handle, never the raw captured bytes (I1); the bag stores
+    /// any `Some` under `out_{step}` regardless of sink id (DESIGN §2.2 F-01).
     PlanNodeDecision {
         decision: runtime_core::ExecutorDecision,
         output_value_id: Option<runtime_core::plan_node::ValueId>,

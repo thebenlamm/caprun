@@ -512,10 +512,6 @@ fn multi_allowed_bags_each_some_and_succeeds() {
     assert_eq!(bag.get("out_2"), Some(&id2));
 }
 
-// ── Linux taint-via-bag (STREAM-02) — Task 2 extends this module ─────────────
-// Placeholder: genuine bag-taint leg lands in Plan 48-02 Task 2.
-// #[cfg(target_os = "linux")] mod linux { ... }
-
 /// Always-on guard so the test binary is never empty on non-Linux hosts.
 #[test]
 fn stream_substrate_host_guard_compiles() {
@@ -530,4 +526,275 @@ fn stream_substrate_host_guard_compiles() {
             StreamBranch::Continue
         )
     );
+}
+
+// ── Linux taint-via-bag (STREAM-02) ──────────────────────────────────────────
+//
+// Substrate proof: bag intermediate storage of a genuine mint_from_exec handle
+// then plan_next-style placement into process.exec/command → I2 Block.
+// Hybrid in-crate multi-node — **not** LIVE-07 CLI multi-step DONE.
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::{apply_stream_decision, StreamBranch};
+    use adapter_fs::workspace::WorkspaceRoot;
+    use brokerd::audit::{
+        append_event, find_event_by_type, open_audit_db, verify_chain,
+    };
+    use brokerd::quarantine::mint_from_exec;
+    use brokerd::sinks::process_exec::invoke_process_exec;
+    use chrono::Utc;
+    use executor::value_store::ValueStore;
+    use runtime_core::plan_node::{PlanArg, SinkId, TaintLabel, ValueId};
+    use runtime_core::{Event, ExecutorDecision, PlanNode, SessionStatus};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use uuid::Uuid;
+
+    /// Fixed, non-secret test MAC key (mirrors s9_process_exec_block).
+    const TEST_KEY: &[u8] = b"stream-substrate-taint-via-bag-test-key";
+
+    fn mint_trusted(store: &mut ValueStore, literal: &str) -> ValueId {
+        store
+            .mint(
+                literal.to_string(),
+                vec![TaintLabel::UserTrusted],
+                vec![Uuid::new_v4()],
+                None,
+            )
+            .expect("mint trusted literal")
+    }
+
+    fn seed_root_event(conn: &rusqlite::Connection, session_id: Uuid) -> (Uuid, String) {
+        let root = Event::new(
+            Uuid::new_v4(),
+            None,
+            session_id,
+            "broker".into(),
+            "session_created".into(),
+            Utc::now(),
+            vec![],
+        );
+        let hash = append_event(conn, TEST_KEY, &root, None).expect("append root event");
+        (root.id, hash)
+    }
+
+    fn fresh_workspace(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "caprun_stream_substrate_{tag}_{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("create workspace dir");
+        dir
+    }
+
+    /// STREAM-02 genuine taint via bag: Node1 trusted process.exec Allowed →
+    /// mint_from_exec → bag under `out_0` (F-01 path) → Node2 process.exec
+    /// command = bag handle → BlockedPendingConfirmation with provenance root
+    /// on process_exited + verify_chain true. No effect of the blocked node.
+    #[tokio::test]
+    async fn taint_via_bag_exec_output_blocks_with_genuine_provenance() {
+        let conn = Arc::new(Mutex::new(open_audit_db(":memory:").expect("open_audit_db")));
+        let session_id = Uuid::new_v4();
+        let (root_id, root_hash) = {
+            let locked = conn.lock().expect("lock conn");
+            seed_root_event(&locked, session_id)
+        };
+
+        let mut store = ValueStore::default();
+        let command_vid = mint_trusted(&mut store, "/bin/echo");
+        let args_json =
+            serde_json::to_string(&vec!["stream-bag-marker"]).expect("serialize args");
+        let args_vid = mint_trusted(&mut store, &args_json);
+
+        // ── Node 1: trusted process.exec (CLEAN ALLOW) ───────────────────────
+        let plan_node1 = PlanNode {
+            sink: SinkId("process.exec".into()),
+            args: vec![
+                PlanArg {
+                    name: "command".into(),
+                    value_id: command_vid,
+                },
+                PlanArg {
+                    name: "args".into(),
+                    value_id: args_vid,
+                },
+            ],
+        };
+        let effect_id1 = Uuid::new_v4();
+        let decision1 = executor::submit_plan_node(
+            session_id,
+            effect_id1,
+            &plan_node1,
+            &store,
+            &SessionStatus::Active,
+            &runtime_core::SessionPolicy::allow_all(),
+        );
+        assert_eq!(
+            decision1,
+            ExecutorDecision::Allowed,
+            "Node1 trusted process.exec must Allow"
+        );
+
+        let ws_dir = fresh_workspace("bag");
+        let workspace_root = WorkspaceRoot::open(&ws_dir).expect("open workspace root");
+
+        let (exec_event_id, exec_hash, combined_output) = invoke_process_exec(
+            &conn,
+            TEST_KEY,
+            &store,
+            session_id,
+            effect_id1,
+            &plan_node1,
+            &workspace_root,
+            root_id,
+            &root_hash,
+        )
+        .await
+        .expect("invoke_process_exec must succeed for trusted /bin/echo");
+
+        assert!(
+            combined_output.contains("stream-bag-marker"),
+            "captured output must contain marker, got: {combined_output:?}"
+        );
+
+        // Anti-stapling: process_exited is durably in the DAG before mint.
+        {
+            let locked = conn.lock().expect("lock conn");
+            let dag_event =
+                find_event_by_type(&locked, &session_id.to_string(), "process_exited")
+                    .expect("query process_exited")
+                    .expect("process_exited must exist");
+            assert_eq!(dag_event.id, exec_event_id);
+        }
+
+        let output_value_id =
+            mint_from_exec(&mut store, session_id, combined_output, exec_event_id)
+                .expect("mint_from_exec must succeed");
+
+        // Genuine provenance: chain root is process_exited event id.
+        let minted = store
+            .resolve(&output_value_id)
+            .expect("output_value_id must resolve")
+            .clone();
+        assert_eq!(
+            minted.provenance_chain,
+            vec![exec_event_id],
+            "mint_from_exec provenance_chain must be exactly [process_exited]"
+        );
+        assert!(minted.taint.contains(&TaintLabel::ExternalUntrusted));
+        assert!(minted.taint.contains(&TaintLabel::ExecRaw));
+
+        // ── Bag intermediate (F-01 worker path): store under out_0 ───────────
+        let mut bag: HashMap<String, ValueId> = HashMap::new();
+        let branch = apply_stream_decision(
+            &mut bag,
+            0,
+            &ExecutorDecision::Allowed,
+            Some(output_value_id.clone()),
+        );
+        assert_eq!(branch, StreamBranch::Continue);
+        assert_eq!(
+            bag.get("out_0"),
+            Some(&output_value_id),
+            "F-01 bag must store genuine mint_from_exec handle under out_0"
+        );
+
+        // ── Node 2: plan surface places bag handle into process.exec/command ─
+        // (STREAM-02 adjacency — not a stapled sink-local mint.)
+        let bag_handle = bag
+            .get("out_0")
+            .expect("bag must carry out_0")
+            .clone();
+        let plan_node2 = PlanNode {
+            sink: SinkId("process.exec".into()),
+            args: vec![PlanArg {
+                name: "command".into(),
+                value_id: bag_handle,
+            }],
+        };
+        let effect_id2 = Uuid::new_v4();
+        let decision2 = executor::submit_plan_node(
+            session_id,
+            effect_id2,
+            &plan_node2,
+            &store,
+            &SessionStatus::Active,
+            &runtime_core::SessionPolicy::allow_all(),
+        );
+
+        let anchor = match decision2 {
+            ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+                assert_eq!(anchors.len(), 1, "exactly one blocked arg (command)");
+                let blocked = anchors.into_iter().next().expect("one anchor");
+                assert_eq!(blocked.anchor.arg, "command");
+                assert_eq!(blocked.anchor.sink.0, "process.exec");
+                blocked.anchor
+            }
+            other => panic!(
+                "expected BlockedPendingConfirmation for bagged exec-output as \
+                 process.exec/command, got {other:?}"
+            ),
+        };
+
+        // Genuine-taint backstop: provenance root is the process_exited event.
+        assert_eq!(
+            anchor.provenance_chain[0], exec_event_id,
+            "GENUINE-TAINT BACKSTOP: provenance_chain[0] must equal process_exited id"
+        );
+        assert_eq!(
+            anchor.read_event_id, exec_event_id,
+            "anchor.read_event_id must equal process_exited event id"
+        );
+
+        // Stream branch on Block: stop, no re-submit.
+        let mut bag_after = bag.clone();
+        let stop = apply_stream_decision(
+            &mut bag_after,
+            1,
+            &ExecutorDecision::BlockedPendingConfirmation {
+                anchors: vec![],
+            },
+            None,
+        );
+        assert_eq!(stop, StreamBranch::StopBlocked);
+        assert_eq!(
+            bag_after.get("out_0"),
+            Some(&output_value_id),
+            "Block must not mutate prior bag entries; no re-submit recovery path"
+        );
+
+        // Durable block + verify_chain (mirrors s9_process_exec_block spine).
+        let block_event = Event::sink_blocked(
+            Uuid::new_v4(),
+            Some(exec_event_id),
+            session_id,
+            Utc::now(),
+            vec![anchor],
+            None,
+            vec!["command".to_string()],
+        );
+        {
+            let locked = conn.lock().expect("lock conn");
+            append_event(&locked, TEST_KEY, &block_event, Some(&exec_hash))
+                .expect("append sink_blocked");
+        }
+
+        let locked = conn.lock().expect("lock conn");
+        let persisted_block =
+            find_event_by_type(&locked, &session_id.to_string(), "sink_blocked")
+                .expect("query sink_blocked")
+                .expect("durable sink_blocked must exist");
+        assert_eq!(persisted_block.id, block_event.id);
+        assert!(
+            find_event_by_type(&locked, &session_id.to_string(), "sink_executed")
+                .expect("query sink_executed")
+                .is_none(),
+            "no sink_executed — blocked node has no effect"
+        );
+        assert!(
+            verify_chain(&locked, &session_id.to_string(), TEST_KEY),
+            "verify_chain must be true: session_created -> process_exited -> sink_blocked"
+        );
+    }
 }

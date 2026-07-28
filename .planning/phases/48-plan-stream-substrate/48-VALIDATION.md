@@ -1,10 +1,11 @@
 ---
 phase: 48
 slug: plan-stream-substrate
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: active
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-07-28
+updated: 2026-07-28
 ---
 
 # Phase 48 — Validation Strategy
@@ -19,7 +20,7 @@ created: 2026-07-28
 |----------|-------|
 | **Framework** | Rust `#[test]` / `#[tokio::test]` via cargo |
 | **Config file** | per-crate `Cargo.toml` |
-| **Quick run command** | `./scripts/check-invariants.sh && cargo test -p caprun --test planner -- --nocapture` |
+| **Quick run command** | `./scripts/check-invariants.sh && cargo test -p caprun --test planner -- --nocapture && cargo test -p caprun --test stream_substrate -- --nocapture` |
 | **Full suite command** | `./scripts/check-invariants.sh && cargo test --workspace --no-fail-fast` |
 | **Linux authority** | `bash scripts/mailpit-verify.sh` (scoped `MAILPIT_VERIFY_CMD` for stream tests) |
 | **Estimated runtime** | quick ~30–90s; full workspace longer |
@@ -39,9 +40,11 @@ created: 2026-07-28
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 48-01-* | 01 | 1 | STREAM-01 | T-48-batch | N sequential SubmitPlanNode; verify_chain | integration | `cargo test -p brokerd` stream multi-submit | ❌ W0 | ⬜ pending |
-| 48-01-* | 01 | 1 | STREAM-02 | T-48-launder | Opaque bag; any Some(output_value_id) | unit | `cargo test -p caprun` handle bag | ❌ W0 | ⬜ pending |
-| 48-* | * | * | HYG | T-48-mint | Gate 1/3; no new mint sites | script | `./scripts/check-invariants.sh` | ✅ | ⬜ pending |
+| 48-01-T1 | 01 | 1 | STREAM-01/02 | T-48-01 | plan_next + bag + sequential worker loop | unit | `cargo test -p caprun --test planner` | ✅ | ✅ green |
+| 48-01-T2 | 01 | 1 | STREAM-01 | T-48-batch | N sequential SubmitPlanNode; verify_chain; ProvideIntent-once | integration | `cargo test -p brokerd --test stream_multi_submit` | ✅ | ✅ green (Linux) |
+| 48-02-T1 | 02 | 2 | STREAM-01 | T-48-09, T-48-04 | Deny abort remaining; Block no re-submit; F-01 bag any Some | unit | `cargo test -p caprun --test stream_substrate` | ✅ | ✅ green |
+| 48-02-T2 | 02 | 2 | STREAM-02 | T-48-01 | Genuine taint via bag → process.exec/command Block + verify_chain | hybrid Linux | `cargo test -p caprun --test stream_substrate` (cfg linux) | ✅ | ✅ present (host: compile-away; Linux: mailpit-verify) |
+| 48-* | * | * | HYG | T-48-06 | Gate 1/3; no new mint sites | script | `./scripts/check-invariants.sh` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -49,14 +52,12 @@ created: 2026-07-28
 
 ## Wave 0 Requirements
 
-- [ ] Multi-submit + `verify_chain` test (brokerd or caprun integration)
-- [ ] Handle bag unit tests (any `Some(output_value_id)`; opaque ValueId only)
-- [ ] Sequential planner surface + one-shot adapter regression
-- [ ] Deny/abort remaining + ProvideIntent-once under multi-submit
-- [ ] Optional Linux taint-via-bag leg via mailpit-verify
-- [ ] Framework install: **none**
-
-*Existing planner tests + check-invariants cover regressions; Wave 0 is stream-specific tests + implementation.*
+- [x] Multi-submit + `verify_chain` test (brokerd or caprun integration) — `crates/brokerd/tests/stream_multi_submit.rs`
+- [x] Handle bag unit tests (any `Some(output_value_id)`; opaque ValueId only) — `planner.rs` + `stream_substrate.rs` F-01
+- [x] Sequential planner surface + one-shot adapter regression — `cli/caprun/tests/planner.rs`
+- [x] Deny/abort remaining + ProvideIntent-once under multi-submit — `stream_substrate` deny/block + `stream_multi_submit` ProvideIntent-once
+- [x] Optional Linux taint-via-bag leg via mailpit-verify — `stream_substrate::linux::taint_via_bag_exec_output_blocks_with_genuine_provenance`
+- [x] Framework install: **none**
 
 ---
 
@@ -68,13 +69,29 @@ created: 2026-07-28
 
 ---
 
+## Linux run recipes
+
+```bash
+# stream_substrate (host-safe + Linux taint leg)
+MAILPIT_VERIFY_CMD='cargo build --workspace && cargo test -p caprun --test stream_substrate -- --nocapture' \
+  bash scripts/mailpit-verify.sh
+
+# Plan 01 broker multi-submit regression
+MAILPIT_VERIFY_CMD='cargo test -p brokerd --test stream_multi_submit -- --nocapture' \
+  bash scripts/mailpit-verify.sh
+```
+
+When Docker/mailpit is unavailable, host runs `cargo test -p caprun --test stream_substrate` for non-Linux-gated cases; Linux bodies are `#[cfg(target_os = "linux")]` (0 passed on non-Linux is expected per CLAUDE.md).
+
+---
+
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 120s focused
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 120s focused
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** wave-0 complete after 48-01 + 48-02 automated STREAM tests exist and host-safe legs pass

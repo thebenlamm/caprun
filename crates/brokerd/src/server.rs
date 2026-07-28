@@ -2254,9 +2254,11 @@ pub async fn dispatch_request(
             }
 
             // Only send the decision AFTER the durable append (and any sink
-            // invocation) succeeded. output_value_id is Some(..) ONLY on an
-            // Allowed process.exec decision (32-05) — None for every other
-            // sink/decision (zero behavior change for file.create/email.send).
+            // invocation) succeeded. output_value_id is Some(..) on an Allowed
+            // decision that mints intermediate output — process.exec,
+            // git.commit, and http.request (F-01 multi-sink; not
+            // process.exec-only). None for sinks that mint nothing
+            // (file.create/email.send/…) and every non-Allowed decision.
             send_response(
                 stream,
                 &BrokerResponse::PlanNodeDecision {
