@@ -46,6 +46,7 @@ use runtime_core::{
     intent::CaprunIntent,
     plan_node::{PlanArg, PlanNode, SinkId, ValueId},
 };
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 // Duration/Instant back the connect-retry loop in the Linux-only
@@ -53,11 +54,63 @@ use std::os::unix::net::UnixStream;
 #[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 
+/// Worker-owned multi-step routing context for `Planner::plan_next`
+/// (Phase 48 / STREAM-01/02; DESIGN-multi-step-plan-stream §1.2–§2.2).
+///
+/// # PLAN-03 / STREAM-02 boundary
+///
+/// Carries ONLY:
+/// - typed `CaprunIntent` (user-trusted enum, never free-form value authority)
+/// - opaque `ValueId` handles in `handles` (routing table — never literals,
+///   never taint labels, never `ValueRecord`)
+/// - `step_index` (static sequence index for multi-node streams)
+/// - `task_instruction: Option<String>` — instruction framing only; **never**
+///   a `ValueId` and never bindable into a sink arg (DESIGN §5)
+///
+/// The bag / `handles` map is a worker-local routing table. Taint and
+/// literals stay broker-owned in `ValueStore`. The planner places offered
+/// handles into `PlanArg`s by call-site convention; it never mints and
+/// never strips taint.
+///
+/// # Handle key convention (worker seed + default `plan_next` adapter)
+///
+/// The worker seeds these named slots after ProvideIntent + claims, and the
+/// default one-shot `plan_next` adapter pulls the same slots that
+/// `Planner::plan` already expects:
+///
+/// | Key | Meaning |
+/// |-----|---------|
+/// | `intent` | UserTrusted primary intent handle (recipient / path) |
+/// | `derived_recipient` | Optional derived/tainted routing handle |
+/// | `body` | Optional derived/tainted body handle |
+/// | `trusted_subject` | UserTrusted subject handle |
+/// | `trusted_body` | UserTrusted body fallback handle |
+/// | `out_{step}` | Allowed-path `output_value_id` stored under step index (F-01: any sink) |
+///
+/// Keys hold **only** `ValueId` values — the type system forbids literals.
+#[derive(Debug, Clone)]
+pub struct PlanStreamContext {
+    pub intent: CaprunIntent,
+    pub step_index: usize,
+    /// Opaque named handles only (`String` → `ValueId`). Never literals/taint.
+    pub handles: HashMap<String, ValueId>,
+    /// Instruction framing (`String`), never a bindable `ValueId` handle.
+    pub task_instruction: Option<String>,
+}
+
 /// The `Planner` seam (PLANNER-01): maps a typed intent + opaque `ValueId`
 /// handles to a `PlanNode`. See the module doc above for the PLANNER-04
 /// compile-time boundary this trait method preserves — implementors may
 /// never accept a `ValueRecord`, a raw byte slice/string from untrusted
 /// content, or a taint label.
+///
+/// # Multi-node surface (Phase 48 / STREAM-01)
+///
+/// `plan()` remains the one-shot email/file/LLM path. `plan_next` is the
+/// **additive** multi-node surface: static step index + opaque handle bag
+/// via `PlanStreamContext`. Default impl is a one-shot adapter over `plan()`
+/// so `DeterministicPlanner` and `LlmPlanner` stay byte-stable without
+/// rewriting their `plan()` bodies (Pitfall 6).
 pub trait Planner {
     /// Map a typed `CaprunIntent` + opaque `ValueId` handles to a `PlanNode`.
     /// Parameters mirror `plan_from_intent` exactly (see its doc below), plus
@@ -77,6 +130,35 @@ pub trait Planner {
         trusted_body_handle: ValueId,
         task_instruction: Option<String>,
     ) -> PlanNode;
+
+    /// Additive multi-node surface (STREAM-01/02). Default: one-shot adapter —
+    /// at `step_index == 0`, pull named handles from `ctx.handles` under the
+    /// documented key convention and delegate to `plan()`; at `step_index > 0`,
+    /// return `None` (stream ends). Missing required seed keys (`intent`,
+    /// `trusted_subject`, `trusted_body`) → `None` (fail-closed empty stream
+    /// at the worker, DESIGN §8.2).
+    ///
+    /// Multi-node implementors override this method and leave `plan()` as a
+    /// rarely-used fallback. No CaprunIntent coding variant here (Phase 49).
+    fn plan_next(&self, ctx: &PlanStreamContext) -> Option<PlanNode> {
+        if ctx.step_index != 0 {
+            return None;
+        }
+        let intent_value_id = ctx.handles.get("intent")?.clone();
+        let trusted_subject_handle = ctx.handles.get("trusted_subject")?.clone();
+        let trusted_body_handle = ctx.handles.get("trusted_body")?.clone();
+        let derived_recipient = ctx.handles.get("derived_recipient").cloned();
+        let body = ctx.handles.get("body").cloned();
+        Some(self.plan(
+            &ctx.intent,
+            intent_value_id,
+            derived_recipient,
+            body,
+            trusted_subject_handle,
+            trusted_body_handle,
+            ctx.task_instruction.clone(),
+        ))
+    }
 }
 
 /// The deterministic planner implementation (PLAN-02): delegates to

@@ -39,22 +39,26 @@
 ///      paths, unchanged (no instruction extraction for this intent kind).
 ///  11. Receive the opaque `ValueId` handles for each report.
 ///  12. Construct a `planner::DeterministicPlanner` (or, when
-///      `CAPRUN_PLANNER=llm`, `planner::LlmPlanner`) and call its
-///      `Planner::plan(&intent, intent_value_id, derived_recipient, body,
-///      trusted_subject_handle, trusted_body_handle, task_instruction)` trait
-///      method (PLANNER-01 seam) — the planner holds ONLY opaque ValueId
-///      handles + the task_instruction `String` (never a `ValueId`, never
-///      bindable to a sink arg), never literals or taint (PLAN-03). Send
-///      `BrokerRequest::SubmitPlanNode { plan_node }` (no session_id —
-///      HARD-03). A benign (fragment-free) `SendEmailSummary` STILL submits
-///      an all-UserTrusted plan node (finding #4 — CONTROL-01's clean half
-///      survives; there is no early-exit here anymore).
-///  13. Receive `BrokerResponse::PlanNodeDecision { decision, output_value_id }`.
-///      If it is `BlockedPendingConfirmation`, exit 1 (non-success BEFORE any
-///      effect runs). `output_value_id` is `Some(handle)` only on an Allowed
-///      `process.exec` decision (32-05) — the opaque handle to the minted
-///      exec output, never the raw bytes.
-///  14. Otherwise exit 0.
+///      `CAPRUN_PLANNER=llm`, `planner::LlmPlanner`). Seed an opaque handle
+///      bag (`HashMap<String, ValueId>`) from ProvideIntent + claim locals
+///      (keys: `intent`, optional `derived_recipient`/`body`,
+///      `trusted_subject`, `trusted_body` — PLAN-03 handles only). Then run
+///      the sequential plan-stream loop (Phase 48 / STREAM-01/02):
+///        a. `PlanStreamContext { intent, step_index, handles: bag, task_instruction }`
+///        b. `planner.plan_next(&ctx)` → `None` breaks the loop
+///        c. `BrokerRequest::SubmitPlanNode { plan_node }` (no session_id —
+///           HARD-03; sequential N× only — no batch authorize)
+///        d. On `Allowed`: if `output_value_id` is `Some`, insert under
+///           `out_{step}` for **any** sink (F-01 — process.exec / git.commit
+///           / http.request mints, not process.exec-only); step += 1; continue
+///        e. On `BlockedPendingConfirmation`: stop fail-closed (exit 1);
+///           **do not** re-submit the blocked node; **do not** ProvideIntent
+///           again (substrate-ready for Phase 50 hold — no product hold here)
+///        f. On `Denied` / `NotImplemented`: abort remaining (exit 1)
+///      Empty stream (`submitted == 0`) fails closed (DESIGN §8.2). ProvideIntent
+///      runs exactly once before RequestFd — the loop never re-sends it.
+///  13. Exit 0 only when every submitted node was `Allowed` and at least one
+///      node was submitted.
 ///
 /// # Cross-Platform Notes
 ///
@@ -77,12 +81,13 @@
 mod planner;
 
 use anyhow::Context;
-use crate::planner::Planner;
+use crate::planner::{PlanStreamContext, Planner};
 use brokerd::proto::{BrokerRequest, BrokerResponse, TransformKind, WorkerClaim};
 use brokerd::quarantine::{concat_doc_fragments, extract_doc_fragments, extract_relative_path_claims};
 use runtime_core::intent::CaprunIntent;
 use runtime_core::plan_node::ValueId;
 use runtime_core::ExecutorDecision;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd};
 
@@ -358,57 +363,97 @@ async fn main() -> anyhow::Result<()> {
         }
         _ => Box::new(crate::planner::DeterministicPlanner),
     };
-    let plan_node = planner.plan(
-        &intent,
-        intent_value_id,
-        derived_recipient,
-        body,
-        trusted_subject_handle,
-        trusted_body_handle,
-        task_instruction,
-    );
 
-    // ── Submit for I2 evaluation (no session_id field — HARD-03) ─────────────
-    send_framed(&std_stream, &BrokerRequest::SubmitPlanNode { plan_node })?;
+    // ── Opaque handle bag (STREAM-02 / DESIGN §2.2) ──────────────────────────
+    // Worker-local routing table of opaque ValueIds only — never literals,
+    // never taint, never ValueRecord. Seeded once from ProvideIntent + claim
+    // locals using the documented key convention (see PlanStreamContext).
+    // ProvideIntent already ran exactly once above; the stream loop never
+    // re-sends it (DESIGN §2.3).
+    let mut bag: HashMap<String, ValueId> = HashMap::new();
+    bag.insert("intent".into(), intent_value_id);
+    if let Some(derived) = derived_recipient {
+        bag.insert("derived_recipient".into(), derived);
+    }
+    if let Some(body_handle) = body {
+        bag.insert("body".into(), body_handle);
+    }
+    bag.insert("trusted_subject".into(), trusted_subject_handle);
+    bag.insert("trusted_body".into(), trusted_body_handle);
 
-    // ── Receive the block/allow decision ─────────────────────────────────────
-    //
-    // `output_value_id` (32-05, EXEC-02/EXEC-03 wiring): Some(handle) only on
-    // an Allowed process.exec decision — the opaque ValueId handle to the
-    // minted exec output (never the raw captured bytes, I1). The worker holds
-    // it here so a LATER plan node can route it into a subsequent PlanArg
-    // (the routing Plan 06's acceptance test drives to a Block); unused for
-    // now beyond this binding is expected at this stage of the wiring.
-    let (decision, output_value_id) = match recv_framed::<BrokerResponse>(&std_stream)? {
-        BrokerResponse::PlanNodeDecision {
-            decision,
-            output_value_id,
-        } => (decision, output_value_id),
-        other => anyhow::bail!("unexpected response to SubmitPlanNode: {other:?}"),
-    };
-    let _ = &output_value_id;
+    // ── Sequential plan-stream loop (STREAM-01; N× SubmitPlanNode) ───────────
+    // Each iteration: plan_next → SubmitPlanNode → PlanNodeDecision → branch.
+    // No batch authorize. No mid-stream ProvideIntent. No re-submit on Block.
+    let mut step_index: usize = 0;
+    let mut submitted: usize = 0;
+    loop {
+        let ctx = PlanStreamContext {
+            intent: intent.clone(),
+            step_index,
+            handles: bag.clone(),
+            task_instruction: task_instruction.clone(),
+        };
+        let Some(plan_node) = planner.plan_next(&ctx) else {
+            break;
+        };
 
-    // ── Exit non-success unless the effect actually ran (durable audit event
-    //    already recorded either way) ──────────────────────────────────────
-    //
-    // Bug found and fixed during Plan 21-04's live composed run: this
-    // originally checked ONLY `BlockedPendingConfirmation`, silently falling
-    // through to `Ok(())` (exit 0) for `ExecutorDecision::Denied { .. }` and
-    // `NotImplemented` — a plan node the executor REJECTED before any effect
-    // ran was indistinguishable, from the caller's exit code alone, from one
-    // that actually succeeded. This was never exercised by the
-    // `DeterministicPlanner` path (its hardcoded arg names always satisfy
-    // `sink_schema::validate_schema`, so it never produces `Denied`), but the
-    // `LlmPlanner` path CAN produce a schema-invalid plan node (e.g. the
-    // model naming an arg something other than the sink's required name) —
-    // empirically confirmed live on Linux (`scripts/mailpit-verify.sh`): a
-    // real run reached `Denied` and exited 0 with NO email ever sent, before
-    // this fix.
-    if !matches!(decision, ExecutorDecision::Allowed) {
-        eprintln!(
-            "[worker] NOT ALLOWED ({decision:?}): no effect ran — exiting 1"
+        // Submit for I2 evaluation (no session_id field — HARD-03).
+        send_framed(&std_stream, &BrokerRequest::SubmitPlanNode { plan_node })?;
+
+        // Receive the block/allow decision.
+        //
+        // `output_value_id` (32-05 + F-01): Some(handle) on an Allowed
+        // decision that mints intermediate output — process.exec, git.commit,
+        // and http.request (not process.exec-only; stale comments fixed).
+        // The opaque handle is never the raw captured bytes (I1). Stored in
+        // the bag under `out_{step}` for ANY sink when Some (DESIGN §2.2 F-01).
+        let (decision, output_value_id) = match recv_framed::<BrokerResponse>(&std_stream)? {
+            BrokerResponse::PlanNodeDecision {
+                decision,
+                output_value_id,
+            } => (decision, output_value_id),
+            other => anyhow::bail!("unexpected response to SubmitPlanNode: {other:?}"),
+        };
+        submitted += 1;
+
+        // Decision branch table (DESIGN §6; Phase 48 substrate — not Phase 50
+        // product hold). Bug found and fixed during Plan 21-04: originally
+        // only BlockedPendingConfirmation exited non-zero, silently treating
+        // Denied/NotImplemented as success; LlmPlanner can produce Denied.
+        match decision {
+            ExecutorDecision::Allowed => {
+                // F-01: store any Some(output_value_id) regardless of sink id.
+                if let Some(id) = output_value_id {
+                    bag.insert(format!("out_{step_index}"), id);
+                }
+                step_index += 1;
+                continue;
+            }
+            ExecutorDecision::BlockedPendingConfirmation { .. } => {
+                // Substrate stop: fail-closed, no re-submit, no ProvideIntent
+                // remint. Phase 50 product hold stays connected + confirms.
+                eprintln!(
+                    "[worker] BLOCKED pending confirmation ({decision:?}): \
+                     stopping stream without re-submit — exiting 1"
+                );
+                std::process::exit(1);
+            }
+            ExecutorDecision::Denied { .. } | ExecutorDecision::NotImplemented => {
+                eprintln!(
+                    "[worker] NOT ALLOWED ({decision:?}): aborting remaining \
+                     plan nodes — exiting 1"
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Empty multi-node stream fails closed (DESIGN §8.2) — not exit 0.
+    if submitted == 0 {
+        anyhow::bail!(
+            "empty plan stream: plan_next returned no nodes before any \
+             SubmitPlanNode — fail closed (DESIGN §8.2)"
         );
-        std::process::exit(1);
     }
 
     Ok(())

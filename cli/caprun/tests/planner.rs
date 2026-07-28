@@ -27,6 +27,7 @@ use runtime_core::{
     intent::CaprunIntent,
     plan_node::{PlanArg, PlanNode, SinkId, ValueId},
 };
+use std::collections::HashMap;
 
 /// Find a plan arg by name (test helper).
 fn arg<'a>(plan: &'a PlanNode, name: &str) -> &'a PlanArg {
@@ -698,4 +699,333 @@ fn response_to_plan_node_err_for_unoffered_handle() {
 
     let result = planner::response_to_plan_node(&resp, &offered, &known_sinks, &canonical_names);
     assert!(result.is_err(), "unoffered handle must be rejected");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 48 / STREAM-01/02 — plan_next one-shot adapter + multi-node bag
+// placement. Pure unit tests (macOS-safe); no CaprunIntent coding variant.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Seed a handle bag with the documented worker key convention for the
+/// default one-shot `plan_next` adapter.
+fn seed_bag(
+    intent: ValueId,
+    derived_recipient: Option<ValueId>,
+    body: Option<ValueId>,
+    trusted_subject: ValueId,
+    trusted_body: ValueId,
+) -> HashMap<String, ValueId> {
+    let mut bag = HashMap::new();
+    bag.insert("intent".into(), intent);
+    if let Some(d) = derived_recipient {
+        bag.insert("derived_recipient".into(), d);
+    }
+    if let Some(b) = body {
+        bag.insert("body".into(), b);
+    }
+    bag.insert("trusted_subject".into(), trusted_subject);
+    bag.insert("trusted_body".into(), trusted_body);
+    bag
+}
+
+/// Default `plan_next` at step 0 returns Some(node) matching
+/// `DeterministicPlanner::plan` for a SendEmailSummary intent.
+#[test]
+fn plan_next_step0_matches_plan_for_email() {
+    let intent_vid = ValueId::new();
+    let trusted_subject = ValueId::new();
+    let trusted_body = ValueId::new();
+    let intent = email_intent("boss@company.com");
+    let planner_impl = planner::DeterministicPlanner;
+
+    let via_plan = planner::Planner::plan(
+        &planner_impl,
+        &intent,
+        intent_vid.clone(),
+        None,
+        None,
+        trusted_subject.clone(),
+        trusted_body.clone(),
+        None,
+    );
+
+    let ctx = planner::PlanStreamContext {
+        intent: intent.clone(),
+        step_index: 0,
+        handles: seed_bag(
+            intent_vid,
+            None,
+            None,
+            trusted_subject,
+            trusted_body,
+        ),
+        task_instruction: None,
+    };
+    let via_next = planner::Planner::plan_next(&planner_impl, &ctx)
+        .expect("step 0 plan_next must return Some for one-shot adapter");
+
+    assert_eq!(
+        via_next, via_plan,
+        "default plan_next step 0 must match plan() for email intents"
+    );
+}
+
+/// Default `plan_next` at step 0 returns Some(node) matching
+/// `DeterministicPlanner::plan` for a CreateFileFromReport intent.
+#[test]
+fn plan_next_step0_matches_plan_for_file() {
+    let intent_vid = ValueId::new();
+    let intent = CaprunIntent::CreateFileFromReport {
+        path: "report.txt".into(),
+    };
+    let planner_impl = planner::DeterministicPlanner;
+
+    let via_plan = planner::Planner::plan(
+        &planner_impl,
+        &intent,
+        intent_vid.clone(),
+        None,
+        None,
+        intent_vid.clone(),
+        intent_vid.clone(),
+        None,
+    );
+
+    let ctx = planner::PlanStreamContext {
+        intent: intent.clone(),
+        step_index: 0,
+        handles: seed_bag(
+            intent_vid.clone(),
+            None,
+            None,
+            intent_vid.clone(),
+            intent_vid,
+        ),
+        task_instruction: None,
+    };
+    let via_next = planner::Planner::plan_next(&planner_impl, &ctx)
+        .expect("step 0 plan_next must return Some for one-shot adapter");
+
+    assert_eq!(
+        via_next, via_plan,
+        "default plan_next step 0 must match plan() for file intents"
+    );
+}
+
+/// Default `plan_next` at step_index ≥ 1 returns None (one-shot adapter).
+#[test]
+fn plan_next_step_ge1_returns_none_one_shot() {
+    let intent_vid = ValueId::new();
+    let intent = email_intent("boss@company.com");
+    let planner_impl = planner::DeterministicPlanner;
+
+    for step in [1usize, 2, 99] {
+        let ctx = planner::PlanStreamContext {
+            intent: intent.clone(),
+            step_index: step,
+            handles: seed_bag(
+                intent_vid.clone(),
+                None,
+                None,
+                intent_vid.clone(),
+                intent_vid.clone(),
+            ),
+            task_instruction: None,
+        };
+        assert!(
+            planner::Planner::plan_next(&planner_impl, &ctx).is_none(),
+            "default plan_next at step {step} must return None (one-shot)"
+        );
+    }
+}
+
+/// Handle bag / PlanStreamContext admits only opaque ValueIds — no literal
+/// payload field. Compile-time proof via type of `handles: HashMap<String, ValueId>`.
+#[test]
+fn plan_stream_context_handles_are_opaque_value_ids_only() {
+    let mut handles: HashMap<String, ValueId> = HashMap::new();
+    let vid = ValueId::new();
+    handles.insert("intent".into(), vid.clone());
+    handles.insert("out_0".into(), ValueId::new());
+
+    // Values are ValueId only — insert path stores ids, never String payloads.
+    for (_k, v) in &handles {
+        let _: &ValueId = v;
+    }
+    assert_eq!(handles.get("intent"), Some(&vid));
+    assert!(handles.contains_key("out_0"));
+}
+
+/// After Allowed with Some(output_value_id), bag stores under `out_{step}`
+/// regardless of sink id (F-01 — no process.exec-only filter). Pure bag
+/// insert path mirror of the worker's Allowed branch.
+#[test]
+fn bag_stores_any_some_output_value_id_under_out_step() {
+    let mut bag: HashMap<String, ValueId> = HashMap::new();
+    bag.insert("intent".into(), ValueId::new());
+
+    // Simulate Allowed + Some for three different sink families (F-01).
+    for (step, _sink) in [
+        (0usize, "process.exec"),
+        (1usize, "git.commit"),
+        (2usize, "http.request"),
+        (3usize, "file.create"), // None would leave bag unchanged; Some still stores
+    ] {
+        let output = ValueId::new();
+        // Worker insert path: if Some(output_value_id) → bag.insert(out_{step})
+        // with NO sink-id filter.
+        let output_value_id: Option<ValueId> = Some(output.clone());
+        if let Some(id) = output_value_id {
+            bag.insert(format!("out_{step}"), id);
+        }
+        assert_eq!(
+            bag.get(&format!("out_{step}")),
+            Some(&output),
+            "bag must store output under out_{step} for any sink (F-01)"
+        );
+    }
+
+    // Allowed with None leaves bag unchanged (no new out_ key).
+    let before = bag.len();
+    let output_value_id: Option<ValueId> = None;
+    if let Some(id) = output_value_id {
+        bag.insert("out_99".into(), id);
+    }
+    assert_eq!(bag.len(), before, "None output_value_id must not mutate bag");
+    assert!(!bag.contains_key("out_99"));
+}
+
+/// Test-only multi-node planner: step 0 → node_a; step 1 → node_b placing a
+/// bag handle into a PlanArg; step ≥ 2 → None. Proves STREAM-02 placement
+/// without a CaprunIntent coding variant (Phase 49).
+struct MultiNodeTestPlanner;
+
+impl planner::Planner for MultiNodeTestPlanner {
+    fn plan(
+        &self,
+        _intent: &CaprunIntent,
+        _intent_value_id: ValueId,
+        _derived_recipient: Option<ValueId>,
+        _body: Option<ValueId>,
+        _trusted_subject_handle: ValueId,
+        _trusted_body_handle: ValueId,
+        _task_instruction: Option<String>,
+    ) -> PlanNode {
+        // Multi-node surface is plan_next; plan() is unused for this fixture.
+        unreachable!("MultiNodeTestPlanner uses plan_next only")
+    }
+
+    fn plan_next(&self, ctx: &planner::PlanStreamContext) -> Option<PlanNode> {
+        match ctx.step_index {
+            0 => {
+                let path = ctx.handles.get("intent")?.clone();
+                Some(PlanNode {
+                    sink: SinkId("file.create".into()),
+                    args: vec![
+                        PlanArg {
+                            name: "path".into(),
+                            value_id: path.clone(),
+                        },
+                        PlanArg {
+                            name: "contents".into(),
+                            value_id: path,
+                        },
+                    ],
+                })
+            }
+            1 => {
+                // Place a bag-offered handle into a PlanArg (STREAM-02).
+                let bag_handle = ctx
+                    .handles
+                    .get("out_0")
+                    .or_else(|| ctx.handles.get("seed_handle"))
+                    .cloned()?;
+                let contents = ctx.handles.get("intent")?.clone();
+                Some(PlanNode {
+                    sink: SinkId("file.create".into()),
+                    args: vec![
+                        PlanArg {
+                            name: "path".into(),
+                            value_id: bag_handle,
+                        },
+                        PlanArg {
+                            name: "contents".into(),
+                            value_id: contents,
+                        },
+                    ],
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
+#[test]
+fn multi_node_test_planner_places_bag_handle_in_second_node() {
+    let intent_vid = ValueId::new();
+    let seed_handle = ValueId::new();
+    let intent = CaprunIntent::CreateFileFromReport {
+        path: "step0.txt".into(),
+    };
+    let mut handles = seed_bag(
+        intent_vid.clone(),
+        None,
+        None,
+        intent_vid.clone(),
+        intent_vid.clone(),
+    );
+    handles.insert("seed_handle".into(), seed_handle.clone());
+    // Simulate prior Allowed mint stored under out_0 (any-sink F-01 path).
+    let out0 = ValueId::new();
+    handles.insert("out_0".into(), out0.clone());
+
+    let planner_impl = MultiNodeTestPlanner;
+
+    let node_a = planner::Planner::plan_next(
+        &planner_impl,
+        &planner::PlanStreamContext {
+            intent: intent.clone(),
+            step_index: 0,
+            handles: handles.clone(),
+            task_instruction: None,
+        },
+    )
+    .expect("step 0 must emit node_a");
+    assert_eq!(node_a.sink, SinkId("file.create".into()));
+    assert_eq!(arg(&node_a, "path").value_id, intent_vid);
+
+    let node_b = planner::Planner::plan_next(
+        &planner_impl,
+        &planner::PlanStreamContext {
+            intent: intent.clone(),
+            step_index: 1,
+            handles: handles.clone(),
+            task_instruction: None,
+        },
+    )
+    .expect("step 1 must emit node_b");
+    assert_eq!(
+        arg(&node_b, "path").value_id,
+        out0,
+        "step 1 PlanArg must place the bag-offered out_0 handle (STREAM-02)"
+    );
+    assert_ne!(
+        arg(&node_b, "path").value_id,
+        intent_vid,
+        "step 1 must not ignore the bag and fall back to intent"
+    );
+
+    assert!(
+        planner::Planner::plan_next(
+            &planner_impl,
+            &planner::PlanStreamContext {
+                intent,
+                step_index: 2,
+                handles,
+                task_instruction: None,
+            },
+        )
+        .is_none(),
+        "step ≥ 2 must return None"
+    );
 }
