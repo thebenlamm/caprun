@@ -42,14 +42,24 @@
 ///        d. On `Allowed`: if `output_value_id` is `Some`, insert under
 ///           `out_{step}` for **any** sink (F-01 — process.exec / git.commit
 ///           / http.request mints, not process.exec-only); step += 1; continue
-///        e. On `BlockedPendingConfirmation`: stop fail-closed (exit 1);
-///           **do not** re-submit the blocked node; **do not** ProvideIntent
-///           again (substrate-ready for Phase 50 hold — no product hold here)
-///        f. On `Denied` / `NotImplemented`: abort remaining (exit 1)
-///      Empty stream (`submitted == 0`) fails closed (DESIGN §8.2). ProvideIntent
-///      runs exactly once before any RequestFd — the loop never re-sends it.
-///  13. Exit 0 only when every submitted node was `Allowed` and at least one
-///      node was submitted.
+///        e. On `BlockedPendingConfirmation` (CONFIRM-01 / CLI-02):
+///           - `SafeCodingWorkflow`: emit `caprun-stream: BLOCKED …`, stay
+///             connected, read parent `PROCEED`/`ABORT` on stdin. PROCEED
+///             advances `step_index` **without** re-submitting the blocked
+///             node and **without** ProvideIntent remint. ABORT → exit 2.
+///           - email/file (single-node): emit BLOCKED, exit 3 (blocked-
+///             incomplete — not deny). No multi-node hold wait.
+///           Silent continue-past-Block is impossible: Block never returns
+///           success without an explicit PROCEED token.
+///        f. On `Denied` / `NotImplemented`: emit `caprun-stream: DENIED
+///           code=…`, abort remaining, exit 2 (CLI-02 denied/aborted bucket;
+///           `policy_deny` distinguished via `code=` field, not a separate exit).
+///      Empty stream (`submitted == 0`) fails closed (DESIGN §8.2) — no
+///      STREAM_DONE, infra/non-zero. ProvideIntent runs exactly once before
+///      any RequestFd — the loop never re-sends it. No reconnect-remint,
+///      no dual-Session stitch (DESIGN §3.3).
+///  13. On natural stream end with `submitted ≥ 1`: emit
+///      `caprun-stream: STREAM_DONE submitted=N` and return Ok (exit 0).
 ///
 /// # Cross-Platform Notes
 ///
@@ -70,9 +80,11 @@
 /// raw hostile sentence is discarded worker-side (lossy guarantee, T-15-15).
 
 mod planner;
+mod stream_hold;
 
 use anyhow::Context;
 use crate::planner::{PlanStreamContext, Planner};
+use crate::stream_hold::{format_line, parse_hold_resume, HoldResume, StreamLine};
 use brokerd::proto::{BrokerRequest, BrokerResponse, TransformKind, WorkerClaim};
 use brokerd::quarantine::{concat_doc_fragments, extract_doc_fragments, extract_relative_path_claims};
 use runtime_core::intent::CaprunIntent;
@@ -392,6 +404,9 @@ async fn main() -> anyhow::Result<()> {
             break;
         };
 
+        // Capture sink id before move into SubmitPlanNode (machine lines need it).
+        let sink_id = plan_node.sink.0.clone();
+
         // Submit for I2 evaluation (no session_id field — HARD-03).
         send_framed(&std_stream, &BrokerRequest::SubmitPlanNode { plan_node })?;
 
@@ -411,9 +426,9 @@ async fn main() -> anyhow::Result<()> {
         };
         submitted += 1;
 
-        // Decision branch table (DESIGN §6; Phase 48 substrate — not Phase 50
-        // product hold). Bug found and fixed during Plan 21-04: originally
-        // only BlockedPendingConfirmation exited non-zero, silently treating
+        // Decision branch table (DESIGN §6; Phase 50 CONFIRM-01 hold + CLI-02).
+        // Bug found and fixed during Plan 21-04: originally only
+        // BlockedPendingConfirmation exited non-zero, silently treating
         // Denied/NotImplemented as success; LlmPlanner can produce Denied.
         match decision {
             ExecutorDecision::Allowed => {
@@ -421,29 +436,117 @@ async fn main() -> anyhow::Result<()> {
                 if let Some(id) = output_value_id {
                     bag.insert(format!("out_{step_index}"), id);
                 }
+                // Optional progress line for parent orchestration (CLI-02).
+                println!(
+                    "{}",
+                    format_line(&StreamLine::NodeAllowed {
+                        step: step_index,
+                        sink: sink_id,
+                    })
+                );
                 step_index += 1;
                 continue;
             }
-            ExecutorDecision::BlockedPendingConfirmation { .. } => {
-                // Substrate stop: fail-closed, no re-submit, no ProvideIntent
-                // remint. Phase 50 product hold stays connected + confirms.
-                eprintln!(
-                    "[worker] BLOCKED pending confirmation ({decision:?}): \
-                     stopping stream without re-submit — exiting 1"
+            ExecutorDecision::BlockedPendingConfirmation { anchors } => {
+                // Fail-closed without anchors (always-confirm push always
+                // supplies them; empty is an invariant violation).
+                let first = anchors.first().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "BlockedPendingConfirmation without anchors — fail closed"
+                    )
+                })?;
+                let effect_id = first.anchor.effect_id.to_string();
+                let block_sink = first.anchor.sink.0.clone();
+
+                // Machine-readable hold signal (parent protocol).
+                println!(
+                    "{}",
+                    format_line(&StreamLine::Blocked {
+                        effect_id: effect_id.clone(),
+                        sink: block_sink.clone(),
+                    })
                 );
-                std::process::exit(1);
+
+                // Coding multi-node: stay-connected Block-and-Hold (CONFIRM-01).
+                // Email/file single-node: stop-on-Block mapped to exit 3.
+                if matches!(intent, CaprunIntent::SafeCodingWorkflow { .. }) {
+                    eprintln!(
+                        "[worker] BLOCKED pending confirmation effect_id={effect_id} \
+                         sink={block_sink}: holding stream (no re-submit, no remint); \
+                         waiting for parent PROCEED/ABORT"
+                    );
+                    let mut line = String::new();
+                    std::io::stdin()
+                        .read_line(&mut line)
+                        .context("read hold resume token from parent stdin")?;
+                    match parse_hold_resume(&line) {
+                        Ok(HoldResume::Proceed) => {
+                            // Advance past the blocked step WITHOUT re-issuing
+                            // SubmitPlanNode for it (confirm already ran the
+                            // sink from the durable snapshot). MUST NOT
+                            // ProvideIntent again.
+                            step_index += 1;
+                            continue;
+                        }
+                        Ok(HoldResume::Abort) => {
+                            eprintln!(
+                                "[worker] hold ABORT for effect_id={effect_id} \
+                                 sink={block_sink} — exiting 2 (denied/aborted)"
+                            );
+                            std::process::exit(2);
+                        }
+                        Err(e) => {
+                            // Unknown token: fail-closed infra — never Proceed.
+                            eprintln!(
+                                "[worker] unknown hold resume token — fail closed: {e}"
+                            );
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    eprintln!(
+                        "[worker] BLOCKED pending confirmation effect_id={effect_id} \
+                         sink={block_sink}: single-node stop (no multi-node hold) \
+                         — exiting 3 (blocked/incomplete)"
+                    );
+                    std::process::exit(3);
+                }
             }
-            ExecutorDecision::Denied { .. } | ExecutorDecision::NotImplemented => {
-                eprintln!(
-                    "[worker] NOT ALLOWED ({decision:?}): aborting remaining \
-                     plan nodes — exiting 1"
+            ExecutorDecision::Denied { reason } => {
+                let code = reason.code().to_string();
+                println!(
+                    "{}",
+                    format_line(&StreamLine::Denied {
+                        code: code.clone(),
+                        sink: sink_id,
+                    })
                 );
-                std::process::exit(1);
+                eprintln!(
+                    "[worker] DENIED code={code} ({reason}): aborting remaining \
+                     plan nodes — exiting 2"
+                );
+                std::process::exit(2);
+            }
+            ExecutorDecision::NotImplemented => {
+                let code = "not_implemented";
+                println!(
+                    "{}",
+                    format_line(&StreamLine::Denied {
+                        code: code.into(),
+                        sink: sink_id,
+                    })
+                );
+                eprintln!(
+                    "[worker] NOT IMPLEMENTED: aborting remaining plan nodes \
+                     — exiting 2"
+                );
+                std::process::exit(2);
             }
         }
     }
 
-    // Empty multi-node stream fails closed (DESIGN §8.2) — not exit 0.
+    // Empty multi-node stream fails closed (DESIGN §8.2) — not exit 0, no
+    // STREAM_DONE (CLI-02 infra bucket via anyhow → non-zero).
     if submitted == 0 {
         anyhow::bail!(
             "empty plan stream: plan_next returned no nodes before any \
@@ -451,6 +554,12 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Full Allowed stream (or Allowed after hold-release with remaining
+    // Allowed): machine-readable success terminal.
+    println!(
+        "{}",
+        format_line(&StreamLine::StreamDone { submitted })
+    );
     Ok(())
 }
 

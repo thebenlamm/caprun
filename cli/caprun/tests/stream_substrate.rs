@@ -1,18 +1,18 @@
-//! stream_substrate — Phase 48 STREAM-01/02 expansion proofs
+//! stream_substrate — Phase 48 STREAM-01/02 + Phase 50 HoldContinue/HoldAbort
 //!
-//! **Substrate proofs only** (worker sequential loop + opaque handle bag +
-//! fail-closed mid-stream branches). This is **not** LIVE-07/08 CLI multi-step
-//! DONE, **not** CaprunIntent coding recipe (Phase 49), and **not** Block-and-
-//! Hold product UX (Phase 50). Hybrid in-crate multi-node is intentional for
-//! the bag/taint spine.
+//! **Substrate proofs** (worker sequential loop + opaque handle bag +
+//! fail-closed mid-stream branches + Phase 50 Block-and-Hold branch table).
+//! This is **not** LIVE-07/08 CLI multi-step DONE. Hybrid in-crate multi-node
+//! is intentional for the bag/taint spine; hold proofs model PROCEED/ABORT
+//! without a live broker.
 //!
 //! # Host-safe legs (always run)
 //!
 //! Pure planner/bag/decision-branch harnesses that mirror the production
 //! branch table in `cli/caprun/src/worker.rs` (Allowed → bag any Some +
-//! continue; BlockedPendingConfirmation → stop, no re-submit; Denied /
-//! NotImplemented → abort remaining). Submit counts prove abort/stop without
-//! a live broker.
+//! continue; BlockedPendingConfirmation → stop or hold; Denied /
+//! NotImplemented → abort remaining). Submit counts prove abort/stop/hold
+//! without a live broker.
 //!
 //! # Linux taint-via-bag leg (STREAM-02)
 //!
@@ -46,17 +46,21 @@ use std::collections::HashMap;
 //
 // Keep these arms aligned with `cli/caprun/src/worker.rs` decision match:
 //   Allowed → if Some(output_value_id) insert out_{step} (any sink, F-01); step++
-//   BlockedPendingConfirmation → stop, no re-submit
+//   BlockedPendingConfirmation → stop (email/file) OR hold (coding)
 //   Denied | NotImplemented → abort remaining
+//
+// Hold path (Phase 50 CONFIRM-01): on Block, optional hold action Proceed
+// advances step_index without counting a second submit of the blocked node;
+// Abort returns AbortDenied without further submits.
 
-/// Terminal outcome of a driven stream (substrate, not product hold).
+/// Terminal outcome of a driven stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StreamTerminal {
     /// At least one Allowed submit, then plan_next returned None.
     Success,
-    /// BlockedPendingConfirmation — stop without re-submit (F-02).
+    /// BlockedPendingConfirmation — stop without re-submit (F-02; non-hold).
     StopBlocked,
-    /// Denied / NotImplemented — abort remaining (DESIGN §6.2).
+    /// Denied / NotImplemented / hold ABORT — abort remaining (DESIGN §6.2).
     AbortDenied,
     /// plan_next returned None before any SubmitPlanNode (DESIGN §8.2).
     EmptyFailClosed,
@@ -66,16 +70,41 @@ enum StreamTerminal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StreamBranch {
     Continue,
+    /// Non-hold stop (email/file single-node Block → exit 3).
     StopBlocked,
     AbortDenied,
+    /// Coding hold: Block signal; caller must supply Proceed/Abort.
+    Hold,
+}
+
+/// Hold resume outcome supplied by the parent (mirrors PROCEED/ABORT tokens).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HoldAction {
+    /// Advance step_index without re-submit (confirm already ran the sink).
+    Proceed,
+    /// Abort remaining — terminal AbortDenied, exit 2.
+    Abort,
 }
 
 /// Apply one decision to the bag — exact F-01 / branch semantics of worker.rs.
+///
+/// On Block this returns `Hold` when `hold_enabled` (coding path) so the
+/// driver can apply Proceed/Abort; otherwise `StopBlocked` (email/file).
 fn apply_stream_decision(
     bag: &mut HashMap<String, ValueId>,
     step_index: usize,
     decision: &ExecutorDecision,
     output_value_id: Option<ValueId>,
+) -> StreamBranch {
+    apply_stream_decision_ex(bag, step_index, decision, output_value_id, false)
+}
+
+fn apply_stream_decision_ex(
+    bag: &mut HashMap<String, ValueId>,
+    step_index: usize,
+    decision: &ExecutorDecision,
+    output_value_id: Option<ValueId>,
+    hold_enabled: bool,
 ) -> StreamBranch {
     match decision {
         ExecutorDecision::Allowed => {
@@ -85,14 +114,20 @@ fn apply_stream_decision(
             }
             StreamBranch::Continue
         }
-        ExecutorDecision::BlockedPendingConfirmation { .. } => StreamBranch::StopBlocked,
+        ExecutorDecision::BlockedPendingConfirmation { .. } => {
+            if hold_enabled {
+                StreamBranch::Hold
+            } else {
+                StreamBranch::StopBlocked
+            }
+        }
         ExecutorDecision::Denied { .. } | ExecutorDecision::NotImplemented => {
             StreamBranch::AbortDenied
         }
     }
 }
 
-/// Drive sequential plan_next → submit → decision until terminal.
+/// Drive sequential plan_next → submit → decision until terminal (non-hold).
 ///
 /// `decisions` is indexed by submit ordinal (0-based). Each entry is
 /// `(ExecutorDecision, Option<output_value_id>)`. Returns
@@ -100,8 +135,31 @@ fn apply_stream_decision(
 fn drive_stream<P: planner::Planner>(
     planner_impl: &P,
     intent: CaprunIntent,
+    bag: HashMap<String, ValueId>,
+    decisions: &[(ExecutorDecision, Option<ValueId>)],
+) -> (
+    usize,
+    Vec<PlanNode>,
+    HashMap<String, ValueId>,
+    StreamTerminal,
+) {
+    drive_stream_with_hold(planner_impl, intent, bag, decisions, &[])
+}
+
+/// Drive sequential plan_next → submit → decision with optional hold actions.
+///
+/// When a Block decision is encountered and a next `HoldAction` is available,
+/// Proceed advances `step_index` without re-submitting the blocked node;
+/// Abort returns AbortDenied without further submits. If no hold action
+/// remains, Block maps to StopBlocked (non-hold substrate path).
+///
+/// `hold_actions` is consumed in order for each Block encountered.
+fn drive_stream_with_hold<P: planner::Planner>(
+    planner_impl: &P,
+    intent: CaprunIntent,
     mut bag: HashMap<String, ValueId>,
     decisions: &[(ExecutorDecision, Option<ValueId>)],
+    hold_actions: &[HoldAction],
 ) -> (
     usize,
     Vec<PlanNode>,
@@ -111,6 +169,11 @@ fn drive_stream<P: planner::Planner>(
     let mut step_index: usize = 0;
     let mut submitted: usize = 0;
     let mut nodes: Vec<PlanNode> = Vec::new();
+    let mut hold_idx: usize = 0;
+    // Hold is enabled when the caller supplied any hold actions (coding path
+    // simulation) OR when intent is SafeCodingWorkflow — mirrors worker gate.
+    let hold_enabled = !hold_actions.is_empty()
+        || matches!(intent, CaprunIntent::SafeCodingWorkflow { .. });
 
     loop {
         let ctx = planner::PlanStreamContext {
@@ -132,7 +195,13 @@ fn drive_stream<P: planner::Planner>(
             .cloned()
             .unwrap_or((ExecutorDecision::NotImplemented, None));
 
-        match apply_stream_decision(&mut bag, step_index, &decision, output_value_id) {
+        match apply_stream_decision_ex(
+            &mut bag,
+            step_index,
+            &decision,
+            output_value_id,
+            hold_enabled,
+        ) {
             StreamBranch::Continue => {
                 step_index += 1;
                 continue;
@@ -142,6 +211,25 @@ fn drive_stream<P: planner::Planner>(
             }
             StreamBranch::AbortDenied => {
                 return (submitted, nodes, bag, StreamTerminal::AbortDenied);
+            }
+            StreamBranch::Hold => {
+                // No re-submit of the blocked node. Apply parent hold action.
+                let action = hold_actions.get(hold_idx).copied();
+                hold_idx += 1;
+                match action {
+                    Some(HoldAction::Proceed) => {
+                        // Confirm already executed sink from durable snapshot.
+                        step_index += 1;
+                        continue;
+                    }
+                    Some(HoldAction::Abort) => {
+                        return (submitted, nodes, bag, StreamTerminal::AbortDenied);
+                    }
+                    None => {
+                        // Hold enabled but no action supplied → incomplete hold.
+                        return (submitted, nodes, bag, StreamTerminal::StopBlocked);
+                    }
+                }
             }
         }
     }
@@ -526,6 +614,172 @@ fn stream_substrate_host_guard_compiles() {
             StreamBranch::Continue
         )
     );
+}
+
+// ── Phase 50 HoldContinue / HoldAbort (CONFIRM-01) ───────────────────────────
+
+/// Five-node coding recipe mirror: file.write → process.exec → git.commit →
+/// git.push → github.pr (same sink order as `plan_coding_next`).
+struct CodingFiveNodePlanner;
+
+impl planner::Planner for CodingFiveNodePlanner {
+    fn plan(
+        &self,
+        _intent: &CaprunIntent,
+        _intent_value_id: ValueId,
+        _derived_recipient: Option<ValueId>,
+        _body: Option<ValueId>,
+        _trusted_subject_handle: ValueId,
+        _trusted_body_handle: ValueId,
+        _task_instruction: Option<String>,
+    ) -> PlanNode {
+        unreachable!("CodingFiveNodePlanner uses plan_next only")
+    }
+
+    fn plan_next(&self, ctx: &planner::PlanStreamContext) -> Option<PlanNode> {
+        let sink = match ctx.step_index {
+            0 => "file.write",
+            1 => "process.exec",
+            2 => "git.commit",
+            3 => "git.push",
+            4 => "github.pr",
+            _ => return None,
+        };
+        let handle = ctx.handles.get("intent")?.clone();
+        Some(PlanNode {
+            sink: SinkId(sink.into()),
+            args: vec![PlanArg {
+                name: "arg".into(),
+                value_id: handle,
+            }],
+        })
+    }
+}
+
+fn coding_intent() -> CaprunIntent {
+    CaprunIntent::SafeCodingWorkflow {
+        path: "src/main.rs".into(),
+        contents: "fn main() {}".into(),
+        test_command: "/bin/true".into(),
+        test_args_json: "[]".into(),
+        commit_message: "wip".into(),
+        remote: "origin".into(),
+        refspec: "HEAD:refs/heads/feat".into(),
+        owner: "acme".into(),
+        repo: "demo".into(),
+        base: "main".into(),
+        head: "feat".into(),
+        pr_title: "feat".into(),
+        pr_body: "body".into(),
+    }
+}
+
+/// HoldContinue: Allowed×3, Block(push), Proceed, Allowed(pr) — submit count
+/// grows only for subsequent sinks; git.push appears exactly once (no re-submit).
+#[test]
+fn hold_continue_no_resubmit_blocked_sink() {
+    let planner_impl = CodingFiveNodePlanner;
+    let decisions = [
+        (ExecutorDecision::Allowed, None), // file.write
+        (ExecutorDecision::Allowed, None), // process.exec
+        (ExecutorDecision::Allowed, None), // git.commit
+        (blocked_pending(), None),         // git.push — always-confirm Block
+        (ExecutorDecision::Allowed, None), // github.pr after PROCEED
+    ];
+    let hold = [HoldAction::Proceed];
+
+    let (submitted, nodes, _, terminal) = drive_stream_with_hold(
+        &planner_impl,
+        coding_intent(),
+        seed_bag(ValueId::new()),
+        &decisions,
+        &hold,
+    );
+
+    assert_eq!(
+        terminal,
+        StreamTerminal::Success,
+        "PROCEED after push Block must reach STREAM success with remaining Allowed"
+    );
+    assert_eq!(
+        submitted, 5,
+        "submit count must be 5 (push once + pr after hold), not 6"
+    );
+    assert_eq!(nodes.len(), 5);
+
+    let sinks: Vec<&str> = nodes.iter().map(|n| n.sink.0.as_str()).collect();
+    assert_eq!(
+        sinks,
+        vec![
+            "file.write",
+            "process.exec",
+            "git.commit",
+            "git.push",
+            "github.pr",
+        ],
+        "sink order must match coding recipe; no re-submit of blocked node"
+    );
+    let push_count = sinks.iter().filter(|s| **s == "git.push").count();
+    assert_eq!(
+        push_count, 1,
+        "git.push must appear exactly once after PROCEED (no second SubmitPlanNode)"
+    );
+}
+
+/// HoldAbort: after Block, Abort → no further plan_next submits; terminal denied.
+#[test]
+fn hold_abort_stops_without_further_submits() {
+    let planner_impl = CodingFiveNodePlanner;
+    let decisions = [
+        (ExecutorDecision::Allowed, None), // file.write
+        (blocked_pending(), None),         // process.exec Block mid-stream
+        (ExecutorDecision::Allowed, None), // must never be submitted
+        (ExecutorDecision::Allowed, None),
+        (ExecutorDecision::Allowed, None),
+    ];
+    let hold = [HoldAction::Abort];
+
+    let (submitted, nodes, _, terminal) = drive_stream_with_hold(
+        &planner_impl,
+        coding_intent(),
+        seed_bag(ValueId::new()),
+        &decisions,
+        &hold,
+    );
+
+    assert_eq!(terminal, StreamTerminal::AbortDenied);
+    assert_eq!(
+        submitted, 2,
+        "ABORT after Block must not submit any later sinks (submitted stays at blocked node)"
+    );
+    assert_eq!(nodes.len(), 2);
+    assert_eq!(nodes[1].sink.0, "process.exec");
+    // No git.commit / git.push / github.pr after abort.
+    assert!(nodes.iter().all(|n| n.sink.0 != "git.commit"));
+    assert!(nodes.iter().all(|n| n.sink.0 != "github.pr"));
+}
+
+/// Silent continue-past-Block is impossible: Block without hold action stops
+/// (does not return Success).
+#[test]
+fn block_without_proceed_is_not_success() {
+    let planner_impl = CodingFiveNodePlanner;
+    let decisions = [
+        (ExecutorDecision::Allowed, None),
+        (blocked_pending(), None),
+        (ExecutorDecision::Allowed, None),
+    ];
+    // hold_enabled via SafeCodingWorkflow intent, but empty hold_actions → incomplete.
+    let (submitted, _, _, terminal) = drive_stream_with_hold(
+        &planner_impl,
+        coding_intent(),
+        seed_bag(ValueId::new()),
+        &decisions,
+        &[], // no PROCEED
+    );
+    assert_eq!(submitted, 2);
+    assert_ne!(terminal, StreamTerminal::Success);
+    assert_eq!(terminal, StreamTerminal::StopBlocked);
 }
 
 // ── Linux taint-via-bag (STREAM-02) ──────────────────────────────────────────
