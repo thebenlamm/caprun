@@ -275,7 +275,16 @@ Plans:
   4. When a mid-stream node returns `BlockedPendingConfirmation` (e.g. always-confirm `git.push`, or I2 Block released by confirm), the multi-node run holds the same Session (Block-and-Hold): worker stays connected or has a designed same-Session resume that does not re-open ProvideIntent, re-bind policy, or mint new trusted values
   5. Human confirm/deny acts on the durable pending row; remaining nodes continue only after Allowed release (or abort on deny); no dual-Session "stitch the chain later" as the product path; no session-wide confirm waiver
 
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 50-01-PLAN.md — Tracer: stream_hold protocol + worker Block-and-Hold PROCEED/ABORT + exit taxonomy + HoldContinue/HoldAbort tests (CLI-02, CONFIRM-01)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 50-02-PLAN.md — Coding argv driver + mid-loop confirm orchestration + grant pointers + exit codes + coding_cli/COVERAGE/validation (CLI-01, CLI-02, CONFIRM-01)
 
 ### Phase 51: Non-hybrid LIVE Proof (v1.10 DONE)
 
