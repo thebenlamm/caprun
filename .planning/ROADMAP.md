@@ -186,7 +186,7 @@ Full detail archived in [`milestones/v1.9-ROADMAP.md`](milestones/v1.9-ROADMAP.m
 - [ ] **Phase 47: Multi-step Plan Stream Design Gate** - DESIGN doc + fresh adversarial code-trace locks stream shape, handle bag, Block-and-Hold, trusted-intent success path, and zero-new-crate hygiene before any multi-step TCB code
 - [ ] **Phase 48: Plan-Stream Substrate** - Worker sequential multi-submit loop + opaque `output_value_id` handle bag on one Session with chain-head continuity
 - [x] **Phase 49: Deterministic Multi-step Coding Planner** - Scripted coding planner emits the edit→test→commit→push→PR node sequence over shipped sinks with trusted-intent args only (completed 2026-07-29)
-- [ ] **Phase 50: CLI Multi-node Driver & Mid-loop Confirm Continuity** - `caprun run` drives the multi-node coding chain with honest stop semantics and same-Session Block-and-Hold confirm
+- [x] **Phase 50: CLI Multi-node Driver & Mid-loop Confirm Continuity** - `caprun run` drives the multi-node coding chain with honest stop semantics and same-Session Block-and-Hold confirm (completed 2026-07-29)
 - [ ] **Phase 51: Non-hybrid LIVE Proof (v1.10 DONE)** - CLI-driven success path + mid-loop I2 Block proven on real Linux with `verify_chain` true (no hybrid DONE claim)
 - [ ] **Phase 52: Minimal Linux Packaging** - Documented design-partner install path co-locating the three sibling binaries + env/credential checklist
 
@@ -275,7 +275,7 @@ Plans:
   4. When a mid-stream node returns `BlockedPendingConfirmation` (e.g. always-confirm `git.push`, or I2 Block released by confirm), the multi-node run holds the same Session (Block-and-Hold): worker stays connected or has a designed same-Session resume that does not re-open ProvideIntent, re-bind policy, or mint new trusted values
   5. Human confirm/deny acts on the durable pending row; remaining nodes continue only after Allowed release (or abort on deny); no dual-Session "stitch the chain later" as the product path; no session-wide confirm waiver
 
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 **Wave 1**
@@ -368,6 +368,6 @@ Plans:
 | 47. Multi-step Plan Stream Design Gate | v1.10 | 1/2 | In Progress|  |
 | 48. Plan-Stream Substrate | v1.10 | 2/2 | In Progress|  |
 | 49. Deterministic Multi-step Coding Planner | v1.10 | 2/2 | Complete    | 2026-07-29 |
-| 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 2/2 | In Progress|  |
+| 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 2/2 | Complete   | 2026-07-29 |
 | 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 0/? | Not started | - |
 | 52. Minimal Linux Packaging | v1.10 | 0/? | Not started | - |
