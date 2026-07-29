@@ -254,7 +254,12 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 49-01-PLAN.md — Tracer: SafeCodingWorkflow + ProvideIntent multi-mint + bag seed + plan_next 5-node sequence + core unit tests (CODE-01/02)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 49-02-PLAN.md — Expansion: LIVE-08 expressibility, anti-launder, RequestFd hygiene, COVERAGE + validation Wave 0
 
 ### Phase 50: CLI Multi-node Driver & Mid-loop Confirm Continuity
