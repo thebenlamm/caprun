@@ -657,24 +657,25 @@ const LIVE_07_NOT: &str = "hybrid in-crate evaluate_plan_node_and_record_for_tes
 
 **If wrong on A1:** planner must checkpoint with user before coding proof-planner selection.
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> Locked at plan-time under `/gsd-plan-phase 51 --auto` (no CONTEXT.md; RESEARCH discretion recommendations accepted as planning defaults). Plans 51-01/51-02 bake these in.
 
 1. **Does LIVE-08 require any product code change?**
    - What we know: worker cannot select CodingI2ProofPlanner today; env allowlist strips parent env.
-   - What's unclear: whether Ben prefers env-gated planner vs accepting hybrid LIVE-08 with blunt framing.
-   - Recommendation: env-gated default-off (A1); document as non-operator feature.
+   - **RESOLVED (A1):** Yes — promote env-gated default-off product delta: `CAPRUN_CODING_I2_PROOF=1` selects `CodingI2ProofPlanner` (main allowlist forward + worker select). Document as non-operator proof feature. Hybrid multi-leg is **not** the LIVE-08 DONE claim.
 
 2. **How much provenance can `caprun audit` surface for LIVE-08 anchors?**
    - What we know: sink_blocked + decision anchors exist; full ValueStore is broker-internal.
-   - Recommendation: assert strongest DAG-visible fields; pair with process_exited event presence in same Session; cite mint_from_exec production path.
+   - **RESOLVED:** Assert strongest DAG-visible fields + `process_exited` event presence in the same Session before Block; cite production `mint_from_exec` path. Do not require full ValueStore dump in audit CLI.
 
 3. **Should LIVE-07 assert mock receipt ledgers (push/PR) like v1.9?**
    - What we know: mock server records receipts; v1.9 sometimes asserts via broker events only.
-   - Recommendation: prefer durable audit terminals (`git_push_succeeded`, `github_pr_succeeded`); mock receipts optional strengthening.
+   - **RESOLVED:** Prefer durable audit terminals (`git_push_succeeded`, `github_pr_succeeded`); mock receipts optional strengthening only — not required for LIVE-07 Complete.
 
 4. **Docker/Colima availability on this research host**
    - What we know: docker/colima **unavailable** on the research host at research time.
-   - Recommendation: plans implement tests + host guards on any host; LIVE green is compose-verify on a Docker-capable machine (design-partner / CI). Do not claim LIVE-07 green from host-only runs.
+   - **RESOLVED:** Implement tests + host guards on any host; LIVE Complete only after `scripts/compose-verify.sh` green on a Docker-capable machine. Host-only green ≠ LIVE-07/08 Complete. If compose `rust:1` lacks `git`, install in the COMPOSE_VERIFY_CMD recipe (Wave 0).
 
 ## Environment Availability
 
@@ -734,7 +735,7 @@ const LIVE_07_NOT: &str = "hybrid in-crate evaluate_plan_node_and_record_for_tes
 
 - [ ] `cli/caprun/tests/live_acceptance_v1_10_cli.rs` — LIVE-07 SUCCESS + LIVE-08 I2 + framing + host guard
 - [ ] Shared helpers: F1 layout, git repo fixture, intent/policy fixtures, external confirm/grant sidecar
-- [ ] Product delta (if A1 accepted): `CodingI2ProofPlanner` in `planner.rs` + worker selection + main env forward
+- [ ] Product delta (A1 RESOLVED): `CodingI2ProofPlanner` in `planner.rs` + worker selection + main env forward
 - [ ] `51-VALIDATION.md` / COVERAGE honesty: LIVE claim only after compose-verify green
 - [ ] Confirm `git` available inside compose-verify rust:1 container (install step if missing)
 - [ ] Framework install: none — cargo test already present
@@ -849,7 +850,7 @@ Prefer 2 plans if Docker is available to the executor.
 - Standard stack: **HIGH** — zero new packages; all in-tree, verified at HEAD  
 - Architecture: **HIGH** — product path + hybrid gap + proof-planner gap verified in code  
 - Pitfalls: **HIGH** — drawn from v1.9 LIVE, Phase 50 research, and code allowlist/env constraints  
-- LIVE-08 product delta: **MEDIUM** until A1 user-confirmed (env-gated planner vs hybrid-only)
+- LIVE-08 product delta: **HIGH** after A1 locked-for-planning (env-gated planner; hybrid not DONE)
 
 **Research date:** 2026-07-29  
 **Valid until:** ~30 days (stable substrate; LIVE composition patterns)
@@ -881,12 +882,13 @@ Prefer 2 plans if Docker is available to the executor.
 | Architecture | HIGH | Code anchors for CLI, hold, proof gap, mocks |
 | Pitfalls | HIGH | Lineage from LIVE-05 hybrid + Phase 50 hold pitfalls |
 
-### Open Questions
+### Open Questions (RESOLVED)
 
-- A1: env-gated proof planner vs hybrid-framed LIVE-08  
-- Audit-visible provenance depth for LIVE-08 anchors  
-- git availability inside compose rust:1 image  
+- **A1 RESOLVED:** env-gated `CAPRUN_CODING_I2_PROOF=1` proof planner (not hybrid-framed LIVE-08 DONE)
+- **Provenance RESOLVED:** strongest DAG-visible fields + `process_exited` + production `mint_from_exec`
+- **Mock receipts RESOLVED:** optional; durable audit terminals sufficient
+- **Docker / git RESOLVED:** host implement + guard anywhere; LIVE Complete only after compose-verify; install `git` in recipe if missing
 
 ### Ready for Planning
 
-Research complete. Planner can create PLAN.md files (recommended 51-01 LIVE-07 harness, 51-02 LIVE-08 + full regression).
+Research complete. Plans created: 51-01 LIVE-07 harness + framing; 51-02 LIVE-08 + full regression.
