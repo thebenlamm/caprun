@@ -185,7 +185,7 @@ Full detail archived in [`milestones/v1.9-ROADMAP.md`](milestones/v1.9-ROADMAP.m
 
 - [ ] **Phase 47: Multi-step Plan Stream Design Gate** - DESIGN doc + fresh adversarial code-trace locks stream shape, handle bag, Block-and-Hold, trusted-intent success path, and zero-new-crate hygiene before any multi-step TCB code
 - [ ] **Phase 48: Plan-Stream Substrate** - Worker sequential multi-submit loop + opaque `output_value_id` handle bag on one Session with chain-head continuity
-- [ ] **Phase 49: Deterministic Multi-step Coding Planner** - Scripted coding planner emits the edit→test→commit→push→PR node sequence over shipped sinks with trusted-intent args only
+- [x] **Phase 49: Deterministic Multi-step Coding Planner** - Scripted coding planner emits the edit→test→commit→push→PR node sequence over shipped sinks with trusted-intent args only (completed 2026-07-29)
 - [ ] **Phase 50: CLI Multi-node Driver & Mid-loop Confirm Continuity** - `caprun run` drives the multi-node coding chain with honest stop semantics and same-Session Block-and-Hold confirm
 - [ ] **Phase 51: Non-hybrid LIVE Proof (v1.10 DONE)** - CLI-driven success path + mid-loop I2 Block proven on real Linux with `verify_chain` true (no hybrid DONE claim)
 - [ ] **Phase 52: Minimal Linux Packaging** - Documented design-partner install path co-locating the three sibling binaries + env/credential checklist
@@ -251,7 +251,7 @@ Plans:
   3. Email/file single-node planners remain green (no regression to existing intents)
   4. The recipe does not launder untrusted observations into trusted args; mid-loop I2 proof routing (tainted handle into a sensitive sink arg) is expressible for LIVE-08 without weakening success-path discipline
 
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 **Wave 1**
@@ -358,7 +358,7 @@ Plans:
 | 46. Composed Live Proof (v1.9 DONE) | v1.9 | 4/4 | Complete    | 2026-07-18 |
 | 47. Multi-step Plan Stream Design Gate | v1.10 | 1/2 | In Progress|  |
 | 48. Plan-Stream Substrate | v1.10 | 2/2 | In Progress|  |
-| 49. Deterministic Multi-step Coding Planner | v1.10 | 2/2 | In Progress|  |
+| 49. Deterministic Multi-step Coding Planner | v1.10 | 2/2 | Complete    | 2026-07-29 |
 | 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 0/? | Not started | - |
 | 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 0/? | Not started | - |
 | 52. Minimal Linux Packaging | v1.10 | 0/? | Not started | - |
