@@ -284,7 +284,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 50-02-PLAN.md — Coding argv driver + mid-loop confirm orchestration + grant pointers + exit codes + coding_cli/COVERAGE/validation (CLI-01, CLI-02, CONFIRM-01)
+- [x] 50-02-PLAN.md — Coding argv driver + mid-loop confirm orchestration + grant pointers + exit codes + coding_cli/COVERAGE/validation (CLI-01, CLI-02, CONFIRM-01)
 
 ### Phase 51: Non-hybrid LIVE Proof (v1.10 DONE)
 
@@ -368,6 +368,6 @@ Plans:
 | 47. Multi-step Plan Stream Design Gate | v1.10 | 1/2 | In Progress|  |
 | 48. Plan-Stream Substrate | v1.10 | 2/2 | In Progress|  |
 | 49. Deterministic Multi-step Coding Planner | v1.10 | 2/2 | Complete    | 2026-07-29 |
-| 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 1/2 | In Progress|  |
+| 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 2/2 | In Progress|  |
 | 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 0/? | Not started | - |
 | 52. Minimal Linux Packaging | v1.10 | 0/? | Not started | - |

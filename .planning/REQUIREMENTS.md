@@ -29,7 +29,7 @@ Requirements for the v1.10 milestone. Each maps to exactly one roadmap phase (se
 
 ### CLI Multi-node Driver
 
-- [ ] **CLI-01**: `caprun run` (or an explicitly documented sibling verb) accepts a coding multi-step intent + workspace + trusted `--policy`, binds policy at session creation (POLICY-03), and **drives the full multi-node coding chain** end-to-end. Existing Block → `review`/`confirm`/`deny`/`grant` surfaces are preserved and pointed at from the driver.
+- [x] **CLI-01**: `caprun run` (or an explicitly documented sibling verb) accepts a coding multi-step intent + workspace + trusted `--policy`, binds policy at session creation (POLICY-03), and **drives the full multi-node coding chain** end-to-end. Existing Block → `review`/`confirm`/`deny`/`grant` surfaces are preserved and pointed at from the driver.
 
 - [x] **CLI-02**: Stream stop semantics are honest and machine-checkable: on I2 Block → stop (or Block-and-Hold per CONFIRM-01), surface `effect_id` + review pointer; on `policy_deny` → distinct outcome; on Deny → abort remaining nodes; on full success → clear success exit. Exit codes distinguish success vs blocked vs denied/aborted. Silent continue-past-Block is forbidden.
 
@@ -95,7 +95,7 @@ Which phases cover which requirements. Filled by the roadmapper.
 | STREAM-02 | Phase 48 | Complete |
 | CODE-01 | Phase 49 | Complete |
 | CODE-02 | Phase 49 | Complete |
-| CLI-01 | Phase 50 | Pending |
+| CLI-01 | Phase 50 | Complete |
 | CLI-02 | Phase 50 | Complete |
 | CONFIRM-01 | Phase 50 | Complete |
 | LIVE-07 | Phase 51 | Pending |
