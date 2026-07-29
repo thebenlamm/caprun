@@ -166,3 +166,53 @@ fn i32_from_stream_exit_code() {
     assert_eq!(i32::from(StreamExitCode::DeniedAborted), 2);
     assert_eq!(i32::from(StreamExitCode::BlockedIncomplete), 3);
 }
+
+/// Empty stream / hold-incomplete / deny share the pure mapper table —
+/// empty is Infra=1 (never success); policy_deny and human ABORT share exit 2
+/// with distinction only in the DENIED `code=` field (CLI-02).
+#[test]
+fn empty_and_policy_deny_exit_buckets() {
+    assert_eq!(
+        map_stream_exit(StreamTerminalKind::InfraOrEmpty).as_i32(),
+        1,
+        "empty stream is infra, not STREAM_DONE success"
+    );
+    // policy_deny is DeniedAborted bucket (exit 2), same as other denies.
+    assert_eq!(
+        map_stream_exit(StreamTerminalKind::DeniedAborted).as_i32(),
+        2
+    );
+    let policy_line = format_line(&StreamLine::Denied {
+        code: DenyReason::PolicyDeny {
+            sink: "git.push".into(),
+            arg: None,
+            constraint: "not-allowlisted".into(),
+        }
+        .code()
+        .into(),
+        sink: "git.push".into(),
+    });
+    match parse_line(&policy_line).unwrap() {
+        StreamLine::Denied { code, sink } => {
+            assert_eq!(code, "policy_deny");
+            assert_eq!(sink, "git.push");
+        }
+        other => panic!("expected DENIED, got {other:?}"),
+    }
+    // Parent must not treat BLOCKED as success (docs contract + parse shape).
+    let blocked = format_line(&StreamLine::Blocked {
+        effect_id: "00000000-0000-0000-0000-000000000001".into(),
+        sink: "git.push".into(),
+    });
+    assert!(
+        matches!(
+            parse_line(&blocked).unwrap(),
+            StreamLine::Blocked { .. }
+        ),
+        "BLOCKED is a hold signal, not success"
+    );
+    assert_ne!(
+        map_stream_exit(StreamTerminalKind::BlockedIncomplete).as_i32(),
+        0
+    );
+}

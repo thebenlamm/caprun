@@ -14,6 +14,10 @@
 //! never after merely parsing `BLOCKED`. `ABORT` on human deny / operator
 //! abort. Forged protocol lines must never auto-authorize effects.
 //!
+//! `policy_deny` is carried as `DENIED code=policy_deny` on stdout; the
+//! process exit integer shares **2** with other denied/aborted outcomes —
+//! the `code=` field is the distinct machine label (CLI-02).
+//!
 //! # Purity
 //!
 //! This module is pure string transforms + exit mapping. Worker/main own
