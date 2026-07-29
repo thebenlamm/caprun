@@ -198,10 +198,12 @@ async fn main() -> anyhow::Result<()> {
     // RequestFd + claims path.
     let (mut bag, task_instruction): (HashMap<String, ValueId>, Option<String>) = match &intent {
         CaprunIntent::SafeCodingWorkflow { .. } => {
-            // No RequestFd: coding success path does not need a workspace seed
-            // file. Skipping avoids multi-file untrusted demotion before
-            // irreversible sinks. Connect → confine → ProvideIntent order is
-            // unchanged; we simply never send RequestFd for this intent kind.
+            // CODE-02 residual hygiene (49-02): coding success path never
+            // RequestFd + claim-extract. Multi-file untrusted demotion is not
+            // required before irreversible sinks — bag is seeded solely from
+            // ProvideIntent named_handles (UserTrusted). Connect → confine →
+            // ProvideIntent order is unchanged; RequestFd is simply omitted
+            // for this intent kind (not reordered after ProvideIntent).
             let mut bag: HashMap<String, ValueId> = HashMap::new();
             bag.insert("intent".into(), intent_value_id.clone());
             // Primary value_id is write_path; also seed under write_path so a

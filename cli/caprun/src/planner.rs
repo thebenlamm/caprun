@@ -90,10 +90,17 @@ use std::time::{Duration, Instant};
 /// ## Coding bag keys (Phase 49 / CODE-01/02 — intent-minted only on success path)
 ///
 /// Seeded from `IntentAccepted.named_handles` (ProvideIntent multi-mint). The
-/// success-path coding recipe **never** places `out_*` handles into sink args
-/// (CODE-02 anti-launder). `out_{step}` retains untrusted provenance when
-/// present and is reserved for the deliberate LIVE-08 expressibility proof
-/// path (Phase 49 Plan 02 / Phase 51) — not the success recipe.
+/// success-path coding recipe (`plan_coding_next` / `DeterministicPlanner`)
+/// **never** places `out_*` handles into sink args (CODE-02 anti-launder).
+/// `out_{step}` retains untrusted provenance when present (worker stores any
+/// `Some(output_value_id)` under that key after Allowed — F-01).
+///
+/// **LIVE-08 expressibility (unit only, not LIVE DONE):** a deliberate
+/// **test-only** proof planner (see `cli/caprun/tests/planner.rs`
+/// `CodingI2ProofPlanner`) may place e.g. `out_1` into `github.pr`/`body`
+/// while other PR args remain intent-minted. That path is **not** product
+/// code, **not** selected by the worker, and **does not** claim Phase 51
+/// LIVE-07/08 CLI multi-step SUCCESS — only bag-routing expressibility.
 ///
 /// | Key | Sink / PlanArg |
 /// |-----|----------------|
