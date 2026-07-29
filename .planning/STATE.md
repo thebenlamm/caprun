@@ -4,16 +4,16 @@ milestone: v1.10
 milestone_name: Multi-step Safe Coding Agent Loop
 current_phase: 49
 current_phase_name: Deterministic Multi-step Coding Planner
-status: plans_ready
-stopped_at: Planned 49-01 + 49-02
-last_updated: "2026-07-29T12:00:00.000Z"
+status: executing
+stopped_at: Completed 49-01-PLAN.md
+last_updated: "2026-07-29T19:57:16.503Z"
 last_activity: 2026-07-29
-last_activity_desc: "Phase 49 planned (2 plans: tracer coding recipe+mint; expansion LIVE-08 expressibility+docs)"
+last_activity_desc: Phase 49 execution started
 progress:
-  total_phases: 6
+  total_phases: 3
   completed_phases: 2
-  total_plans: 2
-  completed_plans: 0
+  total_plans: 6
+  completed_plans: 5
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-23)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended through v1.9 with authorized write egress (git.push + http-write), minimal per-session policy (never overrides I2), and thin CLI/audit surfaces — without weakening I0/I1/I2 or adding any raw `EffectRequest` path. v1.10 makes the Safe Coding Agent path a single Session, CLI-driven multi-node stream.
-**Current focus:** Phase 49 — Deterministic Multi-step Coding Planner (Phase 48 STREAM substrate complete).
+**Current focus:** Phase 49 — Deterministic Multi-step Coding Planner
 
 ## Current Position
 
-Phase: 49 of 52 (Deterministic Multi-step Coding Planner)
-Plan: 01 (of 02) ready to execute
-Status: Plans ready — run `/gsd-execute-phase 49`
-Last activity: 2026-07-29 — Phase 49 planned (CODE-01/02: SafeCodingWorkflow + multi-mint + plan_next)
+Phase: 49 (Deterministic Multi-step Coding Planner) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-07-29 — Phase 49 execution started
 
-Progress: [███░░░░░░░] 33%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
@@ -48,6 +48,7 @@ Progress: [███░░░░░░░] 33%
 |------|----------|-------|-------|
 | Phase 47 P01 | 4min | 2 tasks | 1 files |
 | Phase 48 P02 | 5min | 2 tasks | 5 files |
+| Phase 49 P01 | 12min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -106,6 +107,8 @@ separate as a distinct design-partner deliverable.
 - [Phase ?]: HYG-02 default zero new crates and zero new mint sites
 - [Phase ?]: Host stream proofs use pure drive_stream harness aligned with worker branch table (binary has no lib target)
 - [Phase ?]: Linux taint-via-bag is hybrid in-crate multi-node with bag intermediate — substrate not LIVE-07 CLI DONE
+- [Phase ?]: SafeCodingWorkflow closed variant with 13 operator fields + named_handles multi-mint (CODE-01/02)
+- [Phase ?]: Coding worker skips RequestFd/claim demotion; success-path plan_next never places out_*
 
 ### Blockers/Concerns
 
@@ -144,8 +147,8 @@ separate as a distinct design-partner deliverable.
 
 ## Session Continuity
 
-Last session: 2026-07-28T01:13:50.427Z
-Stopped at: Completed 48-02-PLAN.md
+Last session: 2026-07-29T19:57:16.480Z
+Stopped at: Completed 49-01-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

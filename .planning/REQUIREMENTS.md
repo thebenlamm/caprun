@@ -23,9 +23,9 @@ Requirements for the v1.10 milestone. Each maps to exactly one roadmap phase (se
 
 ### Deterministic Multi-step Coding Planner
 
-- [ ] **CODE-01**: A deterministic multi-step coding planner (new `CaprunIntent` coding variant or equivalent) produces a multi-node plan over **shipped** sinks for at least one concrete workflow: filesystem edit → `process.exec` (tests) → `git.commit` → `git.push` → `github.pr`. No LLM tool-use loop. Email/file single-node planners remain green (no regression).
+- [x] **CODE-01**: A deterministic multi-step coding planner (new `CaprunIntent` coding variant or equivalent) produces a multi-node plan over **shipped** sinks for at least one concrete workflow: filesystem edit → `process.exec` (tests) → `git.commit` → `git.push` → `github.pr`. No LLM tool-use loop. Email/file single-node planners remain green (no regression).
 
-- [ ] **CODE-02**: Success-path plan nodes for the coding recipe use **trusted-intent** operator args only (paths, commands, messages, remotes/refspecs from CLI/intent at session start). The recipe does **not** require multi-file untrusted RequestFd before irreversible sinks for the happy path (avoids HARDEN-01 Draft demotion killing CommitIrreversible). Mid-loop I2 proof uses a deliberate tainted-handle routing path (see LIVE-08), not success-path laundering.
+- [x] **CODE-02**: Success-path plan nodes for the coding recipe use **trusted-intent** operator args only (paths, commands, messages, remotes/refspecs from CLI/intent at session start). The recipe does **not** require multi-file untrusted RequestFd before irreversible sinks for the happy path (avoids HARDEN-01 Draft demotion killing CommitIrreversible). Mid-loop I2 proof uses a deliberate tainted-handle routing path (see LIVE-08), not success-path laundering.
 
 ### CLI Multi-node Driver
 
@@ -93,8 +93,8 @@ Which phases cover which requirements. Filled by the roadmapper.
 | DESIGN-20 | Phase 47 | Complete |
 | STREAM-01 | Phase 48 | Complete |
 | STREAM-02 | Phase 48 | Complete |
-| CODE-01 | Phase 49 | Pending |
-| CODE-02 | Phase 49 | Pending |
+| CODE-01 | Phase 49 | Complete |
+| CODE-02 | Phase 49 | Complete |
 | CLI-01 | Phase 50 | Pending |
 | CLI-02 | Phase 50 | Pending |
 | CONFIRM-01 | Phase 50 | Pending |
