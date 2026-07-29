@@ -216,10 +216,19 @@ pub enum BrokerResponse {
     /// body here) via three sequential `mint_from_intent` calls — never
     /// degenerately reusing `value_id` for all three. For `CreateFileFromReport`
     /// (which has no subject/body fields) both are `None`.
+    ///
+    /// `named_handles` is ADDITIVE (Phase 49 / CODE-02): ordered `(bag_key, ValueId)`
+    /// pairs for intents that mint N named UserTrusted handles beyond the three-slot
+    /// email shape. Coding (`SafeCodingWorkflow`) fills documented bag keys
+    /// (`write_path`, `write_contents`, `test_command`, …); email/file construction
+    /// sites pass an explicit empty `vec![]` (no silent serde default that hides an
+    /// incomplete mint). Three-slot subject/body remain email-shaped; this field is
+    /// additive only.
     IntentAccepted {
         value_id: runtime_core::plan_node::ValueId,
         subject_value_id: Option<runtime_core::plan_node::ValueId>,
         body_value_id: Option<runtime_core::plan_node::ValueId>,
+        named_handles: Vec<(String, runtime_core::plan_node::ValueId)>,
     },
     /// Acknowledgement for ReportClaims: opaque ValueId handles per minted claim,
     /// in the same order as the claims submitted in the ReportClaims message.

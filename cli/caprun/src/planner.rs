@@ -80,12 +80,36 @@ use std::time::{Duration, Instant};
 ///
 /// | Key | Meaning |
 /// |-----|---------|
-/// | `intent` | UserTrusted primary intent handle (recipient / path) |
+/// | `intent` | UserTrusted primary intent handle (recipient / path / write_path) |
 /// | `derived_recipient` | Optional derived/tainted routing handle |
 /// | `body` | Optional derived/tainted body handle |
 /// | `trusted_subject` | UserTrusted subject handle |
 /// | `trusted_body` | UserTrusted body fallback handle |
 /// | `out_{step}` | Allowed-path `output_value_id` stored under step index (F-01: any sink) |
+///
+/// ## Coding bag keys (Phase 49 / CODE-01/02 — intent-minted only on success path)
+///
+/// Seeded from `IntentAccepted.named_handles` (ProvideIntent multi-mint). The
+/// success-path coding recipe **never** places `out_*` handles into sink args
+/// (CODE-02 anti-launder). `out_{step}` retains untrusted provenance when
+/// present and is reserved for the deliberate LIVE-08 expressibility proof
+/// path (Phase 49 Plan 02 / Phase 51) — not the success recipe.
+///
+/// | Key | Sink / PlanArg |
+/// |-----|----------------|
+/// | `write_path` | `file.write` / `path` |
+/// | `write_contents` | `file.write` / `contents` |
+/// | `test_command` | `process.exec` / `command` |
+/// | `test_args` | `process.exec` / `args` (optional) |
+/// | `commit_message` | `git.commit` / `message` |
+/// | `push_remote` | `git.push` / `remote` |
+/// | `push_refspec` | `git.push` / `refspec` |
+/// | `pr_owner` | `github.pr` / `owner` |
+/// | `pr_repo` | `github.pr` / `repo` |
+/// | `pr_base` | `github.pr` / `base` |
+/// | `pr_head` | `github.pr` / `head` |
+/// | `pr_title` | `github.pr` / `title` |
+/// | `pr_body` | `github.pr` / `body` |
 ///
 /// Keys hold **only** `ValueId` values — the type system forbids literals.
 #[derive(Debug, Clone)]
@@ -139,26 +163,34 @@ pub trait Planner {
     /// at the worker, DESIGN §8.2).
     ///
     /// Multi-node implementors override this method and leave `plan()` as a
-    /// rarely-used fallback. No CaprunIntent coding variant here (Phase 49).
+    /// rarely-used fallback. `DeterministicPlanner` overrides for
+    /// `SafeCodingWorkflow` (Phase 49 five-node coding recipe).
     fn plan_next(&self, ctx: &PlanStreamContext) -> Option<PlanNode> {
-        if ctx.step_index != 0 {
-            return None;
-        }
-        let intent_value_id = ctx.handles.get("intent")?.clone();
-        let trusted_subject_handle = ctx.handles.get("trusted_subject")?.clone();
-        let trusted_body_handle = ctx.handles.get("trusted_body")?.clone();
-        let derived_recipient = ctx.handles.get("derived_recipient").cloned();
-        let body = ctx.handles.get("body").cloned();
-        Some(self.plan(
-            &ctx.intent,
-            intent_value_id,
-            derived_recipient,
-            body,
-            trusted_subject_handle,
-            trusted_body_handle,
-            ctx.task_instruction.clone(),
-        ))
+        plan_next_one_shot(self, ctx)
     }
+}
+
+/// Default one-shot `plan_next` adapter (email/file/LLM): step 0 → `plan()`,
+/// step ≥ 1 → `None`. Extracted so `DeterministicPlanner` can delegate for
+/// non-coding intents without duplicating the adapter body.
+pub fn plan_next_one_shot(planner: &(impl Planner + ?Sized), ctx: &PlanStreamContext) -> Option<PlanNode> {
+    if ctx.step_index != 0 {
+        return None;
+    }
+    let intent_value_id = ctx.handles.get("intent")?.clone();
+    let trusted_subject_handle = ctx.handles.get("trusted_subject")?.clone();
+    let trusted_body_handle = ctx.handles.get("trusted_body")?.clone();
+    let derived_recipient = ctx.handles.get("derived_recipient").cloned();
+    let body = ctx.handles.get("body").cloned();
+    Some(planner.plan(
+        &ctx.intent,
+        intent_value_id,
+        derived_recipient,
+        body,
+        trusted_subject_handle,
+        trusted_body_handle,
+        ctx.task_instruction.clone(),
+    ))
 }
 
 /// The deterministic planner implementation (PLAN-02): delegates to
@@ -188,6 +220,106 @@ impl Planner for DeterministicPlanner {
             trusted_subject_handle,
             trusted_body_handle,
         )
+    }
+
+    /// Coding multi-node recipe (Phase 49 / CODE-01): static step-index over
+    /// shipped sinks. Non-coding intents keep the one-shot adapter so email/file
+    /// stay byte-stable.
+    fn plan_next(&self, ctx: &PlanStreamContext) -> Option<PlanNode> {
+        match &ctx.intent {
+            CaprunIntent::SafeCodingWorkflow { .. } => plan_coding_next(ctx),
+            CaprunIntent::SendEmailSummary { .. }
+            | CaprunIntent::CreateFileFromReport { .. } => plan_next_one_shot(self, ctx),
+        }
+    }
+}
+
+/// Static five-node Safe Coding recipe (CODE-01). Places **only** intent-minted
+/// bag keys into sink args (CODE-02) — never `out_*`, never field literals.
+/// Missing required bag key → `None` (fail-closed partial stream, DESIGN §8.2).
+fn plan_coding_next(ctx: &PlanStreamContext) -> Option<PlanNode> {
+    let h = |key: &str| ctx.handles.get(key).cloned();
+    match ctx.step_index {
+        0 => Some(PlanNode {
+            sink: SinkId("file.write".into()),
+            args: vec![
+                PlanArg {
+                    name: "path".into(),
+                    value_id: h("write_path")?,
+                },
+                PlanArg {
+                    name: "contents".into(),
+                    value_id: h("write_contents")?,
+                },
+            ],
+        }),
+        1 => {
+            let mut args = vec![PlanArg {
+                name: "command".into(),
+                value_id: h("test_command")?,
+            }];
+            // Optional process.exec args — present when bag carries test_args.
+            if let Some(a) = h("test_args") {
+                args.push(PlanArg {
+                    name: "args".into(),
+                    value_id: a,
+                });
+            }
+            Some(PlanNode {
+                sink: SinkId("process.exec".into()),
+                args,
+            })
+        }
+        2 => Some(PlanNode {
+            sink: SinkId("git.commit".into()),
+            args: vec![PlanArg {
+                name: "message".into(),
+                value_id: h("commit_message")?,
+            }],
+        }),
+        3 => Some(PlanNode {
+            sink: SinkId("git.push".into()),
+            args: vec![
+                PlanArg {
+                    name: "remote".into(),
+                    value_id: h("push_remote")?,
+                },
+                PlanArg {
+                    name: "refspec".into(),
+                    value_id: h("push_refspec")?,
+                },
+            ],
+        }),
+        4 => Some(PlanNode {
+            sink: SinkId("github.pr".into()),
+            args: vec![
+                PlanArg {
+                    name: "owner".into(),
+                    value_id: h("pr_owner")?,
+                },
+                PlanArg {
+                    name: "repo".into(),
+                    value_id: h("pr_repo")?,
+                },
+                PlanArg {
+                    name: "base".into(),
+                    value_id: h("pr_base")?,
+                },
+                PlanArg {
+                    name: "head".into(),
+                    value_id: h("pr_head")?,
+                },
+                PlanArg {
+                    name: "title".into(),
+                    value_id: h("pr_title")?,
+                },
+                PlanArg {
+                    name: "body".into(),
+                    value_id: h("pr_body")?,
+                },
+            ],
+        }),
+        _ => None,
     }
 }
 
@@ -291,6 +423,15 @@ pub fn plan_from_intent(
                 ],
             }
         }
+        // Multi-node coding MUST go through `plan_next` (Phase 49). `plan()` is
+        // not a product entry for SafeCodingWorkflow — worker always uses
+        // plan_next. Return a non-production placeholder that is not a shipped
+        // sink id so accidental submission fails schema (UnknownSink) rather
+        // than inventing literals into PlanArg (PLAN-03). No field access.
+        CaprunIntent::SafeCodingWorkflow { .. } => PlanNode {
+            sink: SinkId("coding.use_plan_next".into()),
+            args: vec![],
+        },
     }
 }
 
@@ -395,6 +536,16 @@ impl Planner for LlmPlanner {
         trusted_body_handle: ValueId,
         task_instruction: Option<String>,
     ) -> PlanNode {
+        // Phase 49: coding multi-step is DeterministicPlanner::plan_next only —
+        // no LLM tool-use loop for SafeCodingWorkflow (fail-closed).
+        if matches!(intent, CaprunIntent::SafeCodingWorkflow { .. }) {
+            eprintln!(
+                "[llm-planner] SafeCodingWorkflow is unsupported on LlmPlanner \
+                 (no LLM multi-step) — failing closed, no PlanNode submitted"
+            );
+            std::process::exit(1);
+        }
+
         let (request, offered, known_sinks, canonical_names) = build_planner_request(
             intent,
             &intent_value_id,
@@ -522,6 +673,9 @@ pub fn build_planner_request(
         CaprunIntent::CreateFileFromReport { .. } => {
             ("CreateFileFromReport", vec!["file.create".to_string()])
         }
+        // Phase 49: coding is fail-closed for LLM tool-use (empty sinks).
+        // LlmPlanner::plan exits before calling the sidecar for this variant.
+        CaprunIntent::SafeCodingWorkflow { .. } => ("SafeCodingWorkflow", vec![]),
     };
 
     let (available_handles, offered, canonical_names): (
@@ -602,6 +756,8 @@ pub fn build_planner_request(
             let canonical_names = vec![(recipient.clone(), "path".to_string())];
             (handles, offered, canonical_names)
         }
+        // Fail-closed empty offering — LlmPlanner exits before sidecar use.
+        CaprunIntent::SafeCodingWorkflow { .. } => (vec![], vec![], vec![]),
     };
 
     let request = PlannerRequest {

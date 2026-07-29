@@ -44,6 +44,40 @@ pub enum CaprunIntent {
     /// that (attacker-controlled) handle into `path` → `BlockedPendingConfirmation`
     /// (07-04b makes both §9 paths reachable for the 07-05 live proof).
     CreateFileFromReport { path: String },
+    /// Deterministic multi-step Safe Coding Agent recipe (Phase 49 / CODE-01).
+    ///
+    /// Every field is an **operator-typed** literal. The broker mints one DISTINCT
+    /// `UserTrusted` handle per field via sequential `mint_from_intent` calls
+    /// inside the ProvideIntent arm only (Gate 3; Phase 15 finding #6 multi-mint
+    /// discipline) and returns them as `IntentAccepted.named_handles`. The
+    /// planner matches with `..` and places **opaque handles only** (PLAN-03) —
+    /// never the field literals — into the five-node stream:
+    /// `file.write` → `process.exec` → `git.commit` → `git.push` → `github.pr`.
+    ///
+    /// `test_args_json` is a JSON-encoded `Vec<String>` for `process.exec` `args`
+    /// (or empty / `"[]"`). Staging for `git.commit` is folded into the
+    /// operator-typed test command (e.g. `sh -c 'git add -A && cargo test'`) —
+    /// no sixth node required for the CODE-01 minimum.
+    ///
+    /// Multi-node coding uses `Planner::plan_next` only; `plan()` is not a
+    /// product entry for this variant (Phase 49). CLI multi-node productization
+    /// is Phase 50; LIVE proof is Phase 51.
+    SafeCodingWorkflow {
+        path: String,
+        contents: String,
+        test_command: String,
+        /// JSON-encoded `Vec<String>` for process.exec `args`, or empty/`"[]"`.
+        test_args_json: String,
+        commit_message: String,
+        remote: String,
+        refspec: String,
+        owner: String,
+        repo: String,
+        base: String,
+        head: String,
+        pr_title: String,
+        pr_body: String,
+    },
 }
 
 /// The status of an Intent through its lifecycle.

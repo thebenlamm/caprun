@@ -87,6 +87,7 @@ fn intent_accepted_response_round_trips() {
         value_id: value_id.clone(),
         subject_value_id: Some(ValueId::new()),
         body_value_id: Some(ValueId::new()),
+        named_handles: vec![],
     };
     let json = serde_json::to_string(&resp).expect("serialize IntentAccepted response");
     let recovered: BrokerResponse =
@@ -176,7 +177,12 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
 
     // Response must be IntentAccepted with a store-resolvable ValueId (Pitfall 1).
     match response {
-        BrokerResponse::IntentAccepted { value_id, subject_value_id, body_value_id } => {
+        BrokerResponse::IntentAccepted {
+            value_id,
+            subject_value_id,
+            body_value_id,
+            named_handles,
+        } => {
             // Phase 15 (15-04, finding #6): SendEmailSummary mints THREE
             // DISTINCT UserTrusted handles — subject/body must be present and
             // distinct from the recipient handle (never degenerately equal).
@@ -185,6 +191,11 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
             assert_ne!(subject_value_id, value_id, "subject handle must be DISTINCT from the recipient handle");
             assert_ne!(body_value_id, value_id, "body handle must be DISTINCT from the recipient handle");
             assert_ne!(subject_value_id, body_value_id, "subject and body handles must be DISTINCT from each other");
+            // Phase 49: email keeps three-slot shape — named_handles empty.
+            assert!(
+                named_handles.is_empty(),
+                "SendEmailSummary named_handles must be empty (coding-only field)"
+            );
             let subject_record = store
                 .resolve(&subject_value_id)
                 .expect("subject_value_id must resolve in the per-connection store");

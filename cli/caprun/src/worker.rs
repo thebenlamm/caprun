@@ -12,38 +12,29 @@
 ///      apply_confinement → ProvideIntent → RequestFd). The broker mints a
 ///      UserTrusted ValueRecord for the intent literal and returns an opaque handle.
 ///   5. Receive `BrokerResponse::IntentAccepted { value_id, subject_value_id,
-///      body_value_id }` → `intent_value_id` (the recipient/path handle) plus the
-///      trusted subject/body handles (Phase 15 finding #6 — `SendEmailSummary`
-///      mints THREE distinct UserTrusted handles; `CreateFileFromReport` mints
-///      only `value_id` and returns `None` for the other two).
-///   6. Send `BrokerRequest::RequestFd { path }` (4-byte LE prefix + JSON).
-///   7. Call `adapter_fs::recv_fd` to receive the file fd via SCM_RIGHTS out-of-band.
-///      The broker sends the fd's 1-byte sendmsg payload BEFORE the JSON response,
-///      so recvmsg here consumes exactly that 1 byte, leaving the JSON intact.
-///   8. Read the `BrokerResponse::FdGranted` JSON response.
-///   9. Read the workspace file via the received fd (NOT via open() — Landlock
-///      deny-all blocks open on Linux; the passed fd is the only legal path).
-///  10. Extract typed claims LOCALLY (lossy guarantee — the raw sentence is
-///      discarded here; only the extracted typed value crosses the IPC boundary).
-///      For `SendEmailSummary`: extract the recipient-half doc fragments
-///      (`Reply-To:`/`Domain:` markers, EXTRACT-01/Phase 15), the tainted
-///      `Body:` fragment, AND the tainted `Instruction:` fragment (Phase 22 /
-///      GATE-01 — the injection instruction kept worker-side and threaded to
-///      the planner seam as `task_instruction`, never resolved from a broker
-///      handle back to a literal), report them via `ReportClaims { claims }`,
-///      and — ONLY when BOTH recipient-half fragments were found (finding
-///      #8's resolved fork) — apply the concat transform to the worker's OWN
-///      already-extracted fragment values (never a resolved broker literal)
-///      and report the result via `ReportDerivedClaim` to obtain a FRESH
-///      derived handle. For `CreateFileFromReport`: extract root-relative
-///      paths, unchanged (no instruction extraction for this intent kind).
-///  11. Receive the opaque `ValueId` handles for each report.
+///      body_value_id, named_handles }` → `intent_value_id` (the recipient/path
+///      / write_path handle) plus the trusted subject/body handles (Phase 15
+///      finding #6 — `SendEmailSummary` mints THREE distinct UserTrusted
+///      handles; `CreateFileFromReport` mints only `value_id` and returns
+///      `None` for the other two) and, for `SafeCodingWorkflow` (Phase 49),
+///      the full named bag-key → ValueId map from multi-mint.
+///   6–11. Email/file only: RequestFd → recv_fd → FdGranted → read via fd →
+///      extract typed claims LOCALLY → ReportClaims / ReportDerivedClaim.
+///      **Coding (`SafeCodingWorkflow`) skips this path entirely** (CODE-02 /
+///      DESIGN §4 trusted-intent success path): operator-typed args are already
+///      UserTrusted via ProvideIntent multi-mint; no multi-file untrusted
+///      claim extract, no ReportClaims demotion before irreversible sinks.
+///      Connect → confine → ProvideIntent order is preserved; RequestFd is
+///      simply omitted for coding (not reordered). Documented choice: skip
+///      RequestFd for coding rather than keep a dummy seed-file read that
+///      would risk session demotion.
 ///  12. Construct a `planner::DeterministicPlanner` (or, when
 ///      `CAPRUN_PLANNER=llm`, `planner::LlmPlanner`). Seed an opaque handle
 ///      bag (`HashMap<String, ValueId>`) from ProvideIntent + claim locals
-///      (keys: `intent`, optional `derived_recipient`/`body`,
-///      `trusted_subject`, `trusted_body` — PLAN-03 handles only). Then run
-///      the sequential plan-stream loop (Phase 48 / STREAM-01/02):
+///      (email/file keys: `intent`, optional `derived_recipient`/`body`,
+///      `trusted_subject`, `trusted_body`; coding keys: `named_handles` bag
+///      keys — PLAN-03 handles only). Then run the sequential plan-stream
+///      loop (Phase 48 / STREAM-01/02):
 ///        a. `PlanStreamContext { intent, step_index, handles: bag, task_instruction }`
 ///        b. `planner.plan_next(&ctx)` → `None` breaks the loop
 ///        c. `BrokerRequest::SubmitPlanNode { plan_node }` (no session_id —
@@ -56,7 +47,7 @@
 ///           again (substrate-ready for Phase 50 hold — no product hold here)
 ///        f. On `Denied` / `NotImplemented`: abort remaining (exit 1)
 ///      Empty stream (`submitted == 0`) fails closed (DESIGN §8.2). ProvideIntent
-///      runs exactly once before RequestFd — the loop never re-sends it.
+///      runs exactly once before any RequestFd — the loop never re-sends it.
 ///  13. Exit 0 only when every submitted node was `Allowed` and at least one
 ///      node was submitted.
 ///
@@ -181,154 +172,173 @@ async fn main() -> anyhow::Result<()> {
     // intents return `None` for both. Fall back to `intent_value_id` when
     // absent so a caller that doesn't need distinct subject/body handles
     // (e.g. `CreateFileFromReport`) never has to synthesize a placeholder.
-    let (intent_value_id, subject_value_id, body_value_id) =
+    // `named_handles` is additive (Phase 49 / CODE-02): coding fills bag keys;
+    // email/file return empty.
+    let (intent_value_id, subject_value_id, body_value_id, named_handles) =
         match recv_framed::<BrokerResponse>(&std_stream)? {
             BrokerResponse::IntentAccepted {
                 value_id,
                 subject_value_id,
                 body_value_id,
-            } => (value_id, subject_value_id, body_value_id),
+                named_handles,
+            } => (value_id, subject_value_id, body_value_id, named_handles),
             other => anyhow::bail!("unexpected response to ProvideIntent: {other:?}"),
         };
     let trusted_subject_handle = subject_value_id.unwrap_or_else(|| intent_value_id.clone());
     let trusted_body_handle = body_value_id.unwrap_or_else(|| intent_value_id.clone());
 
-    // ── Send BrokerRequest::RequestFd ────────────────────────────────────────
-    send_framed(&std_stream, &BrokerRequest::RequestFd { path: workspace_file })?;
-
-    // ── Receive file fd via SCM_RIGHTS (out-of-band) ─────────────────────────
-    let file_fd = adapter_fs::recv_fd(sock_fd)
-        .map_err(|e| anyhow::anyhow!("recv_fd: {e}"))?;
-
-    // ── Consume BrokerResponse::FdGranted JSON ────────────────────────────────
-    let _granted: BrokerResponse = recv_framed(&std_stream)?;
-
-    // ── Read workspace file via passed fd (NOT via open()) ───────────────────
-    // SAFETY: file_fd is a valid fd received from recv_fd (postcondition).
-    let raw_bytes: Vec<u8> = {
-        let mut file = unsafe { std::fs::File::from_raw_fd(file_fd) };
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf).context("read via passed fd")?;
-        buf
-    };
-    let raw_str = String::from_utf8_lossy(&raw_bytes);
-
-    // ── Extract typed claims + (for email) derive the recipient LOCALLY ──────
-    // The raw hostile sentence is discarded here — only the extracted typed
-    // value (and, for email, the worker-side-transformed derived literal)
-    // crosses the IPC boundary (ASM-03 / T-05-08 / EXTRACT-01). The extractor
-    // is chosen by INTENT KIND; the broker independently taints whatever the
-    // worker emits (mint_from_read / mint_from_derivation) — the worker cannot
-    // launder trust by choosing a variant.
-    let (derived_recipient, body, task_instruction): (
-        Option<ValueId>,
-        Option<ValueId>,
-        Option<String>,
-    ) = match &intent {
-        CaprunIntent::SendEmailSummary { .. } => {
-            // Marker-anchored recipient-half fragments (Reply-To:/Domain:) —
-            // extracted worker-side, never re-read, never resolved-then-
-            // reused. `extract_body_fragment` (below) mirrors the same
-            // marker-anchored, lossy-extraction shape for the `Body:` marker.
-            // `extract_instruction_fragment` (Phase 22 / GATE-01) mirrors the
-            // same shape for a DISTINCT `Instruction:` marker — the injected
-            // instruction text threaded to the LLM planner as task framing.
-            let doc_fragments = extract_doc_fragments(&raw_str);
-            let body_fragment = extract_body_fragment(&raw_str);
-            let instruction_fragment = extract_instruction_fragment(&raw_str);
-
-            // Report ALL raw fragments (recipient-halves + body + injection
-            // instruction, if present) in one ReportClaims batch — the
-            // broker mints one genuinely-tainted ValueRecord per claim via
-            // mint_from_read, in the same order submitted. The instruction
-            // fragment's returned ValueId is intentionally never resolved
-            // back to a literal or reused below — it exists ONLY so the
-            // injection instruction is honestly recorded in the audit DAG as
-            // ExternalUntrusted (T-22-03); the literal that actually reaches
-            // the planner is the worker's OWN already-extracted
-            // `instruction_fragment` string, kept worker-side (same pattern
-            // the recipient-concat path already uses: transform/keep
-            // worker-side, mint for provenance only).
-            let mut fragment_claims: Vec<WorkerClaim> = doc_fragments
-                .iter()
-                .map(|c| WorkerClaim::DocFragment(c.value.clone()))
-                .collect();
-            if let Some(b) = &body_fragment {
-                fragment_claims.push(WorkerClaim::DocFragment(b.clone()));
+    // ── Seed opaque handle bag + optional claim path (by intent kind) ────────
+    // Worker-local routing table of opaque ValueIds only — never literals,
+    // never taint, never ValueRecord. ProvideIntent already ran exactly once
+    // above; the stream loop never re-sends it (DESIGN §2.3).
+    //
+    // Coding (SafeCodingWorkflow): seed from named_handles only — skip
+    // RequestFd / ReportClaims / ReportDerivedClaim demotion path (CODE-02;
+    // DESIGN §4 trusted-intent success path). Email/file: unchanged
+    // RequestFd + claims path.
+    let (mut bag, task_instruction): (HashMap<String, ValueId>, Option<String>) = match &intent {
+        CaprunIntent::SafeCodingWorkflow { .. } => {
+            // No RequestFd: coding success path does not need a workspace seed
+            // file. Skipping avoids multi-file untrusted demotion before
+            // irreversible sinks. Connect → confine → ProvideIntent order is
+            // unchanged; we simply never send RequestFd for this intent kind.
+            let mut bag: HashMap<String, ValueId> = HashMap::new();
+            bag.insert("intent".into(), intent_value_id.clone());
+            // Primary value_id is write_path; also seed under write_path so a
+            // partial named_handles wire still has the primary slot.
+            bag.insert("write_path".into(), intent_value_id);
+            for (name, vid) in named_handles {
+                bag.insert(name, vid);
             }
-            if let Some(instr) = &instruction_fragment {
-                fragment_claims.push(WorkerClaim::DocFragment(instr.clone()));
-            }
-            send_framed(&std_stream, &BrokerRequest::ReportClaims { claims: fragment_claims })?;
-            let fragment_value_ids = match recv_framed::<BrokerResponse>(&std_stream)? {
-                BrokerResponse::ClaimsReceived { value_ids } => value_ids,
-                other => anyhow::bail!("unexpected response to ReportClaims: {other:?}"),
-            };
-
-            // RESOLVED FORK (finding #8): a derived recipient exists ONLY when
-            // BOTH recipient-half fragments (Reply-To local-part + Domain
-            // domain-half) were extracted — a lone fragment (or none) never
-            // taints `to`; a benign doc that merely mentions an address is
-            // NOT routed here (extract_doc_fragments only ever yields
-            // marker-anchored halves, never a whole address).
-            let derived_recipient = if doc_fragments.len() == 2 {
-                // Apply the transform to the worker's OWN already-extracted
-                // fragment VALUES — never resolve a broker ValueId back to a
-                // literal and reuse it (DESIGN-confirm-binding.md
-                // "Post-Transformation Bytes"). The transform runs BEFORE any
-                // mint; the broker never re-applies it (it only byte-verifies).
-                let transformed_literal =
-                    concat_doc_fragments(&doc_fragments[0].value, &doc_fragments[1].value);
-                send_framed(
-                    &std_stream,
-                    &BrokerRequest::ReportDerivedClaim {
-                        transformed_literal,
-                        transform: TransformKind::Concat,
-                        input_value_ids: vec![
-                            fragment_value_ids[0].clone(),
-                            fragment_value_ids[1].clone(),
-                        ],
-                    },
-                )?;
-                match recv_framed::<BrokerResponse>(&std_stream)? {
-                    BrokerResponse::DerivedClaimReceived { value_id } => Some(value_id),
-                    other => anyhow::bail!("unexpected response to ReportDerivedClaim: {other:?}"),
-                }
-            } else {
-                None
-            };
-
-            // The body handle (if a `Body:` fragment was found) is the LAST
-            // element reported — `doc_fragments.len()` fragments precede it
-            // in `fragment_value_ids`, in every case (0, 1, or 2 recipient
-            // halves).
-            let body = if body_fragment.is_some() {
-                Some(fragment_value_ids[doc_fragments.len()].clone())
-            } else {
-                None
-            };
-
-            (derived_recipient, body, instruction_fragment)
+            (bag, None)
         }
-        CaprunIntent::CreateFileFromReport { .. } => {
-            let claims: Vec<WorkerClaim> = extract_relative_path_claims(&raw_str)
-                .into_iter()
-                .map(|c| WorkerClaim::RelativePath(c.value))
-                .collect();
-            send_framed(&std_stream, &BrokerRequest::ReportClaims { claims })?;
-            let value_ids = match recv_framed::<BrokerResponse>(&std_stream)? {
-                BrokerResponse::ClaimsReceived { value_ids } => value_ids,
-                other => anyhow::bail!("unexpected response to ReportClaims: {other:?}"),
+        CaprunIntent::SendEmailSummary { .. } | CaprunIntent::CreateFileFromReport { .. } => {
+            // ── Send BrokerRequest::RequestFd ────────────────────────────────
+            send_framed(
+                &std_stream,
+                &BrokerRequest::RequestFd {
+                    path: workspace_file,
+                },
+            )?;
+
+            // ── Receive file fd via SCM_RIGHTS (out-of-band) ─────────────────
+            let file_fd = adapter_fs::recv_fd(sock_fd)
+                .map_err(|e| anyhow::anyhow!("recv_fd: {e}"))?;
+
+            // ── Consume BrokerResponse::FdGranted JSON ───────────────────────
+            let _granted: BrokerResponse = recv_framed(&std_stream)?;
+
+            // ── Read workspace file via passed fd (NOT via open()) ───────────
+            // SAFETY: file_fd is a valid fd received from recv_fd (postcondition).
+            let raw_bytes: Vec<u8> = {
+                let mut file = unsafe { std::fs::File::from_raw_fd(file_fd) };
+                let mut buf = Vec::new();
+                file.read_to_end(&mut buf).context("read via passed fd")?;
+                buf
             };
-            // Route the FIRST tainted path handle (if any) — mirrors the
-            // pre-Phase-15 `file_value_ids.first()` behavior exactly, just
-            // now threaded through the shared `derived_recipient` slot
-            // (call-site convention, finding #7 — the planner never sees
-            // provenance; it just places whichever handle the caller hands it).
-            // No injection-instruction extraction for this intent kind
-            // (Phase 22 / GATE-01 targets `SendEmailSummary`'s `email.send`
-            // sink only).
-            (value_ids.into_iter().next(), None, None)
+            let raw_str = String::from_utf8_lossy(&raw_bytes);
+
+            // ── Extract typed claims + (for email) derive the recipient ──────
+            // The raw hostile sentence is discarded here — only the extracted
+            // typed value (and, for email, the worker-side-transformed derived
+            // literal) crosses the IPC boundary (ASM-03 / T-05-08 / EXTRACT-01).
+            let (derived_recipient, body, task_instruction): (
+                Option<ValueId>,
+                Option<ValueId>,
+                Option<String>,
+            ) = match &intent {
+                CaprunIntent::SendEmailSummary { .. } => {
+                    let doc_fragments = extract_doc_fragments(&raw_str);
+                    let body_fragment = extract_body_fragment(&raw_str);
+                    let instruction_fragment = extract_instruction_fragment(&raw_str);
+
+                    let mut fragment_claims: Vec<WorkerClaim> = doc_fragments
+                        .iter()
+                        .map(|c| WorkerClaim::DocFragment(c.value.clone()))
+                        .collect();
+                    if let Some(b) = &body_fragment {
+                        fragment_claims.push(WorkerClaim::DocFragment(b.clone()));
+                    }
+                    if let Some(instr) = &instruction_fragment {
+                        fragment_claims.push(WorkerClaim::DocFragment(instr.clone()));
+                    }
+                    send_framed(
+                        &std_stream,
+                        &BrokerRequest::ReportClaims {
+                            claims: fragment_claims,
+                        },
+                    )?;
+                    let fragment_value_ids = match recv_framed::<BrokerResponse>(&std_stream)? {
+                        BrokerResponse::ClaimsReceived { value_ids } => value_ids,
+                        other => {
+                            anyhow::bail!("unexpected response to ReportClaims: {other:?}")
+                        }
+                    };
+
+                    let derived_recipient = if doc_fragments.len() == 2 {
+                        let transformed_literal = concat_doc_fragments(
+                            &doc_fragments[0].value,
+                            &doc_fragments[1].value,
+                        );
+                        send_framed(
+                            &std_stream,
+                            &BrokerRequest::ReportDerivedClaim {
+                                transformed_literal,
+                                transform: TransformKind::Concat,
+                                input_value_ids: vec![
+                                    fragment_value_ids[0].clone(),
+                                    fragment_value_ids[1].clone(),
+                                ],
+                            },
+                        )?;
+                        match recv_framed::<BrokerResponse>(&std_stream)? {
+                            BrokerResponse::DerivedClaimReceived { value_id } => Some(value_id),
+                            other => anyhow::bail!(
+                                "unexpected response to ReportDerivedClaim: {other:?}"
+                            ),
+                        }
+                    } else {
+                        None
+                    };
+
+                    let body = if body_fragment.is_some() {
+                        Some(fragment_value_ids[doc_fragments.len()].clone())
+                    } else {
+                        None
+                    };
+
+                    (derived_recipient, body, instruction_fragment)
+                }
+                CaprunIntent::CreateFileFromReport { .. } => {
+                    let claims: Vec<WorkerClaim> = extract_relative_path_claims(&raw_str)
+                        .into_iter()
+                        .map(|c| WorkerClaim::RelativePath(c.value))
+                        .collect();
+                    send_framed(&std_stream, &BrokerRequest::ReportClaims { claims })?;
+                    let value_ids = match recv_framed::<BrokerResponse>(&std_stream)? {
+                        BrokerResponse::ClaimsReceived { value_ids } => value_ids,
+                        other => {
+                            anyhow::bail!("unexpected response to ReportClaims: {other:?}")
+                        }
+                    };
+                    (value_ids.into_iter().next(), None, None)
+                }
+                CaprunIntent::SafeCodingWorkflow { .. } => unreachable!(
+                    "SafeCodingWorkflow handled in outer match — no claim path"
+                ),
+            };
+
+            let mut bag: HashMap<String, ValueId> = HashMap::new();
+            bag.insert("intent".into(), intent_value_id);
+            if let Some(derived) = derived_recipient {
+                bag.insert("derived_recipient".into(), derived);
+            }
+            if let Some(body_handle) = body {
+                bag.insert("body".into(), body_handle);
+            }
+            bag.insert("trusted_subject".into(), trusted_subject_handle);
+            bag.insert("trusted_body".into(), trusted_body_handle);
+            (bag, task_instruction)
         }
     };
 
@@ -363,23 +373,6 @@ async fn main() -> anyhow::Result<()> {
         }
         _ => Box::new(crate::planner::DeterministicPlanner),
     };
-
-    // ── Opaque handle bag (STREAM-02 / DESIGN §2.2) ──────────────────────────
-    // Worker-local routing table of opaque ValueIds only — never literals,
-    // never taint, never ValueRecord. Seeded once from ProvideIntent + claim
-    // locals using the documented key convention (see PlanStreamContext).
-    // ProvideIntent already ran exactly once above; the stream loop never
-    // re-sends it (DESIGN §2.3).
-    let mut bag: HashMap<String, ValueId> = HashMap::new();
-    bag.insert("intent".into(), intent_value_id);
-    if let Some(derived) = derived_recipient {
-        bag.insert("derived_recipient".into(), derived);
-    }
-    if let Some(body_handle) = body {
-        bag.insert("body".into(), body_handle);
-    }
-    bag.insert("trusted_subject".into(), trusted_subject_handle);
-    bag.insert("trusted_body".into(), trusted_body_handle);
 
     // ── Sequential plan-stream loop (STREAM-01; N× SubmitPlanNode) ───────────
     // Each iteration: plan_next → SubmitPlanNode → PlanNodeDecision → branch.

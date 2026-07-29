@@ -284,6 +284,7 @@ async fn allowed_email_send_replay_delivers_once() {
             value_id,
             subject_value_id,
             body_value_id,
+            named_handles: _,
         } => (value_id, subject_value_id, body_value_id),
         other => panic!("expected IntentAccepted, got {other:?}"),
     };

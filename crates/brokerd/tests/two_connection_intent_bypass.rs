@@ -315,6 +315,7 @@ mod linux_tests {
             value_id,
             subject_value_id,
             body_value_id,
+            named_handles: _,
         } = &conn2_intent_resp
         {
             let mut args = vec![PlanArg {
@@ -450,6 +451,7 @@ mod linux_tests {
             value_id,
             subject_value_id,
             body_value_id,
+            named_handles: _,
         } = &conn2_intent_resp
         {
             let mut args = vec![PlanArg {

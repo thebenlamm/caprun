@@ -2392,152 +2392,239 @@ pub async fn dispatch_request(
                 return Ok(());
             }
 
-            // Extract the user-provided literal(s) from the typed intent.
+            // Extract + mint the user-provided literal(s) from the typed intent.
             // Exhaustive match: adding a new CaprunIntent variant causes a compile error here,
             // forcing the dispatcher to be updated (no silent unhandled variants).
             //
-            // Phase 15 (15-04, finding #6): `SendEmailSummary` carries THREE
-            // trusted literals (recipient/subject/body); `CreateFileFromReport`
-            // still carries only `path`. `subject_literal`/`body_literal` are
-            // `None` for the latter (minimal additive shape — it mints only
-            // ONE handle, unchanged from pre-15-04 behavior).
-            // `primary_role` (T2, DESIGN-slot-type-binding.md §2, Round-1 F3): role is
-            // selected INSIDE this intent-variant match, in the SAME arm that produces
-            // `primary_literal` — never hardcoded at the shared mint_from_intent call
-            // below, which is reached by BOTH variants (recipient for SendEmailSummary,
-            // path for CreateFileFromReport). Hardcoding "recipient" there would mistag
-            // every file.create path.
-            // `primary_claim_type` (M7 / WG-1): the `mint_from_read` claim_type used
-            // ONLY when `primary_file_derived` — `"email_address"` for the
-            // `SendEmailSummary` recipient (→ `[ExternalUntrusted, EmailRaw]`),
-            // `"relative_path"` for the `CreateFileFromReport` path (→
-            // `[ExternalUntrusted, PathRaw]`). Selected in the SAME arm that
-            // produces `primary_literal`/`primary_role` so a new intent variant is
-            // forced to declare its file-derived taint shape (never default-tagged).
-            let (primary_literal, primary_role, primary_claim_type, subject_literal, body_literal): (
-                String,
-                &'static str,
-                &'static str,
-                Option<String>,
-                Option<String>,
-            ) = match &intent {
-                CaprunIntent::SendEmailSummary { recipient, subject, body } => (
-                    recipient.clone(),
-                    "recipient",
-                    "email_address",
-                    Some(subject.clone()),
-                    Some(body.clone()),
-                ),
-                CaprunIntent::CreateFileFromReport { path } => {
-                    (path.clone(), "path", "relative_path", None, None)
-                }
-            };
-
             // Mint inside the per-connection ValueStore (Pitfall 1: minting outside
             // handle_connection would put the ValueId in an unreachable store → Denied).
-            // mint_from_intent is the ONLY caller site of mint_from_intent (T-06-05).
+            // mint_from_intent is the ONLY caller site of mint_from_intent (T-06-05 / Gate 3).
             //
-            // THREE sequential mint_from_intent calls when subject/body are
-            // present, threading last_event_id/last_event_hash across all of
-            // them so the causal chain stays ONE linear chain (never a fork) —
-            // each call's returned event becomes the next call's parent.
-            let (value_id, subject_value_id, body_value_id) = {
+            // Phase 15 (15-04, finding #6): `SendEmailSummary` carries THREE
+            // trusted literals (recipient/subject/body); `CreateFileFromReport`
+            // still carries only `path`. Subject/body are `None` for the latter.
+            //
+            // Phase 49 (CODE-02): `SafeCodingWorkflow` mints N DISTINCT UserTrusted
+            // handles via a sequential mint_from_intent loop over ordered
+            // (bag_key, literal, role) pairs — still ONLY inside this ProvideIntent
+            // arm (Gate 3; no new IPC mint verb; no planner/worker .mint). Primary
+            // `value_id` is the write_path handle; remaining (and write_path itself)
+            // land in `named_handles`. Coding success path requires
+            // `primary_file_derived == false` (operator-typed; never mint_from_read).
+            //
+            // Chain-head threading: each mint's returned event becomes the next
+            // call's parent so the causal chain stays ONE linear chain (never a fork).
+            let (value_id, subject_value_id, body_value_id, named_handles) = {
                 let locked = conn
                     .lock()
                     .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
 
-                // Causal parent = the connection chain head (DESIGN §0): the primary
-                // literal's mint event is parent-linked onto session_created, keeping
-                // the parent_id chain unbroken.
-                //
-                // M7 (WG-1) DISJOINT ROUTING: a FILE-DERIVED primary literal is minted
-                // TAINTED via `mint_from_read` (the existing sole broker taint-mint
-                // site — Gate-3-sanctioned here in server.rs, adding NO second site),
-                // which appends a genuine `file_read` event (`[ExternalUntrusted,
-                // EmailRaw|PathRaw]`), mints a ValueRecord whose `provenance_chain[0]`
-                // roots on that event, and session-demotes (I1) — exactly as a raw
-                // read would. An OPERATOR-TYPED literal stays on `mint_from_intent`
-                // (`UserTrusted`), DISJOINT from file/env ingestion. This is what
-                // makes a file-derived recipient/path I2-Block in a sink arg while an
-                // operator literal in the same arg is Allowed — the value carries
-                // genuine untrusted taint, never a false `UserTrusted` (T-45-01).
-                //
-                // Both arms return `(value_id, next_last_event_id, next_last_event_hash)`.
-                // For `mint_from_read` the next chain head is the `session_demoted`
-                // event it appended LAST (its documented `chain_head_id`/`chain_head_hash`
-                // parent-forking contract) — NOT the `file_read` id — so the subject/body
-                // mints below stay ONE linear chain that `verify_chain` walks.
-                let (recipient_value_id, next_event_id, next_event_hash) = if primary_file_derived {
-                    let claim = Claim {
-                        claim_type: primary_claim_type.to_string(),
-                        value: primary_literal,
-                    };
-                    let (_read_event_id, _read_hash, value_id, chain_head_id, chain_head_hash) =
-                        mint_from_read(
-                            &locked,
-                            key,
-                            value_store,
-                            session_id,
-                            &claim,
-                            Some(*last_event_id),
-                            Some(last_event_hash),
-                        )?;
-                    (value_id, chain_head_id, chain_head_hash)
-                } else {
-                    let (event_id, hash, value_id) = mint_from_intent(
-                        &locked,
-                        key,
-                        value_store,
-                        session_id,
-                        primary_literal,
-                        Some(*last_event_id),
-                        Some(last_event_hash),
-                        Some(primary_role.to_string()),
-                    )?;
-                    (value_id, event_id, hash)
-                };
-                *last_event_id = next_event_id;
-                *last_event_hash = next_event_hash;
+                match &intent {
+                    CaprunIntent::SafeCodingWorkflow {
+                        path,
+                        contents,
+                        test_command,
+                        test_args_json,
+                        commit_message,
+                        remote,
+                        refspec,
+                        owner,
+                        repo,
+                        base,
+                        head,
+                        pr_title,
+                        pr_body,
+                    } => {
+                        // Coding success path is operator-typed only. A file-derived
+                        // primary would be a mint-path pivot (GATE-RECORD re-run) —
+                        // reject fail-closed rather than route through mint_from_read.
+                        if primary_file_derived {
+                            drop(locked);
+                            send_response(
+                                stream,
+                                &BrokerResponse::Error {
+                                    message: "ProvideIntent rejected: SafeCodingWorkflow \
+                                              requires primary_file_derived=false \
+                                              (operator-typed multi-mint only)"
+                                        .into(),
+                                },
+                            )
+                            .await?;
+                            return Ok(());
+                        }
 
-                let subject_value_id = match subject_literal {
-                    Some(subject) => {
-                        let (event_id, hash, vid) = mint_from_intent(
-                            &locked,
-                            key,
-                            value_store,
-                            session_id,
-                            subject,
-                            Some(*last_event_id),
-                            Some(last_event_hash),
-                            Some("subject".to_string()),
-                        )?;
-                        *last_event_id = event_id;
-                        *last_event_hash = hash;
-                        Some(vid)
+                        // Ordered (bag_key, literal, origin_role) pairs — one
+                        // mint_from_intent per operator literal (T-49-04 distinct
+                        // handles). path + contents use origin_role Some("path")
+                        // for file.write Step 1c role gate (DESIGN §4).
+                        let fields: [(&str, &str, Option<&str>); 13] = [
+                            ("write_path", path.as_str(), Some("path")),
+                            ("write_contents", contents.as_str(), Some("path")),
+                            ("test_command", test_command.as_str(), Some("command")),
+                            ("test_args", test_args_json.as_str(), Some("args")),
+                            ("commit_message", commit_message.as_str(), Some("message")),
+                            ("push_remote", remote.as_str(), Some("remote")),
+                            ("push_refspec", refspec.as_str(), Some("refspec")),
+                            ("pr_owner", owner.as_str(), Some("owner")),
+                            ("pr_repo", repo.as_str(), Some("repo")),
+                            ("pr_base", base.as_str(), Some("base")),
+                            ("pr_head", head.as_str(), Some("head")),
+                            ("pr_title", pr_title.as_str(), Some("title")),
+                            ("pr_body", pr_body.as_str(), Some("body")),
+                        ];
+
+                        let mut named: Vec<(String, runtime_core::plan_node::ValueId)> =
+                            Vec::with_capacity(fields.len());
+                        let mut primary: Option<runtime_core::plan_node::ValueId> = None;
+
+                        for (bag_key, literal, role) in fields {
+                            let (event_id, hash, vid) = mint_from_intent(
+                                &locked,
+                                key,
+                                value_store,
+                                session_id,
+                                literal.to_string(),
+                                Some(*last_event_id),
+                                Some(last_event_hash),
+                                role.map(|r| r.to_string()),
+                            )?;
+                            *last_event_id = event_id;
+                            *last_event_hash = hash;
+                            if bag_key == "write_path" {
+                                primary = Some(vid.clone());
+                            }
+                            named.push((bag_key.to_string(), vid));
+                        }
+
+                        let value_id = primary.expect(
+                            "write_path is first field — primary always set after loop",
+                        );
+                        (value_id, None, None, named)
                     }
-                    None => None,
-                };
 
-                let body_value_id = match body_literal {
-                    Some(body) => {
-                        let (event_id, hash, vid) = mint_from_intent(
-                            &locked,
-                            key,
-                            value_store,
-                            session_id,
-                            body,
-                            Some(*last_event_id),
-                            Some(last_event_hash),
-                            Some("body".to_string()),
-                        )?;
-                        *last_event_id = event_id;
-                        *last_event_hash = hash;
-                        Some(vid)
+                    CaprunIntent::SendEmailSummary { .. }
+                    | CaprunIntent::CreateFileFromReport { .. } => {
+                        // Email/file three-slot shape (Phase 15). named_handles empty.
+                        //
+                        // `primary_role` (T2): selected INSIDE the intent-variant
+                        // match that produces `primary_literal` — never hardcoded at
+                        // the shared mint_from_intent call (would mistag file paths).
+                        // `primary_claim_type` (M7 / WG-1): mint_from_read claim_type
+                        // ONLY when primary_file_derived.
+                        let (
+                            primary_literal,
+                            primary_role,
+                            primary_claim_type,
+                            subject_literal,
+                            body_literal,
+                        ): (String, &'static str, &'static str, Option<String>, Option<String>) =
+                            match &intent {
+                                CaprunIntent::SendEmailSummary {
+                                    recipient,
+                                    subject,
+                                    body,
+                                } => (
+                                    recipient.clone(),
+                                    "recipient",
+                                    "email_address",
+                                    Some(subject.clone()),
+                                    Some(body.clone()),
+                                ),
+                                CaprunIntent::CreateFileFromReport { path } => {
+                                    (path.clone(), "path", "relative_path", None, None)
+                                }
+                                CaprunIntent::SafeCodingWorkflow { .. } => unreachable!(
+                                    "SafeCodingWorkflow handled in outer match arm"
+                                ),
+                            };
+
+                        // M7 (WG-1) DISJOINT ROUTING: a FILE-DERIVED primary literal is minted
+                        // TAINTED via `mint_from_read` (Gate-3-sanctioned here; NO second site).
+                        // An OPERATOR-TYPED literal stays on `mint_from_intent` (`UserTrusted`).
+                        let (recipient_value_id, next_event_id, next_event_hash) =
+                            if primary_file_derived {
+                                let claim = Claim {
+                                    claim_type: primary_claim_type.to_string(),
+                                    value: primary_literal,
+                                };
+                                let (
+                                    _read_event_id,
+                                    _read_hash,
+                                    value_id,
+                                    chain_head_id,
+                                    chain_head_hash,
+                                ) = mint_from_read(
+                                    &locked,
+                                    key,
+                                    value_store,
+                                    session_id,
+                                    &claim,
+                                    Some(*last_event_id),
+                                    Some(last_event_hash),
+                                )?;
+                                (value_id, chain_head_id, chain_head_hash)
+                            } else {
+                                let (event_id, hash, value_id) = mint_from_intent(
+                                    &locked,
+                                    key,
+                                    value_store,
+                                    session_id,
+                                    primary_literal,
+                                    Some(*last_event_id),
+                                    Some(last_event_hash),
+                                    Some(primary_role.to_string()),
+                                )?;
+                                (value_id, event_id, hash)
+                            };
+                        *last_event_id = next_event_id;
+                        *last_event_hash = next_event_hash;
+
+                        let subject_value_id = match subject_literal {
+                            Some(subject) => {
+                                let (event_id, hash, vid) = mint_from_intent(
+                                    &locked,
+                                    key,
+                                    value_store,
+                                    session_id,
+                                    subject,
+                                    Some(*last_event_id),
+                                    Some(last_event_hash),
+                                    Some("subject".to_string()),
+                                )?;
+                                *last_event_id = event_id;
+                                *last_event_hash = hash;
+                                Some(vid)
+                            }
+                            None => None,
+                        };
+
+                        let body_value_id = match body_literal {
+                            Some(body) => {
+                                let (event_id, hash, vid) = mint_from_intent(
+                                    &locked,
+                                    key,
+                                    value_store,
+                                    session_id,
+                                    body,
+                                    Some(*last_event_id),
+                                    Some(last_event_hash),
+                                    Some("body".to_string()),
+                                )?;
+                                *last_event_id = event_id;
+                                *last_event_hash = hash;
+                                Some(vid)
+                            }
+                            None => None,
+                        };
+
+                        (
+                            recipient_value_id,
+                            subject_value_id,
+                            body_value_id,
+                            Vec::new(),
+                        )
                     }
-                    None => None,
-                };
-
-                (recipient_value_id, subject_value_id, body_value_id)
+                }
             };
 
             // Guard (a): mark accepted ONLY after the mint(s) succeeded — a
@@ -2551,6 +2638,7 @@ pub async fn dispatch_request(
                     value_id,
                     subject_value_id,
                     body_value_id,
+                    named_handles,
                 },
             )
             .await?;
