@@ -1029,3 +1029,200 @@ fn multi_node_test_planner_places_bag_handle_in_second_node() {
         "step ≥ 2 must return None"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 49 / CODE-01/02 — SafeCodingWorkflow plan_next emission + anti-launder
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Synthetic coding intent — literals never reach plan_next (PLAN-03); present
+/// only so CaprunIntent is constructible for the match arm.
+fn coding_intent() -> CaprunIntent {
+    CaprunIntent::SafeCodingWorkflow {
+        path: "src/lib.rs".into(),
+        contents: "fn main() {}".into(),
+        test_command: "sh".into(),
+        test_args_json: r#"["-c","git add -A && cargo test"]"#.into(),
+        commit_message: "feat: safe coding".into(),
+        remote: "origin".into(),
+        refspec: "HEAD:refs/heads/feature".into(),
+        owner: "acme".into(),
+        repo: "caprun".into(),
+        base: "main".into(),
+        head: "feature".into(),
+        pr_title: "Safe coding PR".into(),
+        pr_body: "Automated multi-step coding stream.".into(),
+    }
+}
+
+/// Seed a full intent-minted coding bag with distinct synthetic ValueIds.
+fn seed_coding_bag() -> HashMap<String, ValueId> {
+    let keys = [
+        "write_path",
+        "write_contents",
+        "test_command",
+        "test_args",
+        "commit_message",
+        "push_remote",
+        "push_refspec",
+        "pr_owner",
+        "pr_repo",
+        "pr_base",
+        "pr_head",
+        "pr_title",
+        "pr_body",
+    ];
+    let mut bag = HashMap::new();
+    for k in keys {
+        bag.insert(k.into(), ValueId::new());
+    }
+    // Primary slot mirrors worker seed (intent == write_path primary).
+    bag.insert("intent".into(), bag.get("write_path").unwrap().clone());
+    bag
+}
+
+/// CODE-01: DeterministicPlanner::plan_next emits five sinks in order with
+/// exact sink_schema PlanArg names; step ≥ 5 returns None.
+#[test]
+fn coding_plan_next_emits_five_sinks_in_order() {
+    let intent = coding_intent();
+    let bag = seed_coding_bag();
+    let planner_impl = planner::DeterministicPlanner;
+
+    let expected: [(&str, &[&str]); 5] = [
+        ("file.write", &["path", "contents"]),
+        ("process.exec", &["command", "args"]),
+        ("git.commit", &["message"]),
+        ("git.push", &["remote", "refspec"]),
+        ("github.pr", &["owner", "repo", "base", "head", "title", "body"]),
+    ];
+
+    for (step, (sink, arg_names)) in expected.iter().enumerate() {
+        let node = planner::Planner::plan_next(
+            &planner_impl,
+            &planner::PlanStreamContext {
+                intent: intent.clone(),
+                step_index: step,
+                handles: bag.clone(),
+                task_instruction: None,
+            },
+        )
+        .unwrap_or_else(|| panic!("step {step} must return Some (CODE-01)"));
+        assert_eq!(
+            node.sink,
+            SinkId((*sink).into()),
+            "step {step} must emit sink {sink}"
+        );
+        assert_eq!(
+            node.args.len(),
+            arg_names.len(),
+            "step {step} must carry exactly {} args",
+            arg_names.len()
+        );
+        for name in *arg_names {
+            let _ = arg(&node, name); // panics if missing
+        }
+        // Handles come from the bag — never invented literals.
+        for a in &node.args {
+            assert!(
+                bag.values().any(|v| v == &a.value_id),
+                "step {step} arg {} must place a bag ValueId",
+                a.name
+            );
+        }
+    }
+
+    for step in [5usize, 6, 99] {
+        assert!(
+            planner::Planner::plan_next(
+                &planner_impl,
+                &planner::PlanStreamContext {
+                    intent: intent.clone(),
+                    step_index: step,
+                    handles: bag.clone(),
+                    task_instruction: None,
+                },
+            )
+            .is_none(),
+            "step {step} must return None (stream end)"
+        );
+    }
+}
+
+/// CODE-02: success-path plan_next never places out_* bag handles into sink args
+/// even when those keys are present in the bag (anti-launder).
+#[test]
+fn coding_success_path_does_not_place_out_handles() {
+    let intent = coding_intent();
+    let mut bag = seed_coding_bag();
+    let out0 = ValueId::new();
+    let out1 = ValueId::new();
+    bag.insert("out_0".into(), out0.clone());
+    bag.insert("out_1".into(), out1.clone());
+    let out_ids = [&out0, &out1];
+    let planner_impl = planner::DeterministicPlanner;
+
+    for step in 0..5 {
+        let node = planner::Planner::plan_next(
+            &planner_impl,
+            &planner::PlanStreamContext {
+                intent: intent.clone(),
+                step_index: step,
+                handles: bag.clone(),
+                task_instruction: None,
+            },
+        )
+        .expect("success-path step must emit a node");
+        for a in &node.args {
+            assert!(
+                !out_ids.iter().any(|o| *o == &a.value_id),
+                "success-path step {step} must not place out_* handles into sink args (CODE-02)"
+            );
+            assert!(
+                !bag.iter()
+                    .any(|(k, v)| k.starts_with("out_") && v == &a.value_id),
+                "success-path step {step} arg {} matched an out_* bag entry",
+                a.name
+            );
+        }
+    }
+}
+
+/// Missing required bag key → that step returns None (fail-closed).
+#[test]
+fn coding_missing_bag_key_fail_closed() {
+    let intent = coding_intent();
+    let mut bag = seed_coding_bag();
+    // Omit write_contents → step 0 must fail closed.
+    bag.remove("write_contents");
+    let planner_impl = planner::DeterministicPlanner;
+    assert!(
+        planner::Planner::plan_next(
+            &planner_impl,
+            &planner::PlanStreamContext {
+                intent: intent.clone(),
+                step_index: 0,
+                handles: bag,
+                task_instruction: None,
+            },
+        )
+        .is_none(),
+        "missing write_contents must fail-closed at step 0"
+    );
+
+    // Omit push_remote → step 3 must fail closed (steps 0–2 still need full bag).
+    let mut bag = seed_coding_bag();
+    bag.remove("push_remote");
+    assert!(
+        planner::Planner::plan_next(
+            &planner_impl,
+            &planner::PlanStreamContext {
+                intent,
+                step_index: 3,
+                handles: bag,
+                task_instruction: None,
+            },
+        )
+        .is_none(),
+        "missing push_remote must fail-closed at step 3"
+    );
+}

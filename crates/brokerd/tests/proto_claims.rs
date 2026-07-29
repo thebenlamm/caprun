@@ -261,6 +261,226 @@ async fn provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle(
     );
 }
 
+/// Phase 49 / CODE-02: IntentAccepted with non-empty named_handles round-trips
+/// through serde_json (additive field shape for coding multi-mint).
+#[test]
+fn intent_accepted_named_handles_round_trips() {
+    use brokerd::proto::BrokerResponse;
+    use runtime_core::plan_node::ValueId;
+
+    let write_path = ValueId::new();
+    let write_contents = ValueId::new();
+    let resp = BrokerResponse::IntentAccepted {
+        value_id: write_path.clone(),
+        subject_value_id: None,
+        body_value_id: None,
+        named_handles: vec![
+            ("write_path".into(), write_path),
+            ("write_contents".into(), write_contents),
+        ],
+    };
+    let json = serde_json::to_string(&resp).expect("serialize IntentAccepted named_handles");
+    let recovered: BrokerResponse =
+        serde_json::from_str(&json).expect("deserialize IntentAccepted named_handles");
+    assert_eq!(resp, recovered);
+}
+
+/// Phase 49 / CODE-02: ProvideIntent SafeCodingWorkflow (primary_file_derived
+/// false) returns N distinct named UserTrusted handles; each resolves in the
+/// per-connection ValueStore; path/contents carry origin_role "path"; no two
+/// bag keys share the same ValueId.
+#[tokio::test]
+async fn provide_intent_safe_coding_multi_mint_distinct_named_handles() {
+    use brokerd::audit::open_audit_db;
+    use brokerd::proto::{BrokerRequest, BrokerResponse};
+    use brokerd::server::dispatch_request;
+    use executor::value_store::ValueStore;
+    use runtime_core::intent::CaprunIntent;
+    use runtime_core::plan_node::TaintLabel;
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+    use uuid::Uuid;
+
+    let conn = Arc::new(Mutex::new(open_audit_db(":memory:").expect("open_audit_db")));
+    let session_id = Uuid::new_v4();
+    let mut store = ValueStore::default();
+    let mut last_event_id = Uuid::new_v4();
+    let mut last_event_hash = "genesis-hash".to_string();
+    let session_status = Arc::new(Mutex::new(runtime_core::SessionStatus::Active));
+    let ws_root = Arc::new(
+        adapter_fs::workspace::WorkspaceRoot::open(std::env::temp_dir().as_path())
+            .expect("open ws root"),
+    );
+    let trusted_inode: Option<(u64, u64)> = None;
+    let (mut server_end, mut client_end) =
+        tokio::net::UnixStream::pair().expect("UnixStream::pair");
+    let mut intent_provided = false;
+    let mut fd_requested = false;
+    let mut fd_request_count: u32 = 0;
+
+    let coding = CaprunIntent::SafeCodingWorkflow {
+        path: "src/lib.rs".into(),
+        contents: "fn main() {}".into(),
+        test_command: "sh".into(),
+        test_args_json: r#"["-c","cargo test"]"#.into(),
+        commit_message: "feat: coding".into(),
+        remote: "origin".into(),
+        refspec: "HEAD:refs/heads/feature".into(),
+        owner: "acme".into(),
+        repo: "caprun".into(),
+        base: "main".into(),
+        head: "feature".into(),
+        pr_title: "PR title".into(),
+        pr_body: "PR body".into(),
+    };
+
+    dispatch_request(
+        BrokerRequest::ProvideIntent {
+            intent: coding,
+            primary_file_derived: false,
+        },
+        &mut server_end,
+        &conn,
+        TEST_KEY,
+        session_id,
+        &mut last_event_id,
+        &mut last_event_hash,
+        &mut store,
+        &ws_root,
+        &session_status,
+        &runtime_core::SessionPolicy::allow_all(),
+        trusted_inode,
+        &mut intent_provided,
+        &mut fd_requested,
+        &mut fd_request_count,
+    )
+    .await
+    .expect("dispatch ProvideIntent SafeCodingWorkflow must succeed");
+
+    use tokio::io::AsyncReadExt;
+    let mut len_buf = [0u8; 4];
+    client_end.read_exact(&mut len_buf).await.expect("read len");
+    let msg_len = u32::from_le_bytes(len_buf) as usize;
+    let mut body = vec![0u8; msg_len];
+    client_end.read_exact(&mut body).await.expect("read body");
+    let response: BrokerResponse = serde_json::from_slice(&body).expect("deserialize response");
+
+    let expected_keys: [&str; 13] = [
+        "write_path",
+        "write_contents",
+        "test_command",
+        "test_args",
+        "commit_message",
+        "push_remote",
+        "push_refspec",
+        "pr_owner",
+        "pr_repo",
+        "pr_base",
+        "pr_head",
+        "pr_title",
+        "pr_body",
+    ];
+
+    match response {
+        BrokerResponse::IntentAccepted {
+            value_id,
+            subject_value_id,
+            body_value_id,
+            named_handles,
+        } => {
+            assert!(
+                subject_value_id.is_none() && body_value_id.is_none(),
+                "coding uses named_handles, not email three-slot subject/body"
+            );
+            assert_eq!(
+                named_handles.len(),
+                expected_keys.len(),
+                "SafeCodingWorkflow must mint one handle per bag key"
+            );
+
+            let mut seen_ids = HashSet::new();
+            let mut by_key = std::collections::HashMap::new();
+            for (key, vid) in &named_handles {
+                assert!(
+                    seen_ids.insert(vid.clone()),
+                    "bag key {key} must have a DISTINCT ValueId (T-49-04)"
+                );
+                by_key.insert(key.as_str(), vid.clone());
+            }
+            for k in expected_keys {
+                assert!(
+                    by_key.contains_key(k),
+                    "named_handles must include bag key {k}"
+                );
+            }
+
+            // Primary value_id is the write_path handle.
+            assert_eq!(
+                &value_id,
+                by_key.get("write_path").expect("write_path present"),
+                "primary value_id must be the write_path handle"
+            );
+
+            // Every handle resolves UserTrusted with no untrusted labels.
+            for (key, vid) in &named_handles {
+                let record = store.resolve(vid).unwrap_or_else(|| {
+                    panic!("named handle {key} must resolve in per-connection store")
+                });
+                assert!(
+                    record.taint.contains(&TaintLabel::UserTrusted),
+                    "named handle {key} must carry UserTrusted"
+                );
+                assert!(
+                    !record.taint.iter().any(|t| t.is_untrusted()),
+                    "named handle {key} must not carry untrusted labels"
+                );
+            }
+
+            // path/contents origin_role usable for file.write Step 1c role gate.
+            let path_rec = store
+                .resolve(by_key.get("write_path").unwrap())
+                .expect("write_path resolve");
+            assert_eq!(
+                path_rec.origin_role.as_deref(),
+                Some("path"),
+                "write_path origin_role must be Some(\"path\")"
+            );
+            assert_eq!(path_rec.literal, "src/lib.rs");
+            let contents_rec = store
+                .resolve(by_key.get("write_contents").unwrap())
+                .expect("write_contents resolve");
+            assert_eq!(
+                contents_rec.origin_role.as_deref(),
+                Some("path"),
+                "write_contents origin_role must be Some(\"path\")"
+            );
+            assert_eq!(contents_rec.literal, "fn main() {}");
+        }
+        other => panic!(
+            "expected IntentAccepted for SafeCodingWorkflow, got {:?}",
+            other
+        ),
+    }
+
+    // 13 sequential mint_from_intent calls → 13 intent_received events.
+    let locked = conn.lock().unwrap();
+    let intent_received_count: i64 = locked
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE session_id = ?1 AND event_type = 'intent_received'",
+            [&session_id.to_string()],
+            |row| row.get(0),
+        )
+        .expect("query intent_received count");
+    assert_eq!(
+        intent_received_count, 13,
+        "SafeCodingWorkflow must mint 13 distinct intent_received events"
+    );
+    assert!(
+        intent_provided,
+        "intent_provided must be true after successful multi-mint"
+    );
+}
+
 /// Test 2e: `WorkerClaim::DocFragment` round-trips through serde_json to an
 /// equal value when wrapped in a `ReportClaims` request (additive variant,
 /// Phase 15 15-03).
