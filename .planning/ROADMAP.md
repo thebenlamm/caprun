@@ -298,7 +298,11 @@ Plans:
   3. In the same proof family, a mid-loop I2 Block is independently attributable: a genuinely tainted handle (non-stapled provenance root on a real read/exec event) occupies a sensitive sink arg (e.g. PR body and/or push refspec) under a policy-permitted sink; executor Blocks; `policy_deny` is not what fired; no effect of that node; chain remains `verify_chain` true
   4. Full-workspace regression green on real Linux via the authoritative compose-verify gate; no v1.0–v1.9 regression; `check-invariants.sh` green
 
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 51-01-PLAN.md — Wave 1 tracer: LIVE-07 harness + framing + CLI multi-node SUCCESS under compose-verify
+- [ ] 51-02-PLAN.md — Wave 2 expansion: LIVE-08 proof-planner path + full compose-verify regression
 
 ### Phase 52: Minimal Linux Packaging
 
