@@ -18,6 +18,11 @@
 ///   create-file-from-report <path>  — create <path> under the workspace root
 ///                                     (clean path → Allow; a hostile workspace-read
 ///                                      path → Block, per §9)
+///   safe-coding-workflow <coding-intent.json>
+///                                   — multi-node Safe Coding Agent loop from a
+///                                     JSON CaprunIntent::SafeCodingWorkflow file
+///                                     (Phase 50 CLI-01; mid-loop hold CONFIRM-01).
+///                                     LIVE multi-node SUCCESS is Phase 51.
 ///
 /// # Single dispatch authority (ASM-01)
 ///
@@ -41,8 +46,11 @@ use brokerd::{
 };
 use chrono::Utc;
 use runtime_core::{intent::CaprunIntent, Event, SeedProvenance};
+use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::path::Path;
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 // Cross-process MAC-key custody + F1 fail-closed startup refusal (HARDEN-02).
@@ -56,6 +64,8 @@ use uuid::Uuid;
 // terminal-state gate, and deny()'s NEW `verify_chain` gate — `deny()` now
 // carries the SAME integrity gates `confirm()` has.
 mod key;
+// Parent↔worker hold protocol (Phase 50 Plan 01) — shared pure module.
+mod stream_hold;
 
 /// Trusted default `subject`/`body` for a `send-email-summary` intent (Phase
 /// 15 finding #6). Deliberately NOT a new CLI flag (this plan's DEFERRED
@@ -315,8 +325,35 @@ async fn main() -> anyhow::Result<()> {
         "create-file-from-report" => CaprunIntent::CreateFileFromReport {
             path: intent_param,
         },
+        // Phase 50 CLI-01: multi-node coding driver. Intent param is a JSON
+        // file path deserializing to CaprunIntent::SafeCodingWorkflow (tagged
+        // kind). Reject file-derived seed at the CLI (broker also rejects
+        // primary_file_derived=true for this variant). LIVE-07/08 SUCCESS is
+        // Phase 51 — this arm only productizes the real binary path.
+        "safe-coding-workflow" => {
+            if primary_file_derived {
+                anyhow::bail!(
+                    "safe-coding-workflow rejects --seed-from-file / \
+                     primary_file_derived (coding multi-mint is operator-typed \
+                     TrustedArg only; file-derived coding seed is fail-closed)"
+                );
+            }
+            let raw = std::fs::read_to_string(&intent_param).with_context(|| {
+                format!("read safe-coding-workflow intent JSON at {intent_param}")
+            })?;
+            let parsed: CaprunIntent = serde_json::from_str(&raw)
+                .context("parse SafeCodingWorkflow intent JSON")?;
+            match parsed {
+                CaprunIntent::SafeCodingWorkflow { .. } => parsed,
+                _ => anyhow::bail!(
+                    "coding intent JSON must be kind SafeCodingWorkflow \
+                     (got a different CaprunIntent variant)"
+                ),
+            }
+        }
         _ => anyhow::bail!("unknown intent kind: {intent_kind}"),
     };
+    let is_coding = matches!(intent, CaprunIntent::SafeCodingWorkflow { .. });
 
     // ── 1. Open audit DB ────────────────────────────────────────────────────
     let conn = Arc::new(Mutex::new(
@@ -404,6 +441,13 @@ async fn main() -> anyhow::Result<()> {
     let session = create_session(intent_id, seed_provenance.clone());
     let session_id = session.id;
     let initial_session_status = session.status.clone();
+
+    // Phase 50 CLI-01 / GITHUB-02: coding sessions need a distinct human grant
+    // before github.pr dispatch. Print the pointer; never auto-grant.
+    if is_coding {
+        println!("session_id={session_id}");
+        println!("grant: caprun grant {session_id} {audit_path}");
+    }
 
     // ORIGIN-01: record the seed-provenance determination in the
     // session_created Event's actor field — Event carries no free-form
@@ -553,20 +597,21 @@ async fn main() -> anyhow::Result<()> {
         .parent()
         .ok_or_else(|| anyhow::anyhow!("caprun has no parent dir"))?
         .join("caprun-worker");
-    let mut child = std::process::Command::new(&worker_binary)
-        // SECURITY (Phase 34 gap-closure, env_clear adversarial-review follow-up):
-        // clear the inherited environment so the confined worker receives NONE of
-        // the unconfined caprun process's env — notably OPENAI_API_KEY and
-        // CAPRUN_SMTP_*. The worker processes untrusted content by design (I1
-        // dynamic taint), so a prompt-injected worker could otherwise `getenv` a
-        // secret (a pure memory read seccomp/Landlock cannot block) and embed it
-        // into a draft-email body or an artifact write. Pass ONLY the explicit,
-        // non-secret vars the worker actually reads (BROKER_SOCK,
-        // WORKSPACE_FILE, INTENT, + the optional planner seam) plus a minimal PATH.
-        // This makes the T-21-10 guarantee ("the worker's env never receives
-        // OPENAI_API_KEY") TRUE by construction — it was previously false via
-        // inheritance. The worker never `execve`s (seccomp-denied), so PATH is
-        // belt-and-suspenders, not required.
+    let mut worker_cmd = std::process::Command::new(&worker_binary);
+    // SECURITY (Phase 34 gap-closure, env_clear adversarial-review follow-up):
+    // clear the inherited environment so the confined worker receives NONE of
+    // the unconfined caprun process's env — notably OPENAI_API_KEY and
+    // CAPRUN_SMTP_*. The worker processes untrusted content by design (I1
+    // dynamic taint), so a prompt-injected worker could otherwise `getenv` a
+    // secret (a pure memory read seccomp/Landlock cannot block) and embed it
+    // into a draft-email body or an artifact write. Pass ONLY the explicit,
+    // non-secret vars the worker actually reads (BROKER_SOCK,
+    // WORKSPACE_FILE, INTENT, + the optional planner seam) plus a minimal PATH.
+    // This makes the T-21-10 guarantee ("the worker's env never receives
+    // OPENAI_API_KEY") TRUE by construction — it was previously false via
+    // inheritance. The worker never `execve`s (seccomp-denied), so PATH is
+    // belt-and-suspenders, not required.
+    worker_cmd
         .env_clear()
         .env("PATH", "/usr/bin:/bin:/usr/local/bin")
         // Abstract socket name WITHOUT the leading NUL (worker prepends it)
@@ -578,21 +623,49 @@ async fn main() -> anyhow::Result<()> {
         // Serialised CaprunIntent — worker deserialises this and sends ProvideIntent
         // to the broker, which mints it authoritatively in the per-connection
         // ValueStore. Never passed raw bytes here; always the typed intent enum.
-        .env("INTENT", serde_json::to_string(&intent).context("serialise intent")?)
+        .env(
+            "INTENT",
+            serde_json::to_string(&intent).context("serialise intent")?,
+        )
         // M7 (WG-1): forward the PER-LITERAL file-derived provenance of the
         // primary intent literal so the worker can set the `primary_file_derived`
         // flag on ProvideIntent. The broker mints a file-derived primary literal
         // via `mint_from_read` (TAINTED) instead of `mint_from_intent` (trusted),
         // closing the laundering path where file content minted trusted escapes I2.
-        .env("PRIMARY_SEED_FILE_DERIVED", if primary_file_derived { "1" } else { "0" })
+        .env(
+            "PRIMARY_SEED_FILE_DERIVED",
+            if primary_file_derived { "1" } else { "0" },
+        )
         // Propagates PLANNER_SOCK + CAPRUN_PLANNER=llm ONLY when the sidecar
         // was spawned above (step 3b) — empty otherwise, so the default path
         // sees this call site add nothing (no regression).
-        .envs(worker_planner_env)
-        .spawn()
-        .context("spawn caprun-worker")?;
+        .envs(worker_planner_env);
+    // Phase 50 CONFIRM-01: coding multi-node hold needs piped stdin/stdout for
+    // the parent↔worker stream_hold protocol. Email/file keep inherit stdio
+    // (simpler wait path; Block maps to exit 3 honesty below).
+    if is_coding {
+        worker_cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
+        // stderr inherits so human hold notices remain visible.
+    }
+    let mut child = worker_cmd.spawn().context("spawn caprun-worker")?;
 
-    // ── 5. Wait for caprun-worker process exit ───────────────────────────────
+    // ── 5. Drive worker lifecycle ────────────────────────────────────────────
+    // Coding: orchestrate mid-loop hold (do NOT abort broker on first BLOCKED).
+    // Email/file: wait for exit, then map 0/2/3/1 honestly (CLI-02).
+    let stream_terminal = if is_coding {
+        orchestrate_coding_stream(
+            &mut child,
+            &session_id.to_string(),
+            &audit_path,
+        )
+        .await
+        .context("orchestrate coding multi-node stream")?
+    } else {
+        None
+    };
+
+    // Wait for caprun-worker process exit (coding may already have exited;
+    // wait is still required to reap and read status).
     // spawn_blocking so child.wait() (blocking) doesn't stall the tokio reactor.
     // All audit writes complete before the worker exits (the broker writes each
     // event and sends its response before the worker proceeds), so by the time
@@ -616,6 +689,8 @@ async fn main() -> anyhow::Result<()> {
     // ── 6. Stop the broker accept loop ───────────────────────────────────────
     // run_broker_server loops forever accepting connections; the worker is done,
     // so abort the task. All audit writes are already durable (see step 5).
+    // CRITICAL (CONFIRM-01): broker is aborted ONLY after worker terminal —
+    // never on first BLOCKED (hold needs the live broker + durable pending).
     broker_task.abort();
 
     // ── 7. Print audit DAG to stdout + verify the hash chain ─────────────────
@@ -629,47 +704,419 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    // Non-success propagation: a §9 block makes the worker exit non-zero, which
-    // must surface as a non-zero caprun exit (BEFORE any effect runs).
-    if !child_status.success() {
-        // ── Surface the blocked effect_id(s) + operator-loop pointer (WG-5, Matt #2) ─
-        // A non-zero worker exit is USUALLY an I2 Block: the broker durably
-        // recorded a `pending_confirmations` row awaiting a human decision.
-        // Read those rows (read-only — mints nothing, appends nothing) and
-        // print, for each, the blocked effect_id + sink + the three actionable
-        // pointers, using the REAL audit-db-path (not a placeholder), so the
-        // operator never has to grep the worker's Debug dump to reach
-        // confirm/deny. A non-Block non-zero exit (e.g. a schema Deny) leaves
-        // ZERO pending rows → nothing extra is printed, and the existing bail
-        // behavior below is unchanged.
-        let pending = {
-            let locked = conn.lock().unwrap();
-            brokerd::audit::list_pending_confirmations_for_session(&locked, &session_id.to_string())
-        };
-        match pending {
-            Ok(rows) if !rows.is_empty() => {
-                println!(
-                    "\n=== Blocked pending confirmation ({} effect{}) ===",
-                    rows.len(),
-                    if rows.len() == 1 { "" } else { "s" }
-                );
-                for (effect_id, sink) in &rows {
-                    println!("  effect_id={effect_id}  sink={sink}");
-                    println!("    review:  caprun review {effect_id} {audit_path}");
-                    println!("    confirm: caprun confirm {effect_id} {audit_path}");
-                    println!("    deny:    caprun deny {effect_id} {audit_path}");
-                }
-            }
-            Ok(_) => { /* non-Block non-zero exit: nothing extra to surface */ }
-            // A read failure here must NOT mask the underlying non-zero exit —
-            // note it and fall through to the bail below (fail-closed).
-            Err(e) => eprintln!("warning: could not list pending confirmations: {e}"),
+    // ── 8. CLI-02 stream exit taxonomy (0 success / 2 denied / 3 blocked / 1) ─
+    // Prefer structured terminal from coding orchestration; fall back to worker
+    // process exit codes (email/file + coding worker status). Never collapse a
+    // known Block/Deny into generic bail→1 when the stream already reported it.
+    let exit_code = map_run_exit_code(stream_terminal, child_status.code());
+    if exit_code != 0 {
+        surface_pending_confirmations(&conn, &session_id.to_string(), &audit_path);
+        if stream_terminal.is_none() {
+            // Email/file path: still log the raw status for operators.
+            eprintln!("caprun-worker exited with status: {child_status}");
         }
-
-        anyhow::bail!("caprun-worker exited with status: {child_status}");
+        std::process::exit(exit_code);
     }
 
     Ok(())
+}
+
+/// Map coding stream terminal + worker process exit → CLI-02 integer.
+///
+/// | Code | Meaning |
+/// |------|---------|
+/// | 0 | Full success |
+/// | 2 | Denied / aborted (incl. policy_deny, human ABORT) |
+/// | 3 | Blocked / hold incomplete |
+/// | 1 | Infra / empty / crash / unknown |
+fn map_run_exit_code(
+    stream_terminal: Option<stream_hold::StreamTerminalKind>,
+    worker_code: Option<i32>,
+) -> i32 {
+    use stream_hold::{map_stream_exit, StreamTerminalKind};
+    if let Some(kind) = stream_terminal {
+        // Structured terminal wins when present (coding orchestration).
+        // Worker status can refine: e.g. Success reported but worker crashed → 1.
+        match kind {
+            StreamTerminalKind::Success => match worker_code {
+                Some(0) | None => map_stream_exit(StreamTerminalKind::Success).as_i32(),
+                Some(2) => map_stream_exit(StreamTerminalKind::DeniedAborted).as_i32(),
+                Some(3) => map_stream_exit(StreamTerminalKind::BlockedIncomplete).as_i32(),
+                Some(_) => map_stream_exit(StreamTerminalKind::InfraOrEmpty).as_i32(),
+            },
+            other => map_stream_exit(other).as_i32(),
+        }
+    } else {
+        // Email/file (or coding without a parsed terminal): map worker exit.
+        match worker_code {
+            Some(0) => 0,
+            Some(2) => 2,
+            Some(3) => 3,
+            Some(_) | None => 1,
+        }
+    }
+}
+
+/// Print pending confirmation rows + review/confirm/deny pointers (shared by
+/// mid-loop hold surface and post-exit honesty path).
+fn surface_pending_confirmations(
+    conn: &Arc<Mutex<rusqlite::Connection>>,
+    session_id: &str,
+    audit_path: &str,
+) {
+    let pending = {
+        let locked = conn.lock().unwrap();
+        brokerd::audit::list_pending_confirmations_for_session(&locked, session_id)
+    };
+    match pending {
+        Ok(rows) if !rows.is_empty() => {
+            print_blocked_pending_banner(&rows, audit_path);
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("warning: could not list pending confirmations: {e}"),
+    }
+}
+
+fn print_blocked_pending_banner(rows: &[(Uuid, String)], audit_path: &str) {
+    println!(
+        "\n=== Blocked pending confirmation ({} effect{}) ===",
+        rows.len(),
+        if rows.len() == 1 { "" } else { "s" }
+    );
+    for (effect_id, sink) in rows {
+        print_effect_pointers(&effect_id.to_string(), sink, audit_path);
+    }
+}
+
+fn print_effect_pointers(effect_id: &str, sink: &str, audit_path: &str) {
+    println!("  effect_id={effect_id}  sink={sink}");
+    println!("    review:  caprun review {effect_id} {audit_path}");
+    println!("    confirm: caprun confirm {effect_id} {audit_path}");
+    println!("    deny:    caprun deny {effect_id} {audit_path}");
+}
+
+/// External-mode poll interval for dual-terminal confirm (CAPRUN_CONFIRM=external
+/// or non-TTY). Documented constant — not a silent busy-loop.
+const EXTERNAL_CONFIRM_POLL_MS: u64 = 200;
+/// Default abandoned-hold timeout for external mode (seconds). Override with
+/// `CAPRUN_CONFIRM_TIMEOUT_SECS`. On timeout → exit 3 (blocked/incomplete).
+const EXTERNAL_CONFIRM_DEFAULT_TIMEOUT_SECS: u64 = 300;
+
+/// Outcome of mid-loop hold resolution (before writing PROCEED/ABORT).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MidLoopHold {
+    /// Human confirmed and sink released — write PROCEED.
+    Proceed,
+    /// Human denied or operator abort — write ABORT.
+    Abort,
+    /// Sink-fail / integrity / unknown — do not PROCEED; treat as infra (exit 1).
+    InfraFail,
+    /// External poll abandoned (timeout) — blocked/incomplete (exit 3).
+    Timeout,
+}
+
+/// Interactive vs external mode for mid-loop confirm (RESEARCH A3).
+///
+/// - `CAPRUN_CONFIRM=external` → always dual-terminal poll.
+/// - Non-TTY stdin → external (no interactive prompt possible).
+/// - Otherwise interactive in-process confirm/deny.
+fn confirm_mode_is_external() -> bool {
+    if std::env::var("CAPRUN_CONFIRM").as_deref() == Ok("external") {
+        return true;
+    }
+    !std::io::stdin().is_terminal()
+}
+
+/// Orchestrate SafeCodingWorkflow stream: read worker stdout protocol lines,
+/// mid-loop confirm on BLOCKED, write PROCEED/ABORT, keep broker alive.
+///
+/// Returns the structured stream terminal for CLI-02 exit mapping, or None if
+/// no protocol terminal was observed (infra).
+async fn orchestrate_coding_stream(
+    child: &mut std::process::Child,
+    session_id: &str,
+    audit_path: &str,
+) -> anyhow::Result<Option<stream_hold::StreamTerminalKind>> {
+    use stream_hold::{parse_line, StreamLine, StreamTerminalKind};
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("coding worker missing piped stdout"))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("coding worker missing piped stdin"))?;
+
+    // Line reader behind a Mutex so we can spawn_blocking per line without
+    // holding the async reactor across blocking read_line.
+    let reader = Arc::new(Mutex::new(BufReader::new(stdout)));
+    let mut terminal: Option<StreamTerminalKind> = None;
+
+    loop {
+        let reader_clone = Arc::clone(&reader);
+        let next = tokio::task::spawn_blocking(move || -> std::io::Result<Option<String>> {
+            let mut line = String::new();
+            let n = reader_clone.lock().unwrap().read_line(&mut line)?;
+            if n == 0 {
+                Ok(None)
+            } else {
+                // Strip trailing newline for parse_line (it trims anyway).
+                Ok(Some(line))
+            }
+        })
+        .await
+        .context("spawn_blocking read worker stdout")?
+        .context("read worker stdout")?;
+
+        let Some(raw_line) = next else {
+            // EOF: worker closed stdout. Terminal may already be set.
+            break;
+        };
+
+        match parse_line(&raw_line) {
+            Ok(StreamLine::Blocked { effect_id, sink }) => {
+                // Surface the same review/confirm/deny pointers mid-hold
+                // (not only post-exit). PROCEED only after Released / durable
+                // confirmed — never on parse alone (T-50-03 / T-50-10).
+                println!("\n=== Blocked pending confirmation (1 effect) ===");
+                print_effect_pointers(&effect_id, &sink, audit_path);
+
+                let hold = resolve_mid_loop_hold(&effect_id, session_id, audit_path).await?;
+                match hold {
+                    MidLoopHold::Proceed => {
+                        stdin
+                            .write_all(b"PROCEED\n")
+                            .context("write PROCEED to worker stdin")?;
+                        stdin.flush().context("flush PROCEED")?;
+                        // Continue reading — remaining nodes (e.g. github.pr).
+                    }
+                    MidLoopHold::Abort => {
+                        stdin
+                            .write_all(b"ABORT\n")
+                            .context("write ABORT to worker stdin")?;
+                        stdin.flush().context("flush ABORT")?;
+                        terminal = Some(StreamTerminalKind::DeniedAborted);
+                        // Drain until EOF / worker death.
+                    }
+                    MidLoopHold::InfraFail => {
+                        // Unblock worker without authorizing continue.
+                        let _ = stdin.write_all(b"ABORT\n");
+                        let _ = stdin.flush();
+                        terminal = Some(StreamTerminalKind::InfraOrEmpty);
+                    }
+                    MidLoopHold::Timeout => {
+                        let _ = stdin.write_all(b"ABORT\n");
+                        let _ = stdin.flush();
+                        terminal = Some(StreamTerminalKind::BlockedIncomplete);
+                    }
+                }
+            }
+            Ok(StreamLine::Denied { code, sink }) => {
+                // CLI-02: surface code= (incl. policy_deny) even when exit shares 2.
+                println!("caprun-stream: DENIED code={code} sink={sink}");
+                terminal = Some(StreamTerminalKind::DeniedAborted);
+            }
+            Ok(StreamLine::StreamDone { submitted }) => {
+                println!("caprun-stream: STREAM_DONE submitted={submitted}");
+                // Only upgrade to Success if we have not already recorded a
+                // non-success terminal (should not happen on honest worker).
+                if terminal.is_none() {
+                    terminal = Some(StreamTerminalKind::Success);
+                }
+                break;
+            }
+            Ok(StreamLine::NodeAllowed { step, sink }) => {
+                println!("caprun-stream: NODE_ALLOWED step={step} sink={sink}");
+            }
+            Err(_) => {
+                // Non-protocol line: forward for operator visibility; control
+                // flow remains driven only by parseable protocol lines.
+                let trimmed = raw_line.trim_end();
+                if !trimmed.is_empty() {
+                    println!("{trimmed}");
+                }
+            }
+        }
+    }
+
+    // Drop stdin so worker sees EOF if still waiting (fail-closed on unknown).
+    drop(stdin);
+    Ok(terminal)
+}
+
+/// Resolve a mid-loop BLOCKED hold via interactive confirm or external poll.
+///
+/// PROCEED only on ConfirmOutcome::Released (interactive) or durable
+/// `confirmed` state (external). Never PROCEED on Reviewed-only / UnknownEffect.
+async fn resolve_mid_loop_hold(
+    effect_id: &str,
+    session_id: &str,
+    audit_path: &str,
+) -> anyhow::Result<MidLoopHold> {
+    if confirm_mode_is_external() {
+        resolve_external_hold(effect_id, session_id, audit_path).await
+    } else {
+        resolve_interactive_hold(effect_id, audit_path).await
+    }
+}
+
+async fn resolve_interactive_hold(
+    effect_id: &str,
+    audit_path: &str,
+) -> anyhow::Result<MidLoopHold> {
+    use brokerd::confirmation::ConfirmOutcome;
+
+    eprint!("caprun: confirm or deny effect {effect_id}? [confirm/deny]: ");
+    let _ = std::io::stderr().flush();
+    let mut answer = String::new();
+    // Read operator decision from the parent process TTY (worker stdin is piped).
+    std::io::stdin()
+        .read_line(&mut answer)
+        .context("read interactive confirm/deny choice")?;
+    let choice = answer.trim().to_ascii_lowercase();
+    match choice.as_str() {
+        "confirm" | "c" | "yes" | "y" => {
+            let outcome = in_process_confirm(effect_id, audit_path).await?;
+            match outcome {
+                ConfirmOutcome::Released => Ok(MidLoopHold::Proceed),
+                ConfirmOutcome::Denied => Ok(MidLoopHold::Abort),
+                // Sink-fail / integrity: durable terminal or refused — never
+                // silent success / never PROCEED as full success.
+                ConfirmOutcome::ConfirmedButSinkFailed
+                | ConfirmOutcome::EmailSendFailed
+                | ConfirmOutcome::DigestMismatch
+                | ConfirmOutcome::BlockedLiteralRedacted
+                | ConfirmOutcome::UnknownEffect
+                | ConfirmOutcome::AlreadyTerminal
+                | ConfirmOutcome::Reviewed => {
+                    eprintln!("caprun: mid-loop confirm outcome={outcome:?} — not releasing hold as success");
+                    Ok(MidLoopHold::InfraFail)
+                }
+            }
+        }
+        "deny" | "d" | "no" | "n" => {
+            let outcome = in_process_deny(effect_id, audit_path)?;
+            match outcome {
+                ConfirmOutcome::Denied | ConfirmOutcome::AlreadyTerminal => Ok(MidLoopHold::Abort),
+                other => {
+                    eprintln!("caprun: mid-loop deny outcome={other:?}");
+                    Ok(MidLoopHold::Abort)
+                }
+            }
+        }
+        other => {
+            eprintln!(
+                "caprun: unrecognized choice {other:?} — treating as deny (fail-closed)"
+            );
+            let _ = in_process_deny(effect_id, audit_path);
+            Ok(MidLoopHold::Abort)
+        }
+    }
+}
+
+async fn resolve_external_hold(
+    effect_id: &str,
+    session_id: &str,
+    audit_path: &str,
+) -> anyhow::Result<MidLoopHold> {
+    use brokerd::confirmation::{find_pending_confirmation, PendingConfirmationState};
+
+    let timeout_secs = std::env::var("CAPRUN_CONFIRM_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(EXTERNAL_CONFIRM_DEFAULT_TIMEOUT_SECS);
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let effect_uuid = Uuid::parse_str(effect_id)
+        .context("BLOCKED effect_id is not a valid UUID")?;
+
+    eprintln!(
+        "caprun: CAPRUN_CONFIRM=external (or non-TTY) — waiting for durable \
+         confirm/deny on effect {effect_id} (poll {EXTERNAL_CONFIRM_POLL_MS}ms, \
+         timeout {timeout_secs}s). Use: caprun confirm {effect_id} {audit_path}"
+    );
+
+    loop {
+        if Instant::now() > deadline {
+            eprintln!(
+                "caprun: external confirm timeout for effect {effect_id} — \
+                 hold incomplete (exit 3)"
+            );
+            return Ok(MidLoopHold::Timeout);
+        }
+
+        // Open a fresh connection each poll so dual-terminal writers are visible
+        // (SQLite WAL / separate process confirm against same path).
+        {
+            let conn = open_audit_db(audit_path).context("open_audit_db (external hold poll)")?;
+            let pending =
+                brokerd::audit::list_pending_confirmations_for_session(&conn, session_id)
+                    .context("list_pending_confirmations_for_session (external hold)")?;
+            let still_pending = pending.iter().any(|(id, _)| *id == effect_uuid);
+            if !still_pending {
+                match find_pending_confirmation(&conn, effect_id)? {
+                    Some(pc) => match pc.state {
+                        PendingConfirmationState::Confirmed => return Ok(MidLoopHold::Proceed),
+                        PendingConfirmationState::Denied => return Ok(MidLoopHold::Abort),
+                        PendingConfirmationState::Pending => {
+                            // Race: list missed it; keep polling.
+                        }
+                    },
+                    None => {
+                        // Row missing entirely — fail closed as infra.
+                        eprintln!(
+                            "caprun: pending row for {effect_id} disappeared without \
+                             terminal state — fail closed"
+                        );
+                        return Ok(MidLoopHold::InfraFail);
+                    }
+                }
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(EXTERNAL_CONFIRM_POLL_MS)).await;
+    }
+}
+
+/// In-process confirm against the same audit DB (shared key/F1 pattern with
+/// `run_confirm_or_deny`). Used by mid-loop hold so we never re-submit PlanNode.
+async fn in_process_confirm(
+    effect_id: &str,
+    audit_path: &str,
+) -> anyhow::Result<brokerd::confirmation::ConfirmOutcome> {
+    use brokerd::confirmation::{confirm, find_pending_confirmation, ConfirmOutcome};
+
+    let mut conn = open_audit_db(audit_path).context("open_audit_db (mid-loop confirm)")?;
+    match find_pending_confirmation(&conn, effect_id)? {
+        None => Ok(ConfirmOutcome::UnknownEffect),
+        Some(pc) => {
+            let ws = adapter_fs::workspace::WorkspaceRoot::open(Path::new(
+                &pc.workspace_root_path,
+            ))
+            .context("open workspace root for mid-loop confirm")?;
+            let key = key::load_or_create_key(audit_path, Path::new(&pc.workspace_root_path))
+                .context("load_or_create_key (mid-loop confirm)")?;
+            confirm(&mut conn, &key, effect_id, &ws).await.map_err(Into::into)
+        }
+    }
+}
+
+/// In-process deny (same key/F1 pattern as `run_confirm_or_deny`).
+fn in_process_deny(
+    effect_id: &str,
+    audit_path: &str,
+) -> anyhow::Result<brokerd::confirmation::ConfirmOutcome> {
+    use brokerd::confirmation::{deny, find_pending_confirmation, ConfirmOutcome};
+
+    let conn = open_audit_db(audit_path).context("open_audit_db (mid-loop deny)")?;
+    match find_pending_confirmation(&conn, effect_id)? {
+        None => Ok(ConfirmOutcome::UnknownEffect),
+        Some(pc) => {
+            let key = key::load_or_create_key(audit_path, Path::new(&pc.workspace_root_path))
+                .context("load_or_create_key (mid-loop deny)")?;
+            deny(&conn, &key, effect_id).map_err(Into::into)
+        }
+    }
 }
 
 /// Parse args, open the SAME persistent audit DB the original `caprun` run
