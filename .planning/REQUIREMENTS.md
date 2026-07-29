@@ -31,11 +31,11 @@ Requirements for the v1.10 milestone. Each maps to exactly one roadmap phase (se
 
 - [ ] **CLI-01**: `caprun run` (or an explicitly documented sibling verb) accepts a coding multi-step intent + workspace + trusted `--policy`, binds policy at session creation (POLICY-03), and **drives the full multi-node coding chain** end-to-end. Existing Block → `review`/`confirm`/`deny`/`grant` surfaces are preserved and pointed at from the driver.
 
-- [ ] **CLI-02**: Stream stop semantics are honest and machine-checkable: on I2 Block → stop (or Block-and-Hold per CONFIRM-01), surface `effect_id` + review pointer; on `policy_deny` → distinct outcome; on Deny → abort remaining nodes; on full success → clear success exit. Exit codes distinguish success vs blocked vs denied/aborted. Silent continue-past-Block is forbidden.
+- [x] **CLI-02**: Stream stop semantics are honest and machine-checkable: on I2 Block → stop (or Block-and-Hold per CONFIRM-01), surface `effect_id` + review pointer; on `policy_deny` → distinct outcome; on Deny → abort remaining nodes; on full success → clear success exit. Exit codes distinguish success vs blocked vs denied/aborted. Silent continue-past-Block is forbidden.
 
 ### Mid-loop Confirm Continuity
 
-- [ ] **CONFIRM-01**: When a mid-stream node returns `BlockedPendingConfirmation` (e.g. always-confirm `git.push`, or I2 Block released by confirm), the multi-node run **holds the same Session** (Block-and-Hold): worker stays connected or has a designed same-Session resume that does **not** re-open ProvideIntent, re-bind policy, or mint new trusted values. Human confirm/deny acts on the durable pending row; remaining nodes continue only after Allowed release (or abort on deny). No dual-Session "stitch the chain later" as the product path.
+- [x] **CONFIRM-01**: When a mid-stream node returns `BlockedPendingConfirmation` (e.g. always-confirm `git.push`, or I2 Block released by confirm), the multi-node run **holds the same Session** (Block-and-Hold): worker stays connected or has a designed same-Session resume that does **not** re-open ProvideIntent, re-bind policy, or mint new trusted values. Human confirm/deny acts on the durable pending row; remaining nodes continue only after Allowed release (or abort on deny). No dual-Session "stitch the chain later" as the product path.
 
 ### Live Proof (v1.10 DONE gate)
 
@@ -96,8 +96,8 @@ Which phases cover which requirements. Filled by the roadmapper.
 | CODE-01 | Phase 49 | Complete |
 | CODE-02 | Phase 49 | Complete |
 | CLI-01 | Phase 50 | Pending |
-| CLI-02 | Phase 50 | Pending |
-| CONFIRM-01 | Phase 50 | Pending |
+| CLI-02 | Phase 50 | Complete |
+| CONFIRM-01 | Phase 50 | Complete |
 | LIVE-07 | Phase 51 | Pending |
 | LIVE-08 | Phase 51 | Pending |
 | PKG-01 | Phase 52 | Pending |

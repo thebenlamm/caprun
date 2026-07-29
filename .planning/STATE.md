@@ -5,15 +5,15 @@ milestone_name: Multi-step Safe Coding Agent Loop
 current_phase: 50
 current_phase_name: CLI Multi-node Driver & Mid-loop Confirm Continuity
 status: executing
-stopped_at: Completed 49-02-PLAN.md
-last_updated: "2026-07-29T21:23:36.970Z"
+stopped_at: Completed 50-01-PLAN.md
+last_updated: "2026-07-29T21:29:39.227Z"
 last_activity: 2026-07-29
-last_activity_desc: Phase 49 complete, transitioned to Phase 50
+last_activity_desc: Phase 50 execution started
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 8
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-23)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended through v1.9 with authorized write egress (git.push + http-write), minimal per-session policy (never overrides I2), and thin CLI/audit surfaces — without weakening I0/I1/I2 or adding any raw `EffectRequest` path. v1.10 makes the Safe Coding Agent path a single Session, CLI-driven multi-node stream.
-**Current focus:** Phase 50 — CLI Multi-node Driver & Mid-loop Confirm Continuity (Phase 49 CODE-01/02 complete).
+**Current focus:** Phase 50 — CLI Multi-node Driver & Mid-loop Confirm Continuity
 
 ## Current Position
 
-Phase: 50 — CLI Multi-node Driver & Mid-loop Confirm Continuity
-Plan: Not started
+Phase: 50 (CLI Multi-node Driver & Mid-loop Confirm Continuity) — EXECUTING
+Plan: 2 of 2
 Status: Ready to execute
-Last activity: 2026-07-29 — Phase 49 complete, transitioned to Phase 50
+Last activity: 2026-07-29 — Phase 50 execution started
 
-Progress: [█████░░░░░] 50%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
@@ -50,6 +50,7 @@ Progress: [█████░░░░░] 50%
 | Phase 48 P02 | 5min | 2 tasks | 5 files |
 | Phase 49 P01 | 12min | 2 tasks | 9 files |
 | Phase 49 P02 | 4min | 2 tasks | 5 files |
+| Phase 50 P01 | 5min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -112,6 +113,9 @@ separate as a distinct design-partner deliverable.
 - [Phase ?]: Coding worker skips RequestFd/claim demotion; success-path plan_next never places out_*
 - [Phase ?]: Test-only CodingI2ProofPlanner for LIVE-08 expressibility; production DeterministicPlanner never places out_*
 - [Phase ?]: CaprunIntent SafeCodingWorkflow is add-alongside closed enum (not promote/replace email/file)
+- [Phase ?]: Hold only for SafeCodingWorkflow; email/file Block → exit 3
+- [Phase ?]: Parent-pipe hold protocol only — no reconnect-remint, dual-Session, or broker Wait verb
+- [Phase ?]: CLI-02 exit taxonomy 0/2/3/1; policy_deny distinguished via DENIED code= field
 
 ### Blockers/Concerns
 
@@ -150,8 +154,8 @@ separate as a distinct design-partner deliverable.
 
 ## Session Continuity
 
-Last session: 2026-07-29T20:01:58.674Z
-Stopped at: Completed 49-02-PLAN.md
+Last session: 2026-07-29T21:29:39.197Z
+Stopped at: Completed 50-01-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
