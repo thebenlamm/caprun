@@ -251,7 +251,11 @@ Plans:
   3. Email/file single-node planners remain green (no regression to existing intents)
   4. The recipe does not launder untrusted observations into trusted args; mid-loop I2 proof routing (tainted handle into a sensitive sink arg) is expressible for LIVE-08 without weakening success-path discipline
 
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 49-01-PLAN.md — Tracer: SafeCodingWorkflow + ProvideIntent multi-mint + bag seed + plan_next 5-node sequence + core unit tests (CODE-01/02)
+- [ ] 49-02-PLAN.md — Expansion: LIVE-08 expressibility, anti-launder, RequestFd hygiene, COVERAGE + validation Wave 0
 
 ### Phase 50: CLI Multi-node Driver & Mid-loop Confirm Continuity
 
@@ -349,7 +353,7 @@ Plans:
 | 46. Composed Live Proof (v1.9 DONE) | v1.9 | 4/4 | Complete    | 2026-07-18 |
 | 47. Multi-step Plan Stream Design Gate | v1.10 | 1/2 | In Progress|  |
 | 48. Plan-Stream Substrate | v1.10 | 2/2 | In Progress|  |
-| 49. Deterministic Multi-step Coding Planner | v1.10 | 0/? | Not started | - |
+| 49. Deterministic Multi-step Coding Planner | v1.10 | 0/2 | Planned | - |
 | 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 0/? | Not started | - |
 | 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 0/? | Not started | - |
 | 52. Minimal Linux Packaging | v1.10 | 0/? | Not started | - |
