@@ -1,0 +1,562 @@
+Ensuring Docker network caprun-compose-net (203.0.113.0/24) exists ...
+Starting Mailpit sidecar (caprun-compose-mailpit) on caprun-compose-net ...
+Resolved Mailpit sidecar IP: 203.0.113.3
+Starting mock GitHub HTTPS sidecar (caprun-compose-mock-github) at 203.0.113.2 ...
+Waiting for mock GitHub HTTPS listener on 203.0.113.2:443 ...
+Mock GitHub HTTPS sidecar is ready.
+Running composed Linux verification suite (rust:1, network=caprun-compose-net) ...
+Hit:1 http://deb.debian.org/debian trixie InRelease
+Get:2 http://deb.debian.org/debian trixie-updates InRelease [47.3 kB]
+Get:3 http://deb.debian.org/debian-security trixie-security InRelease [43.4 kB]
+Get:4 http://deb.debian.org/debian trixie/main amd64 Packages [9673 kB]
+Get:5 http://deb.debian.org/debian trixie-updates/main amd64 Packages [4412 B]
+Get:6 http://deb.debian.org/debian-security trixie-security/main amd64 Packages [231 kB]
+Fetched 9999 kB in 1s (14.0 MB/s)
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+libssl-dev is already the newest version (3.5.6-1~deb13u2).
+The following NEW packages will be installed:
+  pkg-config
+0 upgraded, 1 newly installed, 0 to remove and 10 not upgraded.
+Need to get 14.0 kB of archives.
+After this operation, 29.7 kB of additional disk space will be used.
+Get:1 http://deb.debian.org/debian trixie/main amd64 pkg-config amd64 1.8.1-4 [14.0 kB]
+debconf: unable to initialize frontend: Dialog
+debconf: (TERM is not set, so the dialog frontend is not usable.)
+debconf: falling back to frontend: Readline
+debconf: unable to initialize frontend: Readline
+debconf: (This frontend requires a controlling tty.)
+debconf: falling back to frontend: Teletype
+debconf: unable to initialize frontend: Teletype
+debconf: (This frontend requires a controlling tty.)
+debconf: falling back to frontend: Noninteractive
+Fetched 14.0 kB in 0s (931 kB/s)
+Selecting previously unselected package pkg-config:amd64.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 26057 files and directories currently installed.)
+Preparing to unpack .../pkg-config_1.8.1-4_amd64.deb ...
+Unpacking pkg-config:amd64 (1.8.1-4) ...
+Setting up pkg-config:amd64 (1.8.1-4) ...
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded atomic-waker v1.1.2
+  Downloaded stable_deref_trait v1.2.1
+  Downloaded zeroize v1.9.0
+  Downloaded cfg-if v1.0.4
+  Downloaded foreign-types-shared v0.1.1
+  Downloaded hex v0.4.3
+  Downloaded sync_wrapper v1.0.2
+  Downloaded cpufeatures v0.2.17
+  Downloaded crypto-common v0.1.7
+  Downloaded generic-array v0.14.7
+  Downloaded zerocopy v0.8.52
+  Downloaded sha2 v0.10.9
+  Downloaded signal-hook-registry v1.4.8
+  Downloaded foreign-types v0.3.2
+  Downloaded form_urlencoded v1.2.2
+  Downloaded futures-io v0.3.32
+  Downloaded hostname v0.4.2
+  Downloaded subtle v2.6.1
+  Downloaded zerofrom v0.1.8
+  Downloaded shlex v2.0.1
+  Downloaded mime v0.3.17
+  Downloaded quoted_printable v0.5.2
+  Downloaded want v0.3.1
+  Downloaded autocfg v1.5.1
+  Downloaded smallvec v1.15.2
+  Downloaded utf8_iter v1.0.4
+  Downloaded http-body v1.0.1
+  Downloaded httpdate v1.0.3
+  Downloaded potential_utf v0.1.5
+  Downloaded fallible-streaming-iterator v0.1.9
+  Downloaded yoke v0.8.3
+  Downloaded tokio-macros v2.7.0
+  Downloaded socket2 v0.6.4
+  Downloaded displaydoc v0.2.6
+  Downloaded enumflags2 v0.7.12
+  Downloaded enumflags2_derive v0.7.12
+  Downloaded http-body-util v0.1.3
+  Downloaded tower-layer v0.3.3
+  Downloaded tower-service v0.3.3
+  Downloaded tracing-core v0.1.36
+  Downloaded unicode-ident v1.0.24
+  Downloaded version_check v0.9.5
+  Downloaded email_address v0.2.9
+  Downloaded hashlink v0.9.1
+  Downloaded hyper-rustls v0.27.9
+  Downloaded ahash v0.8.12
+  Downloaded untrusted v0.9.0
+  Downloaded thiserror v2.0.18
+  Downloaded zmij v1.0.21
+  Downloaded block-buffer v0.10.4
+  Downloaded errno v0.3.14
+  Downloaded thiserror-impl v2.0.18
+  Downloaded tokio-rustls v0.26.4
+  Downloaded uuid v1.23.4
+  Downloaded tinystr v0.8.3
+  Downloaded email-encoding v0.4.1
+  Downloaded futures-task v0.3.32
+  Downloaded itoa v1.0.18
+  Downloaded tower v0.5.3
+  Downloaded zerotrie v0.2.4
+  Downloaded cfg_aliases v0.2.1
+  Downloaded typenum v1.20.1
+  Downloaded url v2.5.8
+  Downloaded writeable v0.6.3
+  Downloaded pin-project-lite v0.2.17
+  Downloaded zerovec v0.11.6
+  Downloaded tower-http v0.6.11
+  Downloaded openssl-probe v0.2.1
+  Downloaded rustls-native-certs v0.8.4
+  Downloaded yoke-derive v0.8.2
+  Downloaded fallible-iterator v0.3.0
+  Downloaded hmac v0.12.1
+  Downloaded rustls-pki-types v1.15.0
+  Downloaded syn v2.0.118
+  Downloaded try-lock v0.2.5
+  Downloaded vcpkg v0.2.15
+  Downloaded percent-encoding v2.3.2
+  Downloaded anyhow v1.0.103
+  Downloaded digest v0.10.7
+  Downloaded fastrand v2.4.1
+  Downloaded httparse v1.10.1
+  Downloaded ipnet v2.12.0
+  Downloaded memoffset v0.9.1
+  Downloaded openssl-macros v0.1.1
+  Downloaded pkg-config v0.3.33
+  Downloaded quote v1.0.46
+  Downloaded base64 v0.22.1
+  Downloaded bitflags v2.13.0
+  Downloaded find-msvc-tools v0.1.9
+  Downloaded futures-channel v0.3.32
+  Downloaded futures-core v0.3.32
+  Downloaded getrandom v0.2.17
+  Downloaded getrandom v0.4.3
+  Downloaded iana-time-zone v0.1.65
+  Downloaded idna_adapter v1.2.2
+  Downloaded landlock v0.4.5
+  Downloaded log v0.4.33
+  Downloaded native-tls v0.2.18
+  Downloaded once_cell v1.21.4
+  Downloaded serde_core v1.0.228
+  Downloaded serde_derive v1.0.228
+  Downloaded icu_provider v2.2.0
+  Downloaded litemap v0.8.2
+  Downloaded rustls-platform-verifier v0.7.0
+  Downloaded slab v0.4.12
+  Downloaded bytes v1.12.0
+  Downloaded http v1.4.2
+  Downloaded icu_locale_core v2.2.0
+  Downloaded icu_properties v2.2.0
+  Downloaded num-traits v0.2.19
+  Downloaded openssl-sys v0.9.117
+  Downloaded proc-macro2 v1.0.106
+  Downloaded serde v1.0.228
+  Downloaded synstructure v0.13.2
+  Downloaded tokio v1.52.3
+  Downloaded zerofrom-derive v0.1.7
+  Downloaded cc v1.2.65
+  Downloaded hyper-util v0.1.20
+  Downloaded icu_collections v2.2.0
+  Downloaded icu_normalizer_data v2.2.0
+  Downloaded rustls-webpki v0.103.13
+  Downloaded icu_normalizer v2.2.0
+  Downloaded memchr v2.8.2
+  Downloaded mio v1.2.1
+  Downloaded seccompiler v0.5.0
+  Downloaded hashbrown v0.14.5
+  Downloaded rusqlite v0.32.1
+  Downloaded serde_json v1.0.150
+  Downloaded futures-util v0.3.32
+  Downloaded hyper v1.10.1
+  Downloaded nom v8.0.0
+  Downloaded zerovec-derive v0.11.3
+  Downloaded icu_properties_data v2.2.0
+  Downloaded idna v1.1.0
+  Downloaded reqwest v0.13.4
+  Downloaded lettre v0.11.22
+  Downloaded chrono v0.4.45
+  Downloaded openssl v0.10.81
+  Downloaded nix v0.31.3
+  Downloaded webpki-roots v1.0.8
+  Downloaded rustls v0.23.41
+  Downloaded tracing v0.1.44
+  Downloaded libc v0.2.186
+  Downloaded ring v0.17.14
+  Downloaded libsqlite3-sys v0.30.1
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.46
+   Compiling unicode-ident v1.0.24
+   Compiling libc v0.2.186
+   Compiling cfg-if v1.0.4
+   Compiling find-msvc-tools v0.1.9
+   Compiling shlex v2.0.1
+   Compiling stable_deref_trait v1.2.1
+   Compiling version_check v0.9.5
+   Compiling memchr v2.8.2
+   Compiling itoa v1.0.18
+   Compiling autocfg v1.5.1
+   Compiling pin-project-lite v0.2.17
+   Compiling once_cell v1.21.4
+   Compiling pkg-config v0.3.33
+   Compiling vcpkg v0.2.15
+   Compiling bytes v1.12.0
+   Compiling futures-core v0.3.32
+   Compiling smallvec v1.15.2
+   Compiling writeable v0.6.3
+   Compiling litemap v0.8.2
+   Compiling cc v1.2.65
+   Compiling serde_core v1.0.228
+   Compiling utf8_iter v1.0.4
+   Compiling icu_normalizer_data v2.2.0
+   Compiling zeroize v1.9.0
+   Compiling subtle v2.6.1
+   Compiling icu_properties_data v2.2.0
+   Compiling bitflags v2.13.0
+   Compiling generic-array v0.14.7
+   Compiling thiserror v2.0.18
+   Compiling rustls-pki-types v1.15.0
+   Compiling getrandom v0.4.3
+   Compiling futures-task v0.3.32
+   Compiling num-traits v0.2.19
+   Compiling serde v1.0.228
+   Compiling slab v0.4.12
+   Compiling futures-io v0.3.32
+   Compiling percent-encoding v2.3.2
+   Compiling untrusted v0.9.0
+   Compiling typenum v1.20.1
+   Compiling zmij v1.0.21
+   Compiling serde_json v1.0.150
+   Compiling http v1.4.2
+   Compiling futures-util v0.3.32
+   Compiling httparse v1.10.1
+   Compiling rustls v0.23.41
+   Compiling zerocopy v0.8.52
+   Compiling memoffset v0.9.1
+   Compiling ahash v0.8.12
+   Compiling syn v2.0.118
+   Compiling cfg_aliases v0.2.1
+   Compiling base64 v0.22.1
+   Compiling iana-time-zone v0.1.65
+   Compiling tower-service v0.3.3
+   Compiling openssl-probe v0.2.1
+   Compiling anyhow v1.0.103
+   Compiling try-lock v0.2.5
+   Compiling want v0.3.1
+   Compiling nix v0.31.3
+   Compiling form_urlencoded v1.2.2
+   Compiling tracing-core v0.1.36
+   Compiling futures-channel v0.3.32
+   Compiling foreign-types-shared v0.1.1
+   Compiling log v0.4.33
+   Compiling openssl v0.10.81
+   Compiling atomic-waker v1.1.2
+   Compiling foreign-types v0.3.2
+   Compiling sync_wrapper v1.0.2
+   Compiling tower-layer v0.3.3
+   Compiling native-tls v0.2.18
+   Compiling ipnet v2.12.0
+   Compiling rustls-native-certs v0.8.4
+   Compiling cpufeatures v0.2.17
+   Compiling email-encoding v0.4.1
+   Compiling http-body v1.0.1
+   Compiling nom v8.0.0
+   Compiling fastrand v2.4.1
+   Compiling tracing v0.1.44
+   Compiling ring v0.17.14
+   Compiling openssl-sys v0.9.117
+   Compiling libsqlite3-sys v0.30.1
+   Compiling http-body-util v0.1.3
+   Compiling quoted_printable v0.5.2
+   Compiling email_address v0.2.9
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling errno v0.3.14
+   Compiling socket2 v0.6.4
+   Compiling mio v1.2.1
+   Compiling getrandom v0.2.17
+   Compiling digest v0.10.7
+   Compiling signal-hook-registry v1.4.8
+   Compiling hostname v0.4.2
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling mime v0.3.17
+   Compiling sha2 v0.10.9
+   Compiling fallible-iterator v0.3.0
+   Compiling httpdate v1.0.3
+   Compiling hex v0.4.3
+   Compiling hmac v0.12.1
+   Compiling seccompiler v0.5.0
+   Compiling webpki-roots v1.0.8
+   Compiling uuid v1.23.4
+   Compiling synstructure v0.13.2
+   Compiling hashbrown v0.14.5
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerovec-derive v0.11.3
+   Compiling displaydoc v0.2.6
+   Compiling tokio-macros v2.7.0
+   Compiling thiserror-impl v2.0.18
+   Compiling serde_derive v1.0.228
+   Compiling openssl-macros v0.1.1
+   Compiling enumflags2_derive v0.7.12
+   Compiling hashlink v0.9.1
+   Compiling enumflags2 v0.7.12
+   Compiling tokio v1.52.3
+   Compiling rustls-webpki v0.103.13
+   Compiling zerofrom v0.1.8
+   Compiling yoke v0.8.3
+   Compiling zerovec v0.11.6
+   Compiling zerotrie v0.2.4
+   Compiling landlock v0.4.5
+   Compiling sandbox v0.1.0 (/work/crates/sandbox)
+warning: unused import: `RulesetCreatedAttr`
+  --> crates/sandbox/src/landlock.rs:18:65
+   |
+18 |     use landlock::{Access, AccessFs, ABI, Ruleset, RulesetAttr, RulesetCreatedAttr};
+   |                                                                 ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling tinystr v0.8.3
+   Compiling potential_utf v0.1.5
+   Compiling icu_collections v2.2.0
+warning: `sandbox` (lib) generated 1 warning (run `cargo fix --lib -p sandbox` to apply 1 suggestion)
+   Compiling icu_locale_core v2.2.0
+   Compiling icu_provider v2.2.0
+   Compiling icu_properties v2.2.0
+   Compiling icu_normalizer v2.2.0
+   Compiling chrono v0.4.45
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling runtime-core v0.1.0 (/work/crates/runtime-core)
+   Compiling url v2.5.8
+   Compiling lettre v0.11.22
+   Compiling hyper v1.10.1
+   Compiling tower v0.5.3
+   Compiling tokio-rustls v0.26.4
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling executor v0.1.0 (/work/crates/executor)
+   Compiling adapter-fs v0.1.0 (/work/crates/adapter-fs)
+   Compiling llm-planner v0.1.0 (/work/crates/llm-planner)
+   Compiling tower-http v0.6.11
+   Compiling hyper-util v0.1.20
+   Compiling rusqlite v0.32.1
+   Compiling hyper-rustls v0.27.9
+   Compiling reqwest v0.13.4
+   Compiling brokerd v0.1.0 (/work/crates/brokerd)
+   Compiling caprun v0.1.0 (/work/cli/caprun)
+warning: enum `HoldResume` is never used
+  --> cli/caprun/src/stream_hold.rs:57:10
+   |
+57 | pub enum HoldResume {
+   |          ^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `format_line` is never used
+   --> cli/caprun/src/stream_hold.rs:121:8
+    |
+121 | pub fn format_line(line: &StreamLine) -> String {
+    |        ^^^^^^^^^^^
+
+warning: function `parse_hold_resume` is never used
+   --> cli/caprun/src/stream_hold.rs:188:8
+    |
+188 | pub fn parse_hold_resume(line: &str) -> Result<HoldResume, String> {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: `caprun` (bin "caprun") generated 3 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.15s
+   Compiling brokerd v0.1.0 (/work/crates/brokerd)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.05s
+     Running unittests src/lib.rs (/tmp/lt/debug/deps/brokerd-a89195145b98326d)
+
+running 4 tests
+test sinks::git_push::cred::push_allowlist_default_build_is_empty_base_set ... ok
+test sinks::http_request::tests::write_allowlist_default_build_is_empty_base_set ... ok
+test sinks::http_request::tests::allowlist_default_build_is_api_github_only ... ok
+test sinks::http_request::tests::egress_root_store_default_build_is_webpki_roots_only ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 278 filtered out; finished in 0.00s
+
+feature-OFF-guard-passed:mock-host+anchor-absent-from-release-build
+warning: unused import: `RulesetCreatedAttr`
+  --> crates/sandbox/src/landlock.rs:18:65
+   |
+18 |     use landlock::{Access, AccessFs, ABI, Ruleset, RulesetAttr, RulesetCreatedAttr};
+   |                                                                 ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `sandbox` (lib) generated 1 warning (run `cargo fix --lib -p sandbox` to apply 1 suggestion)
+   Compiling caprun-exec-launcher v0.1.0 (/work/cli/caprun-exec-launcher)
+   Compiling sandbox v0.1.0 (/work/crates/sandbox)
+   Compiling reqwest v0.13.4
+   Compiling brokerd v0.1.0 (/work/crates/brokerd)
+   Compiling caprun-planner v0.1.0 (/work/cli/caprun-planner)
+   Compiling caprun v0.1.0 (/work/cli/caprun)
+warning: enum `HoldResume` is never used
+  --> cli/caprun/src/stream_hold.rs:57:10
+   |
+57 | pub enum HoldResume {
+   |          ^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `format_line` is never used
+   --> cli/caprun/src/stream_hold.rs:121:8
+    |
+121 | pub fn format_line(line: &StreamLine) -> String {
+    |        ^^^^^^^^^^^
+
+warning: function `parse_hold_resume` is never used
+   --> cli/caprun/src/stream_hold.rs:188:8
+    |
+188 | pub fn parse_hold_resume(line: &str) -> Result<HoldResume, String> {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: `caprun` (bin "caprun") generated 3 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.62s
+warning: unused import: `RulesetCreatedAttr`
+  --> crates/sandbox/src/landlock.rs:18:65
+   |
+18 |     use landlock::{Access, AccessFs, ABI, Ruleset, RulesetAttr, RulesetCreatedAttr};
+   |                                                                 ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `sandbox` (lib) generated 1 warning (run `cargo fix --lib -p sandbox` to apply 1 suggestion)
+   Compiling brokerd v0.1.0 (/work/crates/brokerd)
+   Compiling caprun v0.1.0 (/work/cli/caprun)
+warning: enum `HoldResume` is never used
+  --> cli/caprun/src/stream_hold.rs:57:10
+   |
+57 | pub enum HoldResume {
+   |          ^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `format_line` is never used
+   --> cli/caprun/src/stream_hold.rs:121:8
+    |
+121 | pub fn format_line(line: &StreamLine) -> String {
+    |        ^^^^^^^^^^^
+
+warning: function `parse_hold_resume` is never used
+   --> cli/caprun/src/stream_hold.rs:188:8
+    |
+188 | pub fn parse_hold_resume(line: &str) -> Result<HoldResume, String> {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: `caprun` (bin "caprun") generated 3 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.90s
+     Running tests/live_acceptance_v1_10_cli.rs (/tmp/lt/debug/deps/live_acceptance_v1_10_cli-da6ded84b0dd8ece)
+
+running 3 tests
+test linux::live_07_cli_multi_node_one_session_verify_chain ... FAILED
+test linux::live_08_cli_mid_loop_i2_block_genuine_taint ... FAILED
+test live_acceptance_v1_10_cli_guard_present ... ok
+
+failures:
+
+---- linux::live_07_cli_multi_node_one_session_verify_chain stdout ----
+
+thread 'linux::live_07_cli_multi_node_one_session_verify_chain' (5858) panicked at cli/caprun/tests/live_acceptance_v1_10_cli.rs:303:14:
+sidecar failed: "sidecar incomplete: granted=true confirmed=false\nsession_id=ea0b7e48-f988-4340-8c78-380051784271\ngrant: caprun grant ea0b7e48-f988-4340-8c78-380051784271 /tmp/caprun_live_07_133225b8-3f7a-4931-add5-ec15e73cfc49/audit.db\n\n=== Audit DAG (session ea0b7e48-f988-4340-8c78-380051784271) ===\n[0] session_created (actor=broker:seed_provenance=trusted_arg)\n    hash=93070151 parent=(root)\n  [1] policy_bound (actor=broker:policy_bound sha256=faf3c3381b6e09a6fed11cc597210002dcac5b0cb70ef935ce1b83635284ea15)\n      hash=0eaa8fea parent=93070151\n    [2] github_grant_authorized (actor=grant:github.pr:ea0b7e48-f988-4340-8c78-380051784271)\n        hash=aeaa1cd7 parent=0eaa8fea\n\nChain verification: PASSED\n"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- linux::live_08_cli_mid_loop_i2_block_genuine_taint stdout ----
+
+thread 'linux::live_08_cli_mid_loop_i2_block_genuine_taint' (5920) panicked at cli/caprun/tests/live_acceptance_v1_10_cli.rs:383:9:
+terminal must identify github.pr block: session_id=4f3fad61-b10a-425e-b5c3-e74f5363e376
+grant: caprun grant 4f3fad61-b10a-425e-b5c3-e74f5363e376 /tmp/caprun_live_07_7cd85f6a-4899-4ed3-9e06-9f8c3ec896ee/audit.db
+caprun-stream: NODE_ALLOWED step=0 sink=file.write
+caprun-stream: NODE_ALLOWED step=1 sink=process.exec
+caprun-stream: NODE_ALLOWED step=2 sink=git.commit
+
+=== Blocked pending confirmation (1 effect) ===
+  effect_id=fef2795a-5e5c-43f1-94e0-f486a70169a4  sink=git.push
+    review:  caprun review fef2795a-5e5c-43f1-94e0-f486a70169a4 /tmp/caprun_live_07_7cd85f6a-4899-4ed3-9e06-9f8c3ec896ee/audit.db
+    confirm: caprun confirm fef2795a-5e5c-43f1-94e0-f486a70169a4 /tmp/caprun_live_07_7cd85f6a-4899-4ed3-9e06-9f8c3ec896ee/audit.db
+    deny:    caprun deny fef2795a-5e5c-43f1-94e0-f486a70169a4 /tmp/caprun_live_07_7cd85f6a-4899-4ed3-9e06-9f8c3ec896ee/audit.db
+
+=== Blocked pending confirmation (1 effect) ===
+  effect_id=870adb1f-da16-4592-99f3-2bfc508f232a  sink=github.pr
+    review:  caprun review 870adb1f-da16-4592-99f3-2bfc508f232a /tmp/caprun_live_07_7cd85f6a-4899-4ed3-9e06-9f8c3ec896ee/audit.db
+    confirm: caprun confirm 870adb1f-da16-4592-99f3-2bfc508f232a /tmp/caprun_live_07_7cd85f6a-4899-4ed3-9e06-9f8c3ec896ee/audit.db
+    deny:    caprun deny 870adb1f-da16-4592-99f3-2bfc508f232a /tmp/caprun_live_07_7cd85f6a-4899-4ed3-9e06-9f8c3ec896ee/audit.db
+
+=== Audit DAG (session 4f3fad61-b10a-425e-b5c3-e74f5363e376) ===
+[0] session_created (actor=broker:seed_provenance=trusted_arg)
+    hash=1d1f2eca parent=(root)
+  [1] policy_bound (actor=broker:policy_bound sha256=faf3c3381b6e09a6fed11cc597210002dcac5b0cb70ef935ce1b83635284ea15)
+      hash=52060b7c parent=1d1f2eca
+    [2] intent_received (actor=user-intent)
+        hash=4dcac422 parent=52060b7c
+      [3] intent_received (actor=user-intent)
+          hash=8dd24a13 parent=4dcac422
+        [4] intent_received (actor=user-intent)
+            hash=9585fab3 parent=8dd24a13
+          [5] intent_received (actor=user-intent)
+              hash=f7253d8f parent=9585fab3
+            [6] intent_received (actor=user-intent)
+                hash=abd6da50 parent=f7253d8f
+              [7] intent_received (actor=user-intent)
+                  hash=701def75 parent=abd6da50
+                [8] intent_received (actor=user-intent)
+                    hash=5e409ffb parent=701def75
+                  [9] intent_received (actor=user-intent)
+                      hash=fc5ffbaa parent=5e409ffb
+                    [10] intent_received (actor=user-intent)
+                        hash=07fa27f8 parent=fc5ffbaa
+                      [11] intent_received (actor=user-intent)
+                          hash=21aa567c parent=07fa27f8
+                        [12] intent_received (actor=user-intent)
+                            hash=25e0d9b2 parent=21aa567c
+                          [13] intent_received (actor=user-intent)
+                              hash=9581746c parent=25e0d9b2
+                            [14] intent_received (actor=user-intent)
+                                hash=e44e2e4f parent=9581746c
+                              [15] plan_node_evaluated (actor=executor)
+                                  hash=7d288982 parent=e44e2e4f
+                                [16] sink_executed (actor=sink:file.write:1d961928-3561-4ee6-ba13-89e1c61cdb7a)
+                                    hash=bab10678 parent=7d288982
+                                  [17] plan_node_evaluated (actor=executor)
+                                      hash=0e813744 parent=bab10678
+                                    [18] process_exited (actor=sink:process.exec:248e2586-404e-4795-b79a-fc52f18135b2)
+                                        hash=9c952875 parent=0e813744
+                                      [19] plan_node_evaluated (actor=executor)
+                                          hash=be0a571b parent=9c952875
+                                        [20] process_exited (actor=sink:git.commit:12b50712-9cbc-488b-996e-7d2c4a370f36)
+                                            hash=8e33b865 parent=be0a571b
+                                          [21] sink_blocked (actor=executor)
+                                              hash=183b4907 parent=8e33b865
+                                            [22] sink_blocked (actor=executor)
+                                                hash=1acbb3a5 parent=183b4907
+                                            [22] github_grant_authorized (actor=grant:github.pr:4f3fad61-b10a-425e-b5c3-e74f5363e376)
+                                                hash=3f401b99 parent=183b4907
+                                              [23] confirm_granted (actor=confirm:fef2795a-5e5c-43f1-94e0-f486a70169a4)
+                                                  hash=f2e0afa7 parent=3f401b99
+                                                [24] git_push_succeeded (actor=sink:git.push:fef2795a-5e5c-43f1-94e0-f486a70169a4)
+                                                    hash=66566631 parent=f2e0afa7
+
+Chain verification: FAILED
+
+=== Blocked pending confirmation (1 effect) ===
+  effect_id=870adb1f-da16-4592-99f3-2bfc508f232a  sink=github.pr
+    review:  caprun review 870adb1f-da16-4592-99f3-2bfc508f232a /tmp/caprun_live_07_7cd85f6a-4899-4ed3-9e06-9f8c3ec896ee/audit.db
+    confirm: caprun confirm 870adb1f-da16-4592-99f3-2bfc508f232a /tmp/caprun_live_07_7cd85f6a-4899-4ed3-9e06-9f8c3ec896ee/audit.db
+    deny:    caprun deny 870adb1f-da16-4592-99f3-2bfc508f232a /tmp/caprun_live_07_7cd85f6a-4899-4ed3-9e06-9f8c3ec896ee/audit.db
+
+
+
+failures:
+    linux::live_07_cli_multi_node_one_session_verify_chain
+    linux::live_08_cli_mid_loop_i2_block_genuine_taint
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 60.87s
+
+error: test failed, to rerun pass `-p caprun --test live_acceptance_v1_10_cli`
+FAIL — composed verification suite exited 101
+Cleaning up sidecars (caprun-compose-mailpit, caprun-compose-mock-github) ...
