@@ -1,0 +1,56 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-08-04T15:12:21.730Z",
+  "phase": "51",
+  "phase_name": "non-hybrid-live-proof-v1-10-done",
+  "phase_dir": ".planning/phases/51-non-hybrid-live-proof-v1-10-done",
+  "plan": 4,
+  "task": 1,
+  "total_tasks": 3,
+  "status": "paused",
+  "completed_tasks": [],
+  "remaining_tasks": [
+    {
+      "id": 1,
+      "name": "Execute the scoped LIVE-07/LIVE-08 proof on Docker-backed real Linux",
+      "status": "not_started"
+    },
+    {
+      "id": 2,
+      "name": "Run the full workspace compose regression and reconcile durable status",
+      "status": "not_started"
+    },
+    {
+      "id": 3,
+      "name": "Confirm the retained real-Linux proof record",
+      "status": "not_started"
+    }
+  ],
+  "blockers": [
+    {
+      "description": "Plan 51-04 requires a real-Linux host where docker version and docker compose version succeed; the current host is Linux but has no docker executable.",
+      "type": "external",
+      "workaround": "Resume on a Docker-capable Linux host. Do not manufacture or pre-mark proof evidence."
+    }
+  ],
+  "async_jobs": [],
+  "human_actions_pending": [
+    {
+      "action": "Resume Phase 51 on a Docker-capable real-Linux host.",
+      "context": "The authoritative LIVE-07/LIVE-08 scoped proof and full-workspace compose regression cannot run on the current host.",
+      "blocking": true
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "Leave LIVE-07, LIVE-08, validation, evidence, and Phase 51 completion pending until both compose commands actually pass.",
+      "rationale": "Phase 51 is an evidence gate; compilation or an incapable-host fallback cannot establish the promised non-hybrid LIVE proof.",
+      "phase": "51"
+    }
+  ],
+  "uncommitted_files": [
+    ".planning/STATE.md"
+  ],
+  "next_action": "Verify docker version and docker compose version, then run $gsd-resume-work (or $gsd-execute-phase 51 --gaps-only) from this repository.",
+  "context_notes": "Plans 51-01 through 51-03 are complete. Plan 51-03 landed commits f86c210, 3934e1b, and 717dbe9. Plan 51-04 made no changes and stopped at its Task 1 precondition because docker was unavailable."
+}
