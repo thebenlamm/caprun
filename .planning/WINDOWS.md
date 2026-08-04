@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 2
+open_count: 3
 waived_count: 0
 fixed_count: 0
-total_count: 2
-last_updated: 2026-08-04T03:16:35.305Z
+total_count: 3
+last_updated: 2026-08-04T13:44:22.173Z
 ---
 
 # Broken Windows Ledger
@@ -17,6 +17,7 @@ last_updated: 2026-08-04T03:16:35.305Z
 |----|-------|------|------|------|-------------|--------|--------|-------------|-------------|
 | 1 | 51 | unrun-verify | cli/caprun/tests/live_acceptance_v1_10_cli.rs |  | LIVE-07 compose-verify unavailable because Docker is not installed on executor host | open |  | 2026-08-04T03:11:17.796Z |  |
 | 2 | 51 | unrun-verify | cli/caprun/tests/live_acceptance_v1_10_cli.rs |  | LIVE-08 scoped and full-workspace compose verification unavailable because Docker is not installed on executor host | open |  | 2026-08-04T03:16:35.305Z |  |
+| 3 | 51 | unrun-verify | cli/caprun/tests/live_acceptance_v1_10_cli.rs |  | Cargo verification deferred because host lacks pkg-config/OpenSSL development metadata | open |  | 2026-08-04T13:44:22.173Z |  |
 
 ````json
 [
@@ -42,6 +43,18 @@ last_updated: 2026-08-04T03:16:35.305Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-08-04T03:16:35.305Z",
+    "resolved_at": null
+  },
+  {
+    "id": 3,
+    "kind": "unrun-verify",
+    "phase": "51",
+    "file": "cli/caprun/tests/live_acceptance_v1_10_cli.rs",
+    "line": null,
+    "description": "Cargo verification deferred because host lacks pkg-config/OpenSSL development metadata",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-08-04T13:44:22.173Z",
     "resolved_at": null
   }
 ]

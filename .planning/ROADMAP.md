@@ -303,7 +303,7 @@ Plans:
 Plans:
 
 - [x] 51-01-PLAN.md — Wave 1 tracer: LIVE-07 harness + framing + CLI multi-node SUCCESS under compose-verify
-- [ ] 51-02-PLAN.md — Wave 2 expansion: LIVE-08 proof-planner path + full compose-verify regression
+- [x] 51-02-PLAN.md — Wave 2 expansion: LIVE-08 proof-planner path + full compose-verify regression
 
 ### Phase 52: Minimal Linux Packaging
 
@@ -374,5 +374,5 @@ Plans:
 | 48. Plan-Stream Substrate | v1.10 | 2/2 | In Progress|  |
 | 49. Deterministic Multi-step Coding Planner | v1.10 | 2/2 | Complete    | 2026-07-29 |
 | 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 2/2 | Complete   | 2026-07-29 |
-| 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 2/2 | Proof Pending| Docker compose authority still required |
+| 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 3/4 | In Progress|  |
 | 52. Minimal Linux Packaging | v1.10 | 0/? | Not started | - |
