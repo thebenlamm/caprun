@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.10
 milestone_name: Multi-step Safe Coding Agent Loop
 current_phase: 51
-current_phase_name: v1.10 DONE
-status: ready_to_execute
-stopped_at: Phase 51 planning complete (51-01, 51-02)
-last_updated: "2026-07-29T23:55:00.000Z"
-last_activity: 2026-07-29
-last_activity_desc: Phase 51 plans created — ready to execute
+current_phase_name: non-hybrid-live-proof-v1-10-done
+status: executing
+stopped_at: Completed 51-01-PLAN.md; LIVE-07 compose verification pending Docker-capable host
+last_updated: "2026-08-04T03:11:17.345Z"
+last_activity: 2026-08-04
+last_activity_desc: Phase 51 execution started
 progress:
-  total_phases: 4
-  completed_phases: 3
+  total_phases: 5
+  completed_phases: 4
   total_plans: 10
-  completed_plans: 8
+  completed_plans: 9
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-23)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended through v1.9 with authorized write egress (git.push + http-write), minimal per-session policy (never overrides I2), and thin CLI/audit surfaces — without weakening I0/I1/I2 or adding any raw `EffectRequest` path. v1.10 makes the Safe Coding Agent path a single Session, CLI-driven multi-node stream.
-**Current focus:** Phase 51 — Non-hybrid LIVE Proof (v1.10 DONE)
+**Current focus:** Phase 51 — non-hybrid-live-proof-v1-10-done
 
 ## Current Position
 
-Phase: 51 — Non-hybrid LIVE Proof (v1.10 DONE)
-Plan: 01 (next to execute)
+Phase: 51 (non-hybrid-live-proof-v1-10-done) — EXECUTING
+Plan: 2 of 2
 Status: Ready to execute
-Last activity: 2026-07-29 — Phase 51 planning complete (2 plans: LIVE-07 tracer + LIVE-08 expansion)
+Last activity: 2026-08-04 — Phase 51 execution started
 
-Progress: [████████░░] 80% (8/10 plans in v1.10; Phase 51 0/2 executed)
+Progress: [█████████░] 90% (8/10 plans in v1.10; Phase 51 0/2 executed)
 
 ## Performance Metrics
 
@@ -52,6 +52,7 @@ Progress: [████████░░] 80% (8/10 plans in v1.10; Phase 51 0/
 | Phase 49 P02 | 4min | 2 tasks | 5 files |
 | Phase 50 P01 | 5min | 2 tasks | 4 files |
 | Phase 50 P02 | 6min | 2 tasks | 4 files |
+| Phase 51 P01 | 18min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -120,6 +121,7 @@ separate as a distinct design-partner deliverable.
 - [Phase ?]: Interactive mid-loop confirm primary; CAPRUN_CONFIRM=external or non-TTY → dual-terminal poll
 - [Phase ?]: PROCEED only after ConfirmOutcome::Released or durable confirmed; sink-fail → exit 1
 - [Phase ?]: Phase 50 does not claim LIVE-07/08 SUCCESS — Phase 51 owns LIVE
+- [Phase ?]: Phase 51: Forward brokerd/mock-egress-ca through caprun so crate-level LIVE cfg gates execute.
 
 ### Blockers/Concerns
 
@@ -158,8 +160,8 @@ separate as a distinct design-partner deliverable.
 
 ## Session Continuity
 
-Last session: 2026-07-29T21:36:32.051Z
-Stopped at: Completed 50-02-PLAN.md
+Last session: 2026-08-04T03:11:17.319Z
+Stopped at: Completed 51-01-PLAN.md; LIVE-07 compose verification pending Docker-capable host
 Resume file: None
 
 ## Operator Next Steps
