@@ -1,112 +1,114 @@
 {
   "version": "1.0",
-  "timestamp": "2026-08-04T18:34:22.000Z",
+  "timestamp": "2026-08-04T21:05:00.000Z",
   "phase": "51",
   "phase_name": "non-hybrid-live-proof-v1-10-done",
   "phase_dir": ".planning/phases/51-non-hybrid-live-proof-v1-10-done",
   "plan": 4,
   "task": 1,
   "total_tasks": 3,
-  "status": "paused",
+  "status": "blocked",
+  "supersedes": "the 2026-08-04T18:34 handoff, which said no proof command had ever run. That is now OUT OF DATE: the scoped gate HAS been executed three times on a real-Linux host.",
   "completed_tasks": [],
   "remaining_tasks": [
     {
       "id": 1,
       "name": "Execute the scoped LIVE-07/LIVE-08 proof on Docker-backed real Linux",
-      "status": "not_started"
+      "status": "attempted_and_failed",
+      "detail": "Ran 3x on a real-Linux EC2 host through an unmodified scripts/compose-verify.sh. rc=101 each time. Two defects found and fixed en route; two TCB defects remain and block the gate."
     },
     {
       "id": 2,
       "name": "Run the full workspace compose regression and reconcile durable status",
-      "status": "not_started"
+      "status": "never_started",
+      "detail": "Its precondition is a green Task 1. There is NO v1.0-v1.9 regression evidence from this session."
     },
-    {
-      "id": 3,
-      "name": "Confirm the retained real-Linux proof record",
-      "status": "not_started"
-    }
+    { "id": 3, "name": "Confirm the retained real-Linux proof record", "status": "not_started" }
   ],
+  "read_this_first": ".planning/phases/51-non-hybrid-live-proof-v1-10-done/51-BLOCKING-DEFECTS.md",
   "blockers": [
     {
-      "description": "Plan 51-04 requires a host where `docker version` and `docker compose version` succeed. The Linux host at /home/ben/Workspace/caprun has no docker executable, no podman/colima/nerdctl, and no passwordless sudo.",
-      "type": "external",
-      "workaround": "Resume on a Docker-capable host. Do not manufacture or pre-mark proof evidence."
+      "id": "D1",
+      "type": "product-defect-tcb",
+      "severity": "blocking",
+      "description": "The audit hash chain FORKS after any external append. handle_connection threads last_event_id/last_event_hash in memory (server.rs:547-548) and never re-reads the durable head; caprun grant/confirm append off a fresh current_chain_head (audit.rs:548, confirmation.rs:852). After an external confirm commits, the broker's next append chains off a STALE head. verify_chain correctly returns false.",
+      "evidence": "REPRODUCED ON macOS IN 0.01s with no kernel feature and no Linux gate: two children of the stale head, verify_chain false. Also observed live: two events at index [22] sharing parent=183b4907 in 51-LIVE-SCOPED-FAIL-3-chain-fork.log.",
+      "deterministic": true,
+      "do_not": "Do NOT loosen verify_chain. The chain is linear BY DESIGN (audit.rs:1203-1219, confirmation.rs:777-783); the 'DAG' in PLAN.md is the provenance/taint edge graph, not the event parent_id chain. Loosening it deletes HARDEN-02 tail-truncation detection. The append path is the bug."
     },
     {
-      "description": "GSD scaffolding (.claude/ and .codex/) is gitignored and does NOT arrive with a `git pull`. Plan 51-04 Task 2's verify step shells out to `node .codex/gsd-core/bin/gsd-tools.cjs windows status --raw` to mark broken windows 1 and 2 fixed, and 51-04-PLAN.md's <execution_context> references .codex/gsd-core/workflows/execute-plan.md.",
-      "type": "environment",
-      "workaround": "On a freshly-pulled or freshly-cloned host, run `npx -y @opengsd/gsd-core@latest --claude --local` BEFORE executing 51-04."
-    }
-  ],
-  "async_jobs": [],
-  "human_actions_pending": [
+      "id": "D2",
+      "type": "product-defect-tcb",
+      "severity": "blocking",
+      "description": "No busy_timeout / busy_handler / BEGIN IMMEDIATE anywhere in crates/, cli/ or scripts/. open_audit_db (audit.rs:721-731) sets WAL only, so a cross-process write collision returns SQLITE_BUSY immediately and the broker ?-propagates it (server.rs:717), killing the worker.",
+      "evidence": "Consistent with LIVE-07's DAG: session_created -> policy_bound -> github_grant_authorized with ZERO intent_received. That SQLITE_BUSY was the specific cause is INFERRED, not observed - D4 discarded the stderr that would prove it. Do not state it as fact in any evidence record.",
+      "do_not": "Do NOT fix D2 alone. A bare busy_timeout converts D1's crash into a SUCCESSFULLY COMMITTED fork. Design D1 and D2 together."
+    },
     {
-      "action": "Resume Phase 51 Plan 51-04 on a Docker-capable host.",
-      "context": "The authoritative LIVE-07/LIVE-08 scoped proof and the full-workspace compose regression cannot run without Docker. PREFERRED host: the Mac dev machine with Colima — scripts/compose-verify.sh and its sibling scripts/mailpit-verify.sh were written for exactly that environment and need no cloud. AWS EC2 is the documented fallback; see aws_execution_context.",
-      "blocking": true
+      "id": "D3",
+      "type": "test-harness",
+      "severity": "major",
+      "description": "live_acceptance_v1_10_cli.rs:383 asserts stdout contains 'Sink: github.pr', but that string is only printed by render_block_display (confirmation.rs:721) from the separate review/confirm/deny processes. caprun run prints 'effect_id={id}  sink={sink}' (main.rs:804). Because :383 fires BEFORE :391-408, LIVE-08's real attribution assertions have NEVER EXECUTED ONCE.",
+      "do_not": "Do NOT change caprun run's output to satisfy the test. Prefer deleting the stdout substring check; the durable-anchor assertions at :391-408 are the real requirement."
+    },
+    {
+      "id": "D4",
+      "type": "test-harness",
+      "severity": "minor",
+      "description": "live_acceptance_v1_10_cli.rs:300-304 panics on sidecar.join() BEFORE stderr_reader.join(), discarding broker/worker stderr on exactly the failure path. Fix first so the next run is diagnostic."
     }
   ],
+  "fixed_this_session": [
+    { "commit": "2771948", "summary": "The Linux-gated test module never compiled (8 errors): both bodies discarded the Child returned by spawn(), and &Path was passed where open_audit_db wants &str. cfg-linux test-blindness." },
+    { "commit": "1697766", "summary": "plan_coding_next step 1 emitted process.exec with no cwd, so the confined child ran outside the workspace and 'git add -A' staged nothing; git.commit then failed with 'no changes added to commit'. Defaulted cwd to workspace_root in configure_confined_command." }
+  ],
+  "host_guidance": {
+    "linux_dev_server": "GOOD for the gap-closure work and STRICTLY BETTER than the Mac for it: on Linux, cargo test compiles the #[cfg(target_os = \"linux\")] targets that the Mac silently skips - that blindness is exactly what let the two fixed defects ship. The D1 reproducer needs no Docker and no kernel feature. CAVEATS: (1) that host had no docker/podman/colima and no passwordless sudo, so it CANNOT run the compose gates; (2) broken window 3 records it lacking pkg-config/OpenSSL dev metadata - `sudo apt-get install -y pkg-config libssl-dev` is needed before cargo will build (lettre's native-tls path); (3) .claude/ and .codex/ are gitignored and do NOT arrive with git pull - run `npx -y @opengsd/gsd-core@latest --claude --local` first.",
+    "proof_host": "The compose gates need Docker. The Mac's Colima VM is 2 vCPU / 2 GB on an 8 GB machine - too small for two cold full-workspace builds. Use EC2."
+  },
   "aws_execution_context": {
-    "note": "Reconnaissance recorded 2026-08-04 so a resuming session need not repeat it. Only relevant if no local Docker host is available. NO AWS resource was created, started, or modified.",
-    "profiles_probed": [
-      {
-        "profile": "default",
-        "identity": "arn:aws:iam::880583220638:user/municipal-monitor-backup",
-        "usable": false,
-        "detail": "Valid credentials but zero EC2/S3/SSM/ECS/CodeBuild permissions."
-      },
-      {
-        "profile": "municipal-ocr-ec2",
-        "identity": null,
-        "usable": false,
-        "detail": "InvalidClientTokenId — credentials are stale or revoked."
-      },
-      {
-        "profile": "municipal-ocr-runner",
-        "identity": "arn:aws:iam::559846026666:user/municipal-ocr-runner",
-        "usable": "partial",
-        "detail": "Can start exactly one stopped c7i.4xlarge (i-0ee09bc935472cf8a, us-east-1d, tagged Project=municipal-ocr, no key pair attached). ec2:RunInstances is DENIED, as are DescribeImages/DescribeKeyPairs/DescribeSecurityGroups and all SSM actions."
-      }
-    ],
-    "operator_decision": "Do NOT borrow the municipal-ocr instance — it belongs to another project. Launch a clean, dedicated, Project=caprun-tagged throwaway instance using operator-provided credentials that allow ec2:RunInstances. Installing Docker on that proof instance is pre-authorized.",
-    "required_iam_actions": [
-      "ec2:Describe* — regions, availability zones, VPCs, subnets, images, instance types, instances, instance status, volumes, tags, key pairs, security groups",
-      "ssm:GetParameter / ssm:GetParameters on arn:aws:ssm:*::parameter/aws/service/* — resolve current official AMI ids instead of hardcoding a stale one",
-      "ec2:CreateKeyPair, ec2:DeleteKeyPair — throwaway SSH key",
-      "ec2:CreateSecurityGroup, ec2:AuthorizeSecurityGroupIngress, ec2:RevokeSecurityGroupIngress, ec2:DeleteSecurityGroup — port 22 from operator egress IP only",
-      "ec2:RunInstances, ec2:CreateTags",
-      "ec2:StartInstances, ec2:StopInstances, ec2:TerminateInstances, ec2:GetConsoleOutput — condition-scoped to ec2:ResourceTag/Project = caprun"
-    ],
-    "recommended_shape": "c7i.4xlarge (16 vCPU / 32 GiB), 60 GB gp3 root, Ubuntu 24.04, us-east-1. The 60 GB covers target/ (~3.4 GB) plus the rust:1, python:3-slim, and axllent/mailpit images. Estimate 30-60 minutes of instance time for both gates.",
-    "transfer_note": "The repo is 33 MB excluding target/ (target/ is 3.4 GB and must NOT be copied); .git is 10 MB. rsync with --exclude=target is sufficient.",
-    "network_requirement": "The proof needs real outbound HTTPS to api.github.com. scripts/compose-verify.sh deliberately does NOT remap api.github.com (only github-mock.caprun.test), so the ENV-01 live GET must reach real GitHub (T-40-06). Default-VPC egress satisfies this."
+    "note": "Updated 2026-08-04. The previous handoff said no profile could launch an instance; that is no longer true after re-auth.",
+    "working_profile": "benlamm-projects (account 559846026666, OrganizationAccountAccessRole). ec2:RunInstances dry-run returns DryRunOperation = authorized. Default VPC vpc-0c38d3ef77cc7b0b9 exists in us-east-1.",
+    "note_on_expiry": "SSO sessions expire; `aws login --profile benlamm-projects` is interactive and must be run by the operator.",
+    "proven_recipe": "c7i.4xlarge, 60 GB gp3, Ubuntu 24.04 (AMI resolved via ec2:describe-images owner 099720109477, NOT ssm - ssm:GetParameter is denied), tag Project=caprun, SG allowing tcp/22 from the operator's egress IP only, rsync -az --exclude=target/ --exclude=.linux-target/ (payload ~45 MB), then install docker-ce + docker-compose-plugin from Docker's apt repo. Launch-to-gate-running took about 12 minutes.",
+    "teardown": "Instance i-05723d627c62ea73f terminated; key pair caprun-proof-51 and security group sg-021a4537b7227bda4 deleted. No residual Project=caprun resources. ALWAYS tear down - the meter is ~$0.71/hr.",
+    "cost_this_session": "about 2.5 hours of c7i.4xlarge, roughly $2."
   },
   "execution_caveats": [
     {
       "id": "openai-key-skip",
-      "description": "With OPENAI_API_KEY unset or empty, the v1.4 and v1.8 composed live tests SKIP rather than fail (see cli/caprun/tests/live_acceptance_v1_4_composed.rs:585). Task 2's full-workspace gate can therefore exit 0 with those LLM-sidecar legs never executing.",
-      "impact": "Not a Phase 51 acceptance requirement — 51-04 owns LIVE-07/LIVE-08, not the v1.4/v1.8 legs — but if those legs skip it MUST be recorded honestly as a coverage note in 51-LIVE-EVIDENCE.md. Forward a real OPENAI_API_KEY in the host env to make them execute.",
-      "must_not": "Do not describe a run with skipped legs as a full-coverage regression."
+      "description": "OPENAI_API_KEY WAS set and forwarded this session, so the v1.4/v1.8 composed legs would have executed rather than skipped. But Task 2 never ran, so that is a statement about configuration, not achieved coverage.",
+      "must_not": "Do not describe this session as having produced any v1.0-v1.9 regression evidence. It did not."
     },
     {
-      "id": "absolute-path-refs",
-      "description": "Phase 51 plan files reference /home/ben/Workspace/caprun/... absolute paths in <execution_context> blocks and review findings. On a host that clones elsewhere these dangle.",
-      "impact": "Resolve them relative to the repo root; the targets are regenerable GSD scaffolding, not product code."
-    }
-  ],
-  "decisions": [
-    {
-      "decision": "Leave LIVE-07, LIVE-08, validation, evidence, and Phase 51 completion pending until both compose commands actually pass.",
-      "rationale": "Phase 51 is an evidence gate; compilation or an incapable-host fallback cannot establish the promised non-hybrid LIVE proof.",
-      "phase": "51"
+      "id": "compose-verify-cold-builds",
+      "description": "compose-verify.sh uses an ephemeral CARGO_TARGET_DIR inside a --rm container, so the scoped run and the full run are two SEPARATE cold builds of the whole workspace. Budget for that on any proof host."
     },
     {
-      "decision": "Prefer a local Docker/Colima host over AWS for the 51-04 proof run; use a dedicated Project=caprun EC2 instance only as fallback, never a borrowed instance from another project.",
-      "rationale": "compose-verify.sh was written for the Mac+Colima dev machine and needs no cloud. Borrowing municipal-ocr's instance mixes projects, incurs cost, and mutates a machine outside this repo's ownership.",
-      "phase": "51"
+      "id": "sibling-binary",
+      "description": "Any ad hoc `cargo test` container MUST run `cargo build --workspace` first or process.exec fails with 'could not locate sibling binary caprun-exec-launcher'. This bit once during diagnosis and produced a misleading stderr."
     }
   ],
+  "durable_status_untouched": {
+    "evidence_file": "NOT created - 51-LIVE-EVIDENCE.md does not exist",
+    "requirements": "LIVE-07 and LIVE-08 remain Pending in both checkbox and traceability matrix",
+    "windows": "entries 1, 2 and 3 remain open",
+    "roadmap_and_state": "untouched - orchestrator-owned"
+  },
+  "reviewer_verdicts": {
+    "count": 2,
+    "models": "two independent reviewers, different models, each told not to assume agreement",
+    "verdict": "BOTH returned (b): stop 51-04; scope a separate gap-closure plan for D1+D2 behind a design note and a fresh non-self adversarial trace; fold D3/D4 in; then re-run 51-04 unchanged.",
+    "disagreement_resolved": "They split on whether v1.9 is affected. VERIFIED DIRECTLY AGAINST THE TAG: it is NOT. stream_hold.rs is absent at v1.9 (added 5ee23fd 2026-07-29; tag is 2026-07-18) and v1.9's main.rs has no CAPRUN_CONFIRM/external handling and no submit_plan_node, so no shipped v1.9 flow has the broker appending after an external append. The v1.9 tag and its proofs stand; no advisory warranted. Two latent instances of the class exist in older code (server.rs:307-382 dual-connection same seed; audit.rs:546-561 non-transactional read-then-append) but neither is reachable in a shipped flow."
+  },
+  "recommended_next_scope": [
+    "1. RED TEST FIRST, host-runnable and NOT #[cfg(target_os = \"linux\")]: commit a regression test that reproduces the D1 fork and FAILS today. Sequence: broker appends E1 and keeps its hash in memory; an external appender reads current_chain_head and appends E2; the broker appends E3 with the stale hash; assert 2 children of E1 and verify_chain false. This converts the proof run from discovery into confirmation.",
+    "2. Design note for the append-at-head concurrency discipline, then the fix: read head and insert under ONE BEGIN IMMEDIATE transaction, with busy_timeout set in open_audit_db so every connection gets it including short-lived CLI ones. Note parent_id is serialized into the hashed payload, so the parent must be chosen INSIDE the transaction.",
+    "3. Fresh non-self adversarial trace on the diff, specifically checking that causal chain parent_id is never conflated with provenance read_event_id (server.rs:941, :957, :973). I2 and M7 ride on the provenance graph and must be untouched.",
+    "4. Fold in D3 and D4.",
+    "5. Only then relaunch a proof host and re-run 51-04 UNCHANGED."
+  ],
+  "next_action": "Read 51-BLOCKING-DEFECTS.md, then `/gsd-plan-phase 51 --gaps-only` to scope the gap-closure work. Do NOT re-run the compose gates first - D1 is deterministic and a re-run fails identically.",
   "uncommitted_files": [],
-  "next_action": "On a Docker-capable host: run `docker version && docker compose version`. If .claude/ or .codex/ is absent after a fresh pull, run `npx -y @opengsd/gsd-core@latest --claude --local` first. Then `$gsd-resume-work`, or execute directly with `$gsd-execute-phase 51 --gaps-only`. Plan 51-04 Task 1's scoped compose command is the first thing that must actually run.",
-  "context_notes": "Plans 51-01 through 51-03 are complete. Plan 51-03 landed commits f86c210, 3934e1b, and 717dbe9. Plan 51-04 made no changes and stopped at its Task 1 precondition because docker was unavailable. A 2026-08-04 session confirmed the Linux host has no container runtime at all and probed AWS as an alternative without creating anything. No proof command has run, no evidence artifact exists, and LIVE-07/LIVE-08 plus broken windows 1 and 2 remain correctly pending/open. All test machinery is committed and pushed: scripts/compose-verify.sh, scripts/mock-github/ (including its TLS cert and private key, valid to 2126), and cli/caprun/tests/live_acceptance_v1_10_cli.rs."
+  "context_notes": "Plans 51-01..51-03 complete. Plan 51-04 STOPPED at Task 1 after three real-Linux executions. v1.10 CANNOT be marked DONE before D1 is fixed: LIVE-07 acceptance requires verify_chain true, and D1 makes that deterministically false on the exact path v1.10 exists to ship. There is no harness workaround - the mid-loop external confirm IS the feature."
 }
