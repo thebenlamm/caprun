@@ -4,6 +4,11 @@ version.workspace  = true
 edition.workspace  = true
 license.workspace  = true
 
+[features]
+# LIVE-07/08 compile gate: expose brokerd's non-default mock CA at this crate's
+# cfg boundary so the caprun integration-test bodies cannot silently compile out.
+mock-egress-ca = ["brokerd/mock-egress-ca"]
+
 [dependencies]
 sandbox      = { path = "../../crates/sandbox" }
 brokerd      = { path = "../../crates/brokerd" }
