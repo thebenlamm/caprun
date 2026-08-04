@@ -95,12 +95,11 @@ use std::time::{Duration, Instant};
 /// `out_{step}` retains untrusted provenance when present (worker stores any
 /// `Some(output_value_id)` under that key after Allowed — F-01).
 ///
-/// **LIVE-08 expressibility (unit only, not LIVE DONE):** a deliberate
-/// **test-only** proof planner (see `cli/caprun/tests/planner.rs`
-/// `CodingI2ProofPlanner`) may place e.g. `out_1` into `github.pr`/`body`
-/// while other PR args remain intent-minted. That path is **not** product
-/// code, **not** selected by the worker, and **does not** claim Phase 51
-/// LIVE-07/08 CLI multi-step SUCCESS — only bag-routing expressibility.
+/// **LIVE-08 proof path (default off; not LIVE DONE by itself):** the worker
+/// may select `CodingI2ProofPlanner` only when `CAPRUN_CODING_I2_PROOF=1`.
+/// It places `out_1` into `github.pr`/`body` while other PR args remain
+/// intent-minted. The success path and LIVE-07 remain on
+/// `DeterministicPlanner`; unit expressibility alone does not claim LIVE-08.
 ///
 /// | Key | Sink / PlanArg |
 /// |-----|----------------|
@@ -237,6 +236,48 @@ impl Planner for DeterministicPlanner {
             CaprunIntent::SafeCodingWorkflow { .. } => plan_coding_next(ctx),
             CaprunIntent::SendEmailSummary { .. }
             | CaprunIntent::CreateFileFromReport { .. } => plan_next_one_shot(self, ctx),
+        }
+    }
+}
+
+/// Default-off LIVE-08 proof planner. Steps through the normal coding recipe
+/// until the PR node, where genuine `process.exec` output from bag `out_1` is
+/// deliberately placed into the content-sensitive `body` slot. This planner
+/// only places an existing opaque handle; it adds no mint site or bag schema.
+pub struct CodingI2ProofPlanner;
+
+impl Planner for CodingI2ProofPlanner {
+    fn plan(
+        &self,
+        _intent: &CaprunIntent,
+        _intent_value_id: ValueId,
+        _derived_recipient: Option<ValueId>,
+        _body: Option<ValueId>,
+        _trusted_subject_handle: ValueId,
+        _trusted_body_handle: ValueId,
+        _task_instruction: Option<String>,
+    ) -> PlanNode {
+        unreachable!("CodingI2ProofPlanner uses plan_next only")
+    }
+
+    fn plan_next(&self, ctx: &PlanStreamContext) -> Option<PlanNode> {
+        match ctx.step_index {
+            0..=3 => DeterministicPlanner.plan_next(ctx),
+            4 => {
+                let h = |key: &str| ctx.handles.get(key).cloned();
+                Some(PlanNode {
+                    sink: SinkId("github.pr".into()),
+                    args: vec![
+                        PlanArg { name: "owner".into(), value_id: h("pr_owner")? },
+                        PlanArg { name: "repo".into(), value_id: h("pr_repo")? },
+                        PlanArg { name: "base".into(), value_id: h("pr_base")? },
+                        PlanArg { name: "head".into(), value_id: h("pr_head")? },
+                        PlanArg { name: "title".into(), value_id: h("pr_title")? },
+                        PlanArg { name: "body".into(), value_id: h("out_1")? },
+                    ],
+                })
+            }
+            _ => None,
         }
     }
 }

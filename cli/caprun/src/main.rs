@@ -554,6 +554,11 @@ async fn main() -> anyhow::Result<()> {
     // NEITHER the explicitly-set key NOR any ambient broker secret.
     let mut planner_sidecar: Option<std::process::Child> = None;
     let mut worker_planner_env: Vec<(&'static str, String)> = Vec::new();
+    if std::env::var("CAPRUN_CODING_I2_PROOF").as_deref() == Ok("1") {
+        // Non-secret, default-off LIVE-08 proof selector. Tokens remain
+        // excluded by the worker's env_clear allowlist below.
+        worker_planner_env.push(("CAPRUN_CODING_I2_PROOF", "1".to_string()));
+    }
     if std::env::var("CAPRUN_PLANNER").as_deref() == Ok("llm") {
         let planner_sock = format!("/agentos/planner/{session_id}");
         let planner_binary = std::env::current_exe()

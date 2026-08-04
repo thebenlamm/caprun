@@ -1220,8 +1220,8 @@ fn coding_success_path_does_not_place_out_handles() {
     }
 }
 
-/// LIVE-08 expressibility (Phase 49 unit level only — NOT LIVE-07/08 CLI DONE):
-/// a test-only proof planner can place bag `out_1` (simulating mint_from_exec
+/// LIVE-08 expressibility (unit level only — NOT LIVE-07/08 CLI DONE):
+/// the default-off product proof planner can place bag `out_1` (simulating mint_from_exec
 /// output) into `github.pr` body while other PR args remain intent-minted.
 /// Success-path DeterministicPlanner is unchanged and still never places out_*.
 ///
@@ -1236,7 +1236,7 @@ fn coding_i2_proof_places_out_handle() {
     // Also seed out_0 so bag looks like a mid-stream worker bag after step 0/1.
     bag.insert("out_0".into(), ValueId::new());
 
-    let proof = CodingI2ProofPlanner;
+    let proof = planner::CodingI2ProofPlanner;
 
     // Steps 0..3 mirror success recipe (intent keys only).
     for step in 0..4 {
@@ -1310,71 +1310,6 @@ fn coding_i2_proof_places_out_handle() {
     );
 }
 
-/// Test-only proof planner for LIVE-08 expressibility (CODE-02).
-///
-/// Mirrors the five-node success recipe but at `github.pr` places bag `out_1`
-/// into PlanArg `body`. **Not** product code — never selected by the worker.
-/// Exists so Phase 51 can wire genuine taint-via-bag without inventing a new
-/// mint path. Framing: expressibility only; not LIVE multi-step DONE.
-struct CodingI2ProofPlanner;
-
-impl planner::Planner for CodingI2ProofPlanner {
-    fn plan(
-        &self,
-        _intent: &CaprunIntent,
-        _intent_value_id: ValueId,
-        _derived_recipient: Option<ValueId>,
-        _body: Option<ValueId>,
-        _trusted_subject_handle: ValueId,
-        _trusted_body_handle: ValueId,
-        _task_instruction: Option<String>,
-    ) -> PlanNode {
-        unreachable!("CodingI2ProofPlanner uses plan_next only")
-    }
-
-    fn plan_next(&self, ctx: &planner::PlanStreamContext) -> Option<PlanNode> {
-        // Reuse success-path emission for steps 0..3 via DeterministicPlanner,
-        // then deliberately diverge at step 4 for out_1 → body placement.
-        match ctx.step_index {
-            0..=3 => planner::Planner::plan_next(&planner::DeterministicPlanner, ctx),
-            4 => {
-                let h = |key: &str| ctx.handles.get(key).cloned();
-                // LIVE-08 expressibility: body comes from out_1 (exec output bag
-                // slot), NOT pr_body. Other PR args stay intent-minted.
-                Some(PlanNode {
-                    sink: SinkId("github.pr".into()),
-                    args: vec![
-                        PlanArg {
-                            name: "owner".into(),
-                            value_id: h("pr_owner")?,
-                        },
-                        PlanArg {
-                            name: "repo".into(),
-                            value_id: h("pr_repo")?,
-                        },
-                        PlanArg {
-                            name: "base".into(),
-                            value_id: h("pr_base")?,
-                        },
-                        PlanArg {
-                            name: "head".into(),
-                            value_id: h("pr_head")?,
-                        },
-                        PlanArg {
-                            name: "title".into(),
-                            value_id: h("pr_title")?,
-                        },
-                        PlanArg {
-                            name: "body".into(),
-                            value_id: h("out_1")?,
-                        },
-                    ],
-                })
-            }
-            _ => None,
-        }
-    }
-}
 
 /// Missing required bag key → that step returns None (fail-closed).
 #[test]

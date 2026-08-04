@@ -379,11 +379,21 @@ async fn main() -> anyhow::Result<()> {
     // connect pattern this worker already uses for its own broker connection,
     // just via a blocking std UnixStream instead of tokio (LlmPlanner::plan()
     // is a synchronous trait method).
-    let planner: Box<dyn Planner> = match std::env::var("CAPRUN_PLANNER").as_deref() {
-        Ok("llm") => {
+    let planner: Box<dyn Planner> = match (
+        std::env::var("CAPRUN_PLANNER").as_deref() == Ok("llm"),
+        std::env::var("CAPRUN_CODING_I2_PROOF").as_deref() == Ok("1"),
+        matches!(intent, CaprunIntent::SafeCodingWorkflow { .. }),
+    ) {
+        (true, _, true) => anyhow::bail!("LLM planner does not support SafeCodingWorkflow"),
+        (true, _, false) => {
             let planner_sock = std::env::var("PLANNER_SOCK")
                 .context("PLANNER_SOCK required when CAPRUN_PLANNER=llm")?;
             Box::new(crate::planner::LlmPlanner::new(planner_sock))
+        }
+        (false, true, true) => {
+            // Allowed nodes already store output_value_id as out_{step}; this
+            // proof planner only places out_1 and does not change bag minting.
+            Box::new(crate::planner::CodingI2ProofPlanner)
         }
         _ => Box::new(crate::planner::DeterministicPlanner),
     };
