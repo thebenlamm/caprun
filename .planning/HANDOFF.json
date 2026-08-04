@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "timestamp": "2026-08-04T15:12:21.730Z",
+  "timestamp": "2026-08-04T18:34:22.000Z",
   "phase": "51",
   "phase_name": "non-hybrid-live-proof-v1-10-done",
   "phase_dir": ".planning/phases/51-non-hybrid-live-proof-v1-10-done",
@@ -28,17 +28,70 @@
   ],
   "blockers": [
     {
-      "description": "Plan 51-04 requires a real-Linux host where docker version and docker compose version succeed; the current host is Linux but has no docker executable.",
+      "description": "Plan 51-04 requires a host where `docker version` and `docker compose version` succeed. The Linux host at /home/ben/Workspace/caprun has no docker executable, no podman/colima/nerdctl, and no passwordless sudo.",
       "type": "external",
-      "workaround": "Resume on a Docker-capable Linux host. Do not manufacture or pre-mark proof evidence."
+      "workaround": "Resume on a Docker-capable host. Do not manufacture or pre-mark proof evidence."
+    },
+    {
+      "description": "GSD scaffolding (.claude/ and .codex/) is gitignored and does NOT arrive with a `git pull`. Plan 51-04 Task 2's verify step shells out to `node .codex/gsd-core/bin/gsd-tools.cjs windows status --raw` to mark broken windows 1 and 2 fixed, and 51-04-PLAN.md's <execution_context> references .codex/gsd-core/workflows/execute-plan.md.",
+      "type": "environment",
+      "workaround": "On a freshly-pulled or freshly-cloned host, run `npx -y @opengsd/gsd-core@latest --claude --local` BEFORE executing 51-04."
     }
   ],
   "async_jobs": [],
   "human_actions_pending": [
     {
-      "action": "Resume Phase 51 on a Docker-capable real-Linux host.",
-      "context": "The authoritative LIVE-07/LIVE-08 scoped proof and full-workspace compose regression cannot run on the current host.",
+      "action": "Resume Phase 51 Plan 51-04 on a Docker-capable host.",
+      "context": "The authoritative LIVE-07/LIVE-08 scoped proof and the full-workspace compose regression cannot run without Docker. PREFERRED host: the Mac dev machine with Colima — scripts/compose-verify.sh and its sibling scripts/mailpit-verify.sh were written for exactly that environment and need no cloud. AWS EC2 is the documented fallback; see aws_execution_context.",
       "blocking": true
+    }
+  ],
+  "aws_execution_context": {
+    "note": "Reconnaissance recorded 2026-08-04 so a resuming session need not repeat it. Only relevant if no local Docker host is available. NO AWS resource was created, started, or modified.",
+    "profiles_probed": [
+      {
+        "profile": "default",
+        "identity": "arn:aws:iam::880583220638:user/municipal-monitor-backup",
+        "usable": false,
+        "detail": "Valid credentials but zero EC2/S3/SSM/ECS/CodeBuild permissions."
+      },
+      {
+        "profile": "municipal-ocr-ec2",
+        "identity": null,
+        "usable": false,
+        "detail": "InvalidClientTokenId — credentials are stale or revoked."
+      },
+      {
+        "profile": "municipal-ocr-runner",
+        "identity": "arn:aws:iam::559846026666:user/municipal-ocr-runner",
+        "usable": "partial",
+        "detail": "Can start exactly one stopped c7i.4xlarge (i-0ee09bc935472cf8a, us-east-1d, tagged Project=municipal-ocr, no key pair attached). ec2:RunInstances is DENIED, as are DescribeImages/DescribeKeyPairs/DescribeSecurityGroups and all SSM actions."
+      }
+    ],
+    "operator_decision": "Do NOT borrow the municipal-ocr instance — it belongs to another project. Launch a clean, dedicated, Project=caprun-tagged throwaway instance using operator-provided credentials that allow ec2:RunInstances. Installing Docker on that proof instance is pre-authorized.",
+    "required_iam_actions": [
+      "ec2:Describe* — regions, availability zones, VPCs, subnets, images, instance types, instances, instance status, volumes, tags, key pairs, security groups",
+      "ssm:GetParameter / ssm:GetParameters on arn:aws:ssm:*::parameter/aws/service/* — resolve current official AMI ids instead of hardcoding a stale one",
+      "ec2:CreateKeyPair, ec2:DeleteKeyPair — throwaway SSH key",
+      "ec2:CreateSecurityGroup, ec2:AuthorizeSecurityGroupIngress, ec2:RevokeSecurityGroupIngress, ec2:DeleteSecurityGroup — port 22 from operator egress IP only",
+      "ec2:RunInstances, ec2:CreateTags",
+      "ec2:StartInstances, ec2:StopInstances, ec2:TerminateInstances, ec2:GetConsoleOutput — condition-scoped to ec2:ResourceTag/Project = caprun"
+    ],
+    "recommended_shape": "c7i.4xlarge (16 vCPU / 32 GiB), 60 GB gp3 root, Ubuntu 24.04, us-east-1. The 60 GB covers target/ (~3.4 GB) plus the rust:1, python:3-slim, and axllent/mailpit images. Estimate 30-60 minutes of instance time for both gates.",
+    "transfer_note": "The repo is 33 MB excluding target/ (target/ is 3.4 GB and must NOT be copied); .git is 10 MB. rsync with --exclude=target is sufficient.",
+    "network_requirement": "The proof needs real outbound HTTPS to api.github.com. scripts/compose-verify.sh deliberately does NOT remap api.github.com (only github-mock.caprun.test), so the ENV-01 live GET must reach real GitHub (T-40-06). Default-VPC egress satisfies this."
+  },
+  "execution_caveats": [
+    {
+      "id": "openai-key-skip",
+      "description": "With OPENAI_API_KEY unset or empty, the v1.4 and v1.8 composed live tests SKIP rather than fail (see cli/caprun/tests/live_acceptance_v1_4_composed.rs:585). Task 2's full-workspace gate can therefore exit 0 with those LLM-sidecar legs never executing.",
+      "impact": "Not a Phase 51 acceptance requirement — 51-04 owns LIVE-07/LIVE-08, not the v1.4/v1.8 legs — but if those legs skip it MUST be recorded honestly as a coverage note in 51-LIVE-EVIDENCE.md. Forward a real OPENAI_API_KEY in the host env to make them execute.",
+      "must_not": "Do not describe a run with skipped legs as a full-coverage regression."
+    },
+    {
+      "id": "absolute-path-refs",
+      "description": "Phase 51 plan files reference /home/ben/Workspace/caprun/... absolute paths in <execution_context> blocks and review findings. On a host that clones elsewhere these dangle.",
+      "impact": "Resolve them relative to the repo root; the targets are regenerable GSD scaffolding, not product code."
     }
   ],
   "decisions": [
@@ -46,11 +99,14 @@
       "decision": "Leave LIVE-07, LIVE-08, validation, evidence, and Phase 51 completion pending until both compose commands actually pass.",
       "rationale": "Phase 51 is an evidence gate; compilation or an incapable-host fallback cannot establish the promised non-hybrid LIVE proof.",
       "phase": "51"
+    },
+    {
+      "decision": "Prefer a local Docker/Colima host over AWS for the 51-04 proof run; use a dedicated Project=caprun EC2 instance only as fallback, never a borrowed instance from another project.",
+      "rationale": "compose-verify.sh was written for the Mac+Colima dev machine and needs no cloud. Borrowing municipal-ocr's instance mixes projects, incurs cost, and mutates a machine outside this repo's ownership.",
+      "phase": "51"
     }
   ],
-  "uncommitted_files": [
-    ".planning/STATE.md"
-  ],
-  "next_action": "Verify docker version and docker compose version, then run $gsd-resume-work (or $gsd-execute-phase 51 --gaps-only) from this repository.",
-  "context_notes": "Plans 51-01 through 51-03 are complete. Plan 51-03 landed commits f86c210, 3934e1b, and 717dbe9. Plan 51-04 made no changes and stopped at its Task 1 precondition because docker was unavailable."
+  "uncommitted_files": [],
+  "next_action": "On a Docker-capable host: run `docker version && docker compose version`. If .claude/ or .codex/ is absent after a fresh pull, run `npx -y @opengsd/gsd-core@latest --claude --local` first. Then `$gsd-resume-work`, or execute directly with `$gsd-execute-phase 51 --gaps-only`. Plan 51-04 Task 1's scoped compose command is the first thing that must actually run.",
+  "context_notes": "Plans 51-01 through 51-03 are complete. Plan 51-03 landed commits f86c210, 3934e1b, and 717dbe9. Plan 51-04 made no changes and stopped at its Task 1 precondition because docker was unavailable. A 2026-08-04 session confirmed the Linux host has no container runtime at all and probed AWS as an alternative without creating anything. No proof command has run, no evidence artifact exists, and LIVE-07/LIVE-08 plus broken windows 1 and 2 remain correctly pending/open. All test machinery is committed and pushed: scripts/compose-verify.sh, scripts/mock-github/ (including its TLS cert and private key, valid to 2126), and cli/caprun/tests/live_acceptance_v1_10_cli.rs."
 }

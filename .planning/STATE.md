@@ -162,8 +162,8 @@ separate as a distinct design-partner deliverable.
 ## Session Continuity
 
 Last session: 2026-08-04
-Stopped at: Completed 51-02 implementation fallback; LIVE-07/08 compose verification pending Docker-capable host
-Resume file: None
+Stopped at: Plan 51-04 Task 1 still blocked — this host has no Docker (and no podman/colima/nerdctl, no passwordless sudo). AWS was probed as a fallback and held: the only reachable compute (profile `municipal-ocr-runner`, acct 559846026666) is a borrowed municipal-ocr instance, and `ec2:RunInstances` is denied there, so no dedicated instance can be launched. Operator declined borrowing it. Preferred resumption is the Mac dev machine with Colima, which is the environment `scripts/compose-verify.sh` was written for. No AWS resource created/started/modified; no proof command has run; no evidence artifact created; LIVE-07/LIVE-08 and windows 1/2 correctly remain pending/open.
+Resume file: .planning/phases/51-non-hybrid-live-proof-v1-10-done/.continue-here.md and .planning/HANDOFF.json (both refreshed 2026-08-04T18:34Z; HANDOFF.json carries the full AWS reconnaissance under `aws_execution_context` plus the GSD-scaffolding-not-in-git prerequisite)
 
 ## Operator Next Steps
 
