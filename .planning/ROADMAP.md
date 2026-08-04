@@ -374,5 +374,5 @@ Plans:
 | 48. Plan-Stream Substrate | v1.10 | 2/2 | In Progress|  |
 | 49. Deterministic Multi-step Coding Planner | v1.10 | 2/2 | Complete    | 2026-07-29 |
 | 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 2/2 | Complete   | 2026-07-29 |
-| 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 1/2 | In Progress|  |
+| 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 2/2 | Proof Pending| Docker compose authority still required |
 | 52. Minimal Linux Packaging | v1.10 | 0/? | Not started | - |
