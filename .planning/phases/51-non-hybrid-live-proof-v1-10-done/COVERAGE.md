@@ -44,6 +44,14 @@
 - **v1.9 composed / stream_substrate bag taint:** remain **regression / substrate** only.
 - LIVE Complete claims require **compose-verify green** on a Docker-capable host; host guard alone is not LIVE DONE.
 
+## Current proof status
+
+The LIVE-07 and LIVE-08 executable proofs and default-off product selector are
+implemented. This executor host has neither Docker nor host OpenSSL discovery
+via `pkg-config`, so the authoritative scoped and full-workspace compose runs
+remain pending. Consequently LIVE-07/LIVE-08 are not marked Complete and Phase
+51 validation remains `nyquist_compliant: false`.
+
 ## Exemption rationale
 
 Coverage gates that expect new HTTP/SDK client contracts do not apply. Phase 51 is internal composition of existing UDS + audit DB + mock-egress-ca surfaces only.

@@ -382,7 +382,7 @@ async fn main() -> anyhow::Result<()> {
     let planner: Box<dyn Planner> = match (
         std::env::var("CAPRUN_PLANNER").as_deref() == Ok("llm"),
         std::env::var("CAPRUN_CODING_I2_PROOF").as_deref() == Ok("1"),
-        matches!(intent, CaprunIntent::SafeCodingWorkflow { .. }),
+        matches!(&intent, CaprunIntent::SafeCodingWorkflow { .. }),
     ) {
         (true, _, true) => anyhow::bail!("LLM planner does not support SafeCodingWorkflow"),
         (true, _, false) => {

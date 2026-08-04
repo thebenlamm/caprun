@@ -1,4 +1,4 @@
-//! LIVE-07 non-hybrid CLI multi-node acceptance proof.
+//! LIVE-07/08 non-hybrid CLI multi-node acceptance proof.
 //!
 //! SUCCESS here is driven by the real `caprun run safe-coding-workflow` CLI as
 //! one Session. The v1.9 hybrid, in-crate multi-leg
@@ -18,6 +18,8 @@ use uuid::Uuid;
 
 const LIVE_07_DRIVER: &str = "caprun run safe-coding-workflow (CLI multi-node, one Session)";
 const LIVE_07_NOT: &str = "hybrid in-crate evaluate_plan_node_and_record_for_test composition";
+const LIVE_08_DRIVER: &str =
+    "caprun run safe-coding-workflow (CLI sibling Session, CAPRUN_CODING_I2_PROOF=1)";
 
 #[test]
 fn live_acceptance_v1_10_cli_guard_present() {
@@ -203,6 +205,16 @@ mod linux {
         .expect("count durable LIVE-07 events")
     }
 
+    fn first_event_rowid(db: &Path, session_id: &str, event_type: &str) -> i64 {
+        let conn = brokerd::audit::open_audit_db(db).expect("open LIVE audit DB");
+        conn.query_row(
+            "SELECT rowid FROM events WHERE session_id = ?1 AND event_type = ?2 ORDER BY rowid LIMIT 1",
+            rusqlite::params![session_id, event_type],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|error| panic!("missing {event_type} for {session_id}: {error}"))
+    }
+
     fn assert_audit_passed(session_id: &str, audit_db: &Path) {
         let output = caprun(&["audit", session_id, audit_db.to_str().unwrap()]);
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -280,6 +292,75 @@ mod linux {
         assert_eq!(
             count_events(&layout.audit_db, session_id, "github_pr_succeeded"),
             1
+        );
+    }
+
+    /// LIVE-08 is a sibling real-CLI run, not a hybrid composition. The
+    /// policy explicitly permits github.pr; the genuine process.exec output
+    /// reaches its body via product bag out_1 and must trip I2 sink_blocked.
+    #[test]
+    fn live_08_cli_mid_loop_i2_block_genuine_taint() {
+        assert!(!LIVE_08_DRIVER.is_empty(), "LIVE-08 driver framing pin");
+        assert!(POLICY_JSON.contains("\"github.pr\""));
+        let layout = LiveCodingLayout::new();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_caprun"))
+            .args([
+                "run",
+                "--policy",
+                layout.policy_path.to_str().unwrap(),
+                "safe-coding-workflow",
+                layout.intent_json.to_str().unwrap(),
+                layout.workspace_file.to_str().unwrap(),
+                layout.audit_db.to_str().unwrap(),
+            ])
+            .env("CAPRUN_CODING_I2_PROOF", "1")
+            .env("CAPRUN_CONFIRM", "external")
+            .env("CAPRUN_CONFIRM_TIMEOUT_SECS", "60")
+            .env("CAPRUN_GIT_PUSH_TOKEN", "live-08-opaque-test-push-token")
+            .env("CAPRUN_GITHUB_TOKEN", "live-08-opaque-test-github-token")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn real caprun LIVE-08 driver");
+
+        let stderr = child.stderr.take().expect("caprun run stderr must be piped");
+        let stderr_reader = thread::spawn(move || {
+            let mut text = String::new();
+            BufReader::new(stderr)
+                .read_to_string(&mut text)
+                .expect("read caprun stderr");
+            text
+        });
+        // This sidecar grants github.pr and confirms git.push only. It never
+        // confirms the I2-blocked PR node, preserving the no-effect claim.
+        let sidecar = drive_external_confirm_and_grant(&mut child, layout.audit_db.clone());
+        let status = child.wait().expect("wait for caprun run");
+        let stdout = sidecar
+            .join()
+            .expect("sidecar thread panicked")
+            .expect("sidecar failed");
+        let stderr = stderr_reader.join().expect("stderr reader panicked");
+        assert!(
+            matches!(status.code(), Some(2 | 3)),
+            "LIVE-08 must stop denied/blocked, never success: {:?}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            status.code()
+        );
+        assert!(!stdout.contains("DENIED code=policy_deny"));
+
+        let session_ids: Vec<&str> = stdout
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("session_id="))
+            .collect();
+        assert_eq!(session_ids.len(), 1, "LIVE-08 must use one sibling Session");
+        let session_id = session_ids[0];
+        assert_audit_passed(session_id, &layout.audit_db);
+        assert_eq!(count_events(&layout.audit_db, session_id, "process_exited"), 1);
+        assert!(count_events(&layout.audit_db, session_id, "sink_blocked") >= 2);
+        assert_eq!(count_events(&layout.audit_db, session_id, "github_pr_succeeded"), 0);
+        assert!(
+            first_event_rowid(&layout.audit_db, session_id, "process_exited")
+                < first_event_rowid(&layout.audit_db, session_id, "sink_blocked"),
+            "real process.exec provenance root must precede the blocked sink"
         );
     }
 }
