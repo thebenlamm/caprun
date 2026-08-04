@@ -512,7 +512,29 @@ fn configure_confined_command(
     // attributed to the TARGET command, not the empty cwd. Leaving the var
     // UNSET when `cwd` is `None` makes the launcher's own
     // `std::env::var("EXEC_CWD").ok()` correctly resolve to `None`.
-    if let Some(dir) = cwd {
+    //
+    // DEFAULT (Phase 51 LIVE-07): when no `cwd` is supplied, fall back to the
+    // workspace root rather than letting the child inherit the BROKER's cwd.
+    // The exec child's Landlock ruleset grants its write set ONLY beneath
+    // `workspace_root` (sandbox::exec_child_ruleset), so a child started in the
+    // broker's cwd lands somewhere it may not even read — `sh -c "git add -A"`
+    // silently failed there, and because process.exec reports ANY exit status
+    // as a normal `process_exited`, the failure only surfaced later as a
+    // `git.commit` "no changes added to commit". `git.commit` already pins its
+    // own cwd to `workspace_root.root_path()`; this makes process.exec
+    // consistent with it. NOT a widening: the workspace is already the child's
+    // only writable tree, so starting inside it grants no new authority, and an
+    // explicit `cwd` arg still wins (and stays routing-sensitive, so a tainted
+    // cwd is still blocked by I2 before reaching here).
+    let default_cwd;
+    let effective_cwd = match cwd {
+        Some(dir) => Some(dir),
+        None => {
+            default_cwd = workspace_root.root_path().to_string_lossy().into_owned();
+            Some(default_cwd.as_str())
+        }
+    };
+    if let Some(dir) = effective_cwd {
         cmd.env("EXEC_CWD", dir);
     }
     // Effect-specific neutralization env, layered onto the env_clear()ed child
