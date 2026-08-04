@@ -9,7 +9,7 @@
 //! worker and exec-launcher binaries resolve beside `caprun`):
 //!
 //! ```text
-//! COMPOSE_VERIFY_CMD='cargo build --workspace && cargo test -p caprun --test live_acceptance_v1_10_cli --features mock-egress-ca' bash scripts/compose-verify.sh
+//! COMPOSE_VERIFY_CMD='cargo build --workspace && cargo test -p caprun --test live_acceptance_v1_10_cli --features live-proof-fixtures,mock-egress-ca' bash scripts/compose-verify.sh
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -27,13 +27,18 @@ fn live_acceptance_v1_10_cli_guard_present() {
     assert!(!LIVE_07_NOT.is_empty());
 }
 
-#[cfg(all(target_os = "linux", feature = "mock-egress-ca"))]
+#[cfg(all(
+    target_os = "linux",
+    feature = "mock-egress-ca",
+    feature = "live-proof-fixtures"
+))]
 mod linux {
     use super::*;
     use std::io::{BufRead, BufReader, Read};
     use std::process::{Child, Stdio};
     use std::thread;
     use std::time::Duration;
+    use runtime_core::event::Event;
 
     const POLICY_JSON: &str = r#"{
       "allowed_sinks": ["email.send", "file.create", "file.write", "process.exec",
@@ -117,8 +122,28 @@ mod linux {
         );
     }
 
+    fn caprun_command(proof_selector: bool) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_caprun"));
+        command.env_clear().env("PATH", "/usr/bin:/bin");
+        for key in [
+            "CAPRUN_SMTP_HOST",
+            "CAPRUN_SMTP_PORT",
+            "CAPRUN_GITHUB_API_BASE",
+            "HTTPS_PROXY",
+            "NO_PROXY",
+        ] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+        if proof_selector {
+            command.env("CAPRUN_CODING_I2_PROOF", "1");
+        }
+        command
+    }
+
     fn caprun(args: &[&str]) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_caprun"))
+        caprun_command(false)
             .args(args)
             .output()
             .unwrap_or_else(|error| panic!("spawn caprun {args:?}: {error}"))
@@ -205,14 +230,19 @@ mod linux {
         .expect("count durable LIVE-07 events")
     }
 
-    fn first_event_rowid(db: &Path, session_id: &str, event_type: &str) -> i64 {
+    fn events_of_type(db: &Path, session_id: &str, event_type: &str) -> Vec<Event> {
         let conn = brokerd::audit::open_audit_db(db).expect("open LIVE audit DB");
-        conn.query_row(
-            "SELECT rowid FROM events WHERE session_id = ?1 AND event_type = ?2 ORDER BY rowid LIMIT 1",
-            rusqlite::params![session_id, event_type],
-            |row| row.get(0),
-        )
-        .unwrap_or_else(|error| panic!("missing {event_type} for {session_id}: {error}"))
+        let mut statement = conn
+            .prepare("SELECT payload FROM events WHERE session_id = ?1 AND event_type = ?2")
+            .expect("prepare event payload query");
+        statement
+            .query_map(rusqlite::params![session_id, event_type], |row| row.get::<_, String>(0))
+            .expect("query event payloads")
+            .map(|row| {
+                serde_json::from_str(&row.expect("read event payload"))
+                    .expect("deserialize durable Event payload")
+            })
+            .collect()
     }
 
     fn assert_audit_passed(session_id: &str, audit_db: &Path) {
@@ -234,7 +264,8 @@ mod linux {
     fn live_07_cli_multi_node_one_session_verify_chain() {
         assert!(!LIVE_07_DRIVER.is_empty(), "LIVE-07 driver framing pin");
         let layout = LiveCodingLayout::new();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_caprun"))
+        let mut child = caprun_command(false);
+        child
             .args([
                 "run",
                 "--policy",
@@ -303,7 +334,8 @@ mod linux {
         assert!(!LIVE_08_DRIVER.is_empty(), "LIVE-08 driver framing pin");
         assert!(POLICY_JSON.contains("\"github.pr\""));
         let layout = LiveCodingLayout::new();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_caprun"))
+        let mut child = caprun_command(true);
+        child
             .args([
                 "run",
                 "--policy",
@@ -313,7 +345,6 @@ mod linux {
                 layout.workspace_file.to_str().unwrap(),
                 layout.audit_db.to_str().unwrap(),
             ])
-            .env("CAPRUN_CODING_I2_PROOF", "1")
             .env("CAPRUN_CONFIRM", "external")
             .env("CAPRUN_CONFIRM_TIMEOUT_SECS", "60")
             .env("CAPRUN_GIT_PUSH_TOKEN", "live-08-opaque-test-push-token")
@@ -346,6 +377,7 @@ mod linux {
             status.code()
         );
         assert!(!stdout.contains("DENIED code=policy_deny"));
+        assert!(stdout.contains("Sink: github.pr"), "terminal must identify github.pr block: {stdout}");
 
         let session_ids: Vec<&str> = stdout
             .lines()
@@ -355,12 +387,21 @@ mod linux {
         let session_id = session_ids[0];
         assert_audit_passed(session_id, &layout.audit_db);
         assert_eq!(count_events(&layout.audit_db, session_id, "process_exited"), 1);
-        assert!(count_events(&layout.audit_db, session_id, "sink_blocked") >= 2);
         assert_eq!(count_events(&layout.audit_db, session_id, "github_pr_succeeded"), 0);
-        assert!(
-            first_event_rowid(&layout.audit_db, session_id, "process_exited")
-                < first_event_rowid(&layout.audit_db, session_id, "sink_blocked"),
-            "real process.exec provenance root must precede the blocked sink"
-        );
+        let process_events = events_of_type(&layout.audit_db, session_id, "process_exited");
+        assert_eq!(process_events.len(), 1, "unique genuine process root required");
+        let process_event_id = process_events[0].id;
+        let matching: Vec<_> = events_of_type(&layout.audit_db, session_id, "sink_blocked")
+            .into_iter()
+            .flat_map(|event| event.anchors)
+            .filter(|anchor| anchor.sink.0 == "github.pr" && anchor.arg == "body")
+            .collect();
+        assert_eq!(matching.len(), 1, "exactly one durable github.pr/body anchor required");
+        let anchor = &matching[0];
+        assert!(!anchor.taint.is_empty(), "blocked body must carry taint");
+        assert!(anchor.taint.iter().any(|label| label.is_untrusted()));
+        assert_eq!(anchor.provenance_chain.first(), Some(&process_event_id));
+        assert_eq!(anchor.read_event_id, process_event_id);
+        assert_eq!(anchor.read_event_id, anchor.provenance_chain[0]);
     }
 }
