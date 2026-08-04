@@ -5,6 +5,7 @@ edition.workspace  = true
 license.workspace  = true
 
 [features]
+live-proof-fixtures = []
 # LIVE-07/08 compile gate: expose brokerd's non-default mock CA at this crate's
 # cfg boundary so the caprun integration-test bodies cannot silently compile out.
 mock-egress-ca = ["brokerd/mock-egress-ca"]
@@ -65,6 +66,10 @@ path = "tests/e2e.rs"
 [[test]]
 name = "planner"
 path = "tests/planner.rs"
+
+[[test]]
+name = "proof_selector_rejection"
+path = "tests/proof_selector_rejection.rs"
 
 [[test]]
 name = "confirm"

@@ -244,8 +244,10 @@ impl Planner for DeterministicPlanner {
 /// until the PR node, where genuine `process.exec` output from bag `out_1` is
 /// deliberately placed into the content-sensitive `body` slot. This planner
 /// only places an existing opaque handle; it adds no mint site or bag schema.
+#[cfg(feature = "live-proof-fixtures")]
 pub struct CodingI2ProofPlanner;
 
+#[cfg(feature = "live-proof-fixtures")]
 impl Planner for CodingI2ProofPlanner {
     fn plan(
         &self,

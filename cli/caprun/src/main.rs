@@ -354,6 +354,12 @@ async fn main() -> anyhow::Result<()> {
         _ => anyhow::bail!("unknown intent kind: {intent_kind}"),
     };
     let is_coding = matches!(intent, CaprunIntent::SafeCodingWorkflow { .. });
+    #[cfg(not(feature = "live-proof-fixtures"))]
+    if std::env::var_os("CAPRUN_CODING_I2_PROOF").is_some() {
+        anyhow::bail!(
+            "CAPRUN_CODING_I2_PROOF requires a caprun build with live-proof-fixtures"
+        );
+    }
 
     // ── 1. Open audit DB ────────────────────────────────────────────────────
     let conn = Arc::new(Mutex::new(
@@ -554,6 +560,7 @@ async fn main() -> anyhow::Result<()> {
     // NEITHER the explicitly-set key NOR any ambient broker secret.
     let mut planner_sidecar: Option<std::process::Child> = None;
     let mut worker_planner_env: Vec<(&'static str, String)> = Vec::new();
+    #[cfg(feature = "live-proof-fixtures")]
     if std::env::var("CAPRUN_CODING_I2_PROOF").as_deref() == Ok("1") {
         // Non-secret, default-off LIVE-08 proof selector. Tokens remain
         // excluded by the worker's env_clear allowlist below.

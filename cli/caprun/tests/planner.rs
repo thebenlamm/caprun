@@ -1227,6 +1227,7 @@ fn coding_success_path_does_not_place_out_handles() {
 ///
 /// Frame: Phase 49 CODE-02 expressibility for Phase 51 mid-loop I2 routing.
 /// Does not claim non-hybrid LIVE multi-step SUCCESS.
+#[cfg(feature = "live-proof-fixtures")]
 #[test]
 fn coding_i2_proof_places_out_handle() {
     let intent = coding_intent();
