@@ -221,7 +221,8 @@ mod linux {
     }
 
     fn count_events(db: &Path, session_id: &str, event_type: &str) -> i64 {
-        let conn = brokerd::audit::open_audit_db(db).expect("open LIVE-07 audit DB");
+        let conn = brokerd::audit::open_audit_db(db.to_str().expect("audit DB path is UTF-8"))
+            .expect("open LIVE-07 audit DB");
         conn.query_row(
             "SELECT COUNT(*) FROM events WHERE session_id = ?1 AND event_type = ?2",
             rusqlite::params![session_id, event_type],
@@ -231,7 +232,8 @@ mod linux {
     }
 
     fn events_of_type(db: &Path, session_id: &str, event_type: &str) -> Vec<Event> {
-        let conn = brokerd::audit::open_audit_db(db).expect("open LIVE audit DB");
+        let conn = brokerd::audit::open_audit_db(db.to_str().expect("audit DB path is UTF-8"))
+            .expect("open LIVE audit DB");
         let mut statement = conn
             .prepare("SELECT payload FROM events WHERE session_id = ?1 AND event_type = ?2")
             .expect("prepare event payload query");
@@ -264,8 +266,8 @@ mod linux {
     fn live_07_cli_multi_node_one_session_verify_chain() {
         assert!(!LIVE_07_DRIVER.is_empty(), "LIVE-07 driver framing pin");
         let layout = LiveCodingLayout::new();
-        let mut child = caprun_command(false);
-        child
+        let mut command = caprun_command(false);
+        command
             .args([
                 "run",
                 "--policy",
@@ -280,9 +282,10 @@ mod linux {
             .env("CAPRUN_GIT_PUSH_TOKEN", "live-07-opaque-test-push-token")
             .env("CAPRUN_GITHUB_TOKEN", "live-07-opaque-test-github-token")
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn real caprun LIVE-07 driver");
+            .stderr(Stdio::piped());
+        // Bind the spawned Child. Configuring the Command and discarding
+        // spawn()'s result would orphan the process and leave `child` a Command.
+        let mut child = command.spawn().expect("spawn real caprun LIVE-07 driver");
 
         let stderr = child.stderr.take().expect("caprun run stderr must be piped");
         let stderr_reader = thread::spawn(move || {
@@ -334,8 +337,8 @@ mod linux {
         assert!(!LIVE_08_DRIVER.is_empty(), "LIVE-08 driver framing pin");
         assert!(POLICY_JSON.contains("\"github.pr\""));
         let layout = LiveCodingLayout::new();
-        let mut child = caprun_command(true);
-        child
+        let mut command = caprun_command(true);
+        command
             .args([
                 "run",
                 "--policy",
@@ -350,9 +353,9 @@ mod linux {
             .env("CAPRUN_GIT_PUSH_TOKEN", "live-08-opaque-test-push-token")
             .env("CAPRUN_GITHUB_TOKEN", "live-08-opaque-test-github-token")
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn real caprun LIVE-08 driver");
+            .stderr(Stdio::piped());
+        // Bind the spawned Child (see LIVE-07 note).
+        let mut child = command.spawn().expect("spawn real caprun LIVE-08 driver");
 
         let stderr = child.stderr.take().expect("caprun run stderr must be piped");
         let stderr_reader = thread::spawn(move || {
