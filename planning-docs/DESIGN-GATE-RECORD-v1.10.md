@@ -141,6 +141,8 @@ may proceed from Phase 48 under the locked decisions in
 
 This entry authorises no self-clearance. A gsd-executor self-read is not clearance; Plan 51-08 owns the independent trace and any resulting findings, date, and verdict.
 
+**Implementation amendment (2026-08-05, user-authorised):** the autocommit branch of `append_event` may use `Transaction::new_unchecked(conn, TransactionBehavior::Immediate)` so the locked public `append_event(&Connection, ...)` signature is preserved. The explicit `is_autocommit` re-entrancy branch remains required, and the three mutable enclosing sites still use `transaction_with_behavior(TransactionBehavior::Immediate)`. This amendment does not clear the PENDING independent-review gate or weaken any verifier, provenance, MAC, or append-at-head invariant.
+
 ### Reviewer identity and independence
 
 | Field | Value |
