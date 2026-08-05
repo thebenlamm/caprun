@@ -1181,7 +1181,7 @@ async fn evaluate_plan_node_and_record(
         // commit-before-effect discipline, confirmation.rs:868-896). WAL
         // is already enabled; a concurrent double-submit for the same
         // key serializes on this INSERT under the mutex.
-        let tx = locked.transaction()?;
+        let tx = locked.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let sent_at = Utc::now().to_rfc3339();
         let rows_affected = tx.execute(
             "INSERT OR IGNORE INTO sent_plan_nodes \
@@ -1554,7 +1554,7 @@ async fn evaluate_plan_node_and_record(
                 let mut locked = conn
                     .lock()
                     .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))?;
-                let tx = locked.transaction()?;
+                let tx = locked.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
                 let fresh = crate::audit::reserve_created_pr(
                     &tx,
                     &content_key,

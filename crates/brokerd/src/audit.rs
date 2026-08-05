@@ -77,6 +77,9 @@ pub(crate) fn mac_frame(mac: &mut HmacSha256, domain: &[u8], fields: &[&[u8]]) {
 /// when they reuse `mac_frame` above.
 const EVENT_MAC_DOMAIN: &[u8] = b"caprun.audit.event.v1";
 
+/// Explicit TCB-owned SQLite contention budget for every audit connection.
+const AUDIT_BUSY_TIMEOUT_MS: u64 = 5000;
+
 /// Domain tag for the `chain_anchor` row's MAC (v1.6 Phase 28 Plan 04,
 /// HARDEN-02 D-04) — reserved in Plan 03's doc comments above, consumed
 /// here. MUST stay distinct from `EVENT_MAC_DOMAIN` (and Plan 05's
@@ -720,6 +723,10 @@ pub(crate) fn plan_node_idempotency_key(
 /// * `path` — filesystem path for the SQLite file, or `":memory:"`.
 pub fn open_audit_db(path: &str) -> Result<rusqlite::Connection> {
     let conn = rusqlite::Connection::open(path)?;
+    // rusqlite 0.32.1 already applies an implicit 5000 ms timeout at open;
+    // owning it explicitly here makes the TCB guarantee driver-independent.
+    // This timeout is not by itself the D1 fix: append-at-head atomicity is.
+    conn.busy_timeout(std::time::Duration::from_millis(AUDIT_BUSY_TIMEOUT_MS))?;
     conn.execute_batch(SCHEMA_DDL)?;
     migrate_pending_confirmations_schema(&conn)?;
     migrate_chain_anchor_schema(&conn)?;
@@ -974,6 +981,9 @@ pub fn append_event(
     event: &Event,
     parent_hash: Option<&str>,
 ) -> Result<String> {
+    // Retained for API compatibility only: the durable head selected below is
+    // authoritative, so a caller's stale parent hash cannot choose the row.
+    let _caller_parent_hash = parent_hash;
     // Defect B guard (DESIGN §4 rule 7): a `sink_blocked` event with no anchors is
     // a security-meaningless bare marker. Reject it here so it is NON-PERSISTABLE
     // through the TCB — not merely never-triggered. Plural (Phase 14): the guard
@@ -983,33 +993,42 @@ pub fn append_event(
             "sink_blocked event requires at least one anchor (Defect B guard)"
         ));
     }
-    let payload = serde_json::to_string(event)?;
-    let taint_str = serde_json::to_string(&event.taint)?;
-    let hash = compute_event_hash(
-        key,
-        parent_hash,
-        &event.id.to_string(),
-        &event.session_id.to_string(),
-        &event.event_type,
-        &payload,
-        &taint_str,
-    );
-    conn.execute(
+    let append_at_head = |write_conn: &rusqlite::Connection| -> Result<String> {
+        let session_id_str = event.session_id.to_string();
+        let (durable_parent_id, durable_parent_hash) =
+            match current_chain_head(write_conn, &session_id_str)? {
+                Some((id, hash)) => (Some(id), Some(hash)),
+                None => (None, None),
+            };
+        let mut rebound_event = event.clone();
+        rebound_event.parent_id = durable_parent_id;
+        let payload = serde_json::to_string(&rebound_event)?;
+        let taint_str = serde_json::to_string(&rebound_event.taint)?;
+        let hash = compute_event_hash(
+            key,
+            durable_parent_hash.as_deref(),
+            &rebound_event.id.to_string(),
+            &session_id_str,
+            &rebound_event.event_type,
+            &payload,
+            &taint_str,
+        );
+        write_conn.execute(
         "INSERT INTO events \
          (id, parent_id, session_id, event_type, actor, payload, taint, parent_hash, hash) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         rusqlite::params![
-            event.id.to_string(),
-            event.parent_id.map(|id| id.to_string()),
-            event.session_id.to_string(),
-            &event.event_type,
-            &event.actor,
+            rebound_event.id.to_string(),
+            rebound_event.parent_id.map(|id| id.to_string()),
+            &session_id_str,
+            &rebound_event.event_type,
+            &rebound_event.actor,
             &payload,
             &taint_str,
-            parent_hash,
+            durable_parent_hash.as_deref(),
             &hash,
         ],
-    )?;
+        )?;
 
     // Atomically upsert the MAC'd `chain_anchor` row for this session, under
     // the SAME already-held `conn` lock as the events INSERT above (v1.6
@@ -1020,17 +1039,16 @@ pub fn append_event(
     // the two calls, reopening the truncation gap this table exists to
     // close — mirrors `quarantine.rs::mint_from_read`'s two-write same-lock
     // atomicity discipline).
-    let session_id_str = event.session_id.to_string();
     // Read back the ACTUAL persisted count — never assume `+ 1` arithmetic
     // (28-RESEARCH.md Anti-Pattern: the MAC must cover a CONFIRMED value).
-    let event_count: i64 = conn.query_row(
+        let event_count: i64 = write_conn.query_row(
         "SELECT COUNT(*) FROM events WHERE session_id = ?1",
         rusqlite::params![session_id_str],
         |row| row.get(0),
     )?;
-    let event_id_str = event.id.to_string();
-    let anchor_mac = compute_anchor_mac(key, &session_id_str, &event_id_str, &hash, event_count);
-    conn.execute(
+        let event_id_str = rebound_event.id.to_string();
+        let anchor_mac = compute_anchor_mac(key, &session_id_str, &event_id_str, &hash, event_count);
+        write_conn.execute(
         "INSERT INTO chain_anchor (session_id, head_event_id, head_hash, event_count, mac) \
          VALUES (?1, ?2, ?3, ?4, ?5) \
          ON CONFLICT(session_id) DO UPDATE SET \
@@ -1039,9 +1057,22 @@ pub fn append_event(
              event_count = excluded.event_count, \
              mac = excluded.mac",
         rusqlite::params![session_id_str, event_id_str, &hash, event_count, anchor_mac],
-    )?;
+        )?;
 
-    Ok(hash)
+        Ok(hash)
+    };
+
+    if conn.is_autocommit() {
+        let tx = rusqlite::Transaction::new_unchecked(
+            conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        let hash = append_at_head(&tx)?;
+        tx.commit()?;
+        Ok(hash)
+    } else {
+        append_at_head(conn)
+    }
 }
 
 /// Return all Events recorded for `session_id`, ordered by insertion (rowid).

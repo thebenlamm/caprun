@@ -1160,7 +1160,7 @@ pub async fn confirm(
             // DESIGN "At-Most-Once Send + Durable Attempt Ledger"). A zero-row
             // CAS rolls back automatically when `tx` drops without `.commit()`
             // — no attempt event is appended, and the send is never attempted.
-            let tx = conn.transaction()?;
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             let affected = transition_state(&tx, key, &pc, PendingConfirmationState::Confirmed)?;
             if affected == 0 {
                 return Ok(ConfirmOutcome::AlreadyTerminal);
