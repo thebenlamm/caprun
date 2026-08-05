@@ -132,3 +132,27 @@ At gate clear (2026-07-27):
 **APPROVE / CLEARED** — Phase 47 design gate is closed. Multi-step implementation
 may proceed from Phase 48 under the locked decisions in
 `planning-docs/DESIGN-multi-step-plan-stream.md`.
+
+## Gate: audit append-at-head concurrency (Phase 51 gap closure)
+
+**DESIGN doc under review:** `planning-docs/DESIGN-audit-append-concurrency.md`  
+**Requirements gated:** LIVE-07, LIVE-08, and the standing DESIGN-20 fresh-non-self-adversarial-trace obligation  
+**Status:** ⏳ **PENDING** — no change under `crates/brokerd/src/audit.rs`, `server.rs`, or `confirmation.rs` for this defect class may be declared cleared until an orchestrator-owned fresh non-self adversarial code-trace runs against the landed diff.
+
+This entry authorises no self-clearance. A gsd-executor self-read is not clearance; Plan 51-08 owns the independent trace and any resulting findings, date, and verdict.
+
+### Reviewer identity and independence
+
+| Field | Value |
+|---|---|
+| Reviewer agent | TBD |
+| Authoring context | TBD |
+| Independence | TBD |
+| Model/runtime | TBD |
+| Effort | TBD |
+| Orchestrator role | TBD |
+
+### Revision history
+
+| Round | Date | Reviewer | Findings by severity | Result |
+|---|---|---|---|---|

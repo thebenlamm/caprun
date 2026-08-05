@@ -69,3 +69,57 @@ The group at `server.rs:1017-1059` currently executes the event append, every `i
 The committed oracle is `crates/brokerd/tests/audit_chain_fork_regression.rs`, specifically `broker_append_after_external_grant_must_not_fork_chain` and `contended_appends_from_independent_connections_stay_linear`. Both tests must move from failing to passing without being edited.
 
 The implementation is one revertible commit range confined to `crates/brokerd/src/`. Reversibility is rated **costly**, not one-way: the audit database format and MAC scheme do not change, so reverting the implementation leaves existing databases readable. Reconsidering the contract after implementation would invalidate this oracle and the required adversarial trace.
+
+## Appendix A: production append call-site inventory
+
+This inventory was derived by searching `append_event(` under `crates/*/src/` and `cli/*/src/`, then excluding definitions and calls inside test-only items/modules. Line numbers describe the pre-fix tree reviewed by Plan 51-06. The three rows whose connection is a `Transaction` also name the enclosing transaction's line anchor.
+
+| File | Line | Calling function | Role | Required treatment |
+|---|---:|---|---|---|
+| `cli/caprun/src/main.rs` | 481 | `main` (`session_created`) | `session-root` | `explicit note` — genuine first event; choke point preserves NULL parent on an empty session |
+| `cli/caprun/src/main.rs` | 506 | `main` (`policy_bound`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/audit.rs` | 561 | `record_github_grant` | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/confirmation.rs` | 808 | `append_digest_mismatch_event` | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/confirmation.rs` | 1095 | `confirm` (`confirm_granted`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/confirmation.rs` | 1163/1179 | `confirm` (`email_send_attempted`) | `in-transaction` | `enclosing transaction must become IMMEDIATE` |
+| `crates/brokerd/src/confirmation.rs` | 1304 | `confirm` (`email_send_suppressed`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/confirmation.rs` | 1329 | `confirm` (`email_send_failed`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/confirmation.rs` | 1469 | `deny` | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/quarantine.rs` | 372 | `mint_from_read` (`raw_read`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/quarantine.rs` | 417 | `mint_from_read` (`session_demoted`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/quarantine.rs` | 493 | `mint_from_intent` | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/quarantine.rs` | 784 | `mint_from_derivation` | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/quarantine.rs` | 937 | `mint_from_http` (`http_response_read`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/quarantine.rs` | 969 | `mint_from_http` (`session_demoted`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/server.rs` | 1022 | `evaluate_plan_node_and_record` | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/server.rs` | 1184/1226 | `evaluate_plan_node_and_record` (`sent_plan_node`) | `in-transaction` | `enclosing transaction must become IMMEDIATE` |
+| `crates/brokerd/src/server.rs` | 1437 | `evaluate_plan_node_and_record` (`sink_execution_failed`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/server.rs` | 1509 | `evaluate_plan_node_and_record` (`policy_denied`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/server.rs` | 1557/1579 | `evaluate_plan_node_and_record` (`sent_plan_node`) | `in-transaction` | `enclosing transaction must become IMMEDIATE` |
+| `crates/brokerd/src/server.rs` | 1803 | `create_session_arm` | `session-root` | `explicit note` — disabled arm creates the genuine first event for its session |
+| `crates/brokerd/src/server.rs` | 1985 | `dispatch_request` (`raw_read`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/server.rs` | 2068 | `dispatch_request` (`session_demoted`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/email_smtp.rs` | 265 | `invoke_email_smtp_from_resolved` | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/email_smtp.rs` | 299 | `record_send_failed` | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/file_create.rs` | 95 | `invoke_file_create` (`succeeded`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/file_create.rs` | 111 | `invoke_file_create` (`failed`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/file_create.rs` | 201 | `invoke_file_create_from_resolved` (`succeeded`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/file_create.rs` | 218 | `invoke_file_create_from_resolved` (`failed`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/file_write.rs` | 104 | `invoke_file_write` (`succeeded`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/file_write.rs` | 120 | `invoke_file_write` (`failed`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/file_write.rs` | 214 | `invoke_file_write_from_resolved` (`succeeded`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/file_write.rs` | 231 | `invoke_file_write_from_resolved` (`failed`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/git_commit.rs` | 200 | `invoke_git_commit` (`succeeded`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/git_commit.rs` | 224 | `invoke_git_commit` (`failed`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/git_push.rs` | 776 | `append_push_outcome` (`succeeded`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/git_push.rs` | 794 | `append_push_outcome` (`failed`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/github_pr.rs` | 196 | `append_pr_outcome` (`succeeded`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/github_pr.rs` | 224 | `append_pr_outcome` (`failed`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/http_write.rs` | 184 | `append_write_outcome` (`succeeded`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/http_write.rs` | 217 | `append_write_outcome` (`failed`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/process_exec.rs` | 177 | `invoke_process_exec` (`succeeded`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/process_exec.rs` | 199 | `invoke_process_exec` (`failed`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/process_exec.rs` | 317 | `invoke_process_exec_from_resolved` (`succeeded`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+| `crates/brokerd/src/sinks/process_exec.rs` | 334 | `invoke_process_exec_from_resolved` (`failed`) | `chain-continuation` | `inherits choke point (no call-site edit)` |
+
+**Completeness result:** 45 production call sites: 2 `session-root`, 40 `chain-continuation`, and 3 `in-transaction`. No production call site outside this table exists. `crates/brokerd/src/policy.rs` also contains the `session_created`/`policy_bound` append pattern at lines 373 and 389, but only inside its `#[cfg(test)] mod tests`; it was mechanically excluded, while the production equivalents are the first two `cli/caprun/src/main.rs` rows. No production append exists in `file_write`'s sibling `file_create`-unrelated modules beyond those listed, and the terminal sink files named here form the adversarial trace checklist for Plan 51-08.
