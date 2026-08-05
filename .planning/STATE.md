@@ -5,14 +5,14 @@ milestone_name: Multi-step Safe Coding Agent Loop
 current_phase: 51
 current_phase_name: non-hybrid-live-proof-v1-10-done
 status: executing
-stopped_at: Completed 51-02 implementation fallback; LIVE-07/08 compose verification pending Docker-capable host
-last_updated: "2026-08-04T13:39:31.011Z"
+stopped_at: Plan 51-04 STOPPED at Task 1 — scoped gate executed 3x on real-Linux EC2, rc=101 each time; 4 defects found (2 fixed, D1/D2 TCB blocking). Gap-closure plans 51-05..51-08 planned and verified; 51-04 re-runs unchanged afterwards.
+last_updated: "2026-08-04T20:31:51.941Z"
 last_activity: 2026-08-04
 last_activity_desc: Phase 51 execution started
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 12
+  total_plans: 16
   completed_plans: 10
 ---
 
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-07-23)
 ## Current Position
 
 Phase: 51 (non-hybrid-live-proof-v1-10-done) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 51
-Last activity: 2026-08-04 — Phase 51 execution started
+Plan: 5 of 8 (51-01..51-03 complete; 51-04 STOPPED at Task 1; 51-05..51-08 planned, not started)
+Status: Ready to execute (gap closure 51-05..51-08)
+Last activity: 2026-08-04 — 51-04 executed on real Linux and failed; D1–D4 gap closure planned
 
-Progress: [██████████] 100% implementation plans executed; Phase 51 proof gate remains open
+Progress: [████████░░] Phase 51 proof gate OPEN — LIVE-07/LIVE-08 Pending, windows 1/2/3 open, no 51-LIVE-EVIDENCE.md
 
 ## Performance Metrics
 
@@ -145,6 +145,23 @@ separate as a distinct design-partner deliverable.
 - **Carried non-blocking (not v1.10 scope):** git.push 10MB pack-cap (fails closed);
   leg-5b scrub-branch hardening; LLM multi-step tool-use (future).
 
+- **BLOCKING v1.10 DONE (found 2026-08-04 by executing 51-04 on real Linux):**
+  **D1** — the audit hash chain FORKS after any external append. `handle_connection`
+  threads `last_event_id`/`last_event_hash` in memory (`server.rs:547-548`) and never
+  re-reads the durable head, while `caprun grant`/`confirm` append off a fresh
+  `current_chain_head` (`audit.rs:548`, `confirmation.rs:852`). Deterministic, not a
+  race — Block-and-Hold guarantees the ordering. `verify_chain` correctly returns
+  false. **`verify_chain` must NOT be loosened** — the chain is linear by design
+  (`audit.rs:1203-1219`); the "DAG" in PLAN.md is the provenance/taint edge graph, not
+  the event `parent_id` chain, and loosening deletes HARDEN-02 tail-truncation
+  detection. The append path is the bug. **D2** — the append is not transactional
+  (no `BEGIN IMMEDIATE`); must be designed WITH D1, because a bare `busy_timeout`
+  converts D1's crash into a successfully committed fork. Closed by plans 51-05..51-08.
+  **v1.9 is NOT affected** — verified against the tag (`stream_hold.rs` absent; no
+  `CAPRUN_CONFIRM`/external handling; no `submit_plan_node`). Two latent same-class
+  instances exist, unreachable in any shipped flow: the dual-connection same-seed head
+  (`server.rs:307-382`) and `record_github_grant` (`audit.rs:546-561`).
+
 ### Standing GSD-tooling mitigations (carried forward)
 
 - `phases.clear --confirm` deletes ALL prior phase dirs from disk (documented
@@ -162,8 +179,8 @@ separate as a distinct design-partner deliverable.
 ## Session Continuity
 
 Last session: 2026-08-04
-Stopped at: Plan 51-04 Task 1 still blocked — this host has no Docker (and no podman/colima/nerdctl, no passwordless sudo). AWS was probed as a fallback and held: the only reachable compute (profile `municipal-ocr-runner`, acct 559846026666) is a borrowed municipal-ocr instance, and `ec2:RunInstances` is denied there, so no dedicated instance can be launched. Operator declined borrowing it. Preferred resumption is the Mac dev machine with Colima, which is the environment `scripts/compose-verify.sh` was written for. No AWS resource created/started/modified; no proof command has run; no evidence artifact created; LIVE-07/LIVE-08 and windows 1/2 correctly remain pending/open.
-Resume file: .planning/phases/51-non-hybrid-live-proof-v1-10-done/.continue-here.md and .planning/HANDOFF.json (both refreshed 2026-08-04T18:34Z; HANDOFF.json carries the full AWS reconnaissance under `aws_execution_context` plus the GSD-scaffolding-not-in-git prerequisite)
+Stopped at: Plan 51-04 STOPPED at Task 1. **Supersedes the earlier "no proof command has run" note — that is out of date.** The scoped LIVE-07/08 gate WAS executed three times on a provisioned real-Linux EC2 host (Ubuntu 24.04, kernel 6.17.0-1019-aws, Docker 29.7.1) through an unmodified `scripts/compose-verify.sh`, exit status captured before the tee: **rc=101 each time.** Instance/keypair/SG torn down. Two defects fixed en route (`2771948` cfg-linux test module never compiled; `1697766` process.exec ran outside the workspace). Two TCB defects BLOCK the gate and were deliberately not fixed — D1 (audit hash chain forks after any external append; deterministic, reproduced on macOS in 0.01s) and D2 (append is not transactional; note the stated "no busy_timeout" mechanism is wrong — rusqlite 0.32.1 sets 5000ms unconditionally at `inner_connection.rs:119`, verified). Plus D3 (LIVE-08's real attribution assertions have never executed once) and D4 (harness discards broker stderr on the failure path). Task 2 never ran, so there is **no v1.0–v1.9 regression evidence** from that session. Gap-closure plans 51-05..51-08 are written and passed the plan-checker; 51-04 then re-runs UNCHANGED.
+Resume file: .planning/phases/51-non-hybrid-live-proof-v1-10-done/51-BLOCKING-DEFECTS.md (authoritative defect record) and .planning/HANDOFF.json (rewritten 2026-08-04T21:05Z; carries the working AWS profile `benlamm-projects`, the proven EC2 recipe, and the teardown record)
 
 ## Operator Next Steps
 

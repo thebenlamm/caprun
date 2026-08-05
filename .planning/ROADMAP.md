@@ -298,12 +298,37 @@ Plans:
   3. In the same proof family, a mid-loop I2 Block is independently attributable: a genuinely tainted handle (non-stapled provenance root on a real read/exec event) occupies a sensitive sink arg (e.g. PR body and/or push refspec) under a policy-permitted sink; executor Blocks; `policy_deny` is not what fired; no effect of that node; chain remains `verify_chain` true
   4. Full-workspace regression green on real Linux via the authoritative compose-verify gate; no v1.0–v1.9 regression; `check-invariants.sh` green
 
-**Plans**: 2 plans
+**Plans**: 8 plans
 
 Plans:
+**Wave 1**
 
 - [x] 51-01-PLAN.md — Wave 1 tracer: LIVE-07 harness + framing + CLI multi-node SUCCESS under compose-verify
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [x] 51-02-PLAN.md — Wave 2 expansion: LIVE-08 proof-planner path + full compose-verify regression
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 51-03-PLAN.md — Close review findings WR-01/02/03: proof-selector containment, hermetic subprocesses, exact durable `github.pr/body` provenance
+
+**Waves 5–8** *(gap closure — added 2026-08-04 after 51-04 executed on real Linux and failed rc=101 three times; see `51-BLOCKING-DEFECTS.md`)*
+
+- [ ] 51-05-PLAN.md — Wave 5: host-runnable RED regressions for D1 and D1+D2, plus D3/D4 harness repair (no Docker, no cfg-linux gate)
+- [ ] 51-06-PLAN.md — Wave 6: `DESIGN-audit-append-concurrency.md` design gate authorising the TCB fix
+- [ ] 51-07-PLAN.md — Wave 7: coordinated D1+D2 append-at-head fix as ONE atomic commit
+- [ ] 51-08-PLAN.md — Wave 8: fresh non-self ORCHESTRATOR-owned adversarial code-trace of the fix diff
+
+**Wave 9** *(blocked on Wave 8 — the authoritative Docker proof, re-run UNCHANGED)*
+
+- [ ] 51-04-PLAN.md — Wave 9: execute and retain the real-Linux scoped + full-workspace compose proof; reconcile evidence and status ledgers
+
+> **Phase 51 is NOT complete.** LIVE-07 and LIVE-08 remain Pending, broken windows
+> 1/2/3 remain open, and no `51-LIVE-EVIDENCE.md` exists. 51-04 stopped at Task 1;
+> Task 2 (full-workspace regression) never ran, so there is no v1.0–v1.9 regression
+> evidence yet. Plan 51-04's body is byte-unchanged — only its `wave`/`depends_on`
+> frontmatter was renumbered so the adversarial trace gates it.
 
 ### Phase 52: Minimal Linux Packaging
 
