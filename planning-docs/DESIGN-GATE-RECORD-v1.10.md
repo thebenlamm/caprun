@@ -137,24 +137,52 @@ may proceed from Phase 48 under the locked decisions in
 
 **DESIGN doc under review:** `planning-docs/DESIGN-audit-append-concurrency.md`  
 **Requirements gated:** LIVE-07, LIVE-08, and the standing DESIGN-20 fresh-non-self-adversarial-trace obligation  
-**Status:** ⏳ **PENDING** — no change under `crates/brokerd/src/audit.rs`, `server.rs`, or `confirmation.rs` for this defect class may be declared cleared until an orchestrator-owned fresh non-self adversarial code-trace runs against the landed diff.
+**Status:** ✅ **CLEARED** — the orchestrator-owned fresh non-self adversarial code-trace of `a6b8911f5bcb3344b90416c5fcf57294b827cc0f..442a056e7fffb1d3bd32e6f93e1228908bde31f2` returned PASS with 0 BLOCKER and 0 unresolved MAJOR findings. This clears only the audit append-at-head concurrency design gate; LIVE-07 and LIVE-08 remain Pending until unchanged Plan 51-04 executes successfully on a provisioned real-Linux Docker host.
 
-This entry authorises no self-clearance. A gsd-executor self-read is not clearance; Plan 51-08 owns the independent trace and any resulting findings, date, and verdict.
+This entry authorises no self-clearance. A gsd-executor self-read is not clearance; Plan 51-08's independent trace is retained in `.planning/phases/51-non-hybrid-live-proof-v1-10-done/51-ADVERSARIAL-TRACE.md`.
 
-**Implementation amendment (2026-08-05, user-authorised):** the autocommit branch of `append_event` may use `Transaction::new_unchecked(conn, TransactionBehavior::Immediate)` so the locked public `append_event(&Connection, ...)` signature is preserved. The explicit `is_autocommit` re-entrancy branch remains required, and the three mutable enclosing sites still use `transaction_with_behavior(TransactionBehavior::Immediate)`. This amendment does not clear the PENDING independent-review gate or weaken any verifier, provenance, MAC, or append-at-head invariant.
+**Implementation amendment (2026-08-05, user-authorised):** the autocommit branch of `append_event` may use `Transaction::new_unchecked(conn, TransactionBehavior::Immediate)` so the locked public `append_event(&Connection, ...)` signature is preserved. The explicit `is_autocommit` re-entrancy branch remains required, and the three mutable enclosing sites still use `transaction_with_behavior(TransactionBehavior::Immediate)`. The independent review found this mechanism sound without weakening any verifier, provenance, MAC, or append-at-head invariant.
 
 ### Reviewer identity and independence
 
 | Field | Value |
 |---|---|
-| Reviewer agent | TBD |
-| Authoring context | TBD |
-| Independence | TBD |
-| Model/runtime | TBD |
-| Effort | TBD |
-| Orchestrator role | TBD |
+| Reviewer agent | fresh-context, read-only adversarial reviewer; identifier `/root/review_51_07_fix` |
+| Authoring context | Separate Plan 51-06 design-note and Plan 51-07 fix contexts; landed fix commit `442a056e7fffb1d3bd32e6f93e1228908bde31f2` |
+| Independence | **author ≠ reviewer**; reviewer was not author of the design note, fix commit, or implementation, made no file edits, and assumed no prior claim correct |
+| Model/runtime | Codex, GPT-5 runtime |
+| Effort | inherited reviewer effort |
+| Orchestrator role | Spawned reviewer; independently re-verified source equivalence, exact three-file scope, both findings, the filtered 45-site inventory, and audit regression 2/2 before fold |
+
+### Files the reviewer opened (code-trace, not prose-only)
+
+- `crates/brokerd/src/audit.rs`, `crates/brokerd/src/server.rs`, and `crates/brokerd/src/confirmation.rs` at fix commit `442a056e7fffb1d3bd32e6f93e1228908bde31f2`
+- `crates/brokerd/src/quarantine.rs` and `crates/brokerd/src/policy.rs`
+- Terminal appenders `email_smtp.rs`, `file_create.rs`, `file_write.rs`, `git_commit.rs`, `git_push.rs`, `github_pr.rs`, `http_write.rs`, and `process_exec.rs`
+- Short-lived audit connection paths in `cli/caprun/src/main.rs`
+- `crates/brokerd/tests/audit_chain_fork_regression.rs`
+- `planning-docs/DESIGN-audit-append-concurrency.md`, including Appendix A
+- `51-BLOCKING-DEFECTS.md` and `51-ADVERSARIAL-TRACE-BRIEF.md`
 
 ### Revision history
 
 | Round | Date | Reviewer | Findings by severity | Result |
 |---|---|---|---|---|
+| 1 | 2026-08-05 | `/root/review_51_07_fix` (orchestrator-spawned fresh non-self trace) | 0 BLOCKER, 0 MAJOR, 1 MINOR, 1 NIT | **PASS / CLEARED**; two non-blocking follow-ups retained |
+
+### Findings and resolutions
+
+| ID | Sev | Claim | Code evidence (independently re-verified by orchestrator) | Resolution |
+|---|---|---|---|---|
+| MINOR-01 | MINOR | Pre-existing fail-closed limitation: the comment says the blocked event, literals, and checkpoint succeed/fail together, although `append_event` commits before the later statements. | **CONFIRMED:** `server.rs:1033-1054`, especially the claim at `:1044-1049`; orchestrator reproduced the ordering against live code. | Non-blocking pre-existing follow-up. No production edit in Plan 51-08; ordering remains mutex-serialized and errors fail closed. |
+| NIT-01 | NIT | `append_event` comment says 19 production call sites; the current filtered inventory is 45. | **CONFIRMED:** `audit.rs:1033-1037`; orchestrator re-ran the search (93 raw occurrences before definition/test exclusions) and confirmed Appendix A's 45 production sites. | Non-blocking stale-comment follow-up. Appendix A remains authoritative; no production edit in Plan 51-08. |
+
+**BLOCKER count:** 0
+
+**MAJOR count:** 0
+
+**MINOR count:** 1
+
+**NIT count:** 1
+
+All eight mandatory trace obligations passed, including the direct causal-parent/provenance separation check at `server.rs:941`, `:957`, and `:973`, unchanged verifier/MAC functions, all 45 production append sites, immediate transaction discipline, and exact three-file scope. Gate clearance does not change LIVE requirement or broken-window status and does not constitute real-Linux proof.
