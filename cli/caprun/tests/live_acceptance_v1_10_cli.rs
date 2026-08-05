@@ -297,11 +297,15 @@ mod linux {
         });
         let sidecar = drive_external_confirm_and_grant(&mut child, layout.audit_db.clone());
         let status = child.wait().expect("wait for caprun run");
-        let stdout = sidecar
-            .join()
-            .expect("sidecar thread panicked")
-            .expect("sidecar failed");
-        let stderr = stderr_reader.join().expect("stderr reader panicked");
+        let sidecar_result = sidecar.join();
+        let stderr = stderr_reader.join().unwrap_or_else(|_| {
+            "<stderr reader panicked>".to_string()
+        });
+        let stdout = match sidecar_result {
+            Ok(Ok(stdout)) => stdout,
+            Ok(Err(error)) => panic!("sidecar failed: {error}\nstderr:\n{stderr}"),
+            Err(_) => panic!("sidecar thread panicked\nstderr:\n{stderr}"),
+        };
         assert_eq!(
             status.code(),
             Some(0),
@@ -369,19 +373,24 @@ mod linux {
         // confirms the I2-blocked PR node, preserving the no-effect claim.
         let sidecar = drive_external_confirm_and_grant(&mut child, layout.audit_db.clone());
         let status = child.wait().expect("wait for caprun run");
-        let stdout = sidecar
-            .join()
-            .expect("sidecar thread panicked")
-            .expect("sidecar failed");
-        let stderr = stderr_reader.join().expect("stderr reader panicked");
+        let sidecar_result = sidecar.join();
+        let stderr = stderr_reader.join().unwrap_or_else(|_| {
+            "<stderr reader panicked>".to_string()
+        });
+        let stdout = match sidecar_result {
+            Ok(Ok(stdout)) => stdout,
+            Ok(Err(error)) => panic!("sidecar failed: {error}\nstderr:\n{stderr}"),
+            Err(_) => panic!("sidecar thread panicked\nstderr:\n{stderr}"),
+        };
         assert!(
             matches!(status.code(), Some(2 | 3)),
             "LIVE-08 must stop denied/blocked, never success: {:?}\nstdout:\n{stdout}\nstderr:\n{stderr}",
             status.code()
         );
         assert!(!stdout.contains("DENIED code=policy_deny"));
-        assert!(stdout.contains("Sink: github.pr"), "terminal must identify github.pr block: {stdout}");
 
+        // The durable anchor assertions below are the attribution oracle; never
+        // substitute a driver-stdout substring for this persisted provenance.
         let session_ids: Vec<&str> = stdout
             .lines()
             .filter_map(|line| line.trim().strip_prefix("session_id="))
