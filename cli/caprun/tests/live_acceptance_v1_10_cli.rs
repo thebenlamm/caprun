@@ -14,12 +14,94 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use runtime_core::event::Event;
+use runtime_core::executor_decision::SinkBlockedAnchor;
 use uuid::Uuid;
 
 const LIVE_07_DRIVER: &str = "caprun run safe-coding-workflow (CLI multi-node, one Session)";
 const LIVE_07_NOT: &str = "hybrid in-crate evaluate_plan_node_and_record_for_test composition";
 const LIVE_08_DRIVER: &str =
     "caprun run safe-coding-workflow (CLI sibling Session, CAPRUN_CODING_I2_PROOF=1)";
+
+fn attributed_process_exit<'a>(
+    anchor: &SinkBlockedAnchor,
+    process_events: &'a [Event],
+) -> &'a Event {
+    assert_eq!(process_events.len(), 2, "exactly two process exits required");
+    assert_eq!(
+        process_events
+            .iter()
+            .filter(|event| event.actor.starts_with("sink:process.exec:"))
+            .count(),
+        1,
+        "exactly one process.exec exit required"
+    );
+    assert_eq!(
+        process_events
+            .iter()
+            .filter(|event| event.actor.starts_with("sink:git.commit:"))
+            .count(),
+        1,
+        "exactly one git.commit exit required"
+    );
+
+    let matching: Vec<_> = process_events
+        .iter()
+        .filter(|event| event.id == anchor.read_event_id)
+        .collect();
+    assert_eq!(matching.len(), 1, "anchor must name exactly one exit event");
+    let process_event = matching[0];
+    assert!(
+        process_event.actor.starts_with("sink:process.exec:"),
+        "anchor must name the process.exec exit"
+    );
+    assert_eq!(anchor.provenance_chain.first(), Some(&process_event.id));
+    assert_eq!(anchor.read_event_id, process_event.id);
+    process_event
+}
+
+#[test]
+fn live_08_attribution_is_independent_of_exit_event_order() {
+    use chrono::Utc;
+    use runtime_core::plan_node::{SinkId, TaintLabel, ValueId};
+
+    let session_id = Uuid::new_v4();
+    let process_id = Uuid::new_v4();
+    let commit_id = Uuid::new_v4();
+    let process = Event::new(
+        process_id,
+        None,
+        session_id,
+        "sink:process.exec:process-effect".into(),
+        "process_exited".into(),
+        Utc::now(),
+        vec![TaintLabel::ExecRaw],
+    );
+    let commit = Event::new(
+        commit_id,
+        Some(process_id),
+        session_id,
+        "sink:git.commit:commit-effect".into(),
+        "process_exited".into(),
+        Utc::now(),
+        vec![],
+    );
+    let anchor = SinkBlockedAnchor {
+        effect_id: Uuid::new_v4(),
+        sink: SinkId("github.pr".into()),
+        arg: "body".into(),
+        value_id: ValueId::new(),
+        literal_sha256: "representative-digest".into(),
+        taint: vec![TaintLabel::ExecRaw],
+        provenance_chain: vec![process_id],
+        read_event_id: process_id,
+    };
+
+    let forward = [process.clone(), commit.clone()];
+    let reversed = [commit, process];
+    assert_eq!(attributed_process_exit(&anchor, &forward).id, process_id);
+    assert_eq!(attributed_process_exit(&anchor, &reversed).id, process_id);
+}
 
 #[test]
 fn live_acceptance_v1_10_cli_guard_present() {
@@ -38,7 +120,6 @@ mod linux {
     use std::process::{Child, Stdio};
     use std::thread;
     use std::time::Duration;
-    use runtime_core::event::Event;
 
     const POLICY_JSON: &str = r#"{
       "allowed_sinks": ["email.send", "file.create", "file.write", "process.exec",
