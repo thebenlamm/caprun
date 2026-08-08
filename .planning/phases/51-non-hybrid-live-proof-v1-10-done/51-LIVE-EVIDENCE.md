@@ -35,4 +35,18 @@ The previously canonical failed run was preserved rather than overwritten:
 
 ## Full workspace gate
 
-Pending. No full-workspace result or requirement/window completion is claimed in this section until Task 2 passes.
+Exact command:
+
+```sh
+COMPOSE_VERIFY_CMD='cargo build --workspace && cargo test --workspace --no-fail-fast --features brokerd/mock-egress-ca' bash scripts/compose-verify.sh
+```
+
+- Completion time: `2026-08-08T16:44:49Z` (UTC).
+- Exit status: `0`, preserved through a `bash -o pipefail` tee.
+- Complete stdout/stderr: `51-LIVE-FULL.log`.
+- SHA-256: `4bcb275b98dde637d7ac644a60227d33cc5ec47acf65e8898e2f1a4d4b34ee3e`.
+- Observed result: all workspace unit, integration, acceptance, and doc-test binaries completed without failure; the retained output ends with `Composed Linux verification suite PASSED (Mailpit + mock GitHub).`
+- The full suite included the Phase 50 coding/hold/planner regressions and the Linux `live_acceptance_v1_9_composed_success_chain`, which passed.
+- `./scripts/check-invariants.sh` ran immediately after the compose command and reported `All invariant gates PASSED`; Gates 1, 2, 3, 4, 4b, and 6 passed, while Gate 5 reported its documented host-side `cargo not found` skip. The authoritative container build graph and complete workspace tests were green in the preceding compose command.
+
+Because both the scoped and full gates exited `0`, the Phase 51 validation map, broken-windows ledger, and LIVE-07/LIVE-08 requirement statuses were reconciled after these results were retained.

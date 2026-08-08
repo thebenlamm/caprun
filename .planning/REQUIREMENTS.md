@@ -39,9 +39,9 @@ Requirements for the v1.10 milestone. Each maps to exactly one roadmap phase (se
 
 ### Live Proof (v1.10 DONE gate)
 
-- [ ] **LIVE-07**: On real Linux, a design partner can run the multi-step coding intent via the real CLI (`caprun run` or documented equivalent) under a bound policy: edit → test → commit → push (confirm-release) → open PR (mock GitHub allowed for CI). The entire path is **one Session**, inspected via real `caprun audit`, with `verify_chain` true. **This is not a hybrid in-crate composition** — the SUCCESS claim requires the multi-node chain to be CLI-driven (closes v1.9 LIVE-05 honesty gap). Full-workspace regression green; no v1.0–v1.9 regression.
+- [x] **LIVE-07**: On real Linux, a design partner can run the multi-step coding intent via the real CLI (`caprun run` or documented equivalent) under a bound policy: edit → test → commit → push (confirm-release) → open PR (mock GitHub allowed for CI). The entire path is **one Session**, inspected via real `caprun audit`, with `verify_chain` true. **This is not a hybrid in-crate composition** — the SUCCESS claim requires the multi-node chain to be CLI-driven (closes v1.9 LIVE-05 honesty gap). Full-workspace regression green; no v1.0–v1.9 regression.
 
-- [ ] **LIVE-08**: In the same proof family (same or sibling composed run), a mid-loop **I2 Block** is independently attributable: a genuinely tainted handle (non-stapled provenance root on a real read/exec event) occupies a sensitive sink arg (e.g. PR body and/or push refspec) under a **policy-permitted** sink; executor Blocks; `policy_deny` is not what fired; no effect of that node; chain remains `verify_chain` true. Distinct from a policy-deny control if one is included. Framing must not claim hybrid composition as CLI multi-step.
+- [x] **LIVE-08**: In the same proof family (same or sibling composed run), a mid-loop **I2 Block** is independently attributable: a genuinely tainted handle (non-stapled provenance root on a real read/exec event) occupies a sensitive sink arg (e.g. PR body and/or push refspec) under a **policy-permitted** sink; executor Blocks; `policy_deny` is not what fired; no effect of that node; chain remains `verify_chain` true. Distinct from a policy-deny control if one is included. Framing must not claim hybrid composition as CLI multi-step.
 
 ### Packaging
 
@@ -98,8 +98,8 @@ Which phases cover which requirements. Filled by the roadmapper.
 | CLI-01 | Phase 50 | Complete |
 | CLI-02 | Phase 50 | Complete |
 | CONFIRM-01 | Phase 50 | Complete |
-| LIVE-07 | Phase 51 | Pending |
-| LIVE-08 | Phase 51 | Pending |
+| LIVE-07 | Phase 51 | Complete |
+| LIVE-08 | Phase 51 | Complete |
 | PKG-01 | Phase 52 | Pending |
 | HYG-02 | Phase 47 | Complete |
 

@@ -1,0 +1,1836 @@
+Ensuring Docker network caprun-compose-net (203.0.113.0/24) exists ...
+Starting Mailpit sidecar (caprun-compose-mailpit) on caprun-compose-net ...
+Resolved Mailpit sidecar IP: 203.0.113.3
+Starting mock GitHub HTTPS sidecar (caprun-compose-mock-github) at 203.0.113.2 ...
+Waiting for mock GitHub HTTPS listener on 203.0.113.2:443 ...
+Mock GitHub HTTPS sidecar is ready.
+Running composed Linux verification suite (rust:1, network=caprun-compose-net) ...
+Hit:1 http://deb.debian.org/debian trixie InRelease
+Get:2 http://deb.debian.org/debian trixie-updates InRelease [47.3 kB]
+Get:3 http://deb.debian.org/debian-security trixie-security InRelease [43.4 kB]
+Get:4 http://deb.debian.org/debian trixie/main amd64 Packages [9673 kB]
+Get:5 http://deb.debian.org/debian trixie-updates/main amd64 Packages [4412 B]
+Get:6 http://deb.debian.org/debian-security trixie-security/main amd64 Packages [236 kB]
+Fetched 10.0 MB in 1s (14.8 MB/s)
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+libssl-dev is already the newest version (3.5.6-1~deb13u2).
+The following NEW packages will be installed:
+  pkg-config
+0 upgraded, 1 newly installed, 0 to remove and 5 not upgraded.
+Need to get 14.0 kB of archives.
+After this operation, 29.7 kB of additional disk space will be used.
+Get:1 http://deb.debian.org/debian trixie/main amd64 pkg-config amd64 1.8.1-4 [14.0 kB]
+debconf: unable to initialize frontend: Dialog
+debconf: (TERM is not set, so the dialog frontend is not usable.)
+debconf: falling back to frontend: Readline
+debconf: unable to initialize frontend: Readline
+debconf: (This frontend requires a controlling tty.)
+debconf: falling back to frontend: Teletype
+debconf: unable to initialize frontend: Teletype
+debconf: (This frontend requires a controlling tty.)
+debconf: falling back to frontend: Noninteractive
+Fetched 14.0 kB in 0s (1391 kB/s)
+Selecting previously unselected package pkg-config:amd64.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 26056 files and directories currently installed.)
+Preparing to unpack .../pkg-config_1.8.1-4_amd64.deb ...
+Unpacking pkg-config:amd64 (1.8.1-4) ...
+Setting up pkg-config:amd64 (1.8.1-4) ...
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded crypto-common v0.1.7
+  Downloaded futures-io v0.3.32
+  Downloaded sha2 v0.10.9
+  Downloaded rusqlite v0.32.1
+  Downloaded anyhow v1.0.103
+  Downloaded base64 v0.22.1
+  Downloaded icu_properties_data v2.2.0
+  Downloaded mio v1.2.1
+  Downloaded thiserror v2.0.18
+  Downloaded signal-hook-registry v1.4.8
+  Downloaded syn v2.0.118
+  Downloaded shlex v2.0.1
+  Downloaded landlock v0.4.5
+  Downloaded atomic-waker v1.1.2
+  Downloaded once_cell v1.21.4
+  Downloaded smallvec v1.15.2
+  Downloaded ahash v0.8.12
+  Downloaded idna_adapter v1.2.2
+  Downloaded zerovec v0.11.6
+  Downloaded subtle v2.6.1
+  Downloaded tokio-rustls v0.26.4
+  Downloaded version_check v0.9.5
+  Downloaded zerofrom v0.1.8
+  Downloaded autocfg v1.5.1
+  Downloaded stable_deref_trait v1.2.1
+  Downloaded slab v0.4.12
+  Downloaded try-lock v0.2.5
+  Downloaded zerovec-derive v0.11.3
+  Downloaded reqwest v0.13.4
+  Downloaded synstructure v0.13.2
+  Downloaded tower-http v0.6.11
+  Downloaded want v0.3.1
+  Downloaded yoke v0.8.3
+  Downloaded zerocopy v0.8.52
+  Downloaded writeable v0.6.3
+  Downloaded socket2 v0.6.4
+  Downloaded tokio-macros v2.7.0
+  Downloaded hostname v0.4.2
+  Downloaded quote v1.0.46
+  Downloaded yoke-derive v0.8.2
+  Downloaded zeroize v1.9.0
+  Downloaded zerotrie v0.2.4
+  Downloaded sync_wrapper v1.0.2
+  Downloaded utf8_iter v1.0.4
+  Downloaded thiserror-impl v2.0.18
+  Downloaded url v2.5.8
+  Downloaded hyper-util v0.1.20
+  Downloaded zmij v1.0.21
+  Downloaded tower-service v0.3.3
+  Downloaded zerofrom-derive v0.1.7
+  Downloaded openssl-macros v0.1.1
+  Downloaded unicode-ident v1.0.24
+  Downloaded rustls-webpki v0.103.13
+  Downloaded getrandom v0.2.17
+  Downloaded ipnet v2.12.0
+  Downloaded tower-layer v0.3.3
+  Downloaded vcpkg v0.2.15
+  Downloaded errno v0.3.14
+  Downloaded tracing v0.1.44
+  Downloaded untrusted v0.9.0
+  Downloaded webpki-roots v1.0.8
+  Downloaded tracing-core v0.1.36
+  Downloaded nom v8.0.0
+  Downloaded tinystr v0.8.3
+  Downloaded memoffset v0.9.1
+  Downloaded mime v0.3.17
+  Downloaded enumflags2_derive v0.7.12
+  Downloaded typenum v1.20.1
+  Downloaded uuid v1.23.4
+  Downloaded litemap v0.8.2
+  Downloaded chrono v0.4.45
+  Downloaded displaydoc v0.2.6
+  Downloaded tower v0.5.3
+  Downloaded hmac v0.12.1
+  Downloaded proc-macro2 v1.0.106
+  Downloaded cc v1.2.65
+  Downloaded icu_provider v2.2.0
+  Downloaded log v0.4.33
+  Downloaded cfg-if v1.0.4
+  Downloaded enumflags2 v0.7.12
+  Downloaded fastrand v2.4.1
+  Downloaded itoa v1.0.18
+  Downloaded tokio v1.52.3
+  Downloaded foreign-types-shared v0.1.1
+  Downloaded futures-util v0.3.32
+  Downloaded native-tls v0.2.18
+  Downloaded hyper v1.10.1
+  Downloaded serde_derive v1.0.228
+  Downloaded cfg_aliases v0.2.1
+  Downloaded hex v0.4.3
+  Downloaded percent-encoding v2.3.2
+  Downloaded memchr v2.8.2
+  Downloaded serde v1.0.228
+  Downloaded block-buffer v0.10.4
+  Downloaded hashbrown v0.14.5
+  Downloaded httpdate v1.0.3
+  Downloaded fallible-streaming-iterator v0.1.9
+  Downloaded potential_utf v0.1.5
+  Downloaded seccompiler v0.5.0
+  Downloaded find-msvc-tools v0.1.9
+  Downloaded http-body-util v0.1.3
+  Downloaded rustls-native-certs v0.8.4
+  Downloaded futures-channel v0.3.32
+  Downloaded idna v1.1.0
+  Downloaded lettre v0.11.22
+  Downloaded email_address v0.2.9
+  Downloaded iana-time-zone v0.1.65
+  Downloaded icu_collections v2.2.0
+  Downloaded httparse v1.10.1
+  Downloaded openssl-sys v0.9.117
+  Downloaded icu_normalizer_data v2.2.0
+  Downloaded openssl-probe v0.2.1
+  Downloaded rustls v0.23.41
+  Downloaded rustls-platform-verifier v0.7.0
+  Downloaded serde_core v1.0.228
+  Downloaded hashlink v0.9.1
+  Downloaded nix v0.31.3
+  Downloaded pin-project-lite v0.2.17
+  Downloaded cpufeatures v0.2.17
+  Downloaded email-encoding v0.4.1
+  Downloaded bytes v1.12.0
+  Downloaded icu_normalizer v2.2.0
+  Downloaded http-body v1.0.1
+  Downloaded rustls-pki-types v1.15.0
+  Downloaded futures-core v0.3.32
+  Downloaded quoted_printable v0.5.2
+  Downloaded foreign-types v0.3.2
+  Downloaded icu_properties v2.2.0
+  Downloaded form_urlencoded v1.2.2
+  Downloaded futures-task v0.3.32
+  Downloaded digest v0.10.7
+  Downloaded hyper-rustls v0.27.9
+  Downloaded fallible-iterator v0.3.0
+  Downloaded http v1.4.2
+  Downloaded bitflags v2.13.0
+  Downloaded getrandom v0.4.3
+  Downloaded icu_locale_core v2.2.0
+  Downloaded pkg-config v0.3.33
+  Downloaded num-traits v0.2.19
+  Downloaded serde_json v1.0.150
+  Downloaded openssl v0.10.81
+  Downloaded libc v0.2.186
+  Downloaded generic-array v0.14.7
+  Downloaded ring v0.17.14
+  Downloaded libsqlite3-sys v0.30.1
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.46
+   Compiling libc v0.2.186
+   Compiling cfg-if v1.0.4
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.9
+   Compiling stable_deref_trait v1.2.1
+   Compiling version_check v0.9.5
+   Compiling memchr v2.8.2
+   Compiling itoa v1.0.18
+   Compiling autocfg v1.5.1
+   Compiling once_cell v1.21.4
+   Compiling pkg-config v0.3.33
+   Compiling pin-project-lite v0.2.17
+   Compiling vcpkg v0.2.15
+   Compiling smallvec v1.15.2
+   Compiling futures-core v0.3.32
+   Compiling bytes v1.12.0
+   Compiling serde_core v1.0.228
+   Compiling cc v1.2.65
+   Compiling litemap v0.8.2
+   Compiling writeable v0.6.3
+   Compiling subtle v2.6.1
+   Compiling bitflags v2.13.0
+   Compiling utf8_iter v1.0.4
+   Compiling icu_properties_data v2.2.0
+   Compiling zeroize v1.9.0
+   Compiling icu_normalizer_data v2.2.0
+   Compiling generic-array v0.14.7
+   Compiling thiserror v2.0.18
+   Compiling untrusted v0.9.0
+   Compiling rustls-pki-types v1.15.0
+   Compiling num-traits v0.2.19
+   Compiling zmij v1.0.21
+   Compiling slab v0.4.12
+   Compiling futures-task v0.3.32
+   Compiling getrandom v0.4.3
+   Compiling percent-encoding v2.3.2
+   Compiling serde v1.0.228
+   Compiling futures-io v0.3.32
+   Compiling typenum v1.20.1
+   Compiling rustls v0.23.41
+   Compiling httparse v1.10.1
+   Compiling zerocopy v0.8.52
+   Compiling serde_json v1.0.150
+   Compiling http v1.4.2
+   Compiling futures-util v0.3.32
+   Compiling memoffset v0.9.1
+   Compiling ahash v0.8.12
+   Compiling anyhow v1.0.103
+   Compiling iana-time-zone v0.1.65
+   Compiling openssl-probe v0.2.1
+   Compiling syn v2.0.118
+   Compiling tower-service v0.3.3
+   Compiling base64 v0.22.1
+   Compiling try-lock v0.2.5
+   Compiling cfg_aliases v0.2.1
+   Compiling nix v0.31.3
+   Compiling want v0.3.1
+   Compiling form_urlencoded v1.2.2
+   Compiling tracing-core v0.1.36
+   Compiling futures-channel v0.3.32
+   Compiling openssl v0.10.81
+   Compiling log v0.4.33
+   Compiling atomic-waker v1.1.2
+   Compiling foreign-types-shared v0.1.1
+   Compiling sync_wrapper v1.0.2
+   Compiling foreign-types v0.3.2
+   Compiling native-tls v0.2.18
+   Compiling tower-layer v0.3.3
+   Compiling ipnet v2.12.0
+   Compiling rustls-native-certs v0.8.4
+   Compiling cpufeatures v0.2.17
+   Compiling email-encoding v0.4.1
+   Compiling nom v8.0.0
+   Compiling http-body v1.0.1
+   Compiling fallible-iterator v0.3.0
+   Compiling tracing v0.1.44
+   Compiling http-body-util v0.1.3
+   Compiling ring v0.17.14
+   Compiling openssl-sys v0.9.117
+   Compiling libsqlite3-sys v0.30.1
+   Compiling mime v0.3.17
+   Compiling socket2 v0.6.4
+   Compiling errno v0.3.14
+   Compiling mio v1.2.1
+   Compiling getrandom v0.2.17
+   Compiling signal-hook-registry v1.4.8
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling hostname v0.4.2
+   Compiling httpdate v1.0.3
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling digest v0.10.7
+   Compiling hex v0.4.3
+   Compiling email_address v0.2.9
+   Compiling quoted_printable v0.5.2
+   Compiling sha2 v0.10.9
+   Compiling fastrand v2.4.1
+   Compiling hmac v0.12.1
+   Compiling seccompiler v0.5.0
+   Compiling webpki-roots v1.0.8
+   Compiling uuid v1.23.4
+   Compiling synstructure v0.13.2
+   Compiling hashbrown v0.14.5
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerovec-derive v0.11.3
+   Compiling displaydoc v0.2.6
+   Compiling tokio-macros v2.7.0
+   Compiling thiserror-impl v2.0.18
+   Compiling serde_derive v1.0.228
+   Compiling openssl-macros v0.1.1
+   Compiling enumflags2_derive v0.7.12
+   Compiling rustls-webpki v0.103.13
+   Compiling hashlink v0.9.1
+   Compiling enumflags2 v0.7.12
+   Compiling tokio v1.52.3
+   Compiling zerofrom v0.1.8
+   Compiling yoke v0.8.3
+   Compiling landlock v0.4.5
+   Compiling zerovec v0.11.6
+   Compiling zerotrie v0.2.4
+   Compiling sandbox v0.1.0 (/work/crates/sandbox)
+warning: unused import: `RulesetCreatedAttr`
+  --> crates/sandbox/src/landlock.rs:18:65
+   |
+18 |     use landlock::{Access, AccessFs, ABI, Ruleset, RulesetAttr, RulesetCreatedAttr};
+   |                                                                 ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling tinystr v0.8.3
+   Compiling potential_utf v0.1.5
+warning: `sandbox` (lib) generated 1 warning (run `cargo fix --lib -p sandbox` to apply 1 suggestion)
+   Compiling icu_collections v2.2.0
+   Compiling icu_locale_core v2.2.0
+   Compiling icu_provider v2.2.0
+   Compiling chrono v0.4.45
+   Compiling icu_normalizer v2.2.0
+   Compiling icu_properties v2.2.0
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling runtime-core v0.1.0 (/work/crates/runtime-core)
+   Compiling url v2.5.8
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling lettre v0.11.22
+   Compiling hyper v1.10.1
+   Compiling tower v0.5.3
+   Compiling tokio-rustls v0.26.4
+   Compiling adapter-fs v0.1.0 (/work/crates/adapter-fs)
+   Compiling executor v0.1.0 (/work/crates/executor)
+   Compiling llm-planner v0.1.0 (/work/crates/llm-planner)
+   Compiling tower-http v0.6.11
+   Compiling hyper-util v0.1.20
+   Compiling rusqlite v0.32.1
+   Compiling hyper-rustls v0.27.9
+   Compiling reqwest v0.13.4
+   Compiling brokerd v0.1.0 (/work/crates/brokerd)
+   Compiling caprun v0.1.0 (/work/cli/caprun)
+warning: enum `HoldResume` is never used
+  --> cli/caprun/src/stream_hold.rs:57:10
+   |
+57 | pub enum HoldResume {
+   |          ^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `format_line` is never used
+   --> cli/caprun/src/stream_hold.rs:121:8
+    |
+121 | pub fn format_line(line: &StreamLine) -> String {
+    |        ^^^^^^^^^^^
+
+warning: function `parse_hold_resume` is never used
+   --> cli/caprun/src/stream_hold.rs:188:8
+    |
+188 | pub fn parse_hold_resume(line: &str) -> Result<HoldResume, String> {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: `caprun` (bin "caprun") generated 3 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.57s
+   Compiling brokerd v0.1.0 (/work/crates/brokerd)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.94s
+     Running unittests src/lib.rs (/tmp/lt/debug/deps/brokerd-a89195145b98326d)
+
+running 4 tests
+test sinks::git_push::cred::push_allowlist_default_build_is_empty_base_set ... ok
+test sinks::http_request::tests::allowlist_default_build_is_api_github_only ... ok
+test sinks::http_request::tests::write_allowlist_default_build_is_empty_base_set ... ok
+test sinks::http_request::tests::egress_root_store_default_build_is_webpki_roots_only ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 278 filtered out; finished in 0.00s
+
+feature-OFF-guard-passed:mock-host+anchor-absent-from-release-build
+warning: unused import: `RulesetCreatedAttr`
+  --> crates/sandbox/src/landlock.rs:18:65
+   |
+18 |     use landlock::{Access, AccessFs, ABI, Ruleset, RulesetAttr, RulesetCreatedAttr};
+   |                                                                 ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `sandbox` (lib) generated 1 warning (run `cargo fix --lib -p sandbox` to apply 1 suggestion)
+   Compiling sandbox v0.1.0 (/work/crates/sandbox)
+   Compiling caprun-exec-launcher v0.1.0 (/work/cli/caprun-exec-launcher)
+   Compiling reqwest v0.13.4
+   Compiling brokerd v0.1.0 (/work/crates/brokerd)
+   Compiling caprun-planner v0.1.0 (/work/cli/caprun-planner)
+   Compiling caprun v0.1.0 (/work/cli/caprun)
+warning: enum `HoldResume` is never used
+  --> cli/caprun/src/stream_hold.rs:57:10
+   |
+57 | pub enum HoldResume {
+   |          ^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `format_line` is never used
+   --> cli/caprun/src/stream_hold.rs:121:8
+    |
+121 | pub fn format_line(line: &StreamLine) -> String {
+    |        ^^^^^^^^^^^
+
+warning: function `parse_hold_resume` is never used
+   --> cli/caprun/src/stream_hold.rs:188:8
+    |
+188 | pub fn parse_hold_resume(line: &str) -> Result<HoldResume, String> {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: `caprun` (bin "caprun") generated 3 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.49s
+   Compiling runtime-core v0.1.0 (/work/crates/runtime-core)
+warning: unused import: `RulesetCreatedAttr`
+  --> crates/sandbox/src/landlock.rs:18:65
+   |
+18 |     use landlock::{Access, AccessFs, ABI, Ruleset, RulesetAttr, RulesetCreatedAttr};
+   |                                                                 ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling sandbox v0.1.0 (/work/crates/sandbox)
+warning: `sandbox` (lib) generated 1 warning (run `cargo fix --lib -p sandbox` to apply 1 suggestion)
+   Compiling caprun-exec-launcher v0.1.0 (/work/cli/caprun-exec-launcher)
+warning: unused import: `super::*`
+  --> crates/sandbox/src/lib.rs:72:9
+   |
+72 |     use super::*;
+   |         ^^^^^^^^
+
+warning: `sandbox` (lib test) generated 2 warnings (1 duplicate) (run `cargo fix --lib -p sandbox --tests` to apply 1 suggestion)
+   Compiling executor v0.1.0 (/work/crates/executor)
+   Compiling adapter-fs v0.1.0 (/work/crates/adapter-fs)
+   Compiling llm-planner v0.1.0 (/work/crates/llm-planner)
+   Compiling caprun-planner v0.1.0 (/work/cli/caprun-planner)
+   Compiling brokerd v0.1.0 (/work/crates/brokerd)
+   Compiling caprun v0.1.0 (/work/cli/caprun)
+warning: struct `LlmPlanner` is never constructed
+   --> cli/caprun/tests/../src/planner.rs:516:12
+    |
+516 | pub struct LlmPlanner {
+    |            ^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated items `new` and `request_plan_from_sidecar` are never used
+   --> cli/caprun/tests/../src/planner.rs:524:12
+    |
+520 | impl LlmPlanner {
+    | --------------- associated items in this implementation
+...
+524 |     pub fn new(planner_sock: String) -> Self {
+    |            ^^^
+...
+532 |     fn request_plan_from_sidecar(&self, request: &PlannerRequest) -> anyhow::Result<PlannerResponse> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `SidecarReply` is never used
+   --> cli/caprun/tests/../src/planner.rs:573:6
+    |
+573 | enum SidecarReply {
+    |      ^^^^^^^^^^^^
+
+warning: function `connect_to_sidecar` is never used
+   --> cli/caprun/tests/../src/planner.rs:940:4
+    |
+940 | fn connect_to_sidecar(planner_sock: &str) -> anyhow::Result<UnixStream> {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `send_framed` is never used
+   --> cli/caprun/tests/../src/planner.rs:978:4
+    |
+978 | fn send_framed(stream: &UnixStream, msg: &impl serde::Serialize) -> anyhow::Result<()> {
+    |    ^^^^^^^^^^^
+
+warning: function `recv_framed` is never used
+   --> cli/caprun/tests/../src/planner.rs:989:4
+    |
+989 | fn recv_framed<T: serde::de::DeserializeOwned>(stream: &UnixStream) -> anyhow::Result<T> {
+    |    ^^^^^^^^^^^
+
+warning: unused imports: `PathBuf` and `Path`
+  --> cli/caprun/tests/live_acceptance_v1_10_cli.rs:17:17
+   |
+17 | use std::path::{Path, PathBuf};
+   |                 ^^^^  ^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::process::Command`
+  --> cli/caprun/tests/live_acceptance_v1_10_cli.rs:18:5
+   |
+18 | use std::process::Command;
+   |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `LIVE_07_DRIVER` is never used
+  --> cli/caprun/tests/live_acceptance_v1_10_cli.rs:21:7
+   |
+21 | const LIVE_07_DRIVER: &str = "caprun run safe-coding-workflow (CLI multi-node, one Session)";
+   |       ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `LIVE_08_DRIVER` is never used
+  --> cli/caprun/tests/live_acceptance_v1_10_cli.rs:23:7
+   |
+23 | const LIVE_08_DRIVER: &str =
+   |       ^^^^^^^^^^^^^^
+
+warning: `caprun` (test "live_acceptance_v1_10_cli") generated 4 warnings (run `cargo fix --test "live_acceptance_v1_10_cli" -p caprun` to apply 2 suggestions)
+warning: `caprun` (test "planner") generated 6 warnings
+warning: struct `DeterministicPlanner` is never constructed
+   --> cli/caprun/tests/../src/planner.rs:205:12
+    |
+205 | pub struct DeterministicPlanner;
+    |            ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `plan_coding_next` is never used
+   --> cli/caprun/tests/../src/planner.rs:290:4
+    |
+290 | fn plan_coding_next(ctx: &PlanStreamContext) -> Option<PlanNode> {
+    |    ^^^^^^^^^^^^^^^^
+
+warning: function `plan_from_intent` is never used
+   --> cli/caprun/tests/../src/planner.rs:418:8
+    |
+418 | pub fn plan_from_intent(
+    |        ^^^^^^^^^^^^^^^^
+
+warning: struct `LlmPlanner` is never constructed
+   --> cli/caprun/tests/../src/planner.rs:516:12
+    |
+516 | pub struct LlmPlanner {
+    |            ^^^^^^^^^^
+
+warning: function `build_planner_request` is never used
+   --> cli/caprun/tests/../src/planner.rs:707:8
+    |
+707 | pub fn build_planner_request(
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `response_to_plan_node` is never used
+   --> cli/caprun/tests/../src/planner.rs:865:8
+    |
+865 | pub fn response_to_plan_node(
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: `caprun` (test "stream_substrate") generated 11 warnings (5 duplicates)
+warning: enum `HoldResume` is never used
+  --> cli/caprun/src/stream_hold.rs:57:10
+   |
+57 | pub enum HoldResume {
+   |          ^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `format_line` is never used
+   --> cli/caprun/src/stream_hold.rs:121:8
+    |
+121 | pub fn format_line(line: &StreamLine) -> String {
+    |        ^^^^^^^^^^^
+
+warning: function `parse_hold_resume` is never used
+   --> cli/caprun/src/stream_hold.rs:188:8
+    |
+188 | pub fn parse_hold_resume(line: &str) -> Result<HoldResume, String> {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: value assigned to `lei` is never read
+    --> crates/brokerd/src/server.rs:3460:43
+     |
+3460 |         let (conn, session_id, mut store, mut lei, mut leh, _ss, _ws0, _ti) = harness();
+     |                                           ^^^^^^^ this value is reassigned later and never used
+...
+3477 |             lei = root.id;
+     |             ------------- `lei` is overwritten here before the previous value is read
+     |
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `leh` is never read
+    --> crates/brokerd/src/server.rs:3460:52
+     |
+3460 |         let (conn, session_id, mut store, mut lei, mut leh, _ss, _ws0, _ti) = harness();
+     |                                                    ^^^^^^^ this value is reassigned later and never used
+...
+3478 |             leh = root_hash;
+     |             --- `leh` is overwritten here before the previous value is read
+
+warning: `caprun` (bin "caprun") generated 3 warnings
+warning: `brokerd` (lib test) generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.04s
+     Running unittests src/lib.rs (/tmp/lt/debug/deps/adapter_fs-456503bdd7931686)
+
+running 23 tests
+test containment::tests::accepts_sibling_prefix_of_root ... ok
+test containment::tests::refuses_when_equal_to_root ... ok
+test containment::tests::accepts_nonexistent_candidate_with_existing_parent_outside_root ... ok
+test containment::tests::refuses_when_root_unresolvable ... ok
+test tests::pass_recv_fd_roundtrip ... ok
+test workspace::tests::absolute_path_rejected ... ok
+test containment::tests::refuses_when_candidate_parent_unresolvable ... ok
+test containment::tests::refuses_when_descendant_of_root ... ok
+test workspace::tests::create_exclusive_existing_path_rejected ... ok
+test workspace::tests::root_path_returns_the_opened_root ... ok
+test workspace::tests::legit_relative_read_ok ... ok
+test workspace::tests::create_exclusive_absolute_path_rejected ... ok
+test workspace::tests::create_exclusive_parent_traversal_rejected ... ok
+test workspace::tests::create_exclusive_symlink_escape_rejected ... ok
+test workspace::tests::symlink_escape_rejected ... ok
+test workspace::tests::parent_traversal_rejected ... ok
+test workspace::tests::write_within_absolute_path_rejected ... ok
+test workspace::tests::write_within_parent_traversal_rejected ... ok
+test workspace::tests::write_within_fifo_rejected_not_hung ... ok
+test workspace::tests::write_within_missing_target_enoent ... ok
+test workspace::tests::write_within_symlink_escape_rejected ... ok
+test workspace::tests::write_within_overwrites_existing ... ok
+test workspace::tests::create_exclusive_writes_file ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/fd_pass.rs (/tmp/lt/debug/deps/fd_pass-ac8a442daa5b00cd)
+
+running 2 tests
+test round_trip ... ok
+test fd_cloexec ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/lt/debug/deps/brokerd-6970073372071824)
+
+running 284 tests
+test approval::tests::build_confirmation_prompt_no_at_sign_yields_empty_domain ... ok
+test approval::tests::build_confirmation_prompt_trims_whitespace ... ok
+test approval::tests::build_confirmation_prompt_literal_fidelity ... ok
+test audit::tests::created_pr_content_key_is_deterministic ... ok
+test audit::tests::created_pr_content_key_resists_partition_blindness ... ok
+test audit::tests::created_pr_content_key_changes_when_any_field_changes ... ok
+test audit::tests::github_grant_is_session_scoped ... ok
+test audit::tests::idempotency_key_distinguishes_value_id ... ok
+test audit::tests::idempotency_key_is_deterministic ... ok
+test audit::tests::idempotency_key_is_order_invariant ... ok
+test audit::tests::idempotency_key_is_sink_scoped ... ok
+test audit::tests::github_grant_false_on_fresh_db ... ok
+test audit::tests::event_hash_by_id_returns_none_for_unknown_id ... ok
+test audit::tests::created_pr_reserve_fresh_then_suppressed ... ok
+test audit::tests::event_hash_by_id_returns_hash_for_known_event ... ok
+test audit::tests::find_event_by_type_returns_none_for_missing_type ... ok
+test audit::tests::find_event_by_id_returns_none_for_never_appended_uuid ... ok
+test audit::tests::current_chain_head_returns_last_appended_event_on_linear_chain ... ok
+test audit::tests::current_chain_head_returns_none_for_session_with_no_events ... ok
+test audit::tests::find_event_by_type_returns_event_with_taint_intact ... ok
+test audit::tests::find_event_by_id_returns_none_for_cross_session_id ... ok
+test confirmation::tests::combined_digest_duplicate_arg_name_panics - should panic ... ok
+test confirmation::tests::combined_digest_input_order_invariant ... ok
+test audit::tests::find_event_by_id_disambiguates_two_same_type_events ... ok
+test confirmation::tests::combined_digest_name_binding_rename_differs ... ok
+test confirmation::tests::combined_digest_partition_binding_boundary_shift_differs ... ok
+test audit::tests::github_grant_record_is_idempotent ... ok
+test confirmation::tests::combined_digest_single_element_matches_expected_formula ... ok
+test confirmation::tests::combined_digest_transposed_literals_differs ... ok
+test audit::tests::github_grant_recorded_makes_has_true_and_emits_opaque_event ... ok
+test audit::tests::query_events_by_session_returns_all_events ... ok
+test audit::tests::list_pending_confirmations_returns_only_pending_rows_for_session ... ok
+test audit::tests::pending_confirmations_insert_and_duplicate_effect_id_fails ... ok
+test audit::tests::legacy_db_without_anchor_fails_closed ... ok
+test confirmation::tests::confirm_and_deny_on_unknown_effect_id_return_unknown_effect ... ok
+test audit::tests::orphan_event_injection_detected_via_live_count ... ok
+test audit::tests::tail_truncation_detected_via_anchor_mismatch ... ok
+test audit::tests::self_consistent_forgery_without_key_is_rejected ... ok
+test audit::tests::verify_chain_is_key_dependent ... ok
+test confirmation::tests::confirm_on_pending_http_write_releases_exactly_once_no_dangling ... ok
+test confirmation::tests::confirm_on_process_exec_malformed_args_does_not_burn_confirmation ... ok
+test confirmation::tests::confirm_fails_closed_via_verify_chain_when_literal_and_event_digest_edited_self_consistently ... ok
+test confirmation::tests::confirm_on_http_write_malformed_precheck_does_not_burn ... ok
+test confirmation::tests::confirm_fails_closed_with_digest_mismatch_when_trusted_arg_tampered ... ok
+test confirmation::tests::confirm_email_send_adapter_failure_yields_email_send_failed ... ok
+test confirmation::tests::confirm_fails_closed_with_digest_mismatch_when_arg_renamed_post_block ... ok
+test confirmation::tests::confirm_with_redacted_blocked_literal_refuses_to_release ... ok
+test confirmation::tests::deny_fails_closed_on_tampered_state ... ok
+test confirmation::tests::find_unknown_effect_id_returns_none ... ok
+test confirmation::tests::git_push_display_and_shared_neutralizer_do_not_drift ... ok
+test confirmation::tests::git_push_render_clean_shows_no_untrusted_flag ... ok
+test confirmation::tests::confirm_on_undispatchable_sink_does_not_burn_confirmation ... ok
+test confirmation::tests::git_push_render_flags_untrusted_arg_and_shows_frozen_oid ... ok
+test confirmation::tests::git_push_render_neutralizes_control_chars ... ok
+test confirmation::tests::deny_on_pending_block_is_durable ... ok
+test confirmation::tests::flip_back_denied_to_pending_caught_by_mac ... ok
+test confirmation::tests::git_push_frozen_new_oid_is_mac_covered ... ok
+test confirmation::tests::git_push_precheck_failure_leaves_row_pending_no_burn ... ok
+test confirmation::tests::non_git_push_render_has_no_payload_summary ... ok
+test confirmation::tests::github_pr_confirm_malformed_precheck_does_not_burn ... ok
+test confirmation::tests::pending_confirmation_state_from_str_rejects_unknown_string ... ok
+test confirmation::tests::render_block_display_narrates_all_args_marked_blocked_or_trusted ... ok
+test confirmation::tests::render_block_display_does_not_truncate_a_long_literal ... ok
+test confirmation::tests::render_block_display_single_blocked_arg_still_renders_correctly ... ok
+test confirmation::tests::insert_then_find_round_trips_all_fields ... ok
+test confirmation::tests::github_pr_confirm_without_grant_does_not_burn ... ok
+test confirmation::tests::review_on_unknown_effect_id_returns_unknown_effect ... ok
+test display::tests::neutralize_empty_and_control_free_unchanged ... ok
+test display::tests::neutralize_escapes_all_c0_and_del ... ok
+test display::tests::neutralize_escapes_bidi_and_zero_width_spoof_chars ... ok
+test display::tests::neutralize_escapes_c1_range ... ok
+test display::tests::neutralize_escapes_esc_preserves_surrounding_printables ... ok
+test display::tests::neutralize_preserves_non_spoof_non_ascii ... ok
+test display::tests::neutralize_preserves_printable_and_utf8 ... ok
+test policy::tests::bind_policy_binds_valid_sibling_policy_with_hash ... ok
+test confirmation::tests::transition_pending_to_confirmed_then_denied_is_refused ... ok
+test confirmation::tests::github_pr_tainted_title_blocks_and_shows_verbatim ... ok
+test policy::tests::bind_policy_fail_closed_on_unparseable_policy ... ok
+test confirmation::tests::transition_pending_to_denied_then_confirmed_is_refused ... ok
+test policy::tests::bind_policy_fail_closed_on_unresolvable_path ... ok
+test confirmation::tests::review_prints_narration_without_mutating_state_or_appending_event ... ok
+test policy::tests::bind_policy_none_binds_broker_default ... ok
+test policy::tests::bind_policy_hash_is_deterministic ... ok
+test policy::tests::bind_policy_refuses_path_beneath_workspace_root ... ok
+test policy::tests::bind_policy_refuses_path_equal_to_workspace_root ... ok
+test proto::tests::doc_fragment_claim_round_trips ... ok
+test proto::tests::derived_claim_received_response_round_trips ... ok
+test proto::tests::transform_kind_concat_round_trips ... ok
+test proto::tests::report_derived_claim_request_round_trips ... ok
+test quarantine::tests::concat_doc_fragments_joins_with_at_separator ... ok
+test quarantine::tests::extract_doc_fragments_finds_marker_anchored_fragments_in_order ... ok
+test quarantine::tests::extract_finds_email_in_hostile_content ... ok
+test quarantine::tests::extract_finds_relative_path_in_hostile_content ... ok
+test quarantine::tests::extract_is_lossy_no_raw_sentence_in_claim ... ok
+test quarantine::tests::extract_relative_path_rejects_absolute_and_email ... ok
+test quarantine::tests::extract_relative_path_is_lossy ... ok
+test quarantine::tests::extract_returns_empty_when_no_address ... ok
+test quarantine::tests::looks_like_doc_fragment_accepts_plain_tokens_rejects_assembled_recipient ... ok
+test quarantine::tests::mint_from_derivation_concat_byte_verify_rejects_mismatch ... ok
+test quarantine::tests::mint_from_derivation_does_not_demote_session ... ok
+test quarantine::tests::mint_from_derivation_dedups_overlapping_provenance_order_stably ... ok
+test quarantine::tests::mint_from_derivation_drops_user_trusted_when_union_untrusted ... ok
+test quarantine::tests::mint_from_derivation_rejects_all_user_trusted_inputs ... ok
+test quarantine::tests::mint_from_derivation_no_re_anchor ... ok
+test quarantine::tests::mint_from_derivation_rejects_non_file_read_root_at_index_0 ... ok
+test quarantine::tests::mint_from_derivation_rejects_non_file_read_root_at_index_gt_0 ... ok
+test quarantine::tests::mint_from_exec_anchor_identity ... ok
+test quarantine::tests::mint_from_derivation_threads_provenance_and_taint ... ok
+test quarantine::tests::mint_from_derivation_zero_inputs_fails_closed ... ok
+test quarantine::tests::mint_from_http_anchor_identity ... ok
+test quarantine::tests::mint_from_intent_anchor_identity ... ok
+test quarantine::tests::mint_from_intent_does_not_demote_session ... ok
+test quarantine::tests::mint_from_intent_literal_flows_through ... ok
+test quarantine::tests::mint_from_intent_taint_on_record_empty_on_event ... ok
+test quarantine::tests::mint_from_read_anchor_identity ... ok
+test quarantine::tests::mint_from_read_dag_event_carries_taint ... ok
+test quarantine::tests::mint_from_read_demotes_session_to_draft ... ok
+test quarantine::tests::mint_from_read_doc_fragment_rejects_assembled_recipient ... ok
+test quarantine::tests::mint_from_read_demotion_causal_edge ... ok
+test quarantine::tests::mint_from_read_doc_fragment_valid_fragment_mints_external_untrusted ... ok
+test quarantine::tests::mint_from_read_literal_is_extracted_address_only ... ok
+test quarantine::tests::mint_from_read_relative_path_taint_is_path_raw ... ok
+test quarantine::tests::mint_from_read_taint_on_record ... ok
+test quarantine::tests::mint_from_read_unknown_claim_type_errors ... ok
+test server::tests::allowed_http_request_write_reaches_dispatch_records_terminal_event_no_mint ... ok
+test policy::tests::policy_bound_event_is_genuinely_hash_chained ... ok
+test policy::tests::bound_policy_is_immutable_across_a_mid_session_file_rewrite ... ok
+test confirmation::tests::github_pr_confirm_with_grant_proceeds_no_dangling ... ok
+test server::tests::provide_intent_after_request_fd_is_rejected ... ok
+test server::tests::request_fd_count_limit ... ok
+test server::tests::provide_intent_before_any_request_fd_succeeds ... ok
+test session::tests::create_session_file_derived_starts_draft ... ok
+test session::tests::create_session_trusted_arg_starts_active ... ok
+test server::tests::second_provide_intent_is_rejected ... ok
+test server::tests::request_fd_repeated_reads_under_bound_succeed ... ok
+test sinks::email_smtp::tests::build_message_rejects_crlf_in_to_fail_closed ... ok
+test sinks::email_smtp::tests::build_message_ok_for_clean_single_recipient ... ok
+test session::tests::update_session_status_mutates_persisted_row ... ok
+test sinks::email_smtp::tests::build_message_tolerates_absent_cc_bcc ... ok
+test sinks::file_create::tests::invoke_file_create_failure_records_sink_execution_failed ... ok
+test sinks::file_create::tests::invoke_file_create_from_resolved_failure_records_sink_invocation_failed ... ok
+test confirmation::tests::confirm_email_send_twice_records_exactly_one_attempted_event ... ok
+test sinks::email_smtp::tests::invoke_email_smtp_from_resolved_transport_failure_records_email_send_failed ... ok
+test sinks::file_write::tests::invoke_file_write_failure_records_sink_execution_failed ... ok
+test sinks::file_write::tests::invoke_file_write_from_resolved_failure_records_sink_invocation_failed ... ok
+test confirmation::tests::git_push_confirm_releases_once_reaching_step7_dispatch ... ok
+test sinks::git_push::audit::append_push_outcome_failure_appends_opaque_git_push_failed_first ... ok
+test sinks::git_push::audit::append_push_outcome_success_appends_git_push_succeeded ... ok
+test sinks::git_push::audit::scrub_strips_token_remote_and_userinfo_url ... ok
+test sinks::git_push::audit::scrub_userinfo_url_redacts_generic_credential_in_url ... ok
+test sinks::git_push::cred::git_push_token_is_none_when_unset ... ok
+test sinks::git_push::cred::git_push_token_reads_broker_env_when_set ... ok
+test sinks::git_push::cred::push_allowlist_feature_admits_only_the_mock_host ... ok
+test sinks::git_push::cred::push_allowlist_is_distinct_from_read_and_write_hosts ... ok
+test sinks::git_push::pack::generate_pack_nonzero_exit_is_err ... ok
+test sinks::git_push::pack::revlist_create_omits_negative_old_oid ... ok
+test sinks::git_push::pack::revlist_update_includes_negative_old_oid ... ok
+test sinks::git_push::prepare::prepare_errs_on_deletion_refspec ... ok
+test sinks::git_push::prepare::prepare_errs_on_empty_frozen_new_oid ... ok
+test sinks::git_push::prepare::prepare_errs_on_force_refspec ... ok
+test sinks::git_push::prepare::prepare_errs_on_malformed_frozen_new_oid ... ok
+test sinks::git_push::prepare::prepare_errs_on_missing_required_arg ... ok
+test sinks::git_push::prepare::prepare_errs_on_non_allowlisted_host ... ok
+test sinks::git_push::prepare::prepare_errs_on_non_https_remote ... ok
+test sinks::git_push::prepare::prepare_ok_for_well_formed_mock_args ... ok
+test sinks::git_push::tests::command_list_allows_create_with_zero_old_oid ... ok
+test sinks::git_push::tests::command_list_builds_a_valid_update_line ... ok
+test sinks::git_push::tests::command_list_refuses_zero_new_oid_delete ... ok
+test sinks::git_push::tests::command_list_rejects_malformed_oids_and_refnames ... ok
+test sinks::git_push::tests::flush_pkt_is_0000 ... ok
+test sinks::git_push::tests::parse_advertisement_handles_empty_repo_capabilities_line ... ok
+test sinks::git_push::tests::parse_advertisement_reads_caps_and_refs ... ok
+test sinks::git_push::tests::parse_advertisement_rejects_malformed_oid ... ok
+test sinks::git_push::tests::parse_advertisement_rejects_unterminated_stream ... ok
+test sinks::git_push::tests::parse_advertisement_signals_create_for_unadvertised_ref ... ok
+test sinks::git_push::tests::parse_report_status_accepts_clean_unpack_and_ref_ok ... ok
+test sinks::git_push::tests::parse_report_status_fails_on_ng_ref ... ok
+test sinks::git_push::tests::parse_report_status_fails_on_unpack_error ... ok
+test sinks::git_push::tests::parse_report_status_fails_on_unrecognized_line ... ok
+test sinks::git_push::tests::parse_report_status_fails_when_no_ref_status ... ok
+test sinks::git_push::tests::parse_report_status_fails_when_no_unpack_line ... ok
+test sinks::git_push::tests::pkt_line_encodes_4hex_length_prefix ... ok
+test sinks::git_push::tests::pkt_read_decodes_data_then_flush_round_trip ... ok
+test sinks::git_push::tests::pkt_read_flush_is_zero_length ... ok
+test sinks::git_push::tests::pkt_read_rejects_invalid_short_nonflush_length ... ok
+test sinks::git_push::tests::pkt_read_rejects_non_hex_length ... ok
+test sinks::git_push::tests::pkt_read_rejects_truncated_length_header ... ok
+test sinks::git_push::tests::pkt_read_rejects_truncated_payload ... ok
+test sinks::git_push::tests::refspec_accepts_plain_src_dst_and_bare_ref ... ok
+test sinks::git_push::tests::refspec_rejects_deletion_empty_src ... ok
+test sinks::git_push::tests::refspec_rejects_empty_or_malformed ... ok
+test sinks::git_push::tests::refspec_rejects_force_flag_shaped_tokens ... ok
+test sinks::git_push::tests::refspec_rejects_leading_plus_force ... ok
+test sinks::git_push::transfer::assert_frozen_oid_accepts_equal_refuses_differing ... ok
+test sinks::git_push::transfer::driver_non_allowlisted_host_folds_into_opaque_git_push_failed ... ok
+test sinks::git_push::transfer::split_refspec_src_dst_and_bare ... ok
+test sinks::github_pr::tests::api_base_defaults_to_fixed_github_when_env_unset ... ok
+test sinks::github_pr::tests::build_pr_url_constructs_repos_pulls_path ... ok
+test sinks::github_pr::tests::build_pr_url_host_is_fixed_not_derived_from_owner_repo ... ok
+test sinks::github_pr::tests::github_token_errs_when_unset ... ok
+test sinks::github_pr::tests::opaque_audit_token_literal_absent_from_appended_event ... ok
+test sinks::github_pr::tests::overridden_api_base_still_rides_validate_url_and_allowlist ... ok
+test sinks::github_pr::tests::prepare_github_pr_errs_on_empty_arg ... ok
+test sinks::github_pr::tests::prepare_github_pr_errs_on_missing_required_arg ... ok
+test sinks::github_pr::tests::prepare_github_pr_ok_for_well_formed_six_args ... ok
+test sinks::http_request::tests::allowlist_accepts_allowlisted_host ... ok
+test sinks::http_request::tests::allowlist_rejects_non_allowlisted_host ... ok
+test sinks::http_request::tests::body_cap_is_fail_closed_at_the_boundary ... ok
+test sinks::http_request::tests::body_cap_trips_while_accumulating_synthetic_chunks ... ok
+test sinks::http_request::tests::build_pinned_client_constructs_for_a_pinned_write_host ... ok
+test sinks::http_request::tests::build_pinned_client_constructs_redirect_free_pinned_client ... ok
+test sinks::http_request::tests::invoke_http_get_rejects_non_allowlisted_host_without_network ... ok
+test sinks::http_request::tests::invoke_http_get_rejects_non_https_before_allowlist ... ok
+test sinks::http_request::tests::invoke_http_write_rejects_non_https ... ok
+test sinks::http_request::tests::invoke_http_write_rejects_non_write_allowlisted_host_before_resolve ... ok
+test sinks::http_request::tests::invoke_http_write_rejects_unsupported_method_before_socket ... ok
+test sinks::http_request::tests::invoke_http_write_rejects_userinfo ... ok
+test sinks::http_request::tests::invoke_pinned_post_rejects_non_allowlisted_host_before_resolve ... ok
+test sinks::http_request::tests::invoke_pinned_post_rejects_non_https_base ... ok
+test sinks::http_request::tests::invoke_pinned_post_rejects_userinfo_base ... ok
+test sinks::http_request::tests::mock_egress_ca_feature_adds_exactly_one_host_and_one_anchor ... ok
+test sinks::http_request::tests::resolve_and_vet_freezes_a_single_vetted_addr ... ok
+test sinks::http_request::tests::resolve_and_vet_vetting_fail_closes_on_internal_range ... ok
+test sinks::http_request::tests::ssrf_allows_public_ip ... ok
+test sinks::http_request::tests::ssrf_denies_cgnat ... ok
+test sinks::http_request::tests::ssrf_denies_cloud_metadata ... ok
+test sinks::http_request::tests::ssrf_denies_ipv6_mapped_v4 ... ok
+test sinks::http_request::tests::ssrf_denies_link_local ... ok
+test sinks::http_request::tests::ssrf_denies_loopback_v4 ... ok
+test sinks::http_request::tests::ssrf_denies_loopback_v6 ... ok
+test sinks::http_request::tests::ssrf_denies_rfc1918 ... ok
+test sinks::http_request::tests::ssrf_denies_ula ... ok
+test sinks::http_request::tests::ssrf_denies_unspecified ... ok
+test sinks::http_request::tests::ssrf_denies_v4_benchmark_198_18 ... ok
+test sinks::http_request::tests::ssrf_denies_v4_ietf_protocol_192_0_0 ... ok
+test sinks::http_request::tests::ssrf_denies_v4_multicast ... ok
+test sinks::http_request::tests::ssrf_denies_v4_reserved_240 ... ok
+test sinks::http_request::tests::ssrf_denies_v6_6to4 ... ok
+test sinks::http_request::tests::ssrf_denies_v6_ipv4_compatible_embedded ... ok
+test sinks::http_request::tests::ssrf_denies_v6_link_local ... ok
+test sinks::http_request::tests::ssrf_denies_v6_nat64_wkp ... ok
+test sinks::http_request::tests::ssrf_denies_v6_teredo ... ok
+test sinks::http_request::tests::validate_url_accepts_plain_https_domain ... ok
+test sinks::http_request::tests::validate_url_rejects_ip_encoding_tricks ... ok
+test sinks::http_request::tests::validate_url_rejects_non_default_port ... ok
+test sinks::http_request::tests::validate_url_rejects_non_https ... ok
+test sinks::http_request::tests::validate_url_rejects_userinfo ... ok
+test sinks::http_request::tests::validate_write_method_accepts_post_and_put ... ok
+test sinks::http_request::tests::validate_write_method_rejects_other_verbs ... ok
+test sinks::http_request::tests::vet_resolved_denies_empty ... ok
+test sinks::http_request::tests::vet_resolved_denies_if_any_ip_denied ... ok
+test sinks::http_request::tests::vet_resolved_pins_first_when_all_public ... ok
+test sinks::http_request::tests::write_allowlist_feature_on_admits_only_the_mock_host ... ok
+test sinks::http_request::tests::write_vs_read_allowlist_split ... ok
+test sinks::http_write::tests::opaque_audit_no_url_body_or_token_in_appended_event ... ok
+test sinks::http_write::tests::prepare_http_write_errs_on_empty_arg ... ok
+test sinks::http_write::tests::prepare_http_write_errs_on_missing_required_arg ... ok
+test sinks::http_write::tests::prepare_http_write_errs_on_non_write_method ... ok
+test sinks::http_write::tests::prepare_http_write_errs_on_unconstructible_url ... ok
+test sinks::http_write::tests::prepare_http_write_ok_for_well_formed_args ... ok
+test sinks::http_write::tests::write_bearer_is_none_when_unset ... ok
+test sinks::http_write::tests::write_bearer_reads_broker_env_when_set ... ok
+test sinks::process_exec::capture_bytes_tests::run_launcher_capture_bytes_feeds_stdin_binary_round_trip ... ok
+test sinks::file_write::tests::invoke_file_write_from_resolved_success_records_sink_executed ... ok
+test confirmation::tests::confirm_twice_returns_already_terminal_and_creates_no_new_file ... ok
+test sinks::file_create::tests::invoke_file_create_from_resolved_success_records_sink_executed ... ok
+test sinks::file_create::tests::invoke_file_create_success_records_sink_executed ... ok
+test confirmation::tests::confirm_on_pending_file_create_releases_and_creates_file ... ok
+test sinks::file_write::tests::invoke_file_write_success_records_sink_executed ... ok
+test tests::submit_plan_node_empty_args_returns_allowed ... ok
+test tests::submit_plan_node_unknown_sink_denied ... ok
+test confirmation::tests::digest_mismatch_then_retry_does_not_fork_dag_verify_chain_stays_true ... ok
+test sinks::process_exec::capture_bytes_tests::run_launcher_capture_bytes_separates_stdout_from_stderr ... ok
+test confirmation::tests::confirm_on_pending_file_write_releases_and_writes_file ... ok
+test sinks::process_exec::from_resolved_tests::invoke_process_exec_from_resolved_success_appends_process_exited_chained_on_parent ... ok
+test sinks::process_exec::from_resolved_tests::invoke_process_exec_from_resolved_spawn_failure_appends_process_spawn_failed ... ok
+test sinks::process_exec::from_resolved_tests::run_launcher_env_clear_prevents_broker_secret_leak ... ok
+test server::tests::tainted_git_push_blocks_with_frozen_oid ... ok
+test server::tests::clean_git_push_is_confirm_gated_never_auto_dispatched ... ok
+test server::tests::clean_git_push_pending_row_is_confirm_releasable ... ok
+test audit::tests::created_pr_migration_is_idempotent ... ok
+test audit::tests::sent_plan_nodes_migration_is_idempotent ... ok
+test audit::tests::github_grant_migration_is_idempotent ... ok
+test audit::tests::pending_confirmations_migration_widens_legacy_schema_idempotently ... ok
+
+test result: ok. 284 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.23s
+
+     Running tests/audit_chain_fork_regression.rs (/tmp/lt/debug/deps/audit_chain_fork_regression-60327c37c367599a)
+
+running 2 tests
+test broker_append_after_external_grant_must_not_fork_chain ... ok
+test contended_appends_from_independent_connections_stay_linear ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.87s
+
+     Running tests/audit_dag.rs (/tmp/lt/debug/deps/audit_dag-f1c1d4c1ba5c2533)
+
+running 2 tests
+test tamper_breaks_chain ... ok
+test audit_hash_chain ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/durable_anchor.rs (/tmp/lt/debug/deps/durable_anchor-fc56bf609103b019)
+
+running 5 tests
+test after_exit_db_alone_anti_stapling_sentinel ... ok
+test pending_confirmation_persisted_atomically_with_block ... ok
+test combined_digest_covers_full_set_and_matches_between_event_and_pending_confirmation ... ok
+test tamper_evidence_mutating_payload_breaks_verify_chain ... ok
+test redacting_side_table_literal_preserves_verify_chain_and_digest ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.94s
+
+     Running tests/email_smtp_acceptance.rs (/tmp/lt/debug/deps/email_smtp_acceptance-f7d22c4021ab9052)
+
+running 2 tests
+test smtp_05_crlf_body_cannot_smuggle_recipient ... ok
+test smtp_03_confirmed_send_captured_by_mailpit ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/extract_provenance_threading.rs (/tmp/lt/debug/deps/extract_provenance_threading-d40717d0b9c65cb4)
+
+running 4 tests
+test extract_02_and_03_positive_proof_both_anchors ... ok
+test builds_two_anchor_block ... ok
+test extract_02_anti_staple_control_a_fabricated_root_is_rejected ... ok
+test extract_02_anti_staple_control_b_reanchored_staple_is_rejected ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.70s
+
+     Running tests/git_commit_spawn.rs (/tmp/lt/debug/deps/git_commit_spawn-1be0bf6d667cba41)
+
+running 3 tests
+test linux::planted_hook_and_alias_do_not_execute_and_commit_succeeds ... ok
+test linux::exec_child_does_not_inherit_broker_env ... ok
+test linux::git_commit_produces_real_commit_with_process_exited_rooted_taint ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/harden01_session_integrity.rs (/tmp/lt/debug/deps/harden01_session_integrity-30d64e7b5e3a593c)
+
+running 3 tests
+test fd_grant_on_trusted_path_stays_active ... ok
+test fd_grant_on_untrusted_path_demotes_without_report_claims ... ok
+test second_dispatch_call_after_demotion_observes_draft_not_stale_active ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/phase5_dispatch.rs (/tmp/lt/debug/deps/phase5_dispatch-ef97d4b29e0cdcd5)
+
+running 6 tests
+test report_claims_variant_constructs ... ok
+test submit_plan_node_has_no_session_id_field ... ok
+test handle_from_other_connection_store_is_denied ... ok
+test mint_anchors_provenance_to_file_read_event ... ok
+test append_failure_is_fail_closed ... ok
+test block_appends_durable_causal_sink_blocked ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/planner_capability_split.rs (/tmp/lt/debug/deps/planner_capability_split-3518559c82088d3c)
+
+running 3 tests
+test planner_role_gate_denies_every_mint_and_fd_verb ... ok
+test planner_role_permits_only_submit ... ok
+test linux_tests::planner_second_connection_accepted_and_capability_restricted ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/planner_reduced_signal.rs (/tmp/lt/debug/deps/planner_reduced_signal-f314e55cd1e48604)
+
+running 2 tests
+test plan_node_decision_reduced_round_trips_with_only_blocked_bool ... ok
+test linux_tests::planner_submit_plan_node_receives_reduced_never_full ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/process_exec_spawn.rs (/tmp/lt/debug/deps/process_exec_spawn-62a5712a412ec841)
+
+running 3 tests
+test linux::process_exec_spawns_launcher_captures_output_and_chains_process_exited ... ok
+test linux::process_exec_byte_cap_fail_closed_records_process_spawn_failed ... ok
+test linux::process_exec_wall_clock_timeout_kills_child_and_records_process_spawn_failed ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.01s
+
+     Running tests/proto_claims.rs (/tmp/lt/debug/deps/proto_claims-3abea69d46652a91)
+
+running 16 tests
+test doc_fragment_claim_round_trips_via_report_claims ... ok
+test claims_received_response_round_trips ... ok
+test provide_intent_request_round_trips ... ok
+test derived_claim_received_response_round_trips ... ok
+test intent_accepted_response_round_trips ... ok
+test intent_accepted_named_handles_round_trips ... ok
+test report_claims_request_round_trips ... ok
+test report_derived_claim_request_round_trips ... ok
+test unknown_claim_kind_fails_closed ... ok
+test report_claims_dispatch_rejects_assembled_recipient_as_doc_fragment ... ok
+test report_derived_claim_dispatch_rejects_unresolvable_input ... ok
+test provide_intent_dispatch_returns_intent_accepted_with_resolvable_handle ... ok
+test report_derived_claim_dispatch_rejects_concat_byte_mismatch ... ok
+test report_derived_claim_dispatch_rejects_non_file_read_root_at_index_0 ... ok
+test report_derived_claim_dispatch_threads_provenance_from_resolved_inputs ... ok
+test provide_intent_safe_coding_multi_mint_distinct_named_handles ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/replay_cas.rs (/tmp/lt/debug/deps/replay_cas-b5550c2f3bdaf1b6)
+
+running 1 test
+test allowed_email_send_replay_delivers_once ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+
+     Running tests/s37_http_request.rs (/tmp/lt/debug/deps/s37_http_request-50aa0fd3bbf02773)
+
+running 2 tests
+test http_response_demotes_session_to_draft ... ok
+test http_fetched_value_blocks_in_sensitive_slot_non_stapled ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/s38_github_pr.rs (/tmp/lt/debug/deps/s38_github_pr-907d0e768a7b0e24)
+
+running 3 tests
+test github_pr_without_grant_denies_no_attempt ... ok
+test github_pr_without_grant_denies_via_real_dispatch ... ok
+test github_pr_replay_creates_at_most_one ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/s43_http_write_differential.rs (/tmp/lt/debug/deps/s43_http_write_differential-13572d82d90b6153)
+
+running 5 tests
+test leg_d_method_outside_enum_denies_fail_closed ... ok
+test leg_a_i0_draft_session_denies_write_commit_irreversible ... ok
+test legs_b_and_c_taint_is_the_sole_variable ... ok
+test dispatch_clean_body_reaches_egress_terminal_event ... ok
+test dispatch_tainted_body_blocks_and_never_writes ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/s44_git_push_differential.rs (/tmp/lt/debug/deps/s44_git_push_differential-f91a069bfb02f621)
+
+running 5 tests
+test leg_d_force_and_delete_refused_by_construction ... ok
+test leg_a_i0_draft_session_denies_push_commit_irreversible ... ok
+test legs_b_and_c_taint_is_the_sole_variable ... ok
+test dispatch::leg_e_receive_pack_redirect_is_refused ... ok
+test dispatch::leg_c_clean_confirmed_push_reaches_mock_receive_pack ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/s45_sdk_run_surface.rs (/tmp/lt/debug/deps/s45_sdk_run_surface-7ae43bcb70aaaaee)
+
+running 2 tests
+test m7_operator_literal_is_trusted_and_allowed ... ok
+test m7_file_derived_literal_is_tainted_and_i2_blocks_with_genuine_anchor ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/s46_negative_legs_composed.rs (/tmp/lt/debug/deps/s46_negative_legs_composed-138d91d27c734910)
+
+running 3 tests
+test composed::leg5b_error_path_push_worker ... ok
+test s46_negative_legs_composed_guard_present ... ok
+test composed::s46_negative_legs_composed_all_legs ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+     Running tests/s9_acceptance.rs (/tmp/lt/debug/deps/s9_acceptance-b4f84aae03822c41)
+
+running 5 tests
+test slot_type_binding_correctly_routed_allows ... ok
+test clean_path_intent_value_evaluates_to_allowed ... ok
+test s9_acceptance_file_create_path_block ... ok
+test slot_type_binding_swapped_subject_recipient_denies ... ok
+test s9_acceptance ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/stream_multi_submit.rs (/tmp/lt/debug/deps/stream_multi_submit-33c720bf2623c543)
+
+running 2 tests
+test mid_stream_second_provide_intent_rejected ... ok
+test multi_submit_different_nodes_same_session_verify_chain ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/two_connection_intent_bypass.rs (/tmp/lt/debug/deps/two_connection_intent_bypass-66349d33ccae8226)
+
+running 3 tests
+test linux_tests::guard_a_intra_connection_control ... ok
+test linux_tests::overlapping_connection_bypass_repro ... ok
+test linux_tests::sequential_reconnect_bypass_repro ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/uds_abstract_spike.rs (/tmp/lt/debug/deps/uds_abstract_spike-63cf17c1317e5cba)
+
+running 1 test
+test spike::abstract_uds_framed_round_trip ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/uds_ipc.rs (/tmp/lt/debug/deps/uds_ipc-fcd96463320e4e3a)
+
+running 3 tests
+test linux_tests::server_accept ... ok
+test linux_tests::create_session_round_trip ... ok
+test linux_tests::create_session_over_ipc_denied_by_default_when_flag_unset ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/tmp/lt/debug/deps/caprun-d52f0335fb0c7189)
+
+running 15 tests
+test key::tests::f1_refusal_when_audit_under_workspace_root ... ok
+test stream_hold::tests::map_stream_exit_taxonomy ... ok
+test stream_hold::tests::unknown_hold_token_is_not_proceed ... ok
+test stream_hold::tests::format_parse_blocked_round_trip ... ok
+test key::tests::load_existing_key_f1_refusal_when_audit_under_workspace_root ... ok
+test key::tests::load_existing_key_absent_key_errors_and_writes_nothing ... ok
+test key::tests::load_existing_key_refuses_memory ... ok
+test tests::planner_sidecar_allowlist_always_sets_minimal_path ... ok
+test key::tests::memory_audit_path_ephemeral ... ok
+test tests::planner_sidecar_allowlist_forwards_model_when_present_omits_when_absent ... ok
+test tests::planner_sidecar_allowlist_forwards_proxy_when_present_omits_when_absent ... ok
+test tests::planner_sidecar_allowlist_never_leaks_smtp_or_secret ... ok
+test tests::planner_sidecar_allowlist_returns_planner_sock ... ok
+test key::tests::key_file_reused_across_calls ... ok
+test key::tests::load_existing_key_reads_back_existing_key ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/worker.rs (/tmp/lt/debug/deps/caprun_worker-4b3db35f045eb065)
+
+running 3 tests
+test stream_hold::tests::map_stream_exit_taxonomy ... ok
+test stream_hold::tests::format_parse_blocked_round_trip ... ok
+test stream_hold::tests::unknown_hold_token_is_not_proceed ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/audit_viewer.rs (/tmp/lt/debug/deps/audit_viewer-f2a7b74ca26c5574)
+
+running 4 tests
+test memory_db_is_refused_with_no_verdict ... ok
+test absent_key_fails_closed_with_no_verdict ... ok
+test tainted_actor_literal_is_neutralized ... ok
+test render_genuine_chain_verifies_passed ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/coding_cli.rs (/tmp/lt/debug/deps/coding_cli-a2bddf984d61fea6)
+
+running 6 tests
+test coding_intent_json_deserializes_to_safe_coding_workflow ... ok
+test safe_coding_workflow_missing_json_exits_nonzero ... ok
+test safe_coding_workflow_rejects_seed_from_file ... ok
+test unknown_intent_kind_fails_closed ... ok
+test policy_flag_accepted_for_coding_argv ... ok
+test safe_coding_workflow_argv_accepted_past_unknown_kind ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/confirm.rs (/tmp/lt/debug/deps/confirm-e09a3084f0adf325)
+
+running 4 tests
+test confirm_and_deny_on_unknown_effect_id_exit_4 ... ok
+test deny_is_durable_and_confirm_after_deny_is_already_terminal ... ok
+test confirm_email_send_adapter_failure_exits_7 ... ok
+test confirm_releases_once_and_second_confirm_is_already_terminal ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/e2e.rs (/tmp/lt/debug/deps/e2e-b8237c860e737ac5)
+
+running 2 tests
+[sandbox] Landlock status: FullyEnforced
+caprun-stream: NODE_ALLOWED step=0 sink=email.send
+caprun-stream: STREAM_DONE submitted=1
+
+=== Audit DAG (session b21a9e4a-4411-49c7-a84f-4529ea8ece4c) ===
+[0] session_created (actor=broker:seed_provenance=trusted_arg)
+    hash=8283dc36 parent=(root)
+  [1] policy_bound (actor=broker:policy_bound sha256=faf3c3381b6e09a6fed11cc597210002dcac5b0cb70ef935ce1b83635284ea15)
+      hash=bf38e876 parent=8283dc36
+    [2] intent_received (actor=user-intent)
+        hash=be40434b parent=bf38e876
+      [3] intent_received (actor=user-intent)
+          hash=4f6325da parent=be40434b
+        [4] intent_received (actor=user-intent)
+            hash=fc7a6b82 parent=4f6325da
+          [5] fd_granted (actor=broker)
+              hash=ac244d86 parent=fc7a6b82
+            [6] plan_node_evaluated (actor=executor)
+                hash=3b73f612 parent=ac244d86
+              [7] email_send_attempted (actor=sink:email.send:ca51aa49-a8de-424e-814f-f2b9a79754ff)
+                  hash=995e4f65 parent=3b73f612
+                [8] email_send_succeeded (actor=sink:email.send:ca51aa49-a8de-424e-814f-f2b9a79754ff)
+                    hash=9dc3a4c0 parent=995e4f65
+
+Chain verification: PASSED
+test dag_chain_integrity ... ok
+test substrate_demo ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running tests/grant.rs (/tmp/lt/debug/deps/grant-43b746ee97037292)
+
+running 2 tests
+test grant_with_malformed_session_id_exits_nonzero ... ok
+test grant_records_session_scoped_capability_and_exits_0 ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/harden04_featureless_create_session.rs (/tmp/lt/debug/deps/harden04_featureless_create_session-f158d39509a6c993)
+
+running 1 test
+test linux_tests::featureless_create_session_denied_even_with_flag_set ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/live_acceptance_tainted_session.rs (/tmp/lt/debug/deps/live_acceptance_tainted_session-c3e2848fa004b39c)
+
+running 3 tests
+test live_acceptance_guard_binary_present ... ok
+test live_acceptance_deny_path ... ok
+test live_acceptance_confirm_path ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/live_acceptance_v1_10_cli.rs (/tmp/lt/debug/deps/live_acceptance_v1_10_cli-7d6cc8d1030cd56c)
+
+running 2 tests
+test live_acceptance_v1_10_cli_guard_present ... ok
+test live_08_attribution_is_independent_of_exit_event_order ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/live_acceptance_v1_3.rs (/tmp/lt/debug/deps/live_acceptance_v1_3-a8fb4f57388a64b8)
+
+running 2 tests
+test live_acceptance_v1_3_guard_binary_present ... ok
+test live_acceptance_v1_3_composed ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+
+     Running tests/live_acceptance_v1_4_composed.rs (/tmp/lt/debug/deps/live_acceptance_v1_4_composed-a1314620cf42c523)
+
+running 2 tests
+test live_acceptance_v1_4_composed_guard_binary_present ... ok
+test live_acceptance_v1_4_composed_three_legs ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/live_acceptance_v1_7_composed.rs (/tmp/lt/debug/deps/live_acceptance_v1_7_composed-1134a6861e63acb7)
+
+running 2 tests
+test live_acceptance_v1_7_composed_guard_binary_present ... ok
+test linux::live_acceptance_v1_7_composed_four_legs ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests/live_acceptance_v1_8_composed.rs (/tmp/lt/debug/deps/live_acceptance_v1_8_composed-30b71563366aaed5)
+
+running 2 tests
+test live_acceptance_v1_8_composed_guard_binary_present ... ok
+test linux::live_acceptance_v1_8_composed_all_legs ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+     Running tests/live_acceptance_v1_9_composed.rs (/tmp/lt/debug/deps/live_acceptance_v1_9_composed-7297379a3c2cadcc)
+
+running 2 tests
+test live_acceptance_v1_9_composed_guard_binary_present ... ok
+test linux::live_acceptance_v1_9_composed_success_chain ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
+
+     Running tests/llm_planner_live_accept.rs (/tmp/lt/debug/deps/llm_planner_live_accept-0fed835dc6cd5063)
+
+running 2 tests
+test llm_planner_clean_allow_delivers ... ok
+test llm_planner_live_accept_guard_binary_present ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/origin_seed_provenance.rs (/tmp/lt/debug/deps/origin_seed_provenance-a774b083feafa862)
+
+running 3 tests
+test missing_seed_file_fails_closed ... ok
+test trusted_arg_seed_starts_active ... ok
+test file_derived_seed_starts_draft ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+     Running tests/planner.rs (/tmp/lt/debug/deps/planner-cbcaa5a6713b05a4)
+
+running 25 tests
+test build_planner_request_create_file_offers_file_create_sink ... ok
+test bag_stores_any_some_output_value_id_under_out_step ... ok
+test build_planner_request_offers_recipient_subject_body_handles ... ok
+test build_planner_request_offers_both_recipient_candidates_with_distinct_hints ... ok
+test build_planner_request_threads_task_instruction_when_supplied ... ok
+test coding_plan_next_emits_five_sinks_in_order ... ok
+test coding_missing_bag_key_fail_closed ... ok
+test deterministic_planner_output_unchanged_when_task_instruction_threaded ... ok
+test coding_success_path_does_not_place_out_handles ... ok
+test multi_node_test_planner_places_bag_handle_in_second_node ... ok
+test plan_from_intent_create_file_clean_routes_intent_path ... ok
+test plan_from_intent_create_file_hostile_routes_tainted_path ... ok
+test plan_from_intent_recipient_literal_is_not_visible_to_planner ... ok
+test plan_from_intent_send_email_summary_emits_to_subject_body ... ok
+test plan_from_intent_to_routes_by_derived_recipient_presence ... ok
+test plan_next_step0_matches_plan_for_email ... ok
+test plan_next_step0_matches_plan_for_file ... ok
+test plan_stream_context_handles_are_opaque_value_ids_only ... ok
+test plan_next_step_ge1_returns_none_one_shot ... ok
+test response_to_plan_node_canonicalizes_arg_name_ignoring_model_naming ... ok
+test response_to_plan_node_err_for_unknown_sink ... ok
+test response_to_plan_node_err_for_unoffered_handle ... ok
+test response_to_plan_node_ok_for_valid_response ... ok
+test response_to_plan_node_routes_tainted_document_address_into_to_when_model_picks_it ... ok
+test two_handle_offering_is_decoupled_from_task_instruction ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/proof_selector_rejection.rs (/tmp/lt/debug/deps/proof_selector_rejection-00c0d03d3c036f91)
+
+running 1 test
+test proof_selector_is_rejected_before_effects ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/s45_cli_viewer_acceptance.rs (/tmp/lt/debug/deps/s45_cli_viewer_acceptance-89f2533a4602a943)
+
+running 4 tests
+test audit_memory_db_is_refused_with_no_verdict ... ok
+test audit_tainted_literal_is_neutralized_in_viewer ... ok
+test absent_key_on_genuine_run_db_fails_closed ... ok
+test end_to_end_run_block_surface_review_audit ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests/s9_file_write_block.rs (/tmp/lt/debug/deps/s9_file_write_block-9597b5dc826ef209)
+
+running 3 tests
+test s9_file_write_clean_trusted_pair_is_allowed ... ok
+test s9_file_write_tainted_contents_blocks_with_genuine_anchor ... ok
+test s9_file_write_tainted_path_blocks_with_genuine_anchor ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/s9_live_block.rs (/tmp/lt/debug/deps/s9_live_block-f6b4efe4d0354bc8)
+
+running 7 tests
+test s9_live_block_guard_binary_present ... ok
+test s9_live_file_create_clean_allow ... ok
+test s9_live_file_create_hostile_block ... ok
+test s9_control02_body_tainted_recipient_trusted_blocks ... ok
+test s9_live_clean_allow_path ... ok
+test s9_live_email_hostile_block ... ok
+test s9_control_ab_taint_driven ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+
+     Running tests/s9_process_exec_block.rs (/tmp/lt/debug/deps/s9_process_exec_block-7e410d0a18eb42f2)
+
+running 6 tests
+test s9_process_exec_block_guard_binary_present ... ok
+test linux::s9_process_exec_tainted_command_blocks_before_spawn ... ok
+test linux::s9_process_exec_clean_allow_unrouted_output_causes_no_block ... ok
+test linux::s9_process_exec_genuine_taint_block ... ok
+test linux::s9_process_exec_confirm_on_still_undispatchable_sink_refuses_and_stays_pending ... ok
+test linux::s9_process_exec_confirm_release_runs_once_and_second_confirm_is_terminal ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/stream_hold.rs (/tmp/lt/debug/deps/stream_hold-703b14580d1c84f6)
+
+running 11 tests
+test hold_resume_tokens_exact_match_only ... ok
+test empty_and_policy_deny_exit_buckets ... ok
+test denied_round_trip_including_policy_deny ... ok
+test blocked_round_trip ... ok
+test i32_from_stream_exit_code ... ok
+test parse_fail_closed_on_garbage ... ok
+test map_stream_exit_matrix_0_2_3_1 ... ok
+test stream_done_and_node_allowed_round_trip ... ok
+test stream_hold::tests::format_parse_blocked_round_trip ... ok
+test stream_hold::tests::map_stream_exit_taxonomy ... ok
+test stream_hold::tests::unknown_hold_token_is_not_proceed ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/stream_substrate.rs (/tmp/lt/debug/deps/stream_substrate-8680f4988124364c)
+
+running 12 tests
+test empty_stream_fails_closed ... ok
+test block_without_proceed_is_not_success ... ok
+test deny_aborts_remaining_no_further_submit ... ok
+test block_stops_without_resubmit ... ok
+test f01_bag_stores_any_some_output_value_id_multi_sink ... ok
+test hold_continue_no_resubmit_blocked_sink ... ok
+test hold_abort_stops_without_further_submits ... ok
+test multi_allowed_bags_each_some_and_succeeds ... ok
+test not_implemented_also_aborts_remaining ... ok
+test single_allowed_node_then_none_is_success ... ok
+test stream_substrate_host_guard_compiles ... ok
+test linux::taint_via_bag_exec_output_blocks_with_genuine_provenance ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/tmp/lt/debug/deps/caprun_exec_launcher-330137d4b09ef5a7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/lt/debug/deps/caprun_planner-3d6af051a07e561c)
+
+running 3 tests
+test openai::tests::extract_tool_arguments_err_on_content_only_response ... ok
+test openai::tests::extract_tool_arguments_ok_on_tool_call_response ... ok
+test openai::tests::build_chat_request_forces_emit_plan_node_and_embeds_handle_enum ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/tmp/lt/debug/deps/caprun_planner-f0307715f717d621)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/lt/debug/deps/executor-0652e2a5ed4aad34)
+
+running 110 tests
+test policy_gate::tests::sink_not_in_allowlist_denies_sink_scoped ... ok
+test policy_gate::tests::permitted_sink_unconstrained_arg_falls_through ... ok
+test sink_schema::tests::duplicate_arg_denied ... ok
+test policy_gate::tests::dangling_handle_is_not_a_policy_deny ... ok
+test sink_schema::tests::email_send_exact_args_ok ... ok
+test sink_schema::tests::exec_shell_fixture_remains_distinct_unknown_sink ... ok
+test sink_schema::tests::email_send_subset_args_ok ... ok
+test sink_schema::tests::file_create_exact_args_ok ... ok
+test sink_schema::tests::file_write_exact_args_ok ... ok
+test sink_schema::tests::file_write_missing_required_arg_denied ... ok
+test sink_schema::tests::file_write_unknown_arg_denied ... ok
+test sink_schema::tests::get_http_request_row_unchanged_single_arg_url ... ok
+test sink_schema::tests::git_commit_duplicate_arg_denied ... ok
+test sink_schema::tests::git_commit_exact_args_ok ... ok
+test sink_schema::tests::git_commit_is_registered_sink ... ok
+test sink_schema::tests::git_commit_missing_required_arg_denied ... ok
+test sink_schema::tests::git_commit_unknown_arg_denied ... ok
+test sink_schema::tests::git_push_duplicate_arg_denied ... ok
+test sink_schema::tests::git_push_exact_args_ok ... ok
+test sink_schema::tests::git_push_is_registered_sink ... ok
+test sink_schema::tests::git_push_missing_refspec_denied ... ok
+test sink_schema::tests::github_pr_duplicate_arg_denied ... ok
+test sink_schema::tests::github_pr_exact_args_ok ... ok
+test sink_schema::tests::git_push_missing_remote_denied ... ok
+test sink_schema::tests::github_pr_is_registered_sink ... ok
+test sink_schema::tests::http_request_exact_args_ok ... ok
+test sink_schema::tests::http_request_unknown_arg_denied ... ok
+test sink_schema::tests::http_request_missing_required_arg_denied ... ok
+test sink_schema::tests::http_request_write_duplicate_arg_denied ... ok
+test sink_schema::tests::http_request_write_missing_body_denied ... ok
+test sink_schema::tests::http_request_write_is_registered_sink ... ok
+test sink_schema::tests::http_request_write_unknown_arg_denied ... ok
+test sink_schema::tests::github_pr_missing_required_arg_denied ... ok
+test sink_schema::tests::github_pr_unknown_arg_denied ... ok
+test sink_schema::tests::git_push_unknown_arg_denied ... ok
+test sink_schema::tests::http_request_duplicate_arg_denied ... ok
+test sink_schema::tests::http_request_is_registered_sink ... ok
+test sink_schema::tests::process_exec_command_only_ok ... ok
+test sink_schema::tests::http_request_write_missing_method_denied ... ok
+test sink_schema::tests::process_exec_duplicate_arg_denied ... ok
+test sink_schema::tests::process_exec_full_args_ok ... ok
+test sink_schema::tests::process_exec_missing_command_denied ... ok
+test sink_schema::tests::process_exec_unknown_arg_denied ... ok
+test sink_schema::tests::unknown_arg_denied ... ok
+test sink_schema::tests::unknown_sink_checked_before_args ... ok
+test sink_schema::tests::unknown_sink_denied ... ok
+test sink_schema::tests::http_request_write_missing_url_denied ... ok
+test sink_schema::tests::http_request_write_exact_args_ok ... ok
+test sink_schema::tests::missing_arg_denied ... ok
+test sink_sensitivity::tests::email_send_body_expects_body_or_doc_fragment ... ok
+test sink_sensitivity::tests::email_send_content_args_not_routing_sensitive ... ok
+test sink_sensitivity::tests::email_send_subject_expects_subject_only ... ok
+test sink_sensitivity::tests::email_send_routing_sensitive_args ... ok
+test sink_sensitivity::tests::email_send_unknown_arg_is_unconstrained ... ok
+test sink_sensitivity::tests::email_send_is_commit_irreversible ... ok
+test sink_sensitivity::tests::email_send_to_cc_bcc_expect_recipient_or_email_address ... ok
+test sink_sensitivity::tests::file_create_contents_expects_path ... ok
+test sink_sensitivity::tests::file_create_is_commit_irreversible ... ok
+test sink_sensitivity::tests::file_create_contents_is_content_sensitive ... ok
+test sink_sensitivity::tests::file_create_path_expects_path_or_relative_path ... ok
+test sink_sensitivity::tests::file_create_unknown_arg_is_unconstrained ... ok
+test sink_sensitivity::tests::file_create_contents_not_routing_sensitive ... ok
+test sink_sensitivity::tests::file_write_contents_expects_path_exec_output_or_doc_fragment ... ok
+test sink_sensitivity::tests::file_write_contents_is_content_sensitive ... ok
+test sink_sensitivity::tests::file_create_path_is_routing_sensitive ... ok
+test sink_sensitivity::tests::file_write_contents_not_routing_sensitive ... ok
+test sink_sensitivity::tests::file_write_is_commit_irreversible ... ok
+test sink_sensitivity::tests::file_write_path_expects_path_or_relative_path ... ok
+test sink_sensitivity::tests::file_write_unknown_arg_is_unconstrained ... ok
+test sink_sensitivity::tests::file_write_path_is_routing_sensitive ... ok
+test sink_sensitivity::tests::file_write_path_not_content_sensitive ... ok
+test sink_sensitivity::tests::file_create_path_not_content_sensitive ... ok
+test sink_sensitivity::tests::git_commit_is_mutate_reversible ... ok
+test sink_sensitivity::tests::git_commit_message_not_routing_sensitive ... ok
+test sink_sensitivity::tests::git_push_expected_role_is_none ... ok
+test sink_sensitivity::tests::git_push_has_no_content_sensitive_arg ... ok
+test sink_sensitivity::tests::git_push_is_commit_irreversible ... ok
+test sink_sensitivity::tests::git_push_remote_refspec_routing_sensitive ... ok
+test sink_sensitivity::tests::git_commit_message_expected_role_is_none ... ok
+test sink_sensitivity::tests::github_pr_expected_role_is_none ... ok
+test sink_sensitivity::tests::github_pr_is_commit_irreversible ... ok
+test sink_sensitivity::tests::github_pr_owner_repo_base_head_routing_sensitive ... ok
+test sink_sensitivity::tests::github_pr_routing_args_not_content_sensitive ... ok
+test sink_sensitivity::tests::git_commit_message_is_content_sensitive ... ok
+test sink_sensitivity::tests::github_pr_title_body_content_sensitive ... ok
+test sink_sensitivity::tests::http_request_url_is_routing_and_content_sensitive ... ok
+test sink_sensitivity::tests::http_request_write_body_content_but_not_routing_sensitive ... ok
+test sink_sensitivity::tests::http_request_is_observe ... ok
+test sink_sensitivity::tests::http_request_write_expected_role_is_none ... ok
+test sink_sensitivity::tests::http_request_write_is_commit_irreversible ... ok
+test sink_sensitivity::tests::http_request_write_method_not_sensitive ... ok
+test sink_sensitivity::tests::http_request_write_url_is_routing_and_content_sensitive ... ok
+test sink_sensitivity::tests::process_exec_command_and_args_expected_role_is_none ... ok
+test sink_sensitivity::tests::process_exec_command_and_args_routing_and_content_sensitive ... ok
+test sink_sensitivity::tests::unknown_sink_expected_role_is_unconstrained ... ok
+test sink_sensitivity::tests::process_exec_cwd_expects_path_or_relative_path ... ok
+test sink_sensitivity::tests::unknown_sink_not_content_sensitive ... ok
+test sink_sensitivity::tests::unknown_sink_not_routing_sensitive ... ok
+test sink_sensitivity::tests::unregistered_sink_is_fail_closed_commit_irreversible ... ok
+test value_store::tests::mint_accepts_nonempty_taint_and_provenance ... ok
+test value_store::tests::mint_rejects_empty_provenance ... ok
+test sink_sensitivity::tests::process_exec_cwd_routing_but_not_content_sensitive ... ok
+test value_store::tests::mint_rejects_empty_taint ... ok
+test value_store::tests::mint_then_resolve_round_trip ... ok
+test value_store::tests::mint_threads_origin_role_verbatim ... ok
+test value_store::tests::mint_with_no_origin_role_resolves_to_none ... ok
+test value_store::tests::resolve_unknown_id_returns_none ... ok
+test sink_sensitivity::tests::http_request_url_expected_role_is_none ... ok
+test sink_sensitivity::tests::process_exec_is_commit_irreversible ... ok
+test sink_sensitivity::tests::test_observe_fixture_is_observe ... ok
+
+test result: ok. 110 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/executor_decision.rs (/tmp/lt/debug/deps/executor_decision-ff5ddce7fac1b28a)
+
+running 29 tests
+test attachment_denied_unknown_arg ... ok
+test draft_session_allows_observe ... ok
+test body_tainted_recipient_trusted_blocks ... ok
+test collect_then_block_both_to_and_body ... ok
+test draft_session_denies_commit_irreversible ... ok
+test file_create_contents_role_mismatch_denies ... ok
+test draft_session_tainted_routing_arg_still_blocks_not_denied ... ok
+test hard02_externaltainted_still_blocks ... ok
+test http_write_draft_session_denies_commit_irreversible ... ok
+test hard02_usertrusted_only_allows ... ok
+test http_write_empty_method_denies ... ok
+test http_write_invalid_method_denies ... ok
+test http_write_miscased_method_denies ... ok
+test http_write_tainted_garbage_method_denies ... ok
+test http_write_valid_method_tainted_body_still_blocks ... ok
+test http_write_valid_method_tainted_url_still_blocks ... ok
+test http_write_valid_post_clean_body_allowed ... ok
+test http_write_valid_put_clean_body_allowed ... ok
+test matching_role_tainted_still_blocks ... ok
+test non_live_session_allows_observe ... ok
+test role_none_at_role_checked_slot_denies ... ok
+test tainted_body_blocks ... ok
+test non_live_session_denies_commit_irreversible_in_all_four_states ... ok
+test role_mismatch_denies ... ok
+test unknown_handle_returns_denied ... ok
+test untainted_to_arg_returns_allowed ... ok
+test tainted_cc_and_bcc_also_block ... ok
+test tainted_content_sensitive_arg_blocks ... ok
+test tainted_to_arg_blocks_with_verbatim_record_payload ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/policy_gate.rs (/tmp/lt/debug/deps/policy_gate-e524dfcc0feb1bae)
+
+running 4 tests
+test permitted_clean_node_is_allowed ... ok
+test policy_denied_sink_is_a_distinct_policy_deny_not_a_block ... ok
+test policy_deny_fires_before_i2_on_a_doubly_offending_node ... ok
+test permissive_policy_does_not_weaken_the_i2_taint_block ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/lt/debug/deps/llm_planner-5b1c1274daa8e335)
+
+running 14 tests
+test tests::build_planner_prompt_emits_task_instruction_verbatim_when_some ... ok
+test tests::build_planner_prompt_contains_every_handle_id_and_slot_hint ... ok
+test tests::build_planner_prompt_instructs_at_most_one_arg_per_purpose ... ok
+test tests::build_planner_prompt_never_leaks_sink_arg_literal_sentinels ... ok
+test tests::build_planner_prompt_omits_instruction_section_when_none ... ok
+test tests::handle_label_key_set_has_no_literal_field ... ok
+test tests::build_tool_schema_value_id_enum_equals_offered_handles ... ok
+test tests::parse_planner_response_err_for_malformed_json ... ok
+test tests::parse_planner_response_err_for_unknown_sink ... ok
+test tests::parse_planner_response_err_for_unoffered_handle ... ok
+test tests::planner_request_key_set_has_no_literal_field ... ok
+test tests::parse_planner_response_ok_for_valid_response ... ok
+test tests::planner_request_round_trips_through_serde_json ... ok
+test tests::planner_response_round_trips_through_serde_json ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/lt/debug/deps/runtime_core-d15fb1daf18885a2)
+
+running 22 tests
+test executor_decision::tests::policy_deny_code_and_display ... ok
+test event::tests::anchors_empty_event_serializes_byte_identical_and_round_trips ... ok
+test executor_decision::tests::invalid_method_code_and_display ... ok
+test executor_decision::tests::slot_type_mismatch_code_and_display ... ok
+test event::tests::derivation_event_payload_round_trips ... ok
+test policy::tests::allowed_sink_permits_that_sink_and_denies_another ... ok
+test event::tests::sink_blocked_event_combined_digest_round_trips ... ok
+test policy::tests::allow_all_permits_production_sinks_with_no_arg_constraints ... ok
+test policy::tests::broker_default_permits_git_push ... ok
+test policy::tests::broker_default_permits_http_request_write ... ok
+test policy::tests::broker_default_permits_the_nine_production_sinks_and_denies_unlisted ... ok
+test policy::tests::coarse_arg_constraint_permits_matching_and_denies_non_matching ... ok
+test policy::tests::default_fail_closed_is_empty ... ok
+test policy::tests::empty_arg_constraint_allowlist_denies_everything ... ok
+test policy::tests::empty_policy_denies_every_sink ... ok
+test policy::tests::host_suffix_bypass_is_denied ... ok
+test policy::tests::path_traversal_escape_is_denied ... ok
+test policy::tests::policy_deny_kind_constraint_tags_are_stable ... ok
+test policy::tests::scheme_qualified_host_prefix_permits_at_boundary ... ok
+test policy::tests::textual_prefix_without_boundary_is_denied ... ok
+test policy::tests::serde_round_trips_through_json ... ok
+test policy::tests::unconstrained_arg_on_allowed_sink_is_permitted ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/intent_taint.rs (/tmp/lt/debug/deps/intent_taint-98489216b0a18172)
+
+running 12 tests
+test caprun_intent_serde_round_trip ... ok
+test is_untrusted_email_raw_returns_true ... ok
+test caprun_intent_unknown_kind_fails_deserialization ... ok
+test is_untrusted_exec_raw_returns_true ... ok
+test is_untrusted_external_untrusted_returns_true ... ok
+test is_untrusted_http_raw_returns_true ... ok
+test is_untrusted_llm_generated_returns_true ... ok
+test is_untrusted_local_workspace_returns_false ... ok
+test is_untrusted_path_raw_returns_true ... ok
+test is_untrusted_pdf_raw_returns_true ... ok
+test is_untrusted_user_trusted_returns_false ... ok
+test is_untrusted_worker_extracted_returns_true ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/task2_types.rs (/tmp/lt/debug/deps/task2_types-55c3b03c5966ef27)
+
+running 7 tests
+test effect_is_three_variant_enum ... ok
+test executor_decision_has_not_implemented_variant ... ok
+test executor_decision_has_all_variants ... ok
+test plan_node_construction ... ok
+test value_node_has_literal_provenance_taint_fields ... ok
+test blocked_decision_carries_taint_and_provenance_chain ... ok
+test value_node_serde_round_trip_preserves_taint ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/types_compile.rs (/tmp/lt/debug/deps/types_compile-b392aa5e7ffa4886)
+
+running 13 tests
+test all_domain_types_compose_in_a_plan_node ... ok
+test artifact_ref_constructs ... ok
+test artifact_constructs_and_round_trips ... ok
+test provenance_has_provenance_chain_field ... ok
+test event_constructs_and_uses_taint_label_from_plan_node ... ok
+test intent_constructs_and_round_trips ... ok
+test value_id_is_opaque_handle_with_no_literal_or_taint ... ok
+test session_constructs_and_round_trips ... ok
+test value_id_serde_round_trip ... ok
+test value_record_carries_literal_taint_provenance_chain ... ok
+test value_record_origin_role_defaults_to_none_for_pre_field_json ... ok
+test value_node_taint_survives_serde_round_trip ... ok
+test value_record_origin_role_serde_round_trip ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/tmp/lt/debug/deps/sandbox-2019302a486d92a5)
+
+running 1 test
+test tests::noop_on_macos_does_not_panic ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/confine-probe.rs (/tmp/lt/debug/deps/confine_probe-8f4372e5ef7658e3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/api_spike.rs (/tmp/lt/debug/deps/api_spike-862d83ed8aa014fd)
+
+running 1 test
+test spike::seccompiler_deny_rule_compiles_and_converts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/confinement_integration.rs (/tmp/lt/debug/deps/confinement_integration-aa4408c47cce381c)
+
+running 4 tests
+[sandbox] Landlock status: [sandbox] Landlock status: FullyEnforcedFullyEnforced
+
+[sandbox] Landlock status: FullyEnforced
+[sandbox] Landlock status: FullyEnforced
+[confine-probe] confinement applied, attempting op: exec
+[confine-probe] exec: correctly blocked (errno=1)
+[confine-probe] confinement applied, attempting op: fs
+[confine-probe] confinement applied, attempting op: net
+[confine-probe] confinement applied, attempting op: smtp
+[confine-probe] net: correctly blocked (errno=1[confine-probe] fs: correctly blocked on /etc/passwd (errno=)
+[confine-probe] smtp: attempting connect() to 13203.0.113.3:1025)
+
+[confine-probe] smtp: correctly blocked (errno=1, addr=203.0.113.3:1025)
+test negative_exec ... ok
+test negative_net ... ok
+test negative_net_smtp_mailpit ... ok
+test negative_fs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/exec_child_confinement.rs (/tmp/lt/debug/deps/exec_child_confinement-e87d22de8b25c53a)
+
+running 4 tests
+test exec_child_confinement_guard_binary_present ... ok
+test linux::exec_child_benign_workspace_write_and_legitimate_execve_succeed ... ok
+test linux::exec_child_fs_escape_denied ... ok
+test linux::exec_child_net_deny_persists_across_execve ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+   Doc-tests adapter_fs
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests brokerd
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests caprun_planner
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests executor
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests llm_planner
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests runtime_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sandbox
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Composed Linux verification suite PASSED (Mailpit + mock GitHub).
+Cleaning up sidecars (caprun-compose-mailpit, caprun-compose-mock-github) ...
