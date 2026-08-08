@@ -12,10 +12,10 @@
 //! COMPOSE_VERIFY_CMD='cargo build --workspace && cargo test -p caprun --test live_acceptance_v1_10_cli --features live-proof-fixtures,mock-egress-ca' bash scripts/compose-verify.sh
 //! ```
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
 use runtime_core::event::Event;
 use runtime_core::executor_decision::SinkBlockedAnchor;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use uuid::Uuid;
 
 const LIVE_07_DRIVER: &str = "caprun run safe-coding-workflow (CLI multi-node, one Session)";
@@ -27,7 +27,11 @@ fn attributed_process_exit<'a>(
     anchor: &SinkBlockedAnchor,
     process_events: &'a [Event],
 ) -> &'a Event {
-    assert_eq!(process_events.len(), 2, "exactly two process exits required");
+    assert_eq!(
+        process_events.len(),
+        2,
+        "exactly two process exits required"
+    );
     assert_eq!(
         process_events
             .iter()
@@ -171,7 +175,10 @@ mod linux {
             git(&workspace, &["config", "user.name", "caprun-live"]);
             git(&workspace, &["config", "user.email", "live@caprun.test"]);
             git(&workspace, &["add", "-A"]);
-            git(&workspace, &["commit", "-q", "-m", "initial LIVE-07 fixture"]);
+            git(
+                &workspace,
+                &["commit", "-q", "-m", "initial LIVE-07 fixture"],
+            );
             Self {
                 root,
                 workspace_file,
@@ -263,7 +270,10 @@ mod linux {
         child: &mut Child,
         audit_db: PathBuf,
     ) -> thread::JoinHandle<Result<String, String>> {
-        let stdout = child.stdout.take().expect("caprun run stdout must be piped");
+        let stdout = child
+            .stdout
+            .take()
+            .expect("caprun run stdout must be piped");
         thread::spawn(move || {
             let audit = audit_db.to_string_lossy().into_owned();
             let mut transcript = String::new();
@@ -319,7 +329,9 @@ mod linux {
             .prepare("SELECT payload FROM events WHERE session_id = ?1 AND event_type = ?2")
             .expect("prepare event payload query");
         statement
-            .query_map(rusqlite::params![session_id, event_type], |row| row.get::<_, String>(0))
+            .query_map(rusqlite::params![session_id, event_type], |row| {
+                row.get::<_, String>(0)
+            })
             .expect("query event payloads")
             .map(|row| {
                 serde_json::from_str(&row.expect("read event payload"))
@@ -368,7 +380,10 @@ mod linux {
         // spawn()'s result would orphan the process and leave `child` a Command.
         let mut child = command.spawn().expect("spawn real caprun LIVE-07 driver");
 
-        let stderr = child.stderr.take().expect("caprun run stderr must be piped");
+        let stderr = child
+            .stderr
+            .take()
+            .expect("caprun run stderr must be piped");
         let stderr_reader = thread::spawn(move || {
             let mut text = String::new();
             BufReader::new(stderr)
@@ -379,9 +394,9 @@ mod linux {
         let sidecar = drive_external_confirm_and_grant(&mut child, layout.audit_db.clone());
         let status = child.wait().expect("wait for caprun run");
         let sidecar_result = sidecar.join();
-        let stderr = stderr_reader.join().unwrap_or_else(|_| {
-            "<stderr reader panicked>".to_string()
-        });
+        let stderr = stderr_reader
+            .join()
+            .unwrap_or_else(|_| "<stderr reader panicked>".to_string());
         let stdout = match sidecar_result {
             Ok(Ok(stdout)) => stdout,
             Ok(Err(error)) => panic!("sidecar failed: {error}\nstderr:\n{stderr}"),
@@ -442,7 +457,10 @@ mod linux {
         // Bind the spawned Child (see LIVE-07 note).
         let mut child = command.spawn().expect("spawn real caprun LIVE-08 driver");
 
-        let stderr = child.stderr.take().expect("caprun run stderr must be piped");
+        let stderr = child
+            .stderr
+            .take()
+            .expect("caprun run stderr must be piped");
         let stderr_reader = thread::spawn(move || {
             let mut text = String::new();
             BufReader::new(stderr)
@@ -455,9 +473,9 @@ mod linux {
         let sidecar = drive_external_confirm_and_grant(&mut child, layout.audit_db.clone());
         let status = child.wait().expect("wait for caprun run");
         let sidecar_result = sidecar.join();
-        let stderr = stderr_reader.join().unwrap_or_else(|_| {
-            "<stderr reader panicked>".to_string()
-        });
+        let stderr = stderr_reader
+            .join()
+            .unwrap_or_else(|_| "<stderr reader panicked>".to_string());
         let stdout = match sidecar_result {
             Ok(Ok(stdout)) => stdout,
             Ok(Err(error)) => panic!("sidecar failed: {error}\nstderr:\n{stderr}"),
@@ -479,22 +497,26 @@ mod linux {
         assert_eq!(session_ids.len(), 1, "LIVE-08 must use one sibling Session");
         let session_id = session_ids[0];
         assert_audit_passed(session_id, &layout.audit_db);
-        assert_eq!(count_events(&layout.audit_db, session_id, "process_exited"), 1);
-        assert_eq!(count_events(&layout.audit_db, session_id, "github_pr_succeeded"), 0);
-        let process_events = events_of_type(&layout.audit_db, session_id, "process_exited");
-        assert_eq!(process_events.len(), 1, "unique genuine process root required");
-        let process_event_id = process_events[0].id;
+        assert_eq!(
+            count_events(&layout.audit_db, session_id, "github_pr_succeeded"),
+            0
+        );
         let matching: Vec<_> = events_of_type(&layout.audit_db, session_id, "sink_blocked")
             .into_iter()
             .flat_map(|event| event.anchors)
             .filter(|anchor| anchor.sink.0 == "github.pr" && anchor.arg == "body")
             .collect();
-        assert_eq!(matching.len(), 1, "exactly one durable github.pr/body anchor required");
+        assert_eq!(
+            matching.len(),
+            1,
+            "exactly one durable github.pr/body anchor required"
+        );
         let anchor = &matching[0];
         assert!(!anchor.taint.is_empty(), "blocked body must carry taint");
         assert!(anchor.taint.iter().any(|label| label.is_untrusted()));
-        assert_eq!(anchor.provenance_chain.first(), Some(&process_event_id));
-        assert_eq!(anchor.read_event_id, process_event_id);
-        assert_eq!(anchor.read_event_id, anchor.provenance_chain[0]);
+        let process_events = events_of_type(&layout.audit_db, session_id, "process_exited");
+        let process_event = attributed_process_exit(anchor, &process_events);
+        assert_eq!(process_event.id, anchor.read_event_id);
+        assert_eq!(process_event.id, anchor.provenance_chain[0]);
     }
 }
