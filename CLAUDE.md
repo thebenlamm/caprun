@@ -21,21 +21,30 @@ cargo test -p brokerd audit_dag            # single crate / single test target
 
 ### Linux-only security tests (critical)
 
-All v0 security claims are **Linux-only** (Landlock + seccomp-bpf + no_new_privs + rlimits). The dev machine is a Mac; macOS paths are `#[cfg(not(target_os = "linux"))]` no-op stubs, and all enforcement / negative-assertion / e2e tests are `#[cfg(target_os = "linux")]`. **`cargo test` on macOS shows these as "0 passed" — that is expected, not a gap.** Do not "fix" it by removing the cfg gates.
+All v0 security claims are **Linux-only** (Landlock + seccomp-bpf + no_new_privs + rlimits). Non-Linux paths are `#[cfg(not(target_os = "linux"))]` no-op stubs, and all enforcement / negative-assertion / e2e tests are `#[cfg(target_os = "linux")]`. **`cargo test` on a non-Linux host shows these as "0 passed" — that is expected, not a gap.** Do not "fix" it by removing the cfg gates.
 
-To actually run them from the Mac (Colima installed):
+**The dev box cannot run them. Provision AWS EC2 instead.** (Updated 2026-08-09;
+this section previously described a Mac + Colima setup, which is stale.) The
+current dev box is native Linux (kernel 6.8, Landlock present, cargo installed)
+but is a **constrained device with no Docker, and Docker cannot be installed on
+it**; `sudo` requires a password, so no root-requiring setup is available either.
+Both authoritative harnesses need Docker, and the mock-GitHub sidecar needs a
+**public-range IP** (`203.0.113.0/24`) because the broker's `ssrf_check` rejects
+loopback/RFC1918 — so even a Docker-free native-sidecar workaround would need
+CAP_NET_ADMIN. There is no local path.
 
-```bash
-colima start
-docker run --rm \
-  --security-opt seccomp=unconfined \      # required: default profile blocks landlock()/seccomp() syscalls
-  -v "$PWD":/work -w /work \
-  -e CARGO_TARGET_DIR=/tmp/lt \            # keep Linux artifacts out of host target/
-  rust:1 \
-  cargo test --workspace --no-fail-fast
-```
+So: spin up an EC2 Linux host, run the verification there, retain the raw logs
+with SHA-256, tear the host down. Precedent — Phase 51's authoritative proof ran
+on a temporary `c7i.4xlarge` (Ubuntu 24.04) tagged `Project=caprun`. Record
+host/OS/Docker version/git commit/timestamps in the evidence file, because a
+torn-down host cannot be re-inspected. Landlock needs kernel ≥5.13.
 
-No `--privileged` — the confinement stack is fully unprivileged. Landlock needs kernel ≥5.13.
+Runs *without* Docker, and therefore fine on the dev box: `./scripts/check-invariants.sh`
+(Gates 1–6), `sha256sum` evidence re-binding, and `git diff` drift checks.
+
+On EC2, the container itself takes no `--privileged` — the confinement stack is
+fully unprivileged; only `--security-opt seccomp=unconfined` is required, because
+the default profile blocks the `landlock()`/`seccomp()` syscalls under test.
 
 **From Phase 16 onward, ALL Linux verification goes through
 `scripts/mailpit-verify.sh` — never the bare `docker run rust:1` recipe
@@ -63,9 +72,9 @@ discovered and deleted 2026-07-20. Always use the ephemeral
 `compose-verify.sh` already do) unless you also wire the volume into
 `scripts/docker-cache.sh`'s policy (name it `caprun-*`, keep it to one
 volume, `scripts/docker-cache.sh clean` when done) — see README.md "Docker
-cache policy". This is scoped to this repo's own volumes only; never touch
-Colima/Lima VM-level settings (disk size, VM recreation) — that VM is
-shared with other projects and is managed outside this repo.
+cache policy". This is scoped to this repo's own volumes only. On an ephemeral
+EC2 verification host the whole instance goes away on teardown, so the rule
+matters most for any host that is kept alive across runs.
 
 ## Architecture
 
