@@ -331,6 +331,26 @@ Plans:
 > independent evidence review plus human checkpoint approved the record. The disclosed
 > `OPENAI_API_KEY`-gated skips are not part of the LIVE-07/LIVE-08 acceptance claim.
 
+### Phase 51.1: Grant/Audit Atomicity (CR-01) (INSERTED)
+
+**Goal**: A `github.pr` capability can never become durable without its `github_grant_authorized` audit event — the grant row and its event commit or roll back together
+**Depends on**: Phase 51 (CR-01 was found by Phase 51's code review and independent verification)
+**Requirements**: CR-01 (from `51-SECURITY.md` AR-07, `51-REVIEW.md`, `51-VERIFICATION.md` warning CR-01)
+**Success Criteria** (what must be TRUE):
+
+  1. `record_github_grant` (`crates/brokerd/src/audit.rs:542-564`) performs the `session_grants` insert and its conditional `append_event` inside ONE `TransactionBehavior::Immediate` transaction, committing only after the append succeeds — `append_event` appends at the locked durable head without opening a nested transaction
+  2. A fault-injection regression proves an `append_event` failure rolls back `session_grants`, and that a retry then yields EXACTLY one grant row and EXACTLY one `github_grant_authorized` event (the uncovered error path named in `51-VERIFICATION.md`)
+  3. `has_github_grant` cannot observe a grant whose authorization event is absent from the hash chain
+  4. HARDEN-02 tail-truncation detection is intact — the verifier and MAC functions are byte-unchanged, and no added/removed line under `crates/brokerd/src/` touches `read_event_id` or `provenance_chain` (the I2/M7 provenance graph stays un-unified with the causal chain)
+  5. A fresh non-self adversarial code-trace of the landed diff returns 0 BLOCKER and 0 unresolved MAJOR before the change is folded
+  6. `check-invariants.sh` Gates 1–6 stay green; no `Cargo.toml`/`Cargo.lock` change, no new `mint_from_*` site, no raw effect path
+
+**Notes**: No new design gate required — `DESIGN-GATE-RECORD-v1.10.md` already CLEARED the audit append-at-head concurrency gate, and that trace explicitly examined `record_github_grant` (obligations 1 and 5, confirming it continues through the choke point at `audit.rs:564`). Secondary non-blocking cleanups in scope: the stale 19-vs-45 append-site comment (`audit.rs:1033-1037`, AR-05) and the overstated atomicity comment (`server.rs:1044-1049`, AR-06). Fix and its regression are host-runnable (SQLite only, no sinks, no Docker); the full-workspace regression batches onto the same EC2 run as Phase 52.
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 51.1 to break down)
+
 ### Phase 52: Minimal Linux Packaging
 
 **Goal**: A design partner has a documented minimal Linux install path that co-locates the three sibling binaries and lists required env/credentials

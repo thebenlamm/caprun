@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.10
 milestone_name: Multi-step Safe Coding Agent Loop
-current_phase: 52
-current_phase_name: Minimal Linux Packaging
+current_phase: 51.1
+current_phase_name: Grant/Audit Atomicity (CR-01)
 status: planning
-stopped_at: "Phase 51 verified complete (4/4 must-haves). Real-Linux scoped LIVE-07/LIVE-08 and full composed workspace gates passed; retained evidence was independently reviewed and human-approved. Ready to plan Phase 52."
-last_updated: "2026-08-09T03:29:57.424Z"
+stopped_at: Phase 51 verified complete (4/4 must-haves) and secured (51-SECURITY.md, threats_open 0 across a 60-threat plan-time register). Inserted Phase 51.1 for CR-01, the one high-severity finding that arose outside that register - record_github_grant commits session_grants outside its audit append, so a failed-then-retried append can leave an active github.pr grant with no authorization event in the tamper-evident chain. Fix and its fault-injection regression are host-runnable; the full-workspace regression batches onto the same EC2 run as Phase 52.
+last_updated: "2026-08-09T05:19:15.311Z"
 last_activity: 2026-08-09
-last_activity_desc: Phase 51 complete, transitioned to Phase 52
+last_activity_desc: Phase 51 secured; Phase 51.1 inserted for CR-01
 progress:
-  total_phases: 5
+  total_phases: 6
   completed_phases: 5
   total_plans: 17
   completed_plans: 17
@@ -23,14 +23,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-23)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended through v1.9 with authorized write egress (git.push + http-write), minimal per-session policy (never overrides I2), and thin CLI/audit surfaces — without weakening I0/I1/I2 or adding any raw `EffectRequest` path. v1.10 makes the Safe Coding Agent path a single Session, CLI-driven multi-node stream.
-**Current focus:** Phase 52 — Minimal Linux Packaging
+**Current focus:** Phase 51.1 — Grant/Audit Atomicity (CR-01)
 
 ## Current Position
 
-Phase: 52 — Minimal Linux Packaging
+Phase: 51.1 — Grant/Audit Atomicity (CR-01) (INSERTED, urgent)
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-08-09 — Phase 51 complete, transitioned to Phase 52
+Last activity: 2026-08-09 — Phase 51 secured; Phase 51.1 inserted for CR-01
+Next after 51.1: Phase 52 — Minimal Linux Packaging (unchanged scope, PKG-01)
 
 Progress: [██████████] Phase 51 verified complete — LIVE-07/LIVE-08 Complete, Phase 51 windows 1/2/3 fixed, retained real-Linux evidence approved
 
@@ -175,6 +176,10 @@ separate as a distinct design-partner deliverable.
 - The DESIGN-gate adversarial-trace spawn is ORCHESTRATOR-owned, not a
   gsd-executor (fresh, non-self) — the [[fresh-context-adversarial-review]]
   guardrail that has caught real BLOCKER/MAJOR defects through v1.9.
+
+### Roadmap Evolution
+
+- Phase 51.1 inserted after Phase 51: Grant/Audit Atomicity (CR-01) — record_github_grant can durably authorize github.pr with no authorization event in the tamper-evident chain (URGENT)
 
 ## Session Continuity
 
