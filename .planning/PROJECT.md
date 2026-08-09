@@ -44,7 +44,7 @@ v1.8 delivered 3 of the 4 originally-scoped sinks: `git.commit` (broker-spawned 
 
 ## Current State
 
-**v1.10 IN PROGRESS — Multi-step Safe Coding Agent Loop (started 2026-07-23).** Prior: **v1.9 shipped 2026-07-18** — design-partner-runnable security substrate with 5 real sinks + write egress (`http.request` GET/POST/PUT, `git.push`), minimal per-session policy (never overrides I2), thin `caprun run`/`caprun audit` CLI. Full authorized-write loop proven live (compose-verify 696/0) but as a hybrid composition — multi-node chain not yet CLI-driven. Deferred (non-blocking, carried forward): git.push 10MB pack-cap + leg-5b scrub hardening.
+**v1.10 IN PROGRESS — Phase 51 verified complete; Phase 52 packaging remains (updated 2026-08-09).** The Safe Coding Agent path is now a real CLI-driven multi-node stream in one Session, with mid-loop confirm continuity and a non-hybrid real-Linux DONE proof for LIVE-07/LIVE-08. Retained scoped evidence passed 4/4, the full composed workspace gate passed, hashes were independently reconciled, and the human evidence checkpoint was approved. Phase 52 owns the remaining minimal Linux packaging/install path. CR-01 (transactional persistence of `session_grants` with its authorization audit event) is a high-priority follow-up; it does not invalidate the retained one-shot LIVE proof. Prior: **v1.9 shipped 2026-07-18**. Deferred (non-blocking, carried forward): git.push 10MB pack-cap + leg-5b scrub hardening.
 
 Prior: v1.8 Git/GitHub Adapters — Effect Breadth II (git.commit, http.request GET, github.pr) — 2026-07-18; v1.7 Effect Breadth I (process.exec + fs breadth) — 2026-07-18; v1.6 Security Hardening (close the residuals) — 2026-07-17; v1.5 Slot-Type Binding (T2) — 2026-07-12.
 
@@ -381,6 +381,12 @@ assessment). PLAN.md wins on any conflict.
 ## Requirements
 
 ### Validated
+
+Validated in **Phase 51 — Non-hybrid LIVE Proof** (2026-08-09):
+
+- ✓ LIVE-07: real `caprun run safe-coding-workflow` executed the edit → test → commit → confirmed push → PR path in one Session on real Linux, with successful push/PR audit events and `verify_chain` true.
+- ✓ LIVE-08: the sibling real-CLI path produced an exact policy-permitted `github.pr`/`body` I2 Block rooted through durable `read_event_id` provenance on the genuine `process.exec` exit, with no PR effect and `verify_chain` true.
+- ✓ Phase 51 DONE gate: scoped LIVE suite 4/4 green, full composed workspace regression green, evidence hashes matched, coverage skips disclosed, independent re-review `APPROVE`, and human evidence checkpoint approved.
 
 Shipped in **v1.9 — Authorized Egress + Policy & Audit Surface** (2026-07-18). Full traceability
 archived in `.planning/milestones/v1.9-REQUIREMENTS.md`.
