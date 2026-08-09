@@ -347,9 +347,20 @@ Plans:
 
 **Notes**: No new design gate required — `DESIGN-GATE-RECORD-v1.10.md` already CLEARED the audit append-at-head concurrency gate, and that trace explicitly examined `record_github_grant` (obligations 1 and 5, confirming it continues through the choke point at `audit.rs:564`). Secondary non-blocking cleanups in scope: the stale 19-vs-45 append-site comment (`audit.rs:1033-1037`, AR-05) and the overstated atomicity comment (`server.rs:1044-1049`, AR-06). Fix and its regression are host-runnable (SQLite only, no sinks, no Docker); the full-workspace regression batches onto the same EC2 run as Phase 52.
 
-Plans:
+**Plans:** 3 plans
 
-- [ ] TBD (run /gsd-plan-phase 51.1 to break down)
+Plans:
+**Wave 1**
+
+- [ ] 51.1-01-PLAN.md — Tracer: RED fault-injection oracle, then the one-`IMMEDIATE`-transaction fix to `record_github_grant`, plus the AR-05/AR-06 comment cleanups (criteria 1, 2, 3)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 51.1-02-PLAN.md — Mechanical non-regression Gates A/A2/B/C against the pre-fix reference, plus the scoped Docker-free host regression and the unrun-regression disclosure (criteria 4, 6)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 51.1-03-PLAN.md — Adversarial trace brief, then the blocking fresh non-self external code-trace of the landed diff (criterion 5)
 
 ### Phase 52: Minimal Linux Packaging
 
