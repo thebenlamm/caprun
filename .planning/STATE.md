@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.10
 milestone_name: Multi-step Safe Coding Agent Loop
-current_phase: 51
-current_phase_name: non-hybrid-live-proof-v1-10-done
-status: executing
-stopped_at: Plan 51-04 STOPPED at Task 1 — scoped gate executed 3x on real-Linux EC2, rc=101 each time; 4 defects found (2 fixed, D1/D2 TCB blocking). Gap-closure plans 51-05..51-08 planned and verified; 51-04 re-runs unchanged afterwards.
-last_updated: "2026-08-04T20:31:51.941Z"
-last_activity: 2026-08-04
-last_activity_desc: Phase 51 execution started
+current_phase: 52
+current_phase_name: Minimal Linux Packaging
+status: planning
+stopped_at: "Phase 51 verified complete (4/4 must-haves). Real-Linux scoped LIVE-07/LIVE-08 and full composed workspace gates passed; retained evidence was independently reviewed and human-approved. Ready to plan Phase 52."
+last_updated: "2026-08-09T03:29:57.424Z"
+last_activity: 2026-08-09
+last_activity_desc: Phase 51 complete, transitioned to Phase 52
 progress:
   total_phases: 5
-  completed_phases: 4
-  total_plans: 16
-  completed_plans: 10
+  completed_phases: 5
+  total_plans: 17
+  completed_plans: 17
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-23)
 
 **Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended through v1.9 with authorized write egress (git.push + http-write), minimal per-session policy (never overrides I2), and thin CLI/audit surfaces — without weakening I0/I1/I2 or adding any raw `EffectRequest` path. v1.10 makes the Safe Coding Agent path a single Session, CLI-driven multi-node stream.
-**Current focus:** Phase 51 — non-hybrid-live-proof-v1-10-done
+**Current focus:** Phase 52 — Minimal Linux Packaging
 
 ## Current Position
 
-Phase: 51 (non-hybrid-live-proof-v1-10-done) — EXECUTING
-Plan: 5 of 8 (51-01..51-03 complete; 51-04 STOPPED at Task 1; 51-05..51-08 planned, not started)
-Status: Ready to execute (gap closure 51-05..51-08)
-Last activity: 2026-08-04 — 51-04 executed on real Linux and failed; D1–D4 gap closure planned
+Phase: 52 — Minimal Linux Packaging
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-08-09 — Phase 51 complete, transitioned to Phase 52
 
-Progress: [████████░░] Phase 51 proof gate OPEN — LIVE-07/LIVE-08 Pending, windows 1/2/3 open, no 51-LIVE-EVIDENCE.md
+Progress: [██████████] Phase 51 verified complete — LIVE-07/LIVE-08 Complete, Phase 51 windows 1/2/3 fixed, retained real-Linux evidence approved
 
 ## Performance Metrics
 
@@ -179,8 +179,8 @@ separate as a distinct design-partner deliverable.
 ## Session Continuity
 
 Last session: 2026-08-04
-Stopped at: Plan 51-04 STOPPED at Task 1. **Supersedes the earlier "no proof command has run" note — that is out of date.** The scoped LIVE-07/08 gate WAS executed three times on a provisioned real-Linux EC2 host (Ubuntu 24.04, kernel 6.17.0-1019-aws, Docker 29.7.1) through an unmodified `scripts/compose-verify.sh`, exit status captured before the tee: **rc=101 each time.** Instance/keypair/SG torn down. Two defects fixed en route (`2771948` cfg-linux test module never compiled; `1697766` process.exec ran outside the workspace). Two TCB defects BLOCK the gate and were deliberately not fixed — D1 (audit hash chain forks after any external append; deterministic, reproduced on macOS in 0.01s) and D2 (append is not transactional; note the stated "no busy_timeout" mechanism is wrong — rusqlite 0.32.1 sets 5000ms unconditionally at `inner_connection.rs:119`, verified). Plus D3 (LIVE-08's real attribution assertions have never executed once) and D4 (harness discards broker stderr on the failure path). Task 2 never ran, so there is **no v1.0–v1.9 regression evidence** from that session. Gap-closure plans 51-05..51-08 are written and passed the plan-checker; 51-04 then re-runs UNCHANGED.
-Resume file: .planning/phases/51-non-hybrid-live-proof-v1-10-done/51-BLOCKING-DEFECTS.md (authoritative defect record) and .planning/HANDOFF.json (rewritten 2026-08-04T21:05Z; carries the working AWS profile `benlamm-projects`, the proven EC2 recipe, and the teardown record)
+Stopped at: Phase 51 verified complete on 2026-08-09. Scoped LIVE-07/LIVE-08 ran 4/4 green on real Linux, the full composed workspace gate passed, evidence hashes matched, and the human checkpoint was approved. CR-01 remains a high-priority follow-up but does not invalidate the existential proof.
+Resume file: .planning/phases/51-non-hybrid-live-proof-v1-10-done/51-VERIFICATION.md
 
 ## Operator Next Steps
 

@@ -187,7 +187,7 @@ Full detail archived in [`milestones/v1.9-ROADMAP.md`](milestones/v1.9-ROADMAP.m
 - [ ] **Phase 48: Plan-Stream Substrate** - Worker sequential multi-submit loop + opaque `output_value_id` handle bag on one Session with chain-head continuity
 - [x] **Phase 49: Deterministic Multi-step Coding Planner** - Scripted coding planner emits the edit→test→commit→push→PR node sequence over shipped sinks with trusted-intent args only (completed 2026-07-29)
 - [x] **Phase 50: CLI Multi-node Driver & Mid-loop Confirm Continuity** - `caprun run` drives the multi-node coding chain with honest stop semantics and same-Session Block-and-Hold confirm (completed 2026-07-29)
-- [ ] **Phase 51: Non-hybrid LIVE Proof (v1.10 DONE)** - CLI-driven success path + mid-loop I2 Block proven on real Linux with `verify_chain` true (no hybrid DONE claim)
+- [x] **Phase 51: Non-hybrid LIVE Proof (v1.10 DONE)** - CLI-driven success path + mid-loop I2 Block proven on real Linux with `verify_chain` true (no hybrid DONE claim) (completed 2026-08-09)
 - [ ] **Phase 52: Minimal Linux Packaging** - Documented design-partner install path co-locating the three sibling binaries + env/credential checklist
 
 ## Phase Details
@@ -298,7 +298,7 @@ Plans:
   3. In the same proof family, a mid-loop I2 Block is independently attributable: a genuinely tainted handle (non-stapled provenance root on a real read/exec event) occupies a sensitive sink arg (e.g. PR body and/or push refspec) under a policy-permitted sink; executor Blocks; `policy_deny` is not what fired; no effect of that node; chain remains `verify_chain` true
   4. Full-workspace regression green on real Linux via the authoritative compose-verify gate; no v1.0–v1.9 regression; `check-invariants.sh` green
 
-**Plans**: 8 plans
+**Plans**: 9 plans
 
 Plans:
 **Wave 1**
@@ -315,20 +315,21 @@ Plans:
 
 **Waves 5–8** *(gap closure — added 2026-08-04 after 51-04 executed on real Linux and failed rc=101 three times; see `51-BLOCKING-DEFECTS.md`)*
 
-- [ ] 51-05-PLAN.md — Wave 5: host-runnable RED regressions for D1 and D1+D2, plus D3/D4 harness repair (no Docker, no cfg-linux gate)
-- [ ] 51-06-PLAN.md — Wave 6: `DESIGN-audit-append-concurrency.md` design gate authorising the TCB fix
-- [ ] 51-07-PLAN.md — Wave 7: coordinated D1+D2 append-at-head fix as ONE atomic commit
-- [ ] 51-08-PLAN.md — Wave 8: fresh non-self ORCHESTRATOR-owned adversarial code-trace of the fix diff
+- [x] 51-05-PLAN.md — Wave 5: host-runnable RED regressions for D1 and D1+D2, plus D3/D4 harness repair (no Docker, no cfg-linux gate)
+- [x] 51-06-PLAN.md — Wave 6: `DESIGN-audit-append-concurrency.md` design gate authorising the TCB fix
+- [x] 51-07-PLAN.md — Wave 7: coordinated D1+D2 append-at-head fix as ONE atomic commit
+- [x] 51-08-PLAN.md — Wave 8: fresh non-self ORCHESTRATOR-owned adversarial code-trace of the fix diff
 
-**Wave 9** *(blocked on Wave 8 — the authoritative Docker proof, re-run UNCHANGED)*
+**Wave 9** *(blocked on Wave 8 — proof-oracle correction followed by the authoritative Docker proof)*
 
-- [ ] 51-04-PLAN.md — Wave 9: execute and retain the real-Linux scoped + full-workspace compose proof; reconcile evidence and status ledgers
+- [x] 51-09-PLAN.md — Wave 9: order-independent LIVE-08 attribution oracle bound to the durable `read_event_id`
+- [x] 51-04-PLAN.md — Wave 9: execute and retain the real-Linux scoped + full-workspace compose proof; reconcile evidence and status ledgers
 
-> **Phase 51 is NOT complete.** LIVE-07 and LIVE-08 remain Pending, broken windows
-> 1/2/3 remain open, and no `51-LIVE-EVIDENCE.md` exists. 51-04 stopped at Task 1;
-> Task 2 (full-workspace regression) never ran, so there is no v1.0–v1.9 regression
-> evidence yet. Plan 51-04's body is byte-unchanged — only its `wave`/`depends_on`
-> frontmatter was renumbered so the adversarial trace gates it.
+> **Phase 51 verified complete on 2026-08-09.** The retained real-Linux scoped run
+> passed LIVE-07, LIVE-08, the order-independence regression, and the guard (4/4);
+> the full composed workspace gate passed; all three evidence hashes matched; and the
+> independent evidence review plus human checkpoint approved the record. The disclosed
+> `OPENAI_API_KEY`-gated skips are not part of the LIVE-07/LIVE-08 acceptance claim.
 
 ### Phase 52: Minimal Linux Packaging
 
@@ -399,5 +400,5 @@ Plans:
 | 48. Plan-Stream Substrate | v1.10 | 2/2 | In Progress|  |
 | 49. Deterministic Multi-step Coding Planner | v1.10 | 2/2 | Complete    | 2026-07-29 |
 | 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 2/2 | Complete   | 2026-07-29 |
-| 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 3/4 | In Progress|  |
+| 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 9/9 | Complete    | 2026-08-09 |
 | 52. Minimal Linux Packaging | v1.10 | 0/? | Not started | - |
