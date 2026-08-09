@@ -43,6 +43,10 @@ Requirements for the v1.10 milestone. Each maps to exactly one roadmap phase (se
 
 - [x] **LIVE-08**: In the same proof family (same or sibling composed run), a mid-loop **I2 Block** is independently attributable: a genuinely tainted handle (non-stapled provenance root on a real read/exec event) occupies a sensitive sink arg (e.g. PR body and/or push refspec) under a **policy-permitted** sink; executor Blocks; `policy_deny` is not what fired; no effect of that node; chain remains `verify_chain` true. Distinct from a policy-deny control if one is included. Framing must not claim hybrid composition as CLI multi-step.
 
+### Audit Integrity
+
+- [ ] **CR-01**: A `github.pr` capability can never be durable while its `github_grant_authorized` event is absent from the tamper-evident chain. `record_github_grant` performs the `session_grants` insert and its conditional `append_event` in ONE `IMMEDIATE` transaction, committing only after the append succeeds, so an append failure rolls back the grant row and a retry yields exactly one grant row and exactly one authorization event. Proven by a fault-injection regression, not by inspection. Found by Phase 51's code review and independent verification (`51-REVIEW.md` CR-01, `51-VERIFICATION.md` warning CR-01, `51-SECURITY.md` AR-07 — accepted for Phase 51 only, with this as the mandatory follow-up). Must not weaken HARDEN-02 tail-truncation detection or unify the causal `parent_id` chain with the provenance `read_event_id` graph.
+
 ### Packaging
 
 - [ ] **PKG-01**: A minimal Linux design-partner install path: documented release build that co-locates `caprun`, `caprun-worker`, and `caprun-exec-launcher` (sibling `current_exe()` layout), plus env/credential checklist (`CAPRUN_*`, policy file, GitHub grant token as applicable). Thin install script acceptable; not cargo-dist/deb/snap productization. `cargo install --path cli/caprun` alone is **not** sufficient (misses exec-launcher).
@@ -100,13 +104,14 @@ Which phases cover which requirements. Filled by the roadmapper.
 | CONFIRM-01 | Phase 50 | Complete |
 | LIVE-07 | Phase 51 | Complete |
 | LIVE-08 | Phase 51 | Complete |
+| CR-01 | Phase 51.1 | Pending |
 | PKG-01 | Phase 52 | Pending |
 | HYG-02 | Phase 47 | Complete |
 
 **Coverage:**
 
-- v1 requirements: 13 total
-- Mapped to phases: 13/13 ✓
+- v1 requirements: 14 total
+- Mapped to phases: 14/14 ✓
 - Unmapped: 0
 
 ---

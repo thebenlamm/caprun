@@ -335,7 +335,7 @@ Plans:
 
 **Goal**: A `github.pr` capability can never become durable without its `github_grant_authorized` audit event — the grant row and its event commit or roll back together
 **Depends on**: Phase 51 (CR-01 was found by Phase 51's code review and independent verification)
-**Requirements**: CR-01 (from `51-SECURITY.md` AR-07, `51-REVIEW.md`, `51-VERIFICATION.md` warning CR-01)
+**Requirements**: CR-01
 **Success Criteria** (what must be TRUE):
 
   1. `record_github_grant` (`crates/brokerd/src/audit.rs:542-564`) performs the `session_grants` insert and its conditional `append_event` inside ONE `TransactionBehavior::Immediate` transaction, committing only after the append succeeds — `append_event` appends at the locked durable head without opening a nested transaction
