@@ -356,7 +356,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 51.1-02-PLAN.md — Mechanical non-regression Gates A/A2/B/C against the pre-fix reference, plus the scoped Docker-free host regression and the unrun-regression disclosure (criteria 4, 6)
+- [x] 51.1-02-PLAN.md — Mechanical non-regression Gates A/A2/B/C against the pre-fix reference, plus the scoped Docker-free host regression and the unrun-regression disclosure (criteria 4, 6)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
