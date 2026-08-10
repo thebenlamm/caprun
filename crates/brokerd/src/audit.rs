@@ -1041,8 +1041,10 @@ pub fn append_event(
 
     // Atomically upsert the MAC'd `chain_anchor` row for this session, under
     // the SAME already-held `conn` lock as the events INSERT above (v1.6
-    // Phase 28 Plan 04, HARDEN-02 D-04) — every one of the 19 production
-    // `append_event` call sites inherits this for free; NO second call site
+    // Phase 28 Plan 04, HARDEN-02 D-04) — all 45 production sites (2
+    // session-root, 39 chain-continuation, and 4 in-transaction; see
+    // `planning-docs/DESIGN-audit-append-concurrency.md` Appendix A) inherit
+    // this for free; NO second call site
     // is ever added anywhere else (28-RESEARCH.md Pitfall 4: a separate,
     // caller-invoked step could be skipped by a panic/early-return between
     // the two calls, reopening the truncation gap this table exists to

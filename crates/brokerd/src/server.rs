@@ -1041,12 +1041,11 @@ async fn evaluate_plan_node_and_record(
                 anyhow::anyhow!("blocked-literal write failed: {e}")
             })?;
         }
-        // The pending_confirmations checkpoint commits under the SAME
-        // lock as the sink_blocked event append + blocked-literal write
-        // — they succeed or fail together (T-10-02 / DESIGN Persistence
-        // contract): a sink_blocked event can never exist without its
-        // checkpoint, and no orphaned checkpoint without an anchoring
-        // block.
+        // The sink_blocked append, blocked-literal write, and checkpoint insert
+        // are mutex-serialized in this fixed order and fail closed before any
+        // response reaches the worker. They are NOT one SQL transaction:
+        // append_event commits before the later statements run. This is a
+        // known, accepted limitation rather than an atomicity guarantee.
         if let Some(pc) = &pending_confirmation {
             crate::confirmation::insert_pending_confirmation(&locked, key, pc).map_err(|e| {
                 eprintln!("[brokerd] pending_confirmations insert FAILED (fail-closed): {e}");
