@@ -352,7 +352,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 51.1-01-PLAN.md — Tracer: RED fault-injection oracle, then the one-`IMMEDIATE`-transaction fix to `record_github_grant`, plus the AR-05/AR-06 comment cleanups (criteria 1, 2, 3)
+- [x] 51.1-01-PLAN.md — Tracer: RED fault-injection oracle, then the one-`IMMEDIATE`-transaction fix to `record_github_grant`, plus the AR-05/AR-06 comment cleanups (criteria 1, 2, 3)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
