@@ -347,7 +347,7 @@ Plans:
 
 **Notes**: No new design gate required — `DESIGN-GATE-RECORD-v1.10.md` already CLEARED the audit append-at-head concurrency gate, and that trace explicitly examined `record_github_grant` (obligations 1 and 5, confirming it continues through the choke point at `audit.rs:564`). Secondary non-blocking cleanups in scope: the stale 19-vs-45 append-site comment (`audit.rs:1033-1037`, AR-05) and the overstated atomicity comment (`server.rs:1044-1049`, AR-06). Fix and its regression are host-runnable (SQLite only, no sinks, no Docker); the full-workspace regression batches onto the same EC2 run as Phase 52.
 
-**Plans:** 3 plans
+**Plans:** 3/3 plans complete
 
 Plans:
 **Wave 1**
