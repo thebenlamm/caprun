@@ -360,7 +360,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 51.1-03-PLAN.md — Adversarial trace brief, then the blocking fresh non-self external code-trace of the landed diff (criterion 5)
+- [x] 51.1-03-PLAN.md — Adversarial trace brief, then the blocking fresh non-self external code-trace of the landed diff (criterion 5)
 
 ### Phase 52: Minimal Linux Packaging
 
