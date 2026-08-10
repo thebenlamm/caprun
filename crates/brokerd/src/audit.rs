@@ -519,12 +519,11 @@ fn migrate_created_prs_schema(conn: &rusqlite::Connection) -> Result<()> {
 /// consult. Called ONLY from the human `caprun grant` action
 /// (`cli/caprun/src/main.rs`), NEVER from the worker.
 ///
-/// Two writes under the caller's connection:
-/// 1. `INSERT OR IGNORE` the `session_grants` row (`grant_type` "github.pr",
-///    `granted_at` rfc3339). `INSERT OR IGNORE` makes a repeated grant on the
-///    SAME session idempotent — no error, no duplicate capability (the
-///    PRIMARY KEY on `session_id` collapses it).
-/// 2. ONLY when the row was freshly inserted (`rows_affected == 1`), append an
+/// Both writes share one immediate transaction that commits only after the
+/// audit append succeeds. A failed append therefore rolls back the grant row,
+/// so the capability can never be durable without its authorization event.
+/// `INSERT OR IGNORE` keeps a repeated grant on the same session idempotent,
+/// and ONLY when the row was freshly inserted (`rows_affected == 1`) do we append an
 ///    OPAQUE `github_grant_authorized` Event (actor `grant:github.pr:{sid}`,
 ///    empty taint) chained on the session's current chain head via
 ///    `append_event`. Gating the event on the fresh insert keeps a replayed
@@ -539,7 +538,13 @@ pub fn record_github_grant(
     key: &[u8],
     session_id: &str,
 ) -> Result<()> {
-    let rows_affected = conn.execute(
+    // Present call sites use fresh, autocommit connections. A future caller
+    // already inside a transaction fails closed here rather than proceeding.
+    let tx = rusqlite::Transaction::new_unchecked(
+        conn,
+        rusqlite::TransactionBehavior::Immediate,
+    )?;
+    let rows_affected = tx.execute(
         "INSERT OR IGNORE INTO session_grants (session_id, grant_type, granted_at) \
          VALUES (?1, ?2, ?3)",
         rusqlite::params![session_id, "github.pr", chrono::Utc::now().to_rfc3339()],
@@ -548,7 +553,7 @@ pub fn record_github_grant(
     // Replay-suppression: only emit the authorize event on a FRESH grant.
     if rows_affected == 1 {
         let session_uuid = uuid::Uuid::parse_str(session_id)?;
-        let (parent_id, parent_hash) = match current_chain_head(conn, session_id)? {
+        let (parent_id, parent_hash) = match current_chain_head(&tx, session_id)? {
             Some((id, hash)) => (Some(id), Some(hash)),
             None => (None, None),
         };
@@ -561,8 +566,12 @@ pub fn record_github_grant(
             chrono::Utc::now(),
             vec![],
         );
-        append_event(conn, key, &event, parent_hash.as_deref())?;
+        // The existing autocommit check detects this enclosing boundary, so
+        // the append joins it at the locked durable head without nesting and
+        // still passes through the single audit-append choke point.
+        append_event(&tx, key, &event, parent_hash.as_deref())?;
     }
+    tx.commit()?;
     Ok(())
 }
 
