@@ -69,7 +69,12 @@ cargo test -p brokerd audit_dag
 
 # Architectural invariant gate (runs before code; exits non-zero on violation)
 ./scripts/check-invariants.sh
+
+# Install on Linux (build release binaries, co-locate the three required siblings)
+bash scripts/install-linux.sh
 ```
+
+The install command above is a thin convenience wrapper. See [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md#install-linux) — "Install (Linux)" — for the walkthrough, the manual-equivalent commands, and why `cargo install --path cli/caprun` alone is not sufficient.
 
 ### Linux-only security tests
 
@@ -123,6 +128,7 @@ caprun/
   scripts/
     check-invariants.sh   # Gate 1 (EffectRequest absent) + Gate 2 (runtime-core purity)
     docker-cache.sh       # caprun-* Docker volume retention policy (status/check/clean)
+    install-linux.sh      # minimal Linux source-build installer — co-locates caprun/caprun-worker/caprun-exec-launcher
   crates/
     runtime-core/         # pure types — no I/O
     sandbox/              # security boundary
@@ -131,6 +137,8 @@ caprun/
     executor/             # (after DESIGN docs) I2 enforcement
   cli/
     caprun/               # caprun + caprun-worker binaries, e2e tests
+    caprun-exec-launcher/ # separately packaged self-confining exec helper spawned by the broker
+    caprun-planner/       # optional LLM-sidecar planner — not part of the minimal deterministic install
   planning-docs/          # PLAN.md (source of truth), DESIGN-*.md
 ```
 
