@@ -74,8 +74,8 @@ DEST_FLAG=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --dest)
-            if [ $# -lt 2 ]; then
-                echo "FAIL — --dest requires a directory argument" >&2
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                echo "FAIL — --dest requires a non-empty directory argument" >&2
                 usage
                 exit 1
             fi
