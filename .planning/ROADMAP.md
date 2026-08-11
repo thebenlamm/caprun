@@ -373,7 +373,17 @@ Plans:
   2. An env/credential checklist covers `CAPRUN_*`, policy file, and GitHub grant token as applicable
   3. A thin install script (e.g. `scripts/install-linux.sh`) is acceptable; not cargo-dist/deb/snap productization
 
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 52-01-PLAN.md — Tracer: `scripts/install-linux.sh` end-to-end (build → stage → co-locate three siblings → verify) plus the GETTING-STARTED install walkthrough, manual equivalent, and `cargo install` insufficiency warning (criteria 1, 3)
+- [ ] 52-02-PLAN.md — Replace the stale CONFIGURATION surface: real verb/flag CLI, minimal policy example, and the three-tier operator env/credential checklist (criterion 2)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 52-03-PLAN.md — Narrow README layout/pointer update, cross-document consistency + phase regression gate, not-a-security-proof boundary statement, and the human sign-off (criteria 1, 2, 3)
 
 </details>
 
