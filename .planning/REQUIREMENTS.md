@@ -49,7 +49,7 @@ Requirements for the v1.10 milestone. Each maps to exactly one roadmap phase (se
 
 ### Packaging
 
-- [ ] **PKG-01**: A minimal Linux design-partner install path: documented release build that co-locates `caprun`, `caprun-worker`, and `caprun-exec-launcher` (sibling `current_exe()` layout), plus env/credential checklist (`CAPRUN_*`, policy file, GitHub grant token as applicable). Thin install script acceptable; not cargo-dist/deb/snap productization. `cargo install --path cli/caprun` alone is **not** sufficient (misses exec-launcher).
+- [x] **PKG-01**: A minimal Linux design-partner install path: documented release build that co-locates `caprun`, `caprun-worker`, and `caprun-exec-launcher` (sibling `current_exe()` layout), plus env/credential checklist (`CAPRUN_*`, policy file, GitHub grant token as applicable). Thin install script acceptable; not cargo-dist/deb/snap productization. `cargo install --path cli/caprun` alone is **not** sufficient (misses exec-launcher).
 
 ### Supply-Chain & Invariant Hygiene
 
@@ -105,7 +105,7 @@ Which phases cover which requirements. Filled by the roadmapper.
 | LIVE-07 | Phase 51 | Complete |
 | LIVE-08 | Phase 51 | Complete |
 | CR-01 | Phase 51.1 | Complete |
-| PKG-01 | Phase 52 | Pending |
+| PKG-01 | Phase 52 | Complete |
 | HYG-02 | Phase 47 | Complete |
 
 **Coverage:**

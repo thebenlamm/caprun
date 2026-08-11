@@ -188,7 +188,7 @@ Full detail archived in [`milestones/v1.9-ROADMAP.md`](milestones/v1.9-ROADMAP.m
 - [x] **Phase 49: Deterministic Multi-step Coding Planner** - Scripted coding planner emits the edit→test→commit→push→PR node sequence over shipped sinks with trusted-intent args only (completed 2026-07-29)
 - [x] **Phase 50: CLI Multi-node Driver & Mid-loop Confirm Continuity** - `caprun run` drives the multi-node coding chain with honest stop semantics and same-Session Block-and-Hold confirm (completed 2026-07-29)
 - [x] **Phase 51: Non-hybrid LIVE Proof (v1.10 DONE)** - CLI-driven success path + mid-loop I2 Block proven on real Linux with `verify_chain` true (no hybrid DONE claim) (completed 2026-08-09)
-- [ ] **Phase 52: Minimal Linux Packaging** - Documented design-partner install path co-locating the three sibling binaries + env/credential checklist
+- [x] **Phase 52: Minimal Linux Packaging** - Documented design-partner install path co-locating the three sibling binaries + env/credential checklist (completed 2026-08-11)
 
 ## Phase Details
 
@@ -373,7 +373,7 @@ Plans:
   2. An env/credential checklist covers `CAPRUN_*`, policy file, and GitHub grant token as applicable
   3. A thin install script (e.g. `scripts/install-linux.sh`) is acceptable; not cargo-dist/deb/snap productization
 
-**Plans:** 3 plans
+**Plans:** 3/3 plans complete
 
 Plans:
 **Wave 1**
@@ -442,4 +442,4 @@ Plans:
 | 49. Deterministic Multi-step Coding Planner | v1.10 | 2/2 | Complete    | 2026-07-29 |
 | 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 2/2 | Complete   | 2026-07-29 |
 | 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 9/9 | Complete    | 2026-08-09 |
-| 52. Minimal Linux Packaging | v1.10 | 3/3 | In Progress|  |
+| 52. Minimal Linux Packaging | v1.10 | 3/3 | Complete    | 2026-08-11 |
