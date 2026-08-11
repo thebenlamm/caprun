@@ -61,6 +61,11 @@ usage() {
     echo "Usage: bash scripts/install-linux.sh [--dest <dir>]" >&2
 }
 
+# Captured BEFORE the `cd "${REPO_ROOT}"` below, so a relative --dest can be
+# resolved against the directory the caller actually invoked the script
+# from, not the repo root (IN-02).
+CALLER_PWD="$PWD"
+
 # ── Resolve repo root; require Cargo.toml there ─────────────────────────────
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ ! -f "${REPO_ROOT}/Cargo.toml" ]; then
@@ -109,6 +114,14 @@ fi
 
 # ── Destination resolution (flag > env > default; D-04/D-05) ────────────────
 DEST="${DEST_FLAG:-${INSTALL_DEST:-$HOME/.local/bin}}"
+# A relative --dest/INSTALL_DEST resolves against the caller's original
+# working directory (CALLER_PWD, captured before this script's internal
+# `cd "${REPO_ROOT}"`), not against the repo root — matching what a caller
+# invoking the script from another directory would expect.
+case "${DEST}" in
+    /*) ;;
+    *) DEST="${CALLER_PWD}/${DEST}" ;;
+esac
 
 # ── Destination usability guard (D-03/D-06) — fires BEFORE the build, the
 #    staging directory, or any copy touches the destination, so a refused
