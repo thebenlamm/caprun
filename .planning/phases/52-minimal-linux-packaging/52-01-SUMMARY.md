@@ -125,3 +125,13 @@ None - no external service configuration required.
 ---
 *Phase: 52-minimal-linux-packaging*
 *Completed: 2026-08-11*
+
+## Self-Check: PASSED
+
+- FOUND: scripts/install-linux.sh
+- FOUND: docs/GETTING-STARTED.md
+- FOUND: .planning/phases/52-minimal-linux-packaging/52-01-SUMMARY.md
+- FOUND commit: 3d885c8 (Task 1)
+- FOUND commit: 14143c6 (Task 2)
+- FOUND commit: e0b172f (Task 3)
+- FOUND commit: 68403f3 (SUMMARY)
