@@ -52,6 +52,26 @@ This is a grep-based gate that fails if the `EffectRequest` token appears under 
 
 ---
 
+## Install (Linux)
+
+```bash
+bash scripts/install-linux.sh
+```
+
+This builds the release binaries and installs the three required siblings into one directory. The default destination is `${HOME}/.local/bin`; pass `--dest <dir>` to override it. The installer needs no elevated privileges and performs no download beyond what the workspace build itself fetches from crates.io — it builds only from the checked-out source tree and copies the result.
+
+The three installed binaries:
+
+- `caprun` — the orchestrator; spawns the worker and drives the CLI verbs.
+- `caprun-worker` — the self-confining worker; must stay a direct sibling of `caprun`.
+- `caprun-exec-launcher` — the self-confining exec helper the broker spawns for `process.exec`.
+
+`caprun-planner` is also built by the workspace release build but is optional LLM-sidecar functionality — this install path does not install it.
+
+Nothing enters the destination until all three binaries are staged and proven executable, so a failed build or a failed copy never leaves a partial set behind. The three final renames into the destination are atomic individually but not as a set, and two installs run at the same time into the same destination are not serialized against each other — a killed or racing install can leave a mixed set from two different builds. Re-running the installer is both the upgrade path and the recovery: it is idempotent and overwrites any mixed set with one consistent build's binaries.
+
+---
+
 ## Running the substrate demo (Linux)
 
 `caprun` takes a workspace file and an optional audit database path:
