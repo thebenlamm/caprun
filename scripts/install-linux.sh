@@ -15,17 +15,20 @@
 # co-location too.
 #
 # Steps:
-#   1. Resolve the destination (--dest flag > INSTALL_DEST env >
-#      ${HOME}/.local/bin).
-#   2. cargo build --workspace --release.
-#   3. Assert the three release binaries exist.
-#   4. Stage all three into a temp directory INSIDE the destination
+#   1. Verify the host is Linux and cargo is on PATH (fail fast, actionable).
+#   2. Resolve the destination (--dest flag > INSTALL_DEST env >
+#      ${HOME}/.local/bin) and verify it is writable before anything else
+#      touches it.
+#   3. cargo build --workspace --release.
+#   4. Assert the three release binaries exist.
+#   5. Stage all three into a temp directory INSIDE the destination
 #      (same-filesystem renames), verify each is executable.
-#   5. Move the three staged binaries into the destination back to back, in
+#   6. Move the three staged binaries into the destination back to back, in
 #      a fixed order (helpers first, orchestrator last).
-#   6. Post-install layout check: all three paths exist and are executable.
-#   7. Print what was installed, plus a PATH hint if the destination isn't
-#      already discoverable.
+#   7. Post-install layout check: all three paths exist and are executable.
+#   8. Print what was installed, a PATH hint if the destination isn't
+#      already discoverable, and an advisory (non-blocking) kernel-version
+#      note if Landlock's full confinement guarantee needs a newer kernel.
 #
 # caprun-planner is also produced by the workspace release build but is NOT
 # installed — it is optional LLM-sidecar functionality, outside the required
@@ -91,8 +94,30 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# ── Operating-system guard (D-03) ────────────────────────────────────────────
+OS_NAME="$(uname -s)"
+if [ "${OS_NAME}" != "Linux" ]; then
+    echo "FAIL — detected ${OS_NAME}; scripts/install-linux.sh only supports Linux (see docs/GETTING-STARTED.md's platform table for other platforms)" >&2
+    exit 1
+fi
+
+# ── Toolchain guard (D-03) ────────────────────────────────────────────────────
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "FAIL — cargo not found on PATH; install it via rustup (https://rustup.rs) and re-run" >&2
+    exit 1
+fi
+
 # ── Destination resolution (flag > env > default; D-04/D-05) ────────────────
 DEST="${DEST_FLAG:-${INSTALL_DEST:-$HOME/.local/bin}}"
+
+# ── Destination usability guard (D-03/D-06) — fires BEFORE the build, the
+#    staging directory, or any copy touches the destination, so a refused
+#    re-install never partially replaces a previously installed set.
+mkdir -p "${DEST}" 2>/dev/null || true
+if [ ! -d "${DEST}" ] || ! test -w "${DEST}"; then
+    echo "FAIL — ${DEST} is not writable; choose a writable destination with --dest, or create/chown it yourself. This script never escalates privileges to obtain one." >&2
+    exit 1
+fi
 
 # ── Build (D-02) ──────────────────────────────────────────────────────────────
 echo "Building release binaries (cargo build --workspace --release) ..."
@@ -110,7 +135,7 @@ for bin in caprun caprun-worker caprun-exec-launcher; do
 done
 
 # ── Stage (D-06: same-filesystem renames, no visibly mixed set on failure) ───
-mkdir -p "${DEST}"
+# ${DEST} already exists and is writable — verified by the guard above.
 STAGE_DIR="$(mktemp -d "${DEST}/.caprun-install.XXXXXX")"
 cleanup() {
     rm -rf "${STAGE_DIR}"
@@ -150,3 +175,16 @@ case ":$PATH:" in
     *":${DEST}:"*) ;;
     *) echo "NOTE — ${DEST} is not on your PATH. Add it, e.g.: export PATH=\"${DEST}:\$PATH\"" ;;
 esac
+
+# ── Kernel advisory (warn only, never blocks — D-03) ─────────────────────────
+# crates/sandbox already negotiates the Landlock ABI down at runtime, so this
+# install still succeeds and still exits 0 on an older kernel. A plain shell
+# numeric split of the first two dot-separated fields of `uname -r` — not
+# general semver parsing, matching docs/GETTING-STARTED.md's existing
+# "Common setup issues" wording (`uname -r`).
+KERNEL_RELEASE="$(uname -r)"
+KERNEL_MAJOR="$(echo "${KERNEL_RELEASE}" | cut -d. -f1)"
+KERNEL_MINOR="$(echo "${KERNEL_RELEASE}" | cut -d. -f2 | grep -oE '^[0-9]+' || echo 0)"
+if [ "${KERNEL_MAJOR}" -lt 5 ] || { [ "${KERNEL_MAJOR}" -eq 5 ] && [ "${KERNEL_MINOR}" -lt 13 ]; }; then
+    echo "NOTE — detected kernel ${KERNEL_RELEASE}; Landlock needs Linux 5.13 or newer for the full confinement guarantee. caprun will still run — crates/sandbox negotiates the Landlock ABI down at runtime."
+fi
