@@ -349,17 +349,17 @@ echo "PASS — all 3 required binaries present and executable in ${dest}"
 
 **If this table is empty:** N/A — see above; all three assumptions are low-risk operational defaults, not claims about locked repo behavior. Every claim about *existing repo behavior* in this document (sibling resolution, CLI usage, env vars, policy schema, doc staleness) is `[VERIFIED]` against source read this session, not `[ASSUMED]`.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should the install script build in `--release` mode unconditionally, or offer a debug-mode option?**
    - What we know: `docs/GETTING-STARTED.md` currently documents debug-mode usage (`target/debug/caprun`); D-01/D-02 describe "the required release targets" for the script specifically.
    - What's unclear: Whether a debug-mode fallback is worth offering for faster local iteration by a design partner, vs. keeping the script single-purpose (release only, matching D-02's "build the required release targets" wording).
-   - Recommendation: Default to `--release` only, per D-02's explicit wording ("build the required release targets"); the manual-commands documentation path (D-01) can optionally mention debug mode as a separate, unscripted alternative for contributors, not design partners.
+   - RESOLVED: Default to `--release` only, per D-02's explicit wording ("build the required release targets"); the manual-commands documentation path (D-01) can optionally mention debug mode as a separate, unscripted alternative for contributors, not design partners. Incorporated in 52-01 Task 1.
 
 2. **Exact final destination structure for the doc rewrite (single consolidated "Install" section vs. distributed across GETTING-STARTED + CONFIGURATION)?**
    - What we know: CONTEXT.md's canonical_refs name both `docs/GETTING-STARTED.md` (source-build + sibling-binary guidance) and `docs/CONFIGURATION.md` (CLI/env/audit/confinement reference) as the natural homes; agent discretion is explicitly granted for "document placement, headings, and wording."
    - What's unclear: Whether the planner should add a dedicated "Installation" H2 in GETTING-STARTED.md (replacing "Clone and build") with the checklist living in CONFIGURATION.md, or something else.
-   - Recommendation: Put the install walkthrough (script + manual equivalent, D-01) in GETTING-STARTED.md replacing the "Clone and build"/"Running the substrate demo" sections' binary-count claims; put the tiered env/credential checklist (D-11) in CONFIGURATION.md replacing its stale env-var table. This mirrors each doc's existing stated purpose and requires touching, not duplicating, the existing structure.
+   - RESOLVED: Put the install walkthrough (script + manual equivalent, D-01) in GETTING-STARTED.md replacing the "Clone and build"/"Running the substrate demo" sections' binary-count claims; put the tiered env/credential checklist (D-11) in CONFIGURATION.md replacing its stale env-var table. This mirrors each doc's existing stated purpose and requires touching, not duplicating, the existing structure. Incorporated as the 52-01 / 52-02 split.
 
 ## Environment Availability
 
