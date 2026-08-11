@@ -119,6 +119,19 @@ if [ ! -d "${DEST}" ] || ! test -w "${DEST}"; then
     exit 1
 fi
 
+# Pre-flight collision guard: fail closed BEFORE the build/stage work if one
+# of the three required names already exists as a directory at the
+# destination. `mv -f` onto an existing directory target does not overwrite
+# it — it nests the staged file inside, silently, which would otherwise
+# break the sibling co-location caprun's worker lookup depends on
+# (cli/caprun/src/main.rs:607-611).
+for bin in caprun caprun-worker caprun-exec-launcher; do
+    if [ -d "${DEST}/${bin}" ]; then
+        echo "FAIL — ${DEST}/${bin} already exists as a directory; remove it or choose a different --dest" >&2
+        exit 1
+    fi
+done
+
 # ── Build (D-02) ──────────────────────────────────────────────────────────────
 echo "Building release binaries (cargo build --workspace --release) ..."
 if ! cargo build --workspace --release; then
@@ -158,9 +171,13 @@ mv -f "${STAGE_DIR}/caprun-exec-launcher" "${DEST}/caprun-exec-launcher"
 mv -f "${STAGE_DIR}/caprun" "${DEST}/caprun"
 
 # ── Post-install layout check (D-09, non-destructive) ─────────────────────────
+# Must assert regular-file-ness, not just `-x`: `test -x` is also true for a
+# directory the invoking user can traverse, so a pre-existing same-named
+# directory at the destination (see the pre-flight guard above) could
+# otherwise report PASS despite the binary never actually landing there.
 for bin in caprun caprun-worker caprun-exec-launcher; do
-    if [ ! -x "${DEST}/${bin}" ]; then
-        echo "FAIL — ${DEST}/${bin} missing or not executable" >&2
+    if [ ! -f "${DEST}/${bin}" ] || [ ! -x "${DEST}/${bin}" ]; then
+        echo "FAIL — ${DEST}/${bin} missing, not a regular file, or not executable" >&2
         exit 1
     fi
 done
