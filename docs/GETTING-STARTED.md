@@ -88,6 +88,8 @@ for bin in caprun caprun-worker caprun-exec-launcher; do
 done
 ```
 
+**This is a layout check, not a security proof.** It confirms only that the three binaries are present and executable in one directory — it does not exercise confinement (Landlock, seccomp), does not open a Session, and is not a substitute for the Linux security verification. The authoritative harness is `scripts/compose-verify.sh`, which requires Docker on a provisioned Linux host (see `CLAUDE.md` for how to run it).
+
 > **`cargo install --path cli/caprun` alone is NOT a sufficient install.** `caprun-exec-launcher` lives in a separate Cargo package (`cli/caprun-exec-launcher`), not as a second binary target of the `cli/caprun` package — no number of `--bin` flags on that command can ever produce it. Everything appears to work right up until a plan node reaches the `process.exec` sink, which then fails to locate the launcher.
 
 ---
