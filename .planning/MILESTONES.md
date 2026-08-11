@@ -1,5 +1,29 @@
 # Milestones
 
+## v1.10 Multi-step Safe Coding Agent Loop (Shipped: 2026-08-11)
+
+**Phases completed:** 7 phases (47–52 incl. 51.1), 23 plans, 39 tasks  
+**Timeline:** 2026-07-23 → 2026-08-11 (~19 days)  
+**Git range:** `0ef4ee1` → `54e6b70` (+ ~142 commits; ~135 files, +31k/−0.6k LOC in range)  
+**Closeout type:** `override_closeout`  
+**Known verification overrides:** 1 (Phase 47 manager-stale verification; milestone audit scored 47 passed 4/4)  
+**Known deferred items:** 4 open artifacts acknowledged at close (see STATE.md Deferred Items)
+
+**Key accomplishments:**
+
+1. Design-gated multi-step plan stream (sequential submit, opaque handle bag, Block-and-Hold, HYG-02 zero new crates) cleared by a fresh non-self adversarial code-trace before TCB code.
+2. Deterministic `SafeCodingWorkflow` five-node coding planner + product CLI multi-node driver with same-Session mid-loop confirm and honest exit codes.
+3. Non-hybrid real-Linux LIVE-07/08 proof: CLI-driven one-Session edit→test→commit→push→PR plus independently attributable mid-loop I2 Block (`verify_chain` true).
+4. Audit append-at-head concurrency fix (D1/D2) after Docker LIVE failures; every append under an IMMEDIATE write boundary.
+5. CR-01: `github.pr` grant row and authorization event co-atomic (fault-injection RED→GREEN); independent adversarial trace 0 BLOCKER / 0 unresolved MAJOR.
+6. Minimal Linux packaging: `scripts/install-linux.sh` co-locates three sibling binaries + operator env/credential checklist.
+
+**Delivered:** A design partner can drive the Safe Coding Agent path as one CLI-created Session with bound policy, same-Session confirm/deny continuity, independent I2 enforcement, and a genuine end-to-end audit chain — closing the v1.9 hybrid LIVE-05 honesty gap.
+
+**Archives:** `milestones/v1.10-ROADMAP.md`, `milestones/v1.10-REQUIREMENTS.md`, `milestones/v1.10-MILESTONE-AUDIT.md`, `milestones/v1.10-phases/`
+
+---
+
 ## v1.9 Authorized Egress + Policy & Audit Surface (Shipped: 2026-07-19)
 
 **Phases completed:** 6 phases, 22 plans, 22 tasks

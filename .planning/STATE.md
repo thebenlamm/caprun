@@ -2,43 +2,41 @@
 gsd_state_version: 1.0
 milestone: v1.10
 milestone_name: Multi-step Safe Coding Agent Loop
-current_phase: 52
-current_phase_name: Minimal Linux Packaging
-status: complete
-stopped_at: v1.10 all 7 phases executed
-last_updated: "2026-08-11T15:49:02.919Z"
+status: Awaiting next milestone
+stopped_at: v1.10 complete — run /gsd-new-milestone
+last_updated: "2026-08-11T18:42:06.388Z"
 last_activity: 2026-08-11
-last_activity_desc: Phase 52 complete; all v1.10 phases (47-52, incl. 51.1) executed
+last_activity_desc: Milestone v1.10 archived and tagged
 progress:
   total_phases: 7
   completed_phases: 7
   total_plans: 23
   completed_plans: 23
+current_phase: null
+current_phase_name: —
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-23)
+See: .planning/PROJECT.md (updated 2026-08-11)
 
-**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended through v1.9 with authorized write egress (git.push + http-write), minimal per-session policy (never overrides I2), and thin CLI/audit surfaces — without weakening I0/I1/I2 or adding any raw `EffectRequest` path. v1.10 makes the Safe Coding Agent path a single Session, CLI-driven multi-node stream.
-**Current focus:** Phase 52 — Minimal Linux Packaging
+**Core value:** A kernel-confined worker can only cause external effects through broker-mediated plan nodes, and a genuinely-propagated taint chain deterministically blocks value-injection at the sink (I2) — extended through v1.9 with authorized write egress, minimal per-session policy (never overrides I2), and thin CLI/audit surfaces, and through v1.10 with a single-Session CLI-driven multi-node Safe Coding Agent path — without weakening I0/I1/I2 or adding any raw `EffectRequest` path.
+**Current focus:** Planning next milestone (`/gsd-new-milestone`)
 
 ## Current Position
 
-Phase: 52 — Minimal Linux Packaging (last phase of v1.10)
-Plan: All plans executed
-Status: v1.10 fully executed — all 7 phases (47, 48, 49, 50, 51, 51.1, 52) complete
-Last activity: 2026-08-11 — Phase 52 complete; v1.10 milestone ready for close-out
-
-Progress: [██████████] 100%
+Phase: — (v1.10 complete)
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-08-11 — Milestone v1.10 archived (override_closeout)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 154 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 + v1.4: 14 + v1.5: 8 + v1.6: 14 + v1.7: 17 + v1.8: 17 + v1.9: 22)
+- Total plans completed: 177 (v1.0: 15 + v1.1: 15 + v1.2: 11 + v1.3: 21 + v1.4: 14 + v1.5: 8 + v1.6: 14 + v1.7: 17 + v1.8: 17 + v1.9: 22 + v1.10: 23)
 - Average duration: — min
 
 *Updated after each plan completion. v1.9 (phases 41-46) shipped 2026-07-18. v1.10 (phases 47-52) roadmap created 2026-07-23.*
@@ -185,27 +183,30 @@ separate as a distinct design-partner deliverable.
 
 ## Session Continuity
 
-Last session: 2026-08-11T01:12:42.263Z
-Stopped at: Phase 52 context gathered
-Resume file: .planning/phases/52-minimal-linux-packaging/52-CONTEXT.md
+Last session: 2026-08-11
+Stopped at: v1.10 complete — archived
+Resume file: —
 
 ## Operator Next Steps
 
-- v1.10 (all 7 phases: 47, 48, 49, 50, 51, 51.1, 52) is fully executed. Close out the
-  milestone with `/gsd-audit-milestone`, then `/gsd-complete-milestone`.
-- Outstanding: `/gsd-secure-phase 52` has not yet been run.
+- Run `/gsd-new-milestone` to define the next version (questioning → research → requirements → roadmap).
+- Fresh `REQUIREMENTS.md` is created by that workflow after this close deletes the v1.10 file.
 
 ## Deferred Items
 
-Items acknowledged and deferred at prior milestone closes, re-reviewed at v1.10 roadmap creation (2026-07-23).
+Items acknowledged and deferred at milestone close on 2026-08-11 (`override_closeout`), plus carried residuals.
 
 | Category | Item | Status |
 |----------|------|--------|
+| debug | knowledge-base | acknowledged at v1.10 close (GSD debug knowledge base file; not an open investigation) |
+| todo (tooling) | gsd-phases-clear-deletes-all-milestones | acknowledged at v1.10 close — pending (GSD process) |
+| todo (tooling) | gsd-executors-must-not-write-phase-completion-state | acknowledged at v1.10 close — pending (GSD process) |
+| todo (security) | v1.3-phase16-v2-security-obligations — deferred v2 security obligations | acknowledged at v1.10 close — pending |
 | functional (caprun) | git.push `generate_pack` 10 MB pack-cap — fails CLOSED (safe) but blocks large-repo pushes | pending — non-blocking residual (PUSH-CAP-01) |
 | test-hardening (caprun) | LIVE-06 leg-5b scrub-branch hardening on push error path | pending — optional (SCRUB-01) |
 | future | LLM multi-step / ReAct tool-use loop on v1.4 sidecar | deferred past v1.10 (LLM-MS-01) |
 | future | github.pr merge/comment, richer coding recipes, replan-from-observation | deferred (CODE-BREADTH-01) |
 | future | Broader packaging (deb/snap/cargo-dist), Mac best-effort install | deferred (PACK-02) |
-| todo (security) | v1.3-phase16-v2-security-obligations — deferred v2 security obligations | pending |
-| todo (tooling) | gsd-executors-must-not-write-phase-completion-state | pending (GSD process) |
-| todo (tooling) | gsd-phases-clear-deletes-all-milestones | pending (GSD process) |
+| verification | Phase 47 manager-stale verification flag | override at v1.10 close — milestone audit scored 47 passed 4/4 |
+| packaging residual | concurrent/interrupted install can leave mixed binaries; clean-machine + cold-reader walkthroughs host-bound | accepted at Phase 52 / milestone audit |
+

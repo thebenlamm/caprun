@@ -306,6 +306,42 @@ Completed the authorized-write-egress loop and added caprun's first usability/tr
 - Sessions: 1 (single autonomous run across all 6 phases through milestone close).
 - Notable: `git.push` shipped this milestone (the v1.8 gate-deferred sink) — the design-gate's flagged new trust posture was designed, reviewed, implemented, and live-proven in one pass, with the fresh Fable-5 trace clearing 8 push surfaces at 0 security defects.
 
+## Milestone: v1.10 — Multi-step Safe Coding Agent Loop
+
+**Shipped:** 2026-08-11
+**Phases:** 7 (47–52, incl. 51.1) | **Plans:** 23 | **Tasks:** 39
+
+### What Was Built
+Closed the v1.9 LIVE-05 hybrid honesty gap. A design partner can drive edit → test → commit → push → open PR as **one Session via the real CLI**, with I2, per-session policy, same-Session Block-and-Hold confirm, and a genuine audit chain. Design gate (Phase 47) pinned sequential plan-stream shape, opaque handle bag, trusted-intent success path, and HYG-02 zero-new-crate hygiene. Plan-stream substrate (48) + deterministic `SafeCodingWorkflow` five-node planner (49) + CLI multi-node driver with honest exit taxonomy (50). Non-hybrid LIVE-07/08 on real Linux (51), including an audit append-at-head concurrency fix after Docker failures exposed D1/D2. Inserted Phase 51.1 closed CR-01 (grant row + authorization event co-atomic). Phase 52 shipped `scripts/install-linux.sh` three-sibling install + operator env checklist. Milestone audit: 14/14 requirements, 10/10 seams, 4/4 E2E flows (`tech_debt` residuals only).
+
+### What Worked
+- **Design-gate-first held again** before multi-step TCB: stream shape / confirm-hold / trusted-arg mint path locked in writing with a re-run obligation if they change mid-implementation.
+- **Non-hybrid DONE bar as a product requirement** forced real CLI multi-node rather than papering over hybrid composition — the v1.9 honesty gap became the v1.10 acceptance clause.
+- **Host-runnable RED regressions before Docker** (Phase 51.1 and 51-05 D1/D2) made the CR-01 and append-at-head fixes debuggable without EC2 for the unit of proof.
+- **Inserted Phase 51.1 for a review-found integrity bug** rather than shipping CR-01 as known debt past the DONE gate — same insert-phase discipline as prior security follow-ups.
+- **Packaging deliberately zero-TCB** (docs + installer only) after the LIVE proof, so install path matches the proven binary layout without reopening the security surface.
+
+### What Was Inefficient
+- Phase 51 required multiple Docker LIVE failures (rc=101 ×3) and a multi-wave gap-closure (51-05..09) before the authoritative proof passed — cfg/concurrency defects that unit green hid until real multi-process LIVE.
+- Manager marked Phase 47 verification **stale** at close despite a clean milestone audit score — freshness contracts vs design-gate phases still produce close-time override noise.
+- The managed sandbox cannot re-run abstract-UDS LIVE tests (`EPERM`), so audit close relied on retained real-Linux evidence rather than a fresh host re-proof.
+
+### Patterns Established
+- **Stay-connected parent-pipe Block-and-Hold** for mid-loop confirm without dual-Session stitch or re-mint.
+- **Transactional audit append-at-head under IMMEDIATE write lock** as the choke point for concurrent session writers (D1/D2 class).
+- **Co-atomic capability row + authorization event** (CR-01 pattern) for grants that must not outlive their audit event.
+- **Stage-then-rename three-sibling install** matching `current_exe()` discovery — `cargo install --path` alone is an explicit non-goal.
+
+### Key Lessons
+- A LIVE multi-process proof on real Linux is still the only place concurrent audit-append races show up; host-safe unit tests need deliberate RED oracles that inject the failure mode.
+- Closing a hybrid honesty gap means making the CLI the driver of the whole chain — not adding more hybrid legs and better framing.
+- Review-found atomicity bugs (CR-01) should insert a phase before packaging/milestone close, not ride as post-ship debt when the integrity claim is part of the DONE narrative.
+
+### Cost Observations
+- Model mix: multi-session across ~19 days (2026-07-23 → 2026-08-11); Phase 51 gap-closure was the long pole (Docker LIVE + design gate for append concurrency + independent traces).
+- Sessions: multi (design gate → substrate → planner → CLI → LIVE gap closure → CR-01 → packaging → audit → close).
+- Notable: 9 plans in Phase 51 alone (including inserted waves for D1/D2) — LIVE acceptance that fails on real Linux correctly expanded the plan graph rather than weakening assertions.
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Shipped | Notes |
@@ -319,3 +355,4 @@ Completed the authorized-write-egress loop and added caprun's first usability/tr
 | v1.6 Security Hardening (close the residuals) | 5 | 14 | 2026-07-17 | Enforced all 5 standing TCB-local residuals (fd-demote, keyed-MAC audit chain, replay CAS, compile-out forced-Active mint, file.create contents slot) + folded X-04; independent adversarial code-trace APPROVED the diff (found 2 stale TCB comments the verifier missed); closed a real false-assurance gap (harden04 self-skip) with a scoped featureless-build gate; full workspace green on real Linux (331/0, 49 suites); milestone audit PASSED 8/8, 5/5 seams; ran end-to-end autonomously in one session |
 | v1.7 Effect Breadth I | 4 | 17 | 2026-07-18 | Added `process.exec` (broker-spawned confined-child sink, non-stapled `mint_from_exec` rooted on `process_exited`) + filesystem read/write breadth (`file.write` + RequestFd limiter) + EXEC-05 confirm-release; a fresh Fable-5 trace caught the guardrail's 8th real defect (confirm-release audit-gap MAJOR the verifier+gates missed), fixed + re-traced APPROVED; verifier independently re-ran Linux suites + flagged a spec deviation (reconciled via override); post-close env_clear gap-closure (exec-child + worker broker-secret inheritance) fixed + APPROVED, sidecar deferred to v1.8; LIVE-01 composed 4-leg + LIVE-02 391/0 on real Linux; human DONE sign-off + push |
 | v1.9 Authorized Egress + Policy & Audit Surface | 6 | 22 | 2026-07-18 | Completed the authorized-write-egress loop + the first trust-surface layer: a minimal per-session policy (narrows sinks/args, NEVER overrides I2 — POLICY-02 by construction), `http.request.write` POST/PUT, **`git.push` SHIPPED not deferred a 3rd time** (broker-performed destination-pinned smart-HTTP, net-denied child, always confirm-gated, zero new crates), and a thin `caprun run`/`caprun audit` CLI + read-only audit-DAG viewer (M7 anti-laundering + Trojan-Source BiDi neutralization); the orchestrator-owned fresh Fable-5 adversarial trace caught a real defect at EVERY TCB phase (I0-escape, ArgConstraint bypass, M7 laundering, LIVE BiDi confirm-prompt spoof, leg-5b vacuity) + the plan-checker caught the M7 BLOCKER pre-code; LIVE-05 composed loop + 5 attributable negative legs, independent compose-verify 696/0 on real Linux, no v1.0–v1.8 regression; single autonomous session |
+| v1.10 Multi-step Safe Coding Agent Loop | 7 | 23 | 2026-08-11 | Closed LIVE-05 hybrid honesty gap: sequential plan-stream + opaque bag + Block-and-Hold + deterministic SafeCodingWorkflow + CLI multi-node driver; non-hybrid real-Linux LIVE-07/08; audit append-at-head concurrency fix (D1/D2); CR-01 grant/audit co-atomic (inserted 51.1); three-sibling `install-linux.sh`; 14/14 requirements; milestone audit tech_debt residuals only; override_closeout (Phase 47 stale + 4 acknowledged open artifacts) |

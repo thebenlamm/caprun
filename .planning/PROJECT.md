@@ -28,29 +28,35 @@ v1.9 completed the authorized-write-egress loop and added caprun's first usabili
 
 v1.8 delivered 3 of the 4 originally-scoped sinks: `git.commit` (broker-spawned confined-child `git commit`, MutateReversible, reusing the v1.7 exec-launcher + `mint_from_exec`, git config/hooks neutralized), read-only `http.request` GET (Observe, the new `mint_from_http` inbound-taint mechanism minting the response untrusted-on-arrival and demoting the session to draft-only, defended by an SSRF resolve-and-pin classifier), and `github.pr` (CommitIrreversible, a broker-held bearer token never present in the confined worker/planner sidecar/ValueNode/audit-literal, an explicit human auth-grant distinct from single-shot confirm, tainted PR title/body sections deterministically Blocked via CONTENT-01 content-sensitivity, and a content-derived duplicate-PR CAS mirroring HARDEN-03). **`git.push` (GIT-02/GIT-03) is DEFERRED to v1.9** — the Phase-35 design gate's fresh adversarial code-trace proved (BLOCKER-1) that a `git.push` confined child's network destination cannot be pinned by seccomp (it filters syscall numbers/scalars, not the `connect()` sockaddr behind a pointer; Landlock net rules need kernel 6.7 > the 5.13 floor); the sound alternative — a fully-unprivileged, broker-mediated, destination-pinned egress — is a genuinely new trust posture that the gate itself flagged as needing its own design-gate + fresh adversarial review, so `git.push` was deferred rather than shipped with arbitrary child egress (see `planning-docs/DECISION-git-push-deferral-v1.8.md`). ENV-01 closed the v1.7-deferred `caprun-planner` sidecar `env_clear()` gap-closure, hermetic via compiled-in `webpki-roots` (no `SSL_CERT_*` / readable system store required), live-verified against a real OpenAI HTTPS call. Proven end-to-end on real Linux: a composed workflow — `process.exec` (test) → filesystem edit → `git.commit` → `github.pr` (mock GitHub endpoint, standing in for the pushed-branch precondition) + an `http.request` GET leg — with every step gated, tainted, and audit-DAG-chained (`verify_chain` true across the run); three adversarial attack legs (tainted PR-body/title, tainted GET url/SSRF, tainted commit message) each deterministically Blocked; full-workspace regression green (498 passed/0 failed/60 binaries, no v1.0–v1.7 regression). Every TCB change cleared a fresh non-self adversarial code-trace (the DESIGN gate caught a real BLOCKER + 3 MAJORs; Phase 37's diff caught a MAJOR `aws-lc-rs`-in-workspace defect + a `git.commit` Landlock/exit-code defect). Honest scope: v1.8 proves edit→commit→open-PR (mock) + authorized HTTP fetch — real push is deferred, disclosed here and in the milestone audit, not papered over.
 
-## Current Milestone: v1.10 Multi-step Safe Coding Agent Loop
+## Shipped Milestone: v1.10 — Multi-step Safe Coding Agent Loop
 
-**Goal:** A design partner can drive the full Safe Coding Agent path (edit → test → commit → push → open PR) as **one Session via the CLI** — not a hybrid in-crate composition — with I2, per-session policy, and confirm/deny intact, and a genuine audit chain end-to-end.
+**✅ SHIPPED 2026-08-11 — Phases 47-52 (incl. 51.1), 23 plans / 39 tasks, proven live on real Linux. Full detail archived in `.planning/milestones/v1.10-ROADMAP.md` + `.planning/milestones/v1.10-REQUIREMENTS.md` + `.planning/milestones/v1.10-MILESTONE-AUDIT.md`. Next milestone: run `/gsd-new-milestone`.**
 
-**Target features:**
-- **Multi-node plan stream** on the existing v1.4 `Planner` seam / sidecar — not one-shot `PlanNode` only
-- **Deterministic multi-step coding planner first** (scripted/hardcoded multi-node coding workflow); LLM multi-step tool-use is explicit future work, not this milestone
-- **`caprun run` (or equivalent) drives the multi-node coding chain** for at least one concrete workflow, with existing confirm/review surfaces
-- **One-session continuity** — one Session, one audit DAG, policy bound once, `verify_chain` true for the whole CLI-driven path
-- **Non-hybrid LIVE proof** — success path + mid-loop I2 Block (e.g. tainted PR body / push refspec) driven honestly through the CLI
-- **Minimal packaging / install path** for Linux design partners (single binary + documented env/credentials)
-
-**Key context:** v1.9 shipped the effect surface and trust CLI but honestly disclosed that LIVE-05 is hybrid (`caprun run` is single-node; only email/file intents exist). This milestone closes that product gap without becoming an "agent framework." Cedar, web UI, new sink families, pack-cap lift, cross-host/gVisor stay out of scope. Manual-ops-first; design-gate + fresh adversarial code-trace before multi-step TCB changes.
+v1.10 closed the v1.9 LIVE-05 hybrid honesty gap: a design partner can drive the full Safe Coding Agent path (edit → test → commit → push → open PR) as **one Session via the real CLI**, with I2, per-session policy, and confirm/deny intact, and a genuine audit chain end-to-end. Delivered across seven phases. **(1) Design gate (Phase 47)** — `DESIGN-multi-step-plan-stream.md` pins sequential plan-stream shape, opaque handle bag, Block-and-Hold, trusted-intent success path, PLAN-03 channel disjointness, deny/abort, and HYG-02 zero-new-crate hygiene; cleared by a fresh non-self orchestrator-owned adversarial code-trace before any multi-step TCB code. **(2) Plan-stream substrate (Phase 48)** — worker sequential multi-submit + opaque `output_value_id` handle bag with chain-head continuity and `verify_chain` true. **(3) Deterministic multi-step coding planner (Phase 49)** — `CaprunIntent::SafeCodingWorkflow` five-node recipe over shipped sinks (edit → exec → commit → push → PR) with trusted-intent args only; test-only I2-proof planner for LIVE-08. **(4) CLI multi-node driver + mid-loop confirm (Phase 50)** — product `safe-coding-workflow` argv, same-Session Block-and-Hold (PROCEED/ABORT), honest exit taxonomy 0/2/3/1. **(5) Non-hybrid LIVE proof (Phase 51)** — real-Linux CLI-driven LIVE-07 success + LIVE-08 mid-loop I2 Block (`verify_chain` true); audit append-at-head concurrency fix after Docker failures exposed D1/D2. **(6) CR-01 grant/audit atomicity (Phase 51.1, inserted)** — `record_github_grant` co-atomic grant row + authorization event under one IMMEDIATE transaction, RED→GREEN fault-injection proven. **(7) Minimal Linux packaging (Phase 52)** — `scripts/install-linux.sh` stage-then-renames the three sibling binaries; operator env/credential checklist; `cargo install --path cli/caprun` alone documented as insufficient. Milestone audit: 14/14 requirements, 7/7 phases, 10/10 integration, 4/4 E2E flows (status `tech_debt` — accepted residuals only). No invariant weakened (I0/I1/I2 intact; no raw `EffectRequest`; zero new crates).
 
 ## Current State
 
-**v1.10 — all phases (47–52) verified complete; Phase 52 packaging closed 2026-08-11 (updated 2026-08-11).** The Safe Coding Agent path is a real CLI-driven multi-node stream in one Session, with mid-loop confirm continuity and a non-hybrid real-Linux DONE proof for LIVE-07/LIVE-08. Retained scoped evidence passed 4/4, the full composed workspace gate passed, hashes were independently reconciled, and the human evidence checkpoint was approved.
+**v1.10 shipped 2026-08-11.** The Safe Coding Agent path is a real CLI-driven multi-node stream in one Session, with mid-loop confirm continuity and a non-hybrid real-Linux DONE proof for LIVE-07/LIVE-08. CR-01 closed. Design-partner install path co-locates `caprun`, `caprun-worker`, and `caprun-exec-launcher`.
 
-**Validated in Phase 52: Minimal Linux Packaging (PKG-01).** A design partner now has a documented minimal Linux install path: `scripts/install-linux.sh` builds the release targets and stage-then-renames exactly `caprun`, `caprun-worker`, and `caprun-exec-launcher` into one destination (the sibling `current_exe()` layout the worker lookup requires), with `cargo install --path cli/caprun` documented as **not** sufficient and the reason given (`caprun-exec-launcher` is a separate Cargo package). `docs/CONFIGURATION.md`'s stale env table — which named the never-read `SESSION_ID` and omitted every real `CAPRUN_*` variable — is replaced by a three-tier operator checklist verified against source. Verified 27/27 must-haves; the phase changed zero TCB code by design. Deliberately NOT productization: no cargo-dist/deb/snap/Homebrew/macOS. Known residuals, human-accepted as non-gating: an interrupted or concurrent install can leave a binary set mixed across two builds (recovery is re-running the idempotent installer; no lock protocol, out of scope), and neither a clean-machine install nor a cold first-time-reader walkthrough was performed on this host.
+**~59k LOC Rust** across `runtime-core`, `sandbox`, `brokerd`, `executor`, `adapter-fs`, `llm-planner`, and `cli/caprun` (+ worker / exec-launcher siblings). Security claims remain Linux-only.
 
-CR-01 (transactional persistence of `session_grants` with its authorization audit event) is a high-priority follow-up; it does not invalidate the retained one-shot LIVE proof. Prior: **v1.9 shipped 2026-07-18**. Deferred (non-blocking, carried forward): git.push 10MB pack-cap + leg-5b scrub hardening.
+### Next Milestone Goals
 
-Prior: v1.8 Git/GitHub Adapters — Effect Breadth II (git.commit, http.request GET, github.pr) — 2026-07-18; v1.7 Effect Breadth I (process.exec + fs breadth) — 2026-07-18; v1.6 Security Hardening (close the residuals) — 2026-07-17; v1.5 Slot-Type Binding (T2) — 2026-07-12.
+Not yet defined — run `/gsd-new-milestone` to scope the next version. Likely candidates from carried-forward backlog (not committed scope):
+
+- LLM multi-step / ReAct tool-use loop on the v1.4 sidecar (after eval baseline)
+- Richer coding recipes / github.pr merge-comment breadth
+- Broader packaging (deb/snap/cargo-dist) or Mac best-effort install without security claims
+- Residual lifts: git.push 10MB pack-cap, leg-5b scrub-branch hardening
+
+### Accepted residuals (non-blocking)
+
+- Installer concurrency / mixed-binary set on interrupt (recovery: re-run idempotent installer)
+- Clean-machine install + cold first-time-reader walkthrough not performed on this host
+- git.push 10MB pack-cap (fails closed) + leg-5b scrub-branch hardening
+- Minor unused-import / dead-code warnings in current build
+
+Prior: **v1.9 shipped 2026-07-18**; v1.8 Git/GitHub Adapters — 2026-07-18; v1.7 Effect Breadth I — 2026-07-18; v1.6 Security Hardening — 2026-07-17; v1.5 Slot-Type Binding (T2) — 2026-07-12.
 
 ## Shipped Milestone: v1.7 — Effect Breadth I (process.exec + Filesystem Breadth)
 
@@ -386,11 +392,17 @@ assessment). PLAN.md wins on any conflict.
 
 ### Validated
 
-Validated in **Phase 51 — Non-hybrid LIVE Proof** (2026-08-09):
+Shipped in **v1.10 — Multi-step Safe Coding Agent Loop** (2026-08-11). Full traceability
+archived in `.planning/milestones/v1.10-REQUIREMENTS.md`.
 
-- ✓ LIVE-07: real `caprun run safe-coding-workflow` executed the edit → test → commit → confirmed push → PR path in one Session on real Linux, with successful push/PR audit events and `verify_chain` true.
-- ✓ LIVE-08: the sibling real-CLI path produced an exact policy-permitted `github.pr`/`body` I2 Block rooted through durable `read_event_id` provenance on the genuine `process.exec` exit, with no PR effect and `verify_chain` true.
-- ✓ Phase 51 DONE gate: scoped LIVE suite 4/4 green, full composed workspace regression green, evidence hashes matched, coverage skips disclosed, independent re-review `APPROVE`, and human evidence checkpoint approved.
+- ✓ DESIGN-19/20, HYG-02: `DESIGN-multi-step-plan-stream.md` pins sequential plan-stream, opaque handle bag, Block-and-Hold, trusted-intent success path, PLAN-03 channels, deny/abort, zero-new-crate hygiene; fresh non-self orchestrator-owned adversarial code-trace CLEARED before multi-step TCB code — v1.10
+- ✓ STREAM-01/02: worker sequential multi-submit + opaque `output_value_id` handle bag; chain-head continuity; ProvideIntent-once; planner places handles only — v1.10
+- ✓ CODE-01/02: deterministic `SafeCodingWorkflow` five-node coding recipe over shipped sinks; trusted-intent args on success path; anti-laundering preserved — v1.10
+- ✓ CLI-01/02, CONFIRM-01: product `caprun run safe-coding-workflow` drives the multi-node chain; same-Session Block-and-Hold; honest exit taxonomy 0/2/3/1 — v1.10
+- ✓ LIVE-07/08: real-Linux CLI-driven one-Session success path + independently attributable mid-loop I2 Block (`verify_chain` true); non-hybrid DONE claim — v1.10
+- ✓ CR-01: `record_github_grant` co-atomic grant row + `github_grant_authorized` event under one IMMEDIATE transaction; fault-injection RED→GREEN — v1.10
+- ✓ PKG-01: `scripts/install-linux.sh` co-locates three sibling binaries; operator env/credential checklist; `cargo install` alone documented insufficient — v1.10
+- ✓ **v1.10 DONE gate cleared:** 14/14 requirements; milestone audit 7/7 phases, 10/10 integration seams, 4/4 E2E flows; accepted residuals only (`tech_debt`).
 
 Shipped in **v1.9 — Authorized Egress + Policy & Audit Surface** (2026-07-18). Full traceability
 archived in `.planning/milestones/v1.9-REQUIREMENTS.md`.
@@ -624,20 +636,15 @@ traceability archived in `.planning/milestones/v1.5-REQUIREMENTS.md`.
 
 ### Active
 
-**v1.10 — Multi-step Safe Coding Agent Loop** (scoping → requirements → roadmap):
+*(Empty — next milestone requirements defined via `/gsd-new-milestone`.)*
 
-- [ ] **Multi-node plan stream** — planner/worker can emit and submit a sequence of plan nodes in one Session (not one-shot only)
-- [ ] **Deterministic multi-step coding planner** — at least one concrete edit→test→commit→push→PR plan over the shipped sinks
-- [ ] **CLI-driven multi-node run** — `caprun run` (or equivalent) drives the coding chain; confirm/review surfaces preserved
-- [ ] **One-session audit continuity** — single Session, policy bound once, `verify_chain` true across the multi-node path
-- [ ] **Non-hybrid LIVE proof** — CLI-driven success + mid-loop I2 Block on real Linux (no in-crate hybrid as the DONE claim)
-- [ ] **Minimal packaging** — documented Linux install path for a design partner (binary + env/credentials)
-
-**Carried non-blocking (not v1.10 scope unless pulled):**
-- git.push 10MB pack-cap (fails closed; large-repo limit)
-- leg-5b scrub-branch hardening
-- LLM multi-step tool-use loop (future; v1.4 adversarial single-shot seam remains)
-- github.pr merge/comment breadth, Cedar, richer policy file formats
+**Carried non-blocking residuals (candidates for a future milestone, not committed scope):**
+- git.push 10MB pack-cap (fails closed; large-repo limit) — PUSH-CAP-01
+- leg-5b scrub-branch hardening — SCRUB-01
+- LLM multi-step tool-use loop (future; v1.4 adversarial single-shot seam remains) — LLM-MS-01
+- github.pr merge/comment breadth, richer coding recipes — CODE-BREADTH-01
+- Broader packaging (deb/snap/cargo-dist), Mac best-effort install — PACK-02
+- Cedar / richer policy file formats
 
 ### Out of Scope
 
@@ -654,7 +661,7 @@ as of 2026-07-07 unless noted:
   workspace snapshots remain deferred beyond v1.9.
 - Thin SDK/CLI + audit-DAG viewer + minimal policy — **SHIPPED in v1.9**
 - Multi-step / multi-node Safe Coding Agent loop + minimal packaging —
-  **IN SCOPE as v1.10** (deterministic multi-step first; closes the LIVE-05
+  **SHIPPED in v1.10** (deterministic multi-step first; closed the LIVE-05
   hybrid-composition honesty gap)
 - Real LLM multi-step tool-use loop (retries/error handling on the v1.4
   sidecar) — still **deferred past v1.10** (manual-ops-first; evals first)
@@ -692,13 +699,12 @@ as of 2026-07-07 unless noted:
 
 ## Context
 
-- **Current state (v1.10 started 2026-07-23):** multi-step Safe Coding Agent loop is the
-  active milestone — close the product gap that v1.9's hybrid LIVE-05 disclosed. Baseline
-  from **v1.9 shipped 2026-07-18:** design-partner-runnable security substrate with **5 real
-  sinks** + write egress, minimal per-session policy (never overrides I2), thin
-  `caprun run`/`caprun audit` CLI; composed loop proven live (696/0) but not yet as one
-  multi-node CLI-driven Session. Security claims remain Linux-only.
-- **Next milestone:** n/a — v1.10 is active.
+- **Current state (v1.10 shipped 2026-08-11):** Safe Coding Agent path is a real CLI-driven
+  multi-node stream in one Session (edit → test → commit → confirmed push → PR), with
+  mid-loop Block-and-Hold confirm, non-hybrid LIVE-07/08 proof on real Linux, CR-01
+  grant/audit atomicity, and a three-binary Linux install path. ~59k LOC Rust. Security
+  claims remain Linux-only. Awaiting `/gsd-new-milestone` for next scope.
+- **Next milestone:** not yet defined.
 - **Current state (v1.4 shipped 2026-07-11):** v0 done (v1.0) + Usable
   Runtime (v1.1) + Tainted Session, Human Gate (v1.2) + Doc → Action
   Assistant (v1.3) + Trust-Boundary Integrity & the Adversarial Planner
@@ -969,7 +975,7 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-23 after **starting milestone v1.10 — Multi-step Safe Coding Agent Loop** (`/gsd-new-milestone`). Goal: design partner drives edit→test→commit→push→PR as one Session via the CLI (not hybrid in-crate composition), with I2/policy/confirm intact and a genuine audit chain. Target: multi-node plan stream on the v1.4 Planner seam; deterministic multi-step coding planner first (LLM multi-step deferred); `caprun run` drives the coding chain; one-session continuity; non-hybrid LIVE proof; minimal Linux packaging/install path. Out: Cedar, web UI, new sink families, pack-cap lift, cross-host/gVisor. Manual-ops-first; design-gate + fresh adversarial code-trace before multi-step TCB. Prior: 2026-07-18 after **v1.9 — Authorized Egress + Policy & Audit Surface milestone SHIPPED** — authorized-write-egress loop + first trust-surface layer (policy, git.push, http-write, caprun run/audit); LIVE-05 hybrid composition disclosed; independent compose-verify 696/0; **NEXT was `/gsd-new-milestone` (now v1.10).***
+*Last updated: 2026-08-11 after **v1.10 — Multi-step Safe Coding Agent Loop milestone SHIPPED** (`/gsd-complete-milestone`). CLI-driven one-Session edit→test→commit→push→PR; LIVE-07/08 non-hybrid real-Linux proof; CR-01 grant/audit atomicity; three-binary install path. 14/14 requirements. **NEXT: `/gsd-new-milestone`.** Prior: 2026-07-23 started v1.10; 2026-07-18 v1.9 shipped.*
 
 Prior: 2026-07-17 after v1.6 "Security Hardening (close the residuals)"
 SHIPPED — all 5 phases (26-30) complete, turning the five standing TCB-local
