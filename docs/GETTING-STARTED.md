@@ -72,7 +72,7 @@ The three installed binaries:
 
 Nothing enters the destination until all three binaries are staged and proven executable, so a failed build or a failed copy never leaves a partial set behind. The three final renames into the destination are atomic individually but not as a set, and two installs run at the same time into the same destination are not serialized against each other — a killed or racing install can leave a mixed set from two different builds. Re-running the installer is both the upgrade path and the recovery: it is idempotent and overwrites any mixed set with one consistent build's binaries.
 
-**Manual equivalent** — these commands are the script's entire behavior, so this walkthrough is sufficient even if you don't want to run the repository script:
+**Manual equivalent** — these commands reproduce the script's end state on a successful, uninterrupted run, so this walkthrough is sufficient even if you don't want to run the repository script. They are not a full equivalent of the script's behavior: the script additionally stages all three binaries in a temp directory and proves each is executable before any of them touch the real destination, so it cannot leave a partial set behind if a build, copy, or the script itself is interrupted mid-run. The manual form below copies the three files directly with no staging step, so an interruption partway through can leave `$HOME/.local/bin` with a mixed set from an old and a new build:
 
 ```bash
 cargo build --workspace --release
