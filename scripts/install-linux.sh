@@ -114,6 +114,10 @@ DEST="${DEST_FLAG:-${INSTALL_DEST:-$HOME/.local/bin}}"
 #    staging directory, or any copy touches the destination, so a refused
 #    re-install never partially replaces a previously installed set.
 mkdir -p "${DEST}" 2>/dev/null || true
+if [ -e "${DEST}" ] && [ ! -d "${DEST}" ]; then
+    echo "FAIL — ${DEST} exists and is not a directory; choose a different --dest" >&2
+    exit 1
+fi
 if [ ! -d "${DEST}" ] || ! test -w "${DEST}"; then
     echo "FAIL — ${DEST} is not writable; choose a writable destination with --dest, or create/chown it yourself. This script never escalates privileges to obtain one." >&2
     exit 1
