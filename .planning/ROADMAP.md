@@ -383,7 +383,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 52-03-PLAN.md — Narrow README layout/pointer update, cross-document consistency + phase regression gate, not-a-security-proof boundary statement, and the human sign-off (criteria 1, 2, 3)
+- [x] 52-03-PLAN.md — Narrow README layout/pointer update, cross-document consistency + phase regression gate, not-a-security-proof boundary statement, and the human sign-off (criteria 1, 2, 3)
 
 </details>
 
@@ -442,4 +442,4 @@ Plans:
 | 49. Deterministic Multi-step Coding Planner | v1.10 | 2/2 | Complete    | 2026-07-29 |
 | 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 2/2 | Complete   | 2026-07-29 |
 | 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 9/9 | Complete    | 2026-08-09 |
-| 52. Minimal Linux Packaging | v1.10 | 2/3 | In Progress|  |
+| 52. Minimal Linux Packaging | v1.10 | 3/3 | In Progress|  |
