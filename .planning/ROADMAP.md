@@ -183,8 +183,8 @@ Full detail archived in [`milestones/v1.9-ROADMAP.md`](milestones/v1.9-ROADMAP.m
 
 **Milestone goal:** A design partner can drive the full Safe Coding Agent path (edit → test → commit → push → open PR) as **one Session via the CLI** — not a hybrid in-crate composition — with I2, per-session policy, and confirm/deny intact, and a genuine audit chain end-to-end. Closes the v1.9 LIVE-05 hybrid honesty gap. Deterministic multi-step first; LLM multi-step deferred. Zero new crates default. Design-gate + fresh non-self adversarial code-trace before any multi-step TCB change.
 
-- [ ] **Phase 47: Multi-step Plan Stream Design Gate** - DESIGN doc + fresh adversarial code-trace locks stream shape, handle bag, Block-and-Hold, trusted-intent success path, and zero-new-crate hygiene before any multi-step TCB code
-- [ ] **Phase 48: Plan-Stream Substrate** - Worker sequential multi-submit loop + opaque `output_value_id` handle bag on one Session with chain-head continuity
+- [x] **Phase 47: Multi-step Plan Stream Design Gate** - DESIGN doc + fresh adversarial code-trace locks stream shape, handle bag, Block-and-Hold, trusted-intent success path, and zero-new-crate hygiene before any multi-step TCB code (completed 2026-07-27)
+- [x] **Phase 48: Plan-Stream Substrate** - Worker sequential multi-submit loop + opaque `output_value_id` handle bag on one Session with chain-head continuity (completed 2026-07-28)
 - [x] **Phase 49: Deterministic Multi-step Coding Planner** - Scripted coding planner emits the edit→test→commit→push→PR node sequence over shipped sinks with trusted-intent args only (completed 2026-07-29)
 - [x] **Phase 50: CLI Multi-node Driver & Mid-loop Confirm Continuity** - `caprun run` drives the multi-node coding chain with honest stop semantics and same-Session Block-and-Hold confirm (completed 2026-07-29)
 - [x] **Phase 51: Non-hybrid LIVE Proof (v1.10 DONE)** - CLI-driven success path + mid-loop I2 Block proven on real Linux with `verify_chain` true (no hybrid DONE claim) (completed 2026-08-09)
@@ -437,8 +437,8 @@ Plans:
 | 44. `git.push` — Broker-Performed Destination-Pinned Egress | v1.9 | 5/5 | Complete    | 2026-07-18 |
 | 45. Thin CLI/SDK + Read-Only Audit-DAG Viewer | v1.9 | 4/4 | Complete    | 2026-07-18 |
 | 46. Composed Live Proof (v1.9 DONE) | v1.9 | 4/4 | Complete    | 2026-07-18 |
-| 47. Multi-step Plan Stream Design Gate | v1.10 | 1/2 | In Progress|  |
-| 48. Plan-Stream Substrate | v1.10 | 2/2 | In Progress|  |
+| 47. Multi-step Plan Stream Design Gate | v1.10 | 2/2 | Complete    | 2026-07-27 |
+| 48. Plan-Stream Substrate | v1.10 | 2/2 | Complete    | 2026-07-28 |
 | 49. Deterministic Multi-step Coding Planner | v1.10 | 2/2 | Complete    | 2026-07-29 |
 | 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 2/2 | Complete   | 2026-07-29 |
 | 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 9/9 | Complete    | 2026-08-09 |

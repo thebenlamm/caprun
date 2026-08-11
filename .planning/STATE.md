@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.10
 milestone_name: Multi-step Safe Coding Agent Loop
-current_phase: 47
-current_phase_name: Multi-step Plan Stream Design Gate
-status: planning
-stopped_at: Phase 52 context gathered
+current_phase: 52
+current_phase_name: Minimal Linux Packaging
+status: complete
+stopped_at: v1.10 all 7 phases executed
 last_updated: "2026-08-11T15:49:02.919Z"
 last_activity: 2026-08-11
-last_activity_desc: Phase 52 complete, transitioned to Phase 47
+last_activity_desc: Phase 52 complete; all v1.10 phases (47-52, incl. 51.1) executed
 progress:
   total_phases: 7
   completed_phases: 7
@@ -27,11 +27,10 @@ See: .planning/PROJECT.md (updated 2026-07-23)
 
 ## Current Position
 
-Phase: 47 — Multi-step Plan Stream Design Gate
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-08-11 — Phase 52 complete, transitioned to Phase 47
-Next after 51.1: Phase 52 — Minimal Linux Packaging (unchanged scope, PKG-01)
+Phase: 52 — Minimal Linux Packaging (last phase of v1.10)
+Plan: All plans executed
+Status: v1.10 fully executed — all 7 phases (47, 48, 49, 50, 51, 51.1, 52) complete
+Last activity: 2026-08-11 — Phase 52 complete; v1.10 milestone ready for close-out
 
 Progress: [██████████] 100%
 
@@ -192,7 +191,9 @@ Resume file: .planning/phases/52-minimal-linux-packaging/52-CONTEXT.md
 
 ## Operator Next Steps
 
-- Start Phase 47 with `/gsd-discuss-phase 47` or `/gsd-plan-phase 47`
+- v1.10 (all 7 phases: 47, 48, 49, 50, 51, 51.1, 52) is fully executed. Close out the
+  milestone with `/gsd-audit-milestone`, then `/gsd-complete-milestone`.
+- Outstanding: `/gsd-secure-phase 52` has not yet been run.
 
 ## Deferred Items
 
