@@ -8,25 +8,73 @@ caprun has a small, intentionally constrained configuration surface. Confinement
 ## caprun CLI Arguments
 
 ```
-caprun <workspace-file> [audit-db-path]
+caprun [run] [--policy <path>] [--seed-from-file <path>] <intent-kind> <intent-param> <workspace-file> [audit-db-path]
+caprun confirm <effect_id> [audit-db-path]
+caprun deny <effect_id> [audit-db-path]
+caprun review <effect_id> [audit-db-path]
+caprun grant <session_id> [audit-db-path]
+caprun audit <session_id> <audit-db-path>
 ```
+
+The leading `run` verb is an optional, legible alias for the bare-positional intent-run form — both are accepted and behave identically. `confirm`, `deny`, `review`, `grant`, and `audit` are distinct dispatch verbs, checked before the intent-kind parse; `caprun audit` REQUIRES an explicit `<audit-db-path>` — there is no `:memory:` default for it, because an in-memory database has no persisted chain to verify.
 
 | Argument | Required | Default | Description |
 |----------|----------|---------|-------------|
+| `<intent-kind>` | Yes (run form) | — | One of `send-email-summary`, `create-file-from-report`, `safe-coding-workflow` — see the intent-kind table below. |
+| `<intent-param>` | Yes (run form), unless `--seed-from-file` is given | — | The primary literal for the chosen intent kind (recipient address, file path, or coding-intent JSON path). |
 | `<workspace-file>` | Yes | — | Path to the workspace file the confined worker will read. The broker opens this file and passes the file descriptor to the worker via `SCM_RIGHTS`. |
-| `[audit-db-path]` | No | `:memory:` | SQLite audit database path. Pass a filesystem path (e.g., `audit.db`) to persist the audit DAG across runs. Defaults to an in-process ephemeral database. |
+| `[audit-db-path]` | No (Yes for `audit`) | `:memory:` | SQLite audit database path. Pass a filesystem path (e.g., `audit.db`) to persist the audit DAG across runs. The `audit` verb requires an explicit path — there is no in-memory default for it. |
+| `--policy <path>` | No | broker default (see "Session policy file" below) | Trusted session policy file path. Takes precedence over `CAPRUN_POLICY` when both are set. |
+| `--seed-from-file <path>` | No | — | Reads the primary intent literal from file content instead of the CLI argument. The seed file **replaces** the `<intent-param>` positional entirely — it is never consumed in addition to it. A missing or unreadable seed file is a hard error with no fallback to the positional form. |
 
-**Example — ephemeral audit DB (default):**
+### Intent kinds
+
+| Intent kind | `<intent-param>` meaning |
+|-------------|---------------------------|
+| `send-email-summary` | Recipient email address for the workspace summary. |
+| `create-file-from-report` | Path created under the workspace root. |
+| `safe-coding-workflow` | Path to a JSON file deserializing to a `CaprunIntent::SafeCodingWorkflow` coding intent. |
+
+**Example — ephemeral audit DB (default), send-email-summary:**
 ```bash
-./target/debug/caprun ./my-workspace.txt
+./target/release/caprun send-email-summary you@example.com ./my-workspace.txt
 ```
 
-**Example — persistent audit DB:**
+**Example — persistent audit DB, create-file-from-report:**
 ```bash
-./target/debug/caprun ./my-workspace.txt audit.db
+./target/release/caprun create-file-from-report report.md ./my-workspace.txt audit.db
+```
+
+**Example — with an explicit session policy located outside the workspace:**
+```bash
+./target/release/caprun --policy ../policy.json send-email-summary you@example.com ./my-workspace.txt audit.db
 ```
 
 Both `audit.db` and `runtime.db` are gitignored and must not be committed.
+
+### Session policy file
+
+`--policy <path>` is the preferred, runnable way to select a session policy; `CAPRUN_POLICY` is its environment-variable fallback — both feed the SAME `bind_policy` call, and the flag takes precedence when both are set. When neither is supplied, the broker binds its own default: an explicit allowlist of the nine production sinks with no argument constraints (`SessionPolicy::broker_default()`) — never allow-everything.
+
+A minimal policy file admitting only the file/commit sinks:
+
+```json
+{
+  "allowed_sinks": ["file.create", "file.write", "git.commit"],
+  "arg_constraints": {}
+}
+```
+
+The nine production sink ids, any subset of which may appear in `allowed_sinks`:
+
+```
+email.send, file.create, file.write, process.exec,
+git.commit, http.request, github.pr, http.request.write, git.push
+```
+
+**The policy file must live OUTSIDE the workspace directory being operated on.** The broker refuses to bind a policy file at or beneath the workspace root, because that location is reachable by the confined worker itself (the same reach the worker has to read ordinary workspace files) — binding a worker-writable policy there would let the confined worker widen its own allowlist.
+
+A session policy can only ever *narrow* which sinks and arguments are callable. It can never relax or disable the value-injection (I2) enforcement hardcoded in the Rust trusted computing base.
 
 ---
 
