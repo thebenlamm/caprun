@@ -378,8 +378,8 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 52-01-PLAN.md — Tracer: `scripts/install-linux.sh` end-to-end (build → stage → co-locate three siblings → verify) plus the GETTING-STARTED install walkthrough, manual equivalent, and `cargo install` insufficiency warning (criteria 1, 3)
-- [ ] 52-02-PLAN.md — Replace the stale CONFIGURATION surface: real verb/flag CLI, minimal policy example, and the three-tier operator env/credential checklist (criterion 2)
+- [x] 52-01-PLAN.md — Tracer: `scripts/install-linux.sh` end-to-end (build → stage → co-locate three siblings → verify) plus the GETTING-STARTED install walkthrough, manual equivalent, and `cargo install` insufficiency warning (criteria 1, 3)
+- [x] 52-02-PLAN.md — Replace the stale CONFIGURATION surface: real verb/flag CLI, minimal policy example, and the three-tier operator env/credential checklist (criterion 2)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -442,4 +442,4 @@ Plans:
 | 49. Deterministic Multi-step Coding Planner | v1.10 | 2/2 | Complete    | 2026-07-29 |
 | 50. CLI Multi-node Driver & Mid-loop Confirm Continuity | v1.10 | 2/2 | Complete   | 2026-07-29 |
 | 51. Non-hybrid LIVE Proof (v1.10 DONE) | v1.10 | 9/9 | Complete    | 2026-08-09 |
-| 52. Minimal Linux Packaging | v1.10 | 0/? | Not started | - |
+| 52. Minimal Linux Packaging | v1.10 | 2/3 | In Progress|  |
