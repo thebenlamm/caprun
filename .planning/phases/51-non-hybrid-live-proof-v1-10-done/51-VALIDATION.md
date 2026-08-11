@@ -1,7 +1,7 @@
 ---
 phase: 51
 slug: non-hybrid-live-proof-v1-10-done
-status: complete
+status: validated
 nyquist_compliant: true
 wave_0_complete: true
 created: 2026-07-29
@@ -88,3 +88,22 @@ created: 2026-07-29
 - [x] `nyquist_compliant: true` set in frontmatter after Wave 0 tests landed and executed
 
 **Approval:** authoritative scoped and full real-Linux Docker compose gates passed on 2026-08-08. Evidence is retained in `51-LIVE-EVIDENCE.md`, `51-LIVE-SCOPED.log`, and `51-LIVE-FULL.log`.
+
+## Validation Audit 2026-08-11
+
+| Metric | Count |
+|--------|-------|
+| Requirements audited | 2 |
+| Covered | 2 |
+| Partial | 0 |
+| Missing | 0 |
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
+
+The retained authoritative real-Linux logs remain byte-identical to their evidence record:
+`51-LIVE-SCOPED.log` SHA-256 is `dc57e49b2d75ec0d040da69a780f13485507148b5efe19d0457640d41916b98d`
+and `51-LIVE-FULL.log` SHA-256 is `4bcb275b98dde637d7ac644a60227d33cc5ec47acf65e8898e2f1a4d4b34ee3e`.
+The scoped log records LIVE-07 and LIVE-08 green (4/4), and the full log ends with the
+composed Linux verification success marker. A current host-safe rerun of the order-independent
+LIVE-08 attribution oracle passed (1/1), followed by invariant Gates 1–6.

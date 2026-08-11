@@ -3,9 +3,9 @@ phase: 52
 slug: minimal-linux-packaging
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
 # audit-milestone §5.5 distinguishes NOT-VALIDATED (draft) from PARTIAL (validated + nyquist_compliant: false) (#2117)
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-08-11
 ---
 
@@ -44,11 +44,12 @@ verify Phase 52.
 
 ## Per-Task Verification Map
 
-*Populated by `/gsd-validate-phase` after plans are written. Seeded here as draft.*
-
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| TBD | TBD | TBD | PKG-01 | TBD | TBD | integration | `bash -n scripts/install-linux.sh` | ❌ W0 | ⬜ pending |
+| 52-01-T1/T2 | 01 | 1 | PKG-01 | T-52-01..07 | Release build installs exactly three executable sibling binaries; destination/help/error paths fail or succeed explicitly | integration/smoke | `bash -n scripts/install-linux.sh && INSTALL_DEST="$(mktemp -d)" bash scripts/install-linux.sh` plus exact-directory and CLI assertions | ✅ exists | ✅ green |
+| 52-01-T3 | 01 | 1 | PKG-01 | T-52-08 | Linux install walkthrough gives the manual equivalent and warns that `cargo install --path cli/caprun` is insufficient | doc behavior | `grep` assertions from `52-01-PLAN.md` | ✅ exists | ✅ green |
+| 52-02-T1/T2 | 02 | 1 | PKG-01 | credential disclosure | `CAPRUN_*`, policy precedence, and GitHub grant/credential checklist match source names | doc/source integration | bidirectional source/document checks from `52-02-PLAN.md` | ✅ exists | ✅ green |
+| 52-03-T1/T2 | 03 | 2 | PKG-01 | framing drift | README points to the installer and names the three-binary layout; cross-doc and invariant gates remain green | doc/source integration | `grep` cross-document checks plus `./scripts/check-invariants.sh` | ✅ exists | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -56,8 +57,8 @@ verify Phase 52.
 
 ## Wave 0 Requirements
 
-- [ ] `scripts/install-linux.sh` — the install script itself is the primary artifact under test
-- [ ] No test framework install needed — `bash -n`, `cargo`, and `check-invariants.sh` already exist
+- [x] `scripts/install-linux.sh` — primary artifact exists and was executed behaviorally
+- [x] No test framework install needed — `bash -n`, `cargo`, and `check-invariants.sh` already exist
 
 ---
 
@@ -72,11 +73,31 @@ verify Phase 52.
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 10s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 10s on a warm release build
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** PKG-01's install artifact, exact sibling layout, operator-facing failure paths, documentation links/checklist, and invariant gates are green. The clean-host and first-time-reader checks remain explicitly manual-only and were accepted during phase verification.
+
+## Validation Audit 2026-08-11
+
+| Metric | Count |
+|--------|-------|
+| Requirements audited | 1 |
+| Covered | 1 |
+| Partial | 0 |
+| Missing | 0 |
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
+
+A current behavioral run passed shell syntax, a real warm release build, and installation
+into a fresh temporary destination containing exactly `caprun`, `caprun-worker`, and
+`caprun-exec-launcher`, all executable. `--help`, bogus-flag failure, install/configuration
+documentation assertions, README linkage, and invariant Gates 1–6 also passed. The first
+combined audit command initially redirected only stdout for `--help`; because the script
+writes usage to stderr, the audit harness was corrected and rerun without weakening any
+product assertion.

@@ -1,11 +1,11 @@
 ---
 phase: 50
 slug: cli-multi-node-driver-mid-loop-confirm-continuity
-status: complete
+status: validated
 nyquist_compliant: true
 wave_0_complete: true
 created: 2026-07-29
-updated: 2026-07-29
+updated: 2026-08-11
 ---
 
 # Phase 50 — Validation Strategy
@@ -96,4 +96,18 @@ updated: 2026-07-29
 - [x] Feedback latency < 120s
 - [x] `nyquist_compliant: true` set in frontmatter after Wave 0 tests land
 
-**Approval:** Wave 0 complete (50-01 + 50-02 tests landed during execute)
+**Approval:** Wave 0 complete (50-01 + 50-02 tests landed during execute). The real CLI production-path backstop is established by Phase 51's retained, hash-verified real-Linux acceptance evidence.
+
+## Validation Audit 2026-08-11
+
+| Metric | Count |
+|--------|-------|
+| Requirements audited | 3 |
+| Covered | 3 |
+| Partial | 0 |
+| Missing | 0 |
+| Gaps found | 0 |
+| Resolved by retained authoritative evidence | 1 |
+| Escalated | 0 |
+
+Current host-safe evidence passed: `coding_cli` 6/6, `stream_hold` 11/11, `stream_substrate` 12/12, `confirm` 4/4, and `grant` 2/2. These directly cover CLI parsing, exit taxonomy, no-resubmit hold continuity, confirm/deny, and grant surfaces. For CLI-01's full production driver, Phase 51's retained scoped real-Linux log is the authoritative automated execution: its hash matches `51-LIVE-EVIDENCE.md`, and the real-binary LIVE-07 test asserts exit 0, exactly one Session, successful confirmed push and PR, and a passing audit chain. A direct rerun on this host could not supply the compose DNS/mock-egress environment because Docker is unavailable. Per explicit user approval, the retained Linux run closes this environment-only rerun gap without weakening Phase 50's no-LIVE-success-claim boundary at implementation time.

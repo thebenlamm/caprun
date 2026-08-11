@@ -1,11 +1,11 @@
 ---
 phase: 49
 slug: deterministic-multi-step-coding-planner
-status: complete
+status: validated
 nyquist_compliant: true
 wave_0_complete: true
 created: 2026-07-29
-updated: 2026-07-29
+updated: 2026-08-11
 ---
 
 # Phase 49 — Validation Strategy
@@ -45,7 +45,7 @@ updated: 2026-07-29
 | 49-*-file-reg | 49-01 | 1 | CODE-01 | — | File plan_next step0 matches plan() | unit | `cargo test -p caprun --test planner plan_next_step0_matches_plan_for_file` | ✅ | ✅ green |
 | 49-*-no-out | 49-01/02 | 1–2 | CODE-02 | T-49-01 | Success-path args only intent bag keys (no `out_*`) | unit | `cargo test -p caprun --test planner coding_success_path_does_not_place_out_handles` | ✅ | ✅ green |
 | 49-*-mint | 49-01 | 1 | CODE-02 | T-49-02 | ProvideIntent multi-mint distinct named UserTrusted handles | unit/integration | `cargo test -p brokerd --test proto_claims provide_intent_safe_coding_multi_mint_distinct_named_handles` | ✅ | ✅ green |
-| 49-*-i2-proof | 49-02 | 2 | CODE-02 | T-49-01 / T-49-07 | LIVE-08 expressibility: proof path places `out_*` into sensitive arg | unit | `cargo test -p caprun --test planner coding_i2_proof_places_out_handle` | ✅ | ✅ green |
+| 49-*-i2-proof | 49-02 | 2 | CODE-02 | T-49-01 / T-49-07 | LIVE-08 expressibility: proof path places `out_*` into sensitive arg | unit | `cargo test -p caprun --features live-proof-fixtures --test planner coding_i2_proof_places_out_handle -- --exact` | ✅ | ✅ green |
 | 49-*-hyg | 49-01/02 | * | HYG-02 | T-49-08 | Gate 1/3; zero new crates | script | `./scripts/check-invariants.sh` | ✅ | ✅ green |
 | 49-*-stream | 49-02 | 2 | STREAM regression | — | stream_substrate still green | unit | `cargo test -p caprun --test stream_substrate` | ✅ | ✅ green |
 
@@ -87,3 +87,13 @@ updated: 2026-07-29
 - [x] `nyquist_compliant: true` set in frontmatter
 
 **Approval:** Wave 0 complete; host automated legs green (2026-07-29). Ready for `/gsd-verify-work`.
+
+## Validation Audit 2026-08-11
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
+
+Current adversarial rerun: CODE-01 five-node sequence, CODE-02 intent-only anti-launder, missing-key fail-closed behavior, feature-gated I2 expressibility, named-handle serde, and broker multi-mint all passed. The I2 command above now includes its required non-default feature so it executes one test rather than filtering the test out.

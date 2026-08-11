@@ -1,11 +1,11 @@
 ---
 phase: 48
 slug: plan-stream-substrate
-status: active
+status: validated
 nyquist_compliant: true
 wave_0_complete: true
 created: 2026-07-28
-updated: 2026-07-28
+updated: 2026-08-11
 ---
 
 # Phase 48 — Validation Strategy
@@ -94,4 +94,18 @@ When Docker/mailpit is unavailable, host runs `cargo test -p caprun --test strea
 - [x] Feedback latency < 120s focused
 - [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** wave-0 complete after 48-01 + 48-02 automated STREAM tests exist and host-safe legs pass
+**Approval:** wave-0 complete after 48-01 + 48-02 automated STREAM tests exist and host-safe legs pass. Production-worker coverage is additionally established by Phase 51's retained, hash-verified real-Linux CLI evidence.
+
+## Validation Audit 2026-08-11
+
+| Metric | Count |
+|--------|-------|
+| Requirements audited | 2 |
+| Covered | 2 |
+| Partial | 0 |
+| Missing | 0 |
+| Gaps found | 0 |
+| Resolved by retained authoritative evidence | 1 |
+| Escalated | 0 |
+
+Current focused evidence passed: planner 25/25, stream substrate 12/12, broker same-connection multi-submit 2/2, and invariant Gates 1–6. The phase-local deny/block/empty cases use a test-only loop mirror, so the production-worker backstop is Phase 51's retained real-Linux acceptance execution: its scoped log hash matches `51-LIVE-EVIDENCE.md`, records LIVE-07/LIVE-08 green (4/4), and exercises the real CLI and worker through sequential submissions, opaque handle forwarding, stop/hold behavior, and a valid audit chain. A direct rerun on this managed host reached environment-only abstract-UDS/DNS/mock-egress failures; Docker is unavailable. Per explicit user approval, the retained Linux evidence is authoritative for this production-path coverage.
