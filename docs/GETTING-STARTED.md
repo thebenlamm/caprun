@@ -37,10 +37,12 @@ cd caprun
 cargo build --workspace
 ```
 
-This builds all workspace crates and produces two binaries in `target/debug/`:
+This builds all workspace crates and produces four binaries in `target/debug/`, three of which are required for a working install:
 
 - `target/debug/caprun` — the orchestrator
 - `target/debug/caprun-worker` — the self-confining worker (must stay in the same directory as `caprun`)
+- `target/debug/caprun-exec-launcher` — the self-confining exec helper the broker spawns for the `process.exec` sink (must also stay in the same directory as `caprun`)
+- `target/debug/caprun-planner` — optional LLM-sidecar functionality; not required for the minimal deterministic workflow
 
 Run the architectural invariant gate before making code changes:
 
@@ -70,24 +72,44 @@ The three installed binaries:
 
 Nothing enters the destination until all three binaries are staged and proven executable, so a failed build or a failed copy never leaves a partial set behind. The three final renames into the destination are atomic individually but not as a set, and two installs run at the same time into the same destination are not serialized against each other — a killed or racing install can leave a mixed set from two different builds. Re-running the installer is both the upgrade path and the recovery: it is idempotent and overwrites any mixed set with one consistent build's binaries.
 
+**Manual equivalent** — these commands are the script's entire behavior, so this walkthrough is sufficient even if you don't want to run the repository script:
+
+```bash
+cargo build --workspace --release
+mkdir -p "$HOME/.local/bin"
+install -m 755 target/release/caprun target/release/caprun-worker target/release/caprun-exec-launcher "$HOME/.local/bin/"
+```
+
+Then verify the layout the same way the script does — all three executable, in the same directory:
+
+```bash
+for bin in caprun caprun-worker caprun-exec-launcher; do
+    test -x "$HOME/.local/bin/$bin" || echo "MISSING: $bin"
+done
+```
+
+> **`cargo install --path cli/caprun` alone is NOT a sufficient install.** `caprun-exec-launcher` lives in a separate Cargo package (`cli/caprun-exec-launcher`), not as a second binary target of the `cli/caprun` package — no number of `--bin` flags on that command can ever produce it. Everything appears to work right up until a plan node reaches the `process.exec` sink, which then fails to locate the launcher.
+
 ---
 
 ## Running the substrate demo (Linux)
 
-`caprun` takes a workspace file and an optional audit database path:
+`caprun`'s full invocation shape:
 
 ```
-caprun <workspace-file> [audit-db-path]
+caprun [run] [--policy <path>] <intent-kind> <intent-param> <workspace-file> [audit-db-path]
 ```
+
+See [CONFIGURATION.md](CONFIGURATION.md) for the full verb and flag reference (`confirm`/`deny`/`review`/`grant`/`audit`, `--policy`/`CAPRUN_POLICY`).
 
 Create a workspace file and run the demo:
 
 ```bash
 echo "hello from workspace" > /tmp/workspace.txt
-./target/debug/caprun /tmp/workspace.txt /tmp/audit.db
+./target/debug/caprun create-file-from-report /tmp/output.txt /tmp/workspace.txt /tmp/audit.db
 ```
 
-`caprun-worker` must be present alongside the `caprun` binary. After `cargo build --workspace`, both live in `target/debug/` — run `caprun` from the repo root using the `./target/debug/` path so the binary locates its sibling automatically.
+All three required binaries (`caprun`, `caprun-worker`, `caprun-exec-launcher`) must live in the same directory as each other. `caprun`'s worker lookup is a single parent-directory hop with no fallback search, so a partial copy fails at spawn time with a bare operating-system "no such file or directory" error and no descriptive message. After `cargo build --workspace`, all three live in `target/debug/` — run `caprun` from the repo root using the `./target/debug/` path so the binary locates its siblings automatically.
 
 ### What happens
 
@@ -178,6 +200,9 @@ On macOS, seeing "0 passed" for `crates/sandbox` and `cli/caprun` is expected. T
 **`caprun-worker` not found at startup**
 `caprun` locates `caprun-worker` relative to its own binary path. Run `caprun` via its full `target/debug/caprun` path after `cargo build --workspace`. Do not copy just the `caprun` binary without `caprun-worker`.
 
+**`caprun-exec-launcher` not found near the broker's binary**
+The broker could not locate the sibling `caprun-exec-launcher` binary near its own binary path — this is exactly the state `cargo install --path cli/caprun` leaves behind, since that command never installs the separate `cli/caprun-exec-launcher` package. Fix: install all three required binaries together via `bash scripts/install-linux.sh` or the manual commands in [Install (Linux)](#install-linux) above.
+
 **`landlock` syscall blocked in Docker**
 The default Docker seccomp profile blocks `landlock()`. Pass `--security-opt seccomp=unconfined` to the `docker run` command. Do not use `--privileged` — it is not needed.
 
@@ -191,6 +216,7 @@ This indicates audit DAG corruption — the SHA-256 hash chain has a gap or mism
 
 ## Next steps
 
+- **Installing on Linux:** [Install (Linux)](#install-linux) above — the script and manual paths for getting all three required binaries onto a design partner's machine.
 - **Architecture and security model:** [ARCHITECTURE.md](ARCHITECTURE.md) — invariants I0/I1/I2, the locked effect path, SCM_RIGHTS fd-pass, taint model, and the §9 v0 DONE gate.
 - **Configuration reference:** [CONFIGURATION.md](CONFIGURATION.md) — CLI arguments, worker environment variables, audit DB options, hardcoded confinement parameters, and the Colima/Docker recipe in detail.
 - **Source of truth:** `planning-docs/PLAN.md` wins on any conflict between docs, code comments, or this file.
