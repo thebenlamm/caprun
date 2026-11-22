@@ -38,7 +38,7 @@ caprun/
     DESIGN-GATE-RECORD.md
   crates/
     runtime-core/         # pure domain types — no I/O, no async, no network
-    sandbox/              # security boundary: namespaces, Landlock, seccomp, rlimits
+    sandbox/              # security boundary: Landlock, seccomp, rlimits (no namespaces)
     brokerd/              # reference monitor: Session lifecycle, SQLite audit DAG, UDS IPC
     adapter-fs/           # only path to fs effects: SCM_RIGHTS fd-pass
     executor/             # deterministic I2 enforcement (gated — see below)
@@ -53,7 +53,7 @@ caprun/
 | Crate | Security role | Key constraint |
 |-------|---------------|----------------|
 | `runtime-core` | Pure domain types: `Intent`, `Session`, `Effect`, `Artifact`, `Event`, `ValueNode`, `PlanNode`, `ExecutorDecision` | **No I/O, no async, no network** — enforced by Gate 2 |
-| `sandbox` | The security **boundary** — namespaces, Landlock, seccomp, default-deny net | Workers self-confine after connecting to broker |
+| `sandbox` | The security **boundary** — Landlock, seccomp (no socket creation, no io_uring), rlimits | Workers self-confine after connecting to broker |
 | `brokerd` | Reference monitor / control plane (NOT the boundary) — Session lifecycle, SQLite audit DAG (SHA-256 hash chain), UDS IPC | — |
 | `adapter-fs` | The only path to filesystem effects: broker opens workspace files and passes fd via `SCM_RIGHTS` | — |
 | `executor` | Deterministic non-LLM I2 enforcement — the security differentiator | **Gated by two DESIGN docs** — see below |

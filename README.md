@@ -1,9 +1,16 @@
 <!-- generated-by: gsd-doc-writer -->
 # caprun
 
+> **Status: archived (2026-11-22).** Not maintained. Read
+> [`docs/POSTMORTEM.md`](docs/POSTMORTEM.md) first: it records which parts of
+> the design held, the confinement escapes found and fixed at archive time, and
+> what was never tested. In particular, caprun was never run with an LLM agent
+> in a multi-step tool-using loop; the LLM planner was only exercised live on
+> single-step intents.
+
 An **Intent Runtime** on stock Linux: a user-space execution layer where agents have no ambient authority, every external effect is authorized against a Session, and confinement is kernel-enforced.
 
-**v0 binary:** `caprun` — **Linux (Ubuntu) only.** All v0 security claims rest on Linux kernel primitives (Landlock, seccomp-bpf, namespaces, pidfd). Mac/WSL2 are deferred post-v0. This is **not** a kernel fork, agent framework, desktop-automation platform, memory product, or marketplace.
+**v0 binary:** `caprun` — **Linux (Ubuntu) only.** All v0 security claims rest on Linux kernel primitives (Landlock, seccomp-bpf, no_new_privs, rlimits; no namespaces). Mac/WSL2 are deferred post-v0. This is **not** a kernel fork, agent framework, desktop-automation platform, memory product, or marketplace.
 
 ---
 
@@ -37,7 +44,7 @@ Introducing a raw `EffectRequest { effect, args: Map }` straight to a sink is ar
 | Crate | Role |
 |-------|------|
 | `crates/runtime-core` | Pure types: `Intent`, `Session`, `Effect`, `Artifact`, `Event`, `ValueNode`, `PlanNode`, `ExecutorDecision`. No I/O, no async, no network (enforced by Gate 2). |
-| `crates/sandbox` | Security **boundary** — namespaces, Landlock, seccomp, default-deny net, rlimits. Provides the `confine-probe` binary. |
+| `crates/sandbox` | Security **boundary** — Landlock, seccomp (denies all socket creation and io_uring), rlimits. Provides the `confine-probe` binary. |
 | `crates/brokerd` | Reference monitor / control plane (NOT the boundary) — Session lifecycle, SQLite audit DAG (SHA-256 hash chain), UDS IPC, policy. |
 | `crates/adapter-fs` | The only path to fs effects — broker opens workspace files, passes the fd to the worker via `SCM_RIGHTS`. |
 | `crates/executor` | (after design-gate docs) Deterministic, non-LLM I2 enforcement — the security differentiator. |
