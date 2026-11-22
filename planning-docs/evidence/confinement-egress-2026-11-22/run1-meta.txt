@@ -1,0 +1,14 @@
+2026-11-22T04:35:52Z
+Linux ip-172-31-0-242 7.0.0-1018-aws #19~24.04.1-Ubuntu SMP PREEMPT Thu Nov 12 17:17:32 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+PRETTY_NAME="Ubuntu 24.04.5 LTS"
+NAME="Ubuntu"
+29.1.3
+1393d3cbd9da2426a1ff89498427ca82cc600fb8177a999d2e1b0af27084ba81  /root/src.tgz
+0
+FULL_EXIT=101
+2026-11-22T04:38:11Z
+SCOPED_EXIT=0
+2026-11-22T04:40:02Z
+  PASS — containment predicate lives only in the shared helper; all consumers delegate
+
+All invariant gates PASSED.
