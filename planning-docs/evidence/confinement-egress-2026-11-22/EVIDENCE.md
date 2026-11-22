@@ -8,8 +8,8 @@ AWS API timestamps.
 
 | Run | Instance | Type / account | Launched (AWS) | Kernel | OS | Docker |
 |-----|----------|----------------|----------------|--------|----|--------|
-| 1 | `i-01ac51d4eae266e45` | c7i.4xlarge, `559846026666`, tag `Project=caprun` | 2026-11-22T04:35:13Z | `7.0.0-1018-aws` | Ubuntu 24.04.5 LTS | 29.1.3 |
-| 2 | `i-0e9e2864ac2341f8d` | c7i.4xlarge, `559846026666`, tag `Project=caprun` | 2026-11-22T04:41:52Z | `7.0.0-1018-aws` | Ubuntu 24.04.5 LTS | 29.1.3 |
+| 1 | `i-01ac51d4eae266e45` | c7i.4xlarge, project AWS account, tag `Project=caprun` | 2026-11-22T04:35:13Z | `7.0.0-1018-aws` | Ubuntu 24.04.5 LTS | 29.1.3 |
+| 2 | `i-0e9e2864ac2341f8d` | c7i.4xlarge, project AWS account, tag `Project=caprun` | 2026-11-22T04:41:52Z | `7.0.0-1018-aws` | Ubuntu 24.04.5 LTS | 29.1.3 |
 
 Both hosts used `instance-initiated-shutdown-behavior=terminate` and a
 `shutdown -h` safety timer as the first boot command.
