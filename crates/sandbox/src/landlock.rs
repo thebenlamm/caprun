@@ -8,7 +8,7 @@
 
 /// Deny all filesystem access via Landlock.
 ///
-/// Uses ABI::V3 (Linux 5.19+); the `landlock` crate negotiates gracefully
+/// Uses ABI::V3 (Linux 6.2+); the `landlock` crate negotiates gracefully
 /// with older kernels (ABI::V1 requires Linux ≥ 5.13).
 /// No allow-rules are added → everything is denied.
 ///
@@ -28,6 +28,23 @@ pub fn deny_all_filesystem() -> std::io::Result<()> {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e}")))?;
 
     eprintln!("[sandbox] Landlock status: {:?}", status.ruleset);
+    require_enforced(status.ruleset)
+}
+
+/// Fail closed when Landlock did not restrict this process at all (kernel
+/// without Landlock, or Landlock disabled): returning `Ok` there would let the
+/// caller run with NO filesystem confinement. `PartiallyEnforced` (kernel
+/// lacks some requested ABI V2/V3 rights) is accepted; the rights it can miss
+/// (`Refer`, `Truncate`) are backstopped by seccomp's `truncate` deny
+/// (DESIGN-confinement-egress-hardening.md §3.4).
+#[cfg(target_os = "linux")]
+fn require_enforced(status: landlock::RulesetStatus) -> std::io::Result<()> {
+    if status == landlock::RulesetStatus::NotEnforced {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Landlock is not enforced on this kernel; refusing to run unconfined",
+        ));
+    }
     Ok(())
 }
 
@@ -150,9 +167,9 @@ pub fn exec_child_ruleset(workspace_root: &std::path::Path) -> std::io::Result<(
     // the index/ref lock renames work even on the ABI floor). `RemoveDir` +
     // `Truncate` are included to complete the fuller write set (git tooling may
     // prune empty dirs / truncate in place). ABI note: `Refer` is Landlock ABI
-    // V2 (kernel ≥5.19) and `Truncate` is ABI V3 (≥5.19); the `landlock`
+    // V2 (kernel ≥5.19) and `Truncate` is ABI V3 (≥6.2); the `landlock`
     // crate's best-effort compatibility (default for `Ruleset::default()`)
-    // strips the unsupported bits on a ≥5.13 / <5.19 kernel WITHOUT failing, so
+    // strips the unsupported bits on a ≥5.13 / <6.2 kernel WITHOUT failing, so
     // the 5.13 floor is preserved — and because git's lock renames are
     // same-directory, a commit still succeeds there without `Refer`.
     let workspace_access = AccessFs::ReadFile
@@ -203,11 +220,28 @@ pub fn exec_child_ruleset(workspace_root: &std::path::Path) -> std::io::Result<(
         "[caprun-exec-launcher] Landlock exec_child_ruleset status: {:?}",
         status.ruleset
     );
-    Ok(())
+    require_enforced(status.ruleset)
 }
 
 /// No-op stub on non-Linux targets.
 #[cfg(not(target_os = "linux"))]
 pub fn exec_child_ruleset(_workspace_root: &std::path::Path) -> std::io::Result<()> {
     Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::require_enforced;
+    use landlock::RulesetStatus;
+
+    #[test]
+    fn not_enforced_is_refused() {
+        assert!(require_enforced(RulesetStatus::NotEnforced).is_err());
+    }
+
+    #[test]
+    fn partially_and_fully_enforced_are_accepted() {
+        assert!(require_enforced(RulesetStatus::PartiallyEnforced).is_ok());
+        assert!(require_enforced(RulesetStatus::FullyEnforced).is_ok());
+    }
 }

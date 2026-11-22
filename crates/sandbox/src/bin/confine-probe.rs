@@ -39,7 +39,7 @@ fn main() {
     {
         let args: Vec<String> = std::env::args().collect();
         if args.len() < 2 {
-            eprintln!("Usage: confine-probe <fs|net|exec> | confine-probe smtp <host> <port>");
+            eprintln!("Usage: confine-probe <fs|net|exec|uring|netlink|truncate|tiocsti|threaded> | confine-probe unix <path> | confine-probe smtp <host> <port>");
             std::process::exit(2);
         }
         run_linux(&args);
@@ -53,6 +53,9 @@ fn main() {
 /// all other ops (`fs`/`net`/`exec`) take no extra arguments, unchanged.
 #[cfg(target_os = "linux")]
 fn run_linux(args: &[String]) {
+    if args[1] == "threaded" {
+        probe_threaded();
+    }
     if let Err(e) = sandbox::apply_confinement() {
         eprintln!("[confine-probe] apply_confinement failed: {e}");
         std::process::exit(2);
@@ -64,6 +67,17 @@ fn run_linux(args: &[String]) {
         "fs" => probe_fs(),
         "net" => probe_net(),
         "exec" => probe_exec(),
+        "uring" => probe_uring(),
+        "netlink" => probe_netlink(),
+        "truncate" => probe_truncate(),
+        "tiocsti" => probe_tiocsti(),
+        "unix" => {
+            if args.len() < 3 {
+                eprintln!("Usage: confine-probe unix <socket-path>");
+                std::process::exit(2);
+            }
+            probe_unix(&args[2]);
+        }
         "smtp" => {
             if args.len() < 4 {
                 eprintln!("Usage: confine-probe smtp <host> <port>");
@@ -255,5 +269,119 @@ fn probe_exec() {
             std::io::Error::last_os_error()
         );
         std::process::exit(2);
+    }
+}
+
+/// Exit 0 iff `errno` is a confinement denial (EPERM/EACCES), else exit 2.
+#[cfg(target_os = "linux")]
+fn exit_on_denial(op: &str, errno: i32) -> ! {
+    if errno == libc::EPERM || errno == libc::EACCES {
+        eprintln!("[confine-probe] {op}: correctly blocked (errno={errno})");
+        std::process::exit(0);
+    }
+    eprintln!("[confine-probe] {op}: unexpected error (errno={errno})");
+    std::process::exit(2);
+}
+
+/// io_uring must be unavailable: IORING_OP_SOCKET/IORING_OP_CONNECT create and
+/// use sockets without the `socket`/`connect` syscalls, so a seccomp rule on
+/// `socket` alone is bypassable (DESIGN-confinement-egress-hardening D1).
+#[cfg(target_os = "linux")]
+fn probe_uring() {
+    // struct io_uring_params is 120 bytes; all-zero is a valid request.
+    let mut params = [0u8; 120];
+    let fd = unsafe { libc::syscall(libc::SYS_io_uring_setup, 1u32, params.as_mut_ptr()) };
+    if fd >= 0 {
+        unsafe { libc::close(fd as i32) };
+        eprintln!("[confine-probe] uring: io_uring_setup succeeded — socket filter bypassable!");
+        std::process::exit(1);
+    }
+    exit_on_denial("uring", std::io::Error::last_os_error().raw_os_error().unwrap_or(0));
+}
+
+/// Non-INET socket families (here AF_NETLINK) must be denied (D3).
+#[cfg(target_os = "linux")]
+fn probe_netlink() {
+    let fd = unsafe { libc::socket(libc::AF_NETLINK, libc::SOCK_RAW, libc::NETLINK_ROUTE) };
+    if fd >= 0 {
+        unsafe { libc::close(fd) };
+        eprintln!("[confine-probe] netlink: socket(AF_NETLINK) succeeded — not confined!");
+        std::process::exit(1);
+    }
+    exit_on_denial("netlink", std::io::Error::last_os_error().raw_os_error().unwrap_or(0));
+}
+
+/// A confined worker must not reach a pathname UDS outside its broker
+/// connection (D2) — e.g. D-Bus, ssh-agent, docker.sock.
+#[cfg(target_os = "linux")]
+fn probe_unix(path: &str) {
+    match std::os::unix::net::UnixStream::connect(path) {
+        Ok(_) => {
+            eprintln!("[confine-probe] unix: connect({path}) succeeded — not confined!");
+            std::process::exit(1);
+        }
+        Err(e) => exit_on_denial("unix", e.raw_os_error().unwrap_or(0)),
+    }
+}
+
+/// `truncate(path)` must be denied by seccomp (Landlock's Truncate right needs
+/// kernel ≥6.2). A NONEXISTENT path isolates the seccomp layer: without the
+/// rule the kernel answers ENOENT (exit 1); with it, EPERM (exit 0).
+#[cfg(target_os = "linux")]
+fn probe_truncate() {
+    let path = std::ffi::CString::new("/nonexistent-caprun-truncate-probe").unwrap();
+    if unsafe { libc::truncate(path.as_ptr(), 0) } == 0 {
+        eprintln!("[confine-probe] truncate: succeeded — not confined!");
+        std::process::exit(1);
+    }
+    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    if errno == libc::EPERM {
+        eprintln!("[confine-probe] truncate: correctly blocked by seccomp (EPERM)");
+        std::process::exit(0);
+    }
+    eprintln!("[confine-probe] truncate: reached the kernel (errno={errno}) — not filtered!");
+    std::process::exit(1);
+}
+
+/// `ioctl(_, TIOCSTI)` must be denied by seccomp. Issued on a pipe so the
+/// kernel's own answer is ENOTTY (exit 1); the seccomp rule answers EPERM
+/// (exit 0) before the fd type is examined.
+#[cfg(target_os = "linux")]
+fn probe_tiocsti() {
+    let mut fds = [0i32; 2];
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        eprintln!("[confine-probe] tiocsti: pipe() failed");
+        std::process::exit(2);
+    }
+    let c: libc::c_char = b'x' as libc::c_char;
+    let r = unsafe { libc::ioctl(fds[0], libc::TIOCSTI, &c) };
+    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    if r == -1 && errno == libc::EPERM {
+        eprintln!("[confine-probe] tiocsti: correctly blocked by seccomp (EPERM)");
+        std::process::exit(0);
+    }
+    eprintln!("[confine-probe] tiocsti: reached the kernel (r={r}, errno={errno}) — not filtered!");
+    std::process::exit(1);
+}
+
+/// With a second thread alive, `apply_confinement()` must REFUSE (Err): the
+/// other thread would stay unconfined. Exit 0 = refused, 1 = confined anyway.
+#[cfg(target_os = "linux")]
+fn probe_threaded() -> ! {
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let _t = std::thread::spawn(move || {
+        let _ = rx.recv();
+    });
+    match sandbox::apply_confinement() {
+        Err(e) => {
+            eprintln!("[confine-probe] threaded: correctly refused ({e})");
+            drop(tx);
+            std::process::exit(0);
+        }
+        Ok(()) => {
+            eprintln!("[confine-probe] threaded: confined with a live second thread — that thread is unconfined!");
+            drop(tx);
+            std::process::exit(1);
+        }
     }
 }

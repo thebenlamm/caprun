@@ -185,7 +185,7 @@ The following confinement values are hardcoded in the Rust TCB (`crates/sandbox/
 
 | Setting | Value |
 |---------|-------|
-| Denied syscalls | `execve`, `execveat` (unconditional); `socket(AF_INET, ...)`, `socket(AF_INET6, ...)` |
+| Denied syscalls | `execve`, `execveat`, `socket` (all families), `io_uring_setup`/`io_uring_enter`/`io_uring_register`, `truncate` (all unconditional); `ioctl` with `TIOCSTI`/`TIOCLINUX`. The exec child gets the same set minus `execve`/`execveat`. |
 | Denial action | `EPERM` |
 | Default action for all other syscalls | `Allow` |
 | `PR_SET_NO_NEW_PRIVS` | Set automatically by `seccompiler::apply_filter` — no separate `prctl` call needed |

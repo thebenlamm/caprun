@@ -507,30 +507,45 @@ pub fn plan_from_intent(
 ///
 /// # Fail-closed (T-21-08)
 ///
-/// Any sidecar/transport/validation failure — connect failure, a malformed
+/// Any sidecar/transport/validation failure — a used-up or broken stream, a malformed
 /// or unparseable reply, an unknown sink, or a `value_id` the sidecar was
 /// never offered — causes `plan()` to print a clear message to stderr and
 /// `std::process::exit(1)` immediately. No `PlanNode` is ever returned or
 /// submitted on that path, and therefore no effect can run (mirrors the
 /// worker's existing fail-closed exit on a §9 block, see `worker.rs`).
 pub struct LlmPlanner {
-    planner_sock: String,
+    /// Pre-connected sidecar stream, taken by the single request. The worker
+    /// cannot call `socket()` once confined (seccomp denies it —
+    /// DESIGN-confinement-egress-hardening.md §3.2), so the connection is made
+    /// BEFORE `sandbox::apply_confinement()`.
+    stream: std::sync::Mutex<Option<UnixStream>>,
 }
 
 impl LlmPlanner {
-    /// `planner_sock` is the abstract-socket name WITHOUT the leading NUL
-    /// (mirrors `BROKER_SOCK`'s convention, see `worker.rs`) — `LlmPlanner`
-    /// prepends the NUL itself when connecting.
-    pub fn new(planner_sock: String) -> Self {
-        LlmPlanner { planner_sock }
+    /// Connect to the sidecar now. MUST be called before the worker
+    /// self-confines. `planner_sock` is the abstract-socket name WITHOUT the
+    /// leading NUL (mirrors `BROKER_SOCK`'s convention, see `worker.rs`) —
+    /// the NUL is prepended when connecting.
+    pub fn connect(planner_sock: &str) -> anyhow::Result<Self> {
+        let stream = connect_to_sidecar(planner_sock)?;
+        Ok(LlmPlanner {
+            stream: std::sync::Mutex::new(Some(stream)),
+        })
     }
 
-    /// Connect to `\0` + `self.planner_sock`, send the framed `PlannerRequest`,
-    /// and receive the framed reply. Any connect/read/parse failure surfaces
-    /// as an `Err` — `plan()` treats that identically to any other sidecar
-    /// failure: fail closed, submit no `PlanNode`.
+    /// Send the framed `PlannerRequest` on the pre-connected stream and
+    /// receive the framed reply. The stream serves exactly ONE request; a
+    /// second request is an error (the LLM path is single-node only). Any
+    /// transport/read/parse failure surfaces as an `Err` — `plan()` treats
+    /// that identically to any other sidecar failure: fail closed, submit no
+    /// `PlanNode`.
     fn request_plan_from_sidecar(&self, request: &PlannerRequest) -> anyhow::Result<PlannerResponse> {
-        let stream = connect_to_sidecar(&self.planner_sock)?;
+        let stream = self
+            .stream
+            .lock()
+            .map_err(|_| anyhow::anyhow!("LLM planner sidecar stream lock poisoned"))?
+            .take()
+            .context("LLM planner sidecar stream already used (one request per worker)")?;
         send_framed(&stream, request).context("send PlannerRequest to sidecar")?;
         let reply: SidecarReply =
             recv_framed(&stream).context("receive SidecarReply from sidecar")?;

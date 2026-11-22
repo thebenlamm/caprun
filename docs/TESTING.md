@@ -103,6 +103,11 @@ Linux-only. Proves that a process confined by `sandbox::apply_confinement()` can
 |------|-------------|-----------|----------------|
 | `negative_fs` | T-03-03 | Landlock deny-all | `EACCES` on `open(~/.ssh/id_rsa)` |
 | `negative_net` | T-03-04 | seccomp deny `socket(AF_INET, ...)` | `EPERM` on outbound socket |
+| `negative_io_uring` | D1 | seccomp deny `io_uring_setup` (IORING_OP_SOCKET bypass) | `EPERM` |
+| `negative_netlink_socket` | D3 | seccomp deny `socket` for all families | `EPERM` on `socket(AF_NETLINK)` |
+| `negative_unix_socket` | D2 | seccomp deny `socket` (AF_UNIX) | `EPERM` connecting to a live pathname socket |
+| `negative_path_truncate` | M1 | seccomp deny `truncate(path)` | `EPERM` (not ENOENT) |
+| `negative_tiocsti` | M2 | seccomp deny `ioctl(TIOCSTI)` | `EPERM` (not ENOTTY) |
 | `negative_exec` | T-03-05 | seccomp deny `execve` | `EPERM` or `EACCES` on `execve("/bin/true")` |
 
 `confine-probe` exits 0 if the operation was correctly blocked, 1 if not blocked, 2 on unexpected error.

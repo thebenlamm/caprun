@@ -94,7 +94,11 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd};
 
-#[tokio::main]
+// current_thread: Landlock and seccomp confine only the calling thread, so the
+// worker must have exactly one thread when it self-confines
+// (`sandbox::require_single_thread` enforces this). The default multi-thread
+// runtime starts worker threads before main() that would stay unconfined.
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let broker_sock = std::env::var("BROKER_SOCK").context("BROKER_SOCK")?;
     let workspace_file = std::env::var("WORKSPACE_FILE").context("WORKSPACE_FILE")?;
@@ -160,6 +164,18 @@ async fn main() -> anyhow::Result<()> {
         .context("set_nonblocking")?;
 
     let sock_fd = std_stream.as_raw_fd();
+
+    // ── Pre-connect the LLM planner sidecar BEFORE confinement ───────────────
+    // Once confined the worker cannot call socket() at all (seccomp denies
+    // every family — DESIGN-confinement-egress-hardening.md §3.2), so the
+    // sidecar connection must exist before apply_confinement().
+    let mut llm_planner = if std::env::var("CAPRUN_PLANNER").as_deref() == Ok("llm") {
+        let planner_sock = std::env::var("PLANNER_SOCK")
+            .context("PLANNER_SOCK required when CAPRUN_PLANNER=llm")?;
+        Some(crate::planner::LlmPlanner::connect(&planner_sock)?)
+    } else {
+        None
+    };
 
     // ── Self-confine AFTER connecting (self-confinement model) ───────────────
     sandbox::apply_confinement().map_err(|e| anyhow::anyhow!("apply_confinement: {e}"))?;
@@ -371,14 +387,10 @@ async fn main() -> anyhow::Result<()> {
     // reading `PLANNER_SOCK` from env (set by caprun main ONLY when
     // CAPRUN_PLANNER=llm, see main.rs).
     //
-    // ORDERING NOTE: `LlmPlanner::plan()`'s sidecar connect happens HERE,
-    // i.e. AFTER `sandbox::apply_confinement()` above — this is legal because
-    // the worker's seccomp filter permits AF_UNIX socket()/connect() (only
-    // AF_INET/AF_INET6 and execve are denied, see
-    // crates/sandbox/src/seccomp.rs); it is the SAME self-confinement-then-
-    // connect pattern this worker already uses for its own broker connection,
-    // just via a blocking std UnixStream instead of tokio (LlmPlanner::plan()
-    // is a synchronous trait method).
+    // ORDERING NOTE: the `LlmPlanner` sidecar stream was connected BEFORE
+    // `sandbox::apply_confinement()` (see above) — the confined worker's
+    // seccomp filter denies socket() for every family, so a connect here
+    // would fail.
     #[cfg(feature = "live-proof-fixtures")]
     let proof_selected = std::env::var("CAPRUN_CODING_I2_PROOF").as_deref() == Ok("1");
     #[cfg(not(feature = "live-proof-fixtures"))]
@@ -389,11 +401,11 @@ async fn main() -> anyhow::Result<()> {
         matches!(&intent, CaprunIntent::SafeCodingWorkflow { .. }),
     ) {
         (true, _, true) => anyhow::bail!("LLM planner does not support SafeCodingWorkflow"),
-        (true, _, false) => {
-            let planner_sock = std::env::var("PLANNER_SOCK")
-                .context("PLANNER_SOCK required when CAPRUN_PLANNER=llm")?;
-            Box::new(crate::planner::LlmPlanner::new(planner_sock))
-        }
+        (true, _, false) => Box::new(
+            llm_planner
+                .take()
+                .context("LLM planner sidecar was not pre-connected")?,
+        ),
         #[cfg(feature = "live-proof-fixtures")]
         (false, true, true) => {
             // Allowed nodes already store output_value_id as out_{step}; this

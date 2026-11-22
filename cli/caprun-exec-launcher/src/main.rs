@@ -66,6 +66,9 @@ fn main() -> ! {
     // exactly, applied to the exec-child variants. Each step aborts on failure
     // (fail-closed: no target ever runs unconfined) BEFORE the execve below.
 
+    sandbox::require_single_thread()
+        .expect("[caprun-exec-launcher] require_single_thread failed");
+
     sandbox::apply_rlimits().expect("[caprun-exec-launcher] apply_rlimits failed");
 
     sandbox::exec_child_ruleset(Path::new(&workspace_root))

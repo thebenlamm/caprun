@@ -7,7 +7,7 @@ caprun is an **Intent Runtime** on stock Linux: a user-space execution layer whe
 
 Inputs are Intents (a goal expressed by a user or outer system). Outputs are Effects (Observe, MutateReversible, or CommitIrreversible) that are only permitted after passing through the broker's policy gate, the deterministic executor's I2 enforcement, and the SQLite audit DAG. The primary architectural style is a layered object-capability runtime with a strict reference-monitor control plane (Broker), a kernel-enforced confinement boundary (Sandbox), and a deterministic, non-LLM enforcement engine (Executor).
 
-All v0 security claims are Linux-only (Landlock + seccomp-bpf + namespaces + rlimits). Mac builds compile but confinement primitives are no-ops. The v0 target platform is Ubuntu Linux; kernel ≥ 5.13 is required for Landlock.
+All v0 security claims are Linux-only (Landlock + seccomp-bpf + rlimits; no namespaces). Mac builds compile but confinement primitives are no-ops. The v0 target platform is Ubuntu Linux; kernel ≥ 5.13 is required for Landlock.
 
 ---
 
@@ -75,7 +75,7 @@ The layer role assignment is locked (DEC-layer-roles). Each layer has exactly on
 
 | Crate | Security Role | What it is NOT |
 |-------|--------------|----------------|
-| `crates/sandbox` | **Security boundary** — namespaces, Landlock deny-all filesystem, seccomp deny-execve + deny-socket(AF_INET/6), rlimits | Not the reference monitor |
+| `crates/sandbox` | **Security boundary** — Landlock deny-all filesystem (fails closed if not enforced), seccomp deny-execve + deny-socket (all families) + deny-io_uring, rlimits. No namespaces (unprivileged user namespaces are blocked on Ubuntu 24.04) | Not the reference monitor |
 | `crates/brokerd` | **Reference monitor / control plane** — Session lifecycle, policy, audit DAG, UDS IPC | Not the security boundary |
 | `crates/executor` | **I2 enforcement** — deterministic, non-LLM; the security differentiator | Not yet created (design-gated) |
 | `crates/adapter-fs` | **Only path to filesystem effects** — broker opens files, passes fd via SCM_RIGHTS | Not a general I/O layer |
@@ -173,7 +173,7 @@ The Worker confines itself, not the other way around. `caprun` spawns `caprun-wo
 Confinement is applied in strict order:
 1. `RLIMIT_AS` = 512 MiB, `RLIMIT_CPU` = 30 s
 2. Landlock deny-all filesystem (abstract UDS sockets are filesystem-independent — unaffected)
-3. seccomp deny-execve/execveat + deny-socket(AF_INET/AF_INET6); `seccompiler::apply_filter()` sets `PR_SET_NO_NEW_PRIVS` internally
+3. seccomp deny-execve/execveat + deny-socket (all families) + deny-io_uring_* + deny-truncate + deny-ioctl(TIOCSTI/TIOCLINUX); `seccompiler::apply_filter()` sets `PR_SET_NO_NEW_PRIVS` internally
 
 This ordering is mandatory. Applying Landlock deny-all or seccomp deny-execve before the exec would prevent the Worker binary from loading.
 
@@ -408,7 +408,7 @@ All TCB code is Rust. Python is permitted only for non-TCB experiments.
 | `rusqlite` | 0.32 (bundled) | SQLite audit DAG (bundled: no system SQLite dep) |
 | `nix` | 0.31.3 | SCM_RIGHTS fd-passing, rlimits, pidfd |
 | `landlock` | 0.4.5 | Landlock LSM filesystem deny-all (kernel ≥ 5.13) |
-| `seccompiler` | 0.5.0 | seccomp-BPF filter (deny execve/execveat + AF_INET/6 sockets) |
+| `seccompiler` | 0.5.0 | seccomp-BPF filter (deny execve/execveat, all socket creation, io_uring, truncate, TIOCSTI) |
 | `sha2` + `hex` | 0.10 / 0.4 | SHA-256 hash chain for audit DAG |
 | `uuid` | 1.23.4 | v4 UUIDs for Session, Intent, Event, ValueId identities |
 | `ed25519-dalek` | (planned) | FAMP message signing (post-v0 adoption) |

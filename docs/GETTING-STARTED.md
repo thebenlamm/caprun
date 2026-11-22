@@ -118,7 +118,7 @@ All three required binaries (`caprun`, `caprun-worker`, `caprun-exec-launcher`) 
 1. `caprun` opens the audit DB and creates a Session.
 2. It binds an abstract-namespace Unix domain socket at `\0/agentos/<session-id>`.
 3. It spawns `caprun-worker` as a normal process (no pre-exec confinement).
-4. The worker connects to the socket, then immediately calls `sandbox::apply_confinement()` on itself: rlimits → Landlock deny-all filesystem → seccomp deny-execve + deny-socket(AF_INET/6).
+4. The worker connects to the socket, then immediately calls `sandbox::apply_confinement()` on itself: rlimits → Landlock deny-all filesystem → seccomp deny-execve + deny-socket (all families) + deny-io_uring. Any LLM-planner sidecar connection is opened before this step, because the confined worker cannot create sockets.
 5. The worker requests the workspace file by path; the broker opens it with ambient authority and passes the file descriptor via `SCM_RIGHTS`.
 6. The worker reads through the received fd and reports the byte count back to the broker.
 7. The broker appends each step as an `Event` to the SQLite audit DAG with an unbroken SHA-256 hash chain.

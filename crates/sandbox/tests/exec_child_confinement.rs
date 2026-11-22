@@ -231,6 +231,141 @@ mod linux {
         std::fs::remove_dir_all(&ws).ok();
     }
 
+    /// Run `python_code` in a confined exec child and assert exit 0, where the
+    /// script uses 0=expected, 1=confinement FAILURE, 3=unexpected error.
+    fn assert_exec_child_exit0(tag: &str, python_code: &str, what: &str) {
+        let ws = fresh_workspace(tag);
+        let output = run_exec_child(&ws, python_code);
+        eprintln!(
+            "[{tag}] status={:?} stdout={:?} stderr={:?}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::remove_dir_all(&ws).ok();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{what}; got {:?}. Exit codes: 0=expected, 1=confinement FAILURE, 3=unexpected-error",
+            output.status.code()
+        );
+    }
+
+    /// io_uring is denied in the exec child: IORING_OP_SOCKET would otherwise
+    /// create an AF_INET socket without the filtered `socket` syscall
+    /// (DESIGN-confinement-egress-hardening D1). io_uring_setup is syscall 425
+    /// in the generic table (x86_64 and aarch64).
+    #[test]
+    fn exec_child_io_uring_denied() {
+        let python_code = "import ctypes, sys\n\
+             libc = ctypes.CDLL(None, use_errno=True)\n\
+             params = ctypes.create_string_buffer(120)\n\
+             fd = libc.syscall(425, 1, params)\n\
+             if fd >= 0:\n\
+             \x20   sys.exit(1)  # UNEXPECTED: io_uring_setup succeeded\n\
+             sys.exit(0 if ctypes.get_errno() in (1, 13) else 3)\n";
+        assert_exec_child_exit0(
+            "uring-deny",
+            python_code,
+            "expected io_uring_setup DENIED (EPERM) in the exec child",
+        );
+    }
+
+    /// Non-INET, non-UNIX socket families (here AF_NETLINK) are denied in the
+    /// exec child (D3).
+    #[test]
+    fn exec_child_netlink_denied() {
+        let python_code = "import socket, sys\n\
+             try:\n\
+             \x20   socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, 0)\n\
+             \x20   sys.exit(1)  # UNEXPECTED: AF_NETLINK socket created\n\
+             except PermissionError:\n\
+             \x20   sys.exit(0)\n\
+             except OSError:\n\
+             \x20   sys.exit(3)\n";
+        assert_exec_child_exit0(
+            "netlink-deny",
+            python_code,
+            "expected socket(AF_NETLINK) DENIED (EPERM) in the exec child",
+        );
+    }
+
+    /// socket(AF_UNIX) is denied in the exec child. With it allowed, a child
+    /// reached the user D-Bus session bus and ran an unconfined command via
+    /// `systemd-run --user` (full escape, reproduced 2026-11-22).
+    #[test]
+    fn exec_child_unix_socket_denied() {
+        let python_code = "import socket, sys\n\
+             try:\n\
+             \x20   socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n\
+             \x20   sys.exit(1)  # UNEXPECTED: AF_UNIX socket created\n\
+             except PermissionError:\n\
+             \x20   sys.exit(0)\n\
+             except OSError:\n\
+             \x20   sys.exit(3)\n";
+        assert_exec_child_exit0(
+            "unix-deny",
+            python_code,
+            "expected socket(AF_UNIX) DENIED (EPERM) in the exec child",
+        );
+    }
+
+    /// truncate(path) is denied by seccomp even INSIDE the workspace (where
+    /// Landlock grants Truncate) — the seccomp backstop for kernels < 6.2.
+    /// ftruncate on a legitimately opened fd still works.
+    #[test]
+    fn exec_child_path_truncate_denied_ftruncate_allowed() {
+        let ws = fresh_workspace("truncate-deny");
+        let f = ws.join("f");
+        let python_code = format!(
+            "import os, sys\n\
+             p = {path:?}\n\
+             open(p, 'w').write('hello')\n\
+             try:\n\
+             \x20   os.truncate(p, 0)\n\
+             \x20   sys.exit(1)  # UNEXPECTED: truncate(path) succeeded\n\
+             except PermissionError:\n\
+             \x20   pass\n\
+             with open(p, 'r+') as fh:\n\
+             \x20   os.ftruncate(fh.fileno(), 1)\n\
+             sys.exit(0 if os.path.getsize(p) == 1 else 3)\n",
+            path = f.to_str().expect("valid UTF-8 path")
+        );
+        let output = run_exec_child(&ws, &python_code);
+        eprintln!(
+            "[truncate-deny] status={:?} stderr={:?}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::remove_dir_all(&ws).ok();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "expected truncate(path) DENIED and ftruncate ALLOWED in the exec child; got {:?}. \
+             Exit codes: 0=expected, 1=confinement FAILURE, 3=unexpected-error",
+            output.status.code()
+        );
+    }
+
+    /// Benign capability kept: AF_UNIX socketpair still works in the exec
+    /// child (build/test tools use it). socket() itself is denied for every
+    /// family (DESIGN §3.3); socketpair creates only an unnamed connected pair.
+    #[test]
+    fn exec_child_unix_socketpair_allowed() {
+        let python_code = "import socket, sys\n\
+             try:\n\
+             \x20   a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)\n\
+             \x20   a.sendall(b'x')\n\
+             \x20   sys.exit(0 if b.recv(1) == b'x' else 3)\n\
+             except OSError:\n\
+             \x20   sys.exit(1)  # UNEXPECTED: benign socketpair denied\n";
+        assert_exec_child_exit0(
+            "socketpair-allow",
+            python_code,
+            "expected AF_UNIX socketpair ALLOWED in the exec child",
+        );
+    }
+
     /// (c) narrow-allow, not deny-all: a benign in-WorkspaceRoot write+read
     /// AND the legitimate target `execve` itself both SUCCEED — the launcher
     /// correctly loaded and ran `/usr/bin/python3` (Landlock `ReadFile +

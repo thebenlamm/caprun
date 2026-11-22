@@ -107,3 +107,72 @@ fn negative_net_smtp_mailpit() {
         status.code()
     );
 }
+
+/// A confined process cannot set up io_uring, whose IORING_OP_SOCKET would
+/// otherwise create an AF_INET socket without the filtered `socket` syscall
+/// (DESIGN-confinement-egress-hardening D1).
+#[cfg(target_os = "linux")]
+#[test]
+fn negative_io_uring() {
+    assert_probe_blocked("uring");
+}
+
+/// A confined process cannot open a non-INET socket family (D3).
+#[cfg(target_os = "linux")]
+#[test]
+fn negative_netlink_socket() {
+    assert_probe_blocked("netlink");
+}
+
+/// A confined process cannot connect to a live pathname Unix socket outside
+/// its broker connection (D2). The listener is real and accepting, so a
+/// success here would be a genuine connection, not ENOENT/ECONNREFUSED.
+#[cfg(target_os = "linux")]
+#[test]
+fn negative_unix_socket() {
+    // Short path: sun_path is limited to 108 bytes.
+    let dir = std::path::PathBuf::from(format!("/tmp/cprb-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create probe socket dir");
+    let sock = dir.join("s");
+    let _listener =
+        std::os::unix::net::UnixListener::bind(&sock).expect("bind probe listener");
+
+    let binary = env!("CARGO_BIN_EXE_confine-probe");
+    let status = std::process::Command::new(binary)
+        .args(["unix", sock.to_str().expect("utf8 path")])
+        .status()
+        .unwrap_or_else(|e| panic!("failed to spawn confine-probe unix: {e}"));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "confine-probe unix: expected exit 0 (correctly blocked) but got {:?}. \
+         Exit codes: 0=blocked, 1=not-blocked, 2=unexpected-error, 100=non-Linux-sentinel",
+        status.code()
+    );
+}
+
+/// A confined process cannot `truncate(path)` (seccomp backstop for kernels
+/// where Landlock lacks the Truncate right, < 6.2).
+#[cfg(target_os = "linux")]
+#[test]
+fn negative_path_truncate() {
+    assert_probe_blocked("truncate");
+}
+
+/// A confined process cannot inject terminal input via `ioctl(TIOCSTI)`.
+#[cfg(target_os = "linux")]
+#[test]
+fn negative_tiocsti() {
+    assert_probe_blocked("tiocsti");
+}
+
+/// `apply_confinement()` refuses to run while another thread exists, because
+/// Landlock/seccomp would confine only the calling thread.
+#[cfg(target_os = "linux")]
+#[test]
+fn negative_multithreaded_confinement_refused() {
+    assert_probe_blocked("threaded");
+}
